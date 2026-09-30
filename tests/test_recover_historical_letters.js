@@ -69,6 +69,13 @@ check('billing: an already-accounted mailing must be a $0 documenting line, neve
   && planBilling([bill({ already_accounted: 'Vantaca 2026-07-10', amount: 0 })], 25).length === 0);
 check('billing: the same mailing listed twice is refused', planBilling([bill(), bill()], 25).some((p) => /listed twice/.test(p)));
 check('billing: idempotency ref is issue11:violation:date', ref(bill()) === `issue11:${V}:2026-07-21`);
+const { linesFor } = require('../scripts/stage_certified_billing_items');
+const five = ['2026-07-10', '2026-07-21', '2026-07-30', '2026-07-31', '2026-07-31'].map((d, i) => bill({ violation_id: `v${i}`, mailed_on: d, address_label: `${100 + i} Sample St` }));
+const L = linesFor(five, 25);
+check('billing: five July letters become ONE invoice line, qty 5 at $25 = $125, per-letter detail kept for the note',
+  L.length === 1 && L[0].description === 'Deed Restriction Certified Demand Letter' && L[0].qty === 5 && L[0].amount === 125 && L[0].detail.length === 5 && L[0].source_ref === 'issue11:2026-07:drv_certified', JSON.stringify(L));
+check('billing: mailings in two months become one line per month', linesFor([...five, bill({ violation_id: 'v9', mailed_on: '2026-08-02' })], 25).map((l) => l.qty).join(',') === '5,1');
+check('billing: an already-accounted mailing is left off the line', linesFor([bill({ already_accounted: 'Vantaca', amount: 0 }), ...five], 25)[0].qty === 5);
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

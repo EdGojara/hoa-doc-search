@@ -11,10 +11,13 @@
 //   node scripts/stage_certified_billing_items.js <manifest.json> --apply  write
 //
 // Reads manifest.billing: [{ violation_id, mailed_on, address_label, amount,
-//   already_accounted?: 'where it was already billed' }]. An already-accounted
-// mailing stages a $0 line that documents it, never a second charge. The rate
-// must equal the contract's DRV certified-letter owner charge. Idempotent:
-// source_ref 'issue11:<violation_id>:<mailed_on>' is looked up first.
+//   already_accounted?: 'where it was already billed' }]. Stages ONE line per
+// mailing month, "Deed Restriction Certified Demand Letter" qty N at the rate,
+// with the per-letter list in the internal note (how Bedrock bills). An
+// already-accounted mailing is left off, never charged twice. The rate must
+// equal the contract's DRV certified-letter owner charge. Idempotent:
+// source_ref 'issue11:<yyyy-mm>:drv_certified' (and the older per-mailing
+// refs) is looked up first.
 // ============================================================================
 require('dotenv').config({ quiet: true });
 const fs = require('fs');
@@ -54,30 +57,47 @@ async function main() {
   const problems = planBilling(m.billing, rates[0]);
   if (problems.length) throw new Error('blocked, nothing written:\n  ' + problems.join('\n  '));
 
-  const existing = await must(sb.from('billing_pending_items').select('source_ref, status, amount').eq('community_id', m.community_id).in('source_ref', m.billing.map(ref)), 'existing items');
-  let total = 0;
+  // Billing convention (Ed 2026-09-30): the invoice shows ONE line per category
+  // per month ("Deed Restriction Certified Demand Letter", qty N at the rate),
+  // never one line per letter. The per-letter detail goes in the internal note.
+  const lines = linesFor(m.billing, rates[0]);
+  const refs = [...lines.map((l) => l.source_ref), ...m.billing.map(ref)];
+  const existing = await must(sb.from('billing_pending_items').select('source_ref, status').eq('community_id', m.community_id).in('source_ref', refs).neq('status', 'dismissed'), 'existing items');
   const toInsert = [];
-  for (const b of m.billing) {
-    const have = existing.find((x) => x.source_ref === ref(b));
-    const amount = Number(b.amount);
-    total += amount;
-    console.log(`${b.mailed_on} ${b.address_label.padEnd(26)} $${amount.toFixed(2)} ${b.already_accounted ? '(already accounted: ' + b.already_accounted + ')' : ''} ${have ? '-> already staged (' + have.status + ')' : '-> stage'}`);
+  for (const l of lines) {
+    const have = existing.find((x) => x.source_ref === l.source_ref || l.mailing_refs.includes(x.source_ref));
+    console.log(`${l.month}: ${l.description} x${l.qty} @ $${l.unit_price} = $${l.amount.toFixed(2)} ${have ? '-> already staged (' + have.status + ')' : '-> stage'}`);
+    for (const d of l.detail) console.log(`    ${d}`);
     if (!have) toInsert.push({
       management_company_id: comm.management_company_id, community_id: m.community_id, category: CATEGORY,
-      description: b.already_accounted
-        ? `Deed Restriction Certified Demand Letter, ${b.address_label}, mailed ${b.mailed_on} (already billed: ${b.already_accounted})`
-        : `Deed Restriction Certified Demand Letter, ${b.address_label}, mailed ${b.mailed_on}`,
-      qty: 1, unit_price: amount, amount, source: 'manual', source_ref: ref(b),
+      description: l.description, qty: l.qty, unit_price: l.unit_price, amount: l.amount, source: 'manual', source_ref: l.source_ref,
       submitted_by: m.recovered_by || 'historical_letter_recovery',
-      note: 'Certified notice mailed per USPS receipt; Trusted record restored (Issue #11). Charged at the contract rate.',
+      note: `Certified notices mailed per USPS receipt; Trusted records restored (Issue #11): ${l.detail.join('; ')}. Charged at the contract rate.`,
       status: 'pending',
     });
   }
-  console.log(`\n${m.billing.length} mailings, new charges $${total.toFixed(2)} (contract rate $${rates[0]}); ${toInsert.length} to stage.`);
+  for (const b of m.billing.filter((x) => x.already_accounted)) console.log(`not billed (already accounted: ${b.already_accounted}): ${b.address_label}, ${b.mailed_on}`);
+  console.log(`\n${toInsert.length} line(s) to stage.`);
   if (!apply) { console.log('DRY RUN: nothing written.'); return; }
   if (toInsert.length) await must(sb.from('billing_pending_items').insert(toInsert), 'stage items');
   console.log(`Staged ${toInsert.length}. They drop onto ${comm.name}'s next activity draft invoice.`);
 }
 
+// One invoice line per mailing month for the chargeable mailings.
+function linesFor(items, rate) {
+  const byMonth = new Map();
+  for (const b of items.filter((x) => !x.already_accounted)) {
+    const k = b.mailed_on.slice(0, 7);
+    if (!byMonth.has(k)) byMonth.set(k, []);
+    byMonth.get(k).push(b);
+  }
+  return [...byMonth.entries()].sort().map(([month, bs]) => ({
+    month, description: 'Deed Restriction Certified Demand Letter', qty: bs.length, unit_price: rate, amount: bs.length * rate,
+    source_ref: `issue11:${month}:${CATEGORY === 'drv_certified_demand' ? 'drv_certified' : CATEGORY}`,
+    mailing_refs: bs.map(ref),
+    detail: bs.sort((a, b) => a.mailed_on.localeCompare(b.mailed_on)).map((b) => `${b.address_label}, mailed ${b.mailed_on}`),
+  }));
+}
+
 if (require.main === module) main().catch((e) => { console.error('ERR', e.message); process.exit(1); });
-module.exports = { planBilling, ref };
+module.exports = { planBilling, ref, linesFor };
