@@ -59,5 +59,16 @@ r = planEntry(base(), facts({ feeAutopost: true }), C);
 check('July mailings are before the autopost start date, so autopost cannot fire', r.ok);
 check('recovery key is property:date:violation', recoveryKey(P, '2026-07-30', V) === `${P}:2026-07-30:${V}`);
 
+// Billing staging (scripts/stage_certified_billing_items.js)
+const { planBilling, ref } = require('../scripts/stage_certified_billing_items');
+const bill = (o = {}) => ({ violation_id: V, mailed_on: '2026-07-21', address_label: '4101 Sample Meadow Dr', amount: 25, ...o });
+check('billing: a mailing at the contract rate plans cleanly', planBilling([bill()], 25).length === 0);
+check('billing: a charge above the contract rate (e.g. the $35 printed) is refused', planBilling([bill({ amount: 35 })], 25).some((p) => /should be 25/.test(p)));
+check('billing: an already-accounted mailing must be a $0 documenting line, never a second charge',
+  planBilling([bill({ already_accounted: 'Vantaca 2026-07-10', amount: 25 })], 25).some((p) => /should be 0/.test(p))
+  && planBilling([bill({ already_accounted: 'Vantaca 2026-07-10', amount: 0 })], 25).length === 0);
+check('billing: the same mailing listed twice is refused', planBilling([bill(), bill()], 25).some((p) => /listed twice/.test(p)));
+check('billing: idempotency ref is issue11:violation:date', ref(bill()) === `issue11:${V}:2026-07-21`);
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

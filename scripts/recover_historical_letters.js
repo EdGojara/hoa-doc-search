@@ -109,6 +109,11 @@ async function main() {
   const download = async (bucket, p) => { const { data, error } = await sb.storage.from(bucket).download(p); if (error || !data) return null; return Buffer.from(await data.arrayBuffer()); };
 
   const comm = await must(sb.from('communities').select('id, name, certified_fee_autopost').eq('id', m.community_id).single(), 'community');
+  // Before migration 475 is applied a dry run still validates every entry; --apply refuses.
+  const probe = await sb.from('letter_recovery_records').select('id').limit(1);
+  const has475 = !probe.error;
+  if (!has475 && apply) throw new Error('migration 475 is not applied (letter_recovery_records missing); apply it first');
+  if (!has475) console.log('NOTE: migration 475 not applied yet; validating only.\n');
 
   // Read everything and plan every entry before any write (all-or-nothing gate).
   const plans = [];
@@ -119,7 +124,7 @@ async function main() {
       : e.source && e.source.bucket ? await download(e.source.bucket, e.source.path) : null;
     const priorBytes = e.reuse_draft && prior && prior.content ? await download(LETTERS_BUCKET, prior.content) : null;
     const key = violation ? recoveryKey(violation.property_id, e.mailed_on, e.violation_id) : null;
-    const existingRecovery = key ? await must(sb.from('letter_recovery_records').select('id, sha256, interaction_id').eq('recovery_key', key).maybeSingle(), 'existing recovery') : null;
+    const existingRecovery = key && has475 ? await must(sb.from('letter_recovery_records').select('id, sha256, interaction_id').eq('recovery_key', key).maybeSingle(), 'existing recovery') : null;
     const p = planEntry(e, { violation, prior, bytes, priorBytes, existingRecovery, feeAutopost: !!comm.certified_fee_autopost }, m.community_id);
     plans.push({ e, violation, prior, bytes, key, ...p });
     console.log(`${e.violation_id.slice(0, 8)} mailed ${e.mailed_on} ${e.provenance.padEnd(18)} ${p.action.padEnd(16)} ${p.ok ? 'ok' : 'BLOCKED: ' + p.problems.join('; ')}`);
