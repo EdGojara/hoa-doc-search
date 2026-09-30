@@ -67,6 +67,10 @@
   .asset .role{font-weight:700;color:var(--ink);}
   details summary{cursor:pointer;font-weight:700;color:var(--navy);font-size:13px;}
   #err{display:none;} .hide{display:none;}
+  .modal{position:fixed;inset:0;background:rgba(11,29,52,.45);display:flex;align-items:center;justify-content:center;padding:16px;z-index:50;}
+  .modal.hide{display:none;}
+  .modal-box{background:var(--surface);border-radius:14px;padding:20px 22px;max-width:440px;width:100%;box-shadow:0 10px 40px rgba(0,0,0,.25);}
+  .modal-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:16px;}
   .b-unresolved,.b-needs_decision{background:var(--crit-bg);color:var(--crit);}
   .b-approvable{background:var(--info-bg);color:var(--accent);}
   .oq{margin:4px 0 0 16px;padding:0;font-size:12.5px;color:var(--crit);}
@@ -82,6 +86,13 @@
   <div id="err" class="banner bad"></div>
   <div id="roster" class="roster"></div>
   <div id="detail"></div>
+  <div id="confirmModal" class="modal hide" role="dialog" aria-modal="true" aria-labelledby="confirmTitle">
+    <div class="modal-box">
+      <h2 id="confirmTitle" style="margin-top:0">Confirm</h2>
+      <div id="confirmBody" class="small"></div>
+      <div class="modal-actions"><button class="btn ghost" id="confirmCancel" type="button">Cancel</button><button class="btn" id="confirmOk" type="button">Confirm</button></div>
+    </div>
+  </div>
 </div>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
@@ -270,9 +281,15 @@ function render(d){
     $('verifyBtn').disabled = false;
   };
   // One handler for every Approve button (review panel and component cards).
+  // An in-app Confirm replaces typing a reason; the audit event still records
+  // the owner (server-side, from the session) and a fixed reason.
   document.querySelectorAll('[data-approve]').forEach((b)=>b.onclick = async ()=>{
-    const reason = prompt(`Approve ${b.dataset.label} as canonical?\n\nReason:`);
-    if (!reason || !reason.trim()) return;
+    const comp = String(b.dataset.label||'').split(' ')[0];
+    const scope = (AP.visual_components||[]).includes(comp) ? 'visual canon' : 'canon';
+    const ok = await confirmModal(`Approve ${b.dataset.label} as ${c.display_name} ${scope}?`,
+      'This records your approval in the append-only history. Nothing in production changes.');
+    if (!ok) return;
+    const reason = `Approved ${b.dataset.label} as ${c.display_name} ${scope} (owner confirmed)`;
     b.disabled = true;
     try { await api(`/api/characters/${c.character_id}/components/${b.dataset.approve}/status`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ event:'approved', reason }) });
           showErr(''); await openCharacter(c.character_id); await loadRoster(); }
@@ -284,6 +301,23 @@ function render(d){
     try { await api(`/api/characters/${c.character_id}/releases/${b.dataset.promote}/promote`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ reason }) });
           await openCharacter(c.character_id); await loadRoster(); }
     catch(e){ showErr('Could not change the current release: '+esc(e.message)); }
+  });
+}
+
+// In-app confirmation (Trusted styling, not browser chrome). Resolves true on
+// Confirm, false on Cancel / Escape / backdrop click.
+function confirmModal(title, body){
+  return new Promise((resolve)=>{
+    const m = $('confirmModal');
+    $('confirmTitle').textContent = title; $('confirmBody').textContent = body || '';
+    m.classList.remove('hide');
+    const onKey = (e)=>{ if (e.key==='Escape') done(false); };
+    const done = (v)=>{ m.classList.add('hide'); $('confirmOk').onclick = $('confirmCancel').onclick = m.onclick = null; document.removeEventListener('keydown', onKey); resolve(v); };
+    $('confirmOk').onclick = ()=>done(true);
+    $('confirmCancel').onclick = ()=>done(false);
+    m.onclick = (e)=>{ if (e.target===m) done(false); };
+    document.addEventListener('keydown', onKey);
+    $('confirmOk').focus();
   });
 }
 
