@@ -173,6 +173,8 @@ const CHECKS = [
   'tests/sql/469_apply_one_e2e.mjs',
   'tests/sql/473_apply_one_e2e.mjs',
   'tests/sql/474_apply_one_e2e.mjs',
+  'tests/sql/475_apply_one_e2e.mjs',
+  'tests/test_recover_historical_letters.js',
   'scripts/check_migration_immutability.js',
   'scripts/check_migration_checks.js',
   'tests/sql/apply_one_rehearsal.mjs',

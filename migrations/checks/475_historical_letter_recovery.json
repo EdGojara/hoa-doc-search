@@ -1,0 +1,126 @@
+{
+  "migration": "475_historical_letter_recovery.sql",
+  "summary": "Historical certified-letter recovery (Issue #11): the empty, append-only letter_recovery_records table (provenance, hashes, receipt evidence per recovered mailing) and a trigger that seals any interaction it names against delete or change of its mailing record. No interaction, violation, mail piece, archive, ledger or GL row is created or changed by the migration.",
+  "requires": [
+    "474_legal_invoice_extractions.sql"
+  ],
+  "preflight": [
+    {
+      "name": "letter_recovery_records does not exist yet",
+      "sql": "SELECT count(*)::int FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'letter_recovery_records'",
+      "expect": 0
+    },
+    {
+      "name": "no seal trigger on interactions yet",
+      "sql": "SELECT count(*)::int FROM pg_trigger WHERE tgname = 'trg_letter_recovery_seal'",
+      "expect": 0
+    }
+  ],
+  "expected_changes": [
+    "Creates the empty table letter_recovery_records (service role SELECT/INSERT only; row-level security on; browser roles revoked) with its key, format, provenance and date CHECKs, RESTRICT foreign keys to communities, properties, violations and interactions, and two indexes.",
+    "Adds letter_recovery_seal_interaction() and the BEFORE UPDATE OR DELETE trigger trg_letter_recovery_seal on interactions. It only acts on interactions named by a recovery row; with the table empty it changes nothing.",
+    "No interaction, violation, mail piece, sent-letter archive, owner-ledger, journal or GL data is created or changed."
+  ],
+  "objects": {
+    "added": [
+      "column:letter_recovery_records.archive_path",
+      "column:letter_recovery_records.bytes",
+      "column:letter_recovery_records.community_id",
+      "column:letter_recovery_records.delivery_method",
+      "column:letter_recovery_records.id",
+      "column:letter_recovery_records.interaction_id",
+      "column:letter_recovery_records.mailed_at",
+      "column:letter_recovery_records.mailed_on",
+      "column:letter_recovery_records.prior_interaction_id",
+      "column:letter_recovery_records.property_id",
+      "column:letter_recovery_records.provenance",
+      "column:letter_recovery_records.reason",
+      "column:letter_recovery_records.receipt_evidence",
+      "column:letter_recovery_records.reconstruction",
+      "column:letter_recovery_records.recovered_at",
+      "column:letter_recovery_records.recovered_by",
+      "column:letter_recovery_records.recovery_key",
+      "column:letter_recovery_records.sha256",
+      "column:letter_recovery_records.source_path",
+      "column:letter_recovery_records.violation_id",
+      "constraint:letter_recovery_records.letter_recovery_mailed_at_on_date",
+      "constraint:letter_recovery_records.letter_recovery_reason_present",
+      "constraint:letter_recovery_records.letter_recovery_reconstruction_detail",
+      "constraint:letter_recovery_records.letter_recovery_records_bytes_check",
+      "constraint:letter_recovery_records.letter_recovery_records_community_id_fkey",
+      "constraint:letter_recovery_records.letter_recovery_records_delivery_method_check",
+      "constraint:letter_recovery_records.letter_recovery_records_interaction_id_fkey",
+      "constraint:letter_recovery_records.letter_recovery_records_interaction_id_key",
+      "constraint:letter_recovery_records.letter_recovery_records_pkey",
+      "constraint:letter_recovery_records.letter_recovery_records_prior_interaction_id_fkey",
+      "constraint:letter_recovery_records.letter_recovery_records_property_id_fkey",
+      "constraint:letter_recovery_records.letter_recovery_records_provenance_check",
+      "constraint:letter_recovery_records.letter_recovery_records_recovery_key_key",
+      "constraint:letter_recovery_records.letter_recovery_records_violation_id_fkey",
+      "constraint:letter_recovery_records.letter_recovery_sha256_format",
+      "function:letter_recovery_seal_interaction",
+      "index:idx_letter_recovery_property",
+      "index:idx_letter_recovery_violation",
+      "index:letter_recovery_records_interaction_id_key",
+      "index:letter_recovery_records_pkey",
+      "index:letter_recovery_records_recovery_key_key",
+      "table:letter_recovery_records",
+      "trigger:interactions.trg_letter_recovery_seal"
+    ],
+    "changed": [],
+    "removed": []
+  },
+  "row_changes": {
+    "letter_recovery_records": 0
+  },
+  "protected": [
+    {
+      "table": "interactions",
+      "order_by": "id"
+    },
+    {
+      "table": "violations",
+      "order_by": "id"
+    },
+    {
+      "table": "letter_mail_pieces",
+      "order_by": "id"
+    },
+    {
+      "table": "sent_letter_archive",
+      "order_by": "id"
+    },
+    {
+      "table": "homeowner_transactions",
+      "order_by": "id"
+    },
+    {
+      "table": "journal_entries",
+      "order_by": "id"
+    }
+  ],
+  "verify": [
+    {
+      "name": "letter_recovery_records exists and is empty",
+      "sql": "SELECT count(*)::int FROM letter_recovery_records",
+      "expect": 0
+    },
+    {
+      "name": "the seal trigger is on interactions",
+      "sql": "SELECT count(*)::int FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid WHERE t.tgname = 'trg_letter_recovery_seal' AND c.relname = 'interactions'",
+      "expect": 1
+    },
+    {
+      "name": "the service role cannot update or delete recovery rows",
+      "sql": "SELECT (has_table_privilege('service_role', 'letter_recovery_records', 'UPDATE') OR has_table_privilege('service_role', 'letter_recovery_records', 'DELETE'))::int",
+      "expect": 0
+    }
+  ],
+  "api_checks": [
+    {
+      "table": "letter_recovery_records",
+      "expect_count": 0
+    }
+  ],
+  "reload_schema": true
+}
