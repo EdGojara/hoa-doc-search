@@ -167,6 +167,7 @@ const CHECKS = [
   'tests/test_lma_asset_accounting.js',
   'scripts/check_mgmt_id.js',
   'tests/test_character_registry.js',
+  'tests/test_character_approval.js',
   'tests/test_payment_foundation.js',
   'tests/sql/469_payment_rehearsal.mjs',
   'tests/sql/469_apply_one_e2e.mjs',
