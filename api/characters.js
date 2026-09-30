@@ -102,8 +102,17 @@ router.get('/:id', async (req, res) => {
       // What each release would make canonical, and what still needs a decision.
       approval: {
         visual_components: approval.VISUAL_COMPONENTS,
-        versions: Object.fromEntries(d.versions.map((v) => [v.id, approval.versionReview(v)])),
+        versions: Object.fromEntries(d.versions.map((v) => {
+          const r = approval.versionReview(v); const sup = approval.supersededBy(d, v);
+          return [v.id, Object.assign(r, sup ? { superseded_by: sup, approvable: false } : {})];
+        })),
         releases: Object.fromEntries(d.releases.map((r) => [r.id, approval.reviewRelease(d, r.id)])),
+        visual_canon: approval.visualCanon(d),
+        changes: Object.fromEntries(d.versions.filter((v) => v.parent_version_id).map((v) => {
+          const parent = d.versions.find((p) => p.id === v.parent_version_id);
+          return [v.id, parent ? { parent_version_no: parent.version_no, fields: approval.specChanges(parent.spec, v.spec),
+            same_assets: JSON.stringify(parent.assets.map((a) => a.role + a.sha256).sort()) === JSON.stringify(v.assets.map((a) => a.role + a.sha256).sort()) } : null];
+        })),
       },
     });
   } catch (err) {
@@ -165,6 +174,8 @@ router.post('/:id/components/:vid/status', async (req, res) => {
     const version = d.versions.find((v) => v.id === req.params.vid);
     if (!version) return res.status(404).json({ error: 'version_not_for_character' });
     if (event === 'approved') {
+      const sup = approval.supersededBy(d, version);
+      if (sup) return res.status(409).json({ error: 'superseded', detail: `${version.component} v${version.version_no} is superseded by v${sup.version_no}; approve that version instead.`, superseded_by: sup });
       const rev = approval.versionReview(version);
       if (rev.open_questions.length) {
         return res.status(409).json({ error: 'unresolved_canon', detail: `${version.component} v${version.version_no} still has unresolved questions, so it cannot be approved. Resolve them with a new version first.`, open_questions: rev.open_questions });

@@ -1,0 +1,27 @@
+{
+  "character_slug": "amanda_albright",
+  "component": "face",
+  "parent_version_no": 2,
+  "change_reason": "Face v3: resolves face v2's open descriptors against the SAME canonical master image (sha256 601c6d92..., 1672x941), inspected at full resolution. Only observable descriptors were checked; where the image cannot support precision, the descriptor is made less precise rather than guessed. Proposed only; approval is the owner's.",
+  "spec": {
+    "apparent_age_range": [48, 52],
+    "hair": {
+      "color": "brunette with caramel highlights",
+      "style": "layered, medium length past the shoulders, soft volume"
+    },
+    "eyes": "brown",
+    "skin_tone": "warm light-medium",
+    "distinguishing": [
+      "light freckles, most visible on the chest",
+      "fine lines at the eyes",
+      "soft smile lines",
+      "small gold hoop earrings",
+      "small round gold disc pendant"
+    ],
+    "visual_vibe": "competence before she speaks; warm but controlled",
+    "canonical_image_notes": "Landscape master (1672x941): camel blazer, white blouse, warm lamp-lit office. Square crops are derived assets. Descriptors checked against this image: the eyes read brown with lighter warm tones near the pupil, but a hazel distinction is not reliable at this resolution under warm light, so they are recorded as brown; the skin undertone is warm, and olive is not asserted because of the lighting."
+  },
+  "assets": [
+    { "sha256": "601c6d9229c0cab9a3f990c39c352f07b29b2b4c0e6663bc9d2b9321ad840d90", "role": "canonical", "notes": "Same master image as face v2 (unchanged)." }
+  ]
+}

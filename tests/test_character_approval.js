@@ -122,6 +122,40 @@ t('rejected / retired versions are never approvable; approved ones read as appro
   assert.strictEqual(A.versionReview(Object.assign({}, v, { status: 'proposed' })).approvable, true);
 });
 
+// ---- face v3 proposal + visual canon by component version ---------------------------
+const PROPOSAL = require(path.join(__dirname, '..', 'scripts', 'character_seed', 'proposals', 'amanda_albright.face.v3.json'));
+t('face v3 proposal: validates, has no open questions, reuses the parent’s canonical image', () => {
+  assert.ok(validateSpec('face', PROPOSAL.spec).ok, JSON.stringify(validateSpec('face', PROPOSAL.spec).errors));
+  assert.deepStrictEqual(A.openQuestions('face', PROPOSAL.spec), []);
+  const v2 = SEED('amanda_albright').components[1];
+  assert.deepStrictEqual(PROPOSAL.assets.filter((a) => a.role === 'canonical').map((a) => a.sha256), ['601c6d9229c0cab9a3f990c39c352f07b29b2b4c0e6663bc9d2b9321ad840d90']);
+  const changed = A.specChanges(v2.spec, PROPOSAL.spec).map((c) => c.field).sort();
+  assert.deepStrictEqual(changed, ['canonical_image_notes', 'distinguishing', 'eyes', 'skin_tone']);   // age, hair, vibe unchanged
+});
+t('visual canon: follows the newest APPROVED version per component, not the release', () => {
+  const seed = JSON.parse(JSON.stringify(SEED('amanda_albright')));
+  seed.components.splice(2, 0, { component: 'face', spec: PROPOSAL.spec });   // face v3, not in any release
+  const d = detailFrom(seed);
+  let vc = A.visualCanon(d);
+  const face = vc.components.find((c) => c.component === 'face');
+  assert.strictEqual(face.approved, null); assert.strictEqual(face.candidate.version_no, 3);    // v3 resolved; v2 is not a candidate
+  assert.strictEqual(vc.ready, false);
+  const d2 = detailFrom(seed, (comp, key) => (['face.v3', 'body.v1', 'wardrobe.v1', 'guardrails.v1'].includes(key) ? 'approved' : 'proposed'));
+  vc = A.visualCanon(d2);
+  assert.strictEqual(vc.ready, true);
+  assert.deepStrictEqual(vc.components.map((c) => c.component + ' v' + c.approved.version_no), ['face v3', 'body v1', 'wardrobe v1', 'guardrails v1']);
+  assert.strictEqual(A.reviewRelease(d2, d2.releases[1].id).package_approvable, false);   // voice still open; no release promoted
+});
+
+t('superseded: an older face is never approvable on its own once a newer (non-rejected) face exists', () => {
+  const d = detailFrom(SEED('amanda_albright'));
+  const v1 = d.versions.find((v) => v.component === 'face' && v.version_no === 1);
+  assert.strictEqual(A.supersededBy(d, v1).version_no, 2);          // v2 still open, but v1 is superseded regardless
+  const d2 = detailFrom(SEED('amanda_albright'), (comp, key) => (key === 'face.v2' ? 'rejected' : 'proposed'));
+  assert.strictEqual(A.supersededBy(d2, d2.versions.find((v) => v.component === 'face' && v.version_no === 1)), null);   // v2 rejected → v1 not superseded
+  assert.strictEqual(A.supersededBy(d, d.versions.find((v) => v.component === 'body')), null);
+});
+
 // ---- 4) the API --------------------------------------------------------------------
 async function apiTests(run) {
   const seed = SEED('amanda_albright');
@@ -188,6 +222,11 @@ async function apiTests(run) {
       assert.strictEqual(r.status, 200, JSON.stringify(r.body));
       assert.deepStrictEqual(calls.map((c) => c[0]), ['setComponentStatus']);
       assert.strictEqual(calls[0][1].versionId, vid('body', 1)); assert.strictEqual(calls[0][1].actor, 'owner@example.test');
+    });
+    await run('api: approving a superseded (legacy) face is refused', async () => {
+      calls.length = 0;
+      const r = await post(`/components/${vid('face', 1)}/status`, { event: 'approved', reason: 'x' });
+      assert.strictEqual(r.status, 409); assert.strictEqual(r.body.error, 'superseded'); assert.strictEqual(r.body.superseded_by.version_no, 2); assert.strictEqual(calls.length, 0);
     });
     await run('api: rejecting an unresolved version is allowed (only approval requires resolution)', async () => {
       calls.length = 0;
