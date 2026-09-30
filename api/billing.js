@@ -1754,6 +1754,31 @@ async function renderInvoicePdfBuffer(invoiceId) {
   }
 }
 
+// Historically recovered certified mailings (Issue #11, migration 475) were
+// mailed by hand outside the Mail Queue, so their interactions carry no
+// printed_at / postmark_date and every "letters mailed in the period" query
+// below skipped them. They are real mailings, dated by the certified receipt
+// (letter_recovery_records.mailed_on). Fold them into each activity letter set
+// with postmark_date = mailed_on, so the activity report, the detail report and
+// the invoice auto-fill all count them in the month they were mailed.
+async function withRecoveredMailings(letters, { start, endEx, communityId, cols }) {
+  let q = supabase.from('letter_recovery_records').select('interaction_id, mailed_on')
+    .gte('mailed_on', start).lt('mailed_on', endEx).order('mailed_on').limit(1000);
+  if (communityId) q = q.eq('community_id', communityId);
+  const { data: rec, error } = await q;
+  if (error) {
+    if (!/letter_recovery_records/.test(error.message || '')) console.warn('[billing] recovered mailings lookup failed:', error.message);
+    return letters;
+  }
+  const have = new Set(letters.map((l) => l.id));
+  const ids = (rec || []).map((r) => r.interaction_id).filter((id) => !have.has(id));
+  if (!ids.length) return letters;
+  const { data: rows, error: e2 } = await supabase.from('interactions').select(cols).in('id', ids);
+  if (e2) { console.warn('[billing] recovered mailings interactions failed:', e2.message); return letters; }
+  const mailedOn = Object.fromEntries(rec.map((r) => [r.interaction_id, r.mailed_on]));
+  return letters.concat((rows || []).map((r) => ({ ...r, postmark_date: mailedOn[r.id] })));
+}
+
 // Supporting "activity detail" PDF for the board — the per-property breakdown
 // behind the activity invoice (violation letters + ARC/ACC decisions). Queries
 // the SAME source tables + filters as GET /activity-detail and the activity
@@ -1766,7 +1791,9 @@ async function renderActivityDetailPdfBuffer(communityId, start, end) {
   const STAGE_LABEL = { letter_courtesy_1: 'Courtesy 1', letter_courtesy_2: 'Courtesy 2', letter_209: 'Certified §209', letter_postcard_reminder: 'Postcard reminder' };
   async function fetchAll(build) { const out = []; for (let f = 0; ; f += 1000) { const { data, error } = await build().range(f, f + 999); if (error) break; out.push(...(data || [])); if (!data || data.length < 1000) break; } return out; }
   const { data: community } = await supabase.from('communities').select('id, name').eq('id', communityId).maybeSingle();
-  const letters = await fetchAll(() => supabase.from('interactions').select('id, property_id, type, delivery_method, postmark_date, content, bundle_id').eq('community_id', communityId).in('type', LETTER_TYPES).not('printed_at', 'is', null).gte('postmark_date', start).lt('postmark_date', endEx));
+  const letters = await withRecoveredMailings(
+    await fetchAll(() => supabase.from('interactions').select('id, property_id, type, delivery_method, postmark_date, content, bundle_id').eq('community_id', communityId).in('type', LETTER_TYPES).not('printed_at', 'is', null).gte('postmark_date', start).lt('postmark_date', endEx)),
+    { start, endEx, communityId, cols: 'id, property_id, type, delivery_method, postmark_date, content, bundle_id' });
   // Resident ACC decisions billed by DECISION date (decided_at, mig 330) — the
   // date staff issued the decision, not the date the application arrived. Only
   // status='decided' is billable. (Ed 2026-07-24.)
@@ -2538,6 +2565,8 @@ router.get('/activity-report', async (req, res) => {
         letters = await letterCols('id, community_id, content, bundle_id, type, delivery_method, postmark_date');
       } else { throw e; }
     }
+    letters = await withRecoveredMailings(letters, { start, endEx, communityId,
+      cols: hasPageCount ? 'id, community_id, content, bundle_id, page_count, type, delivery_method, postmark_date' : 'id, community_id, content, bundle_id, type, delivery_method, postmark_date' });
 
     // 1b) Violations OBSERVED (created) in the period, per community. This is NOT
     // billable — postage bills on the MAIL date — but it lets the report warn when
@@ -2818,7 +2847,8 @@ router.get('/activity-detail', async (req, res) => {
       fetchAll(() => supabase.from('interactions')
         .select('id, property_id, type, delivery_method, postmark_date, content, bundle_id, page_count, violation_id')
         .eq('community_id', communityId).in('type', LETTER_TYPES)
-        .not('printed_at', 'is', null).gte('postmark_date', start).lt('postmark_date', endEx)),
+        .not('printed_at', 'is', null).gte('postmark_date', start).lt('postmark_date', endEx))
+        .then((rows) => withRecoveredMailings(rows, { start, endEx, communityId, cols: 'id, property_id, type, delivery_method, postmark_date, content, bundle_id, page_count, violation_id' })),
       fetchAll(() => supabase.from('builder_applications')
         .select('id, reference_number, street_address, submitter_name, status, decided_at')
         .eq('community_id', communityId)
