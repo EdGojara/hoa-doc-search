@@ -287,12 +287,6 @@ async function buildDraftLineItems({ contractId, type, period, communityId }) {
       .eq('invoice_id', priorInv.id).gt('qty', 0).order('sort_order');
     priorLines = pl || [];
   }
-  if (priorLines.length > 0) {
-    return alpha(priorLines.map((p) => ({
-      source: p.source, source_ref_id: p.source_ref_id, category: p.category, description: p.description,
-      qty: 0, unit_price: Number(p.unit_price || 0), amount: 0, sort_order: p.sort_order,
-    })));
-  }
   const { data: reimb, error: rErr } = await supabase
     .from('contract_reimbursables').select('*').eq('contract_id', contractId).eq('default_on_invoice', true).order('sort_order');
   if (rErr) throw rErr;
@@ -309,6 +303,21 @@ async function buildDraftLineItems({ contractId, type, period, communityId }) {
     source: 'owner_charge', source_ref_id: o.id, category: o.category, description: o.description,
     qty: 0, unit_price: Number(o.fee_amount), amount: 0, sort_order: ownerOffset + o.sort_order,
   }));
+  // Last month's billed lines carry forward (they include one-offs), but only
+  // lines that had a quantity. The contract's default lines must ALWAYS be on
+  // the worksheet too: after a month with no first-class mail the postage line
+  // vanished, and the next month's letters had no line to bill on (Ed
+  // 2026-09-30, Eaglewood Aug: 122 letters, no postage). Union by category
+  // (by description for uncategorized one-offs).
+  if (priorLines.length > 0) {
+    const carried = priorLines.map((p) => ({
+      source: p.source, source_ref_id: p.source_ref_id, category: p.category, description: p.description,
+      qty: 0, unit_price: Number(p.unit_price || 0), amount: 0, sort_order: p.sort_order,
+    }));
+    const key = (l) => l.category || ('desc:' + String(l.description || '').toLowerCase());
+    const have = new Set(carried.map(key));
+    return alpha([...carried, ...lines.filter((l) => !have.has(key(l)))]);
+  }
   return alpha(lines);
 }
 
