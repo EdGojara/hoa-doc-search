@@ -272,6 +272,17 @@ check('vendor link: sender address or vendor domain is evidence', () => {
   assert.ok(vendorLinkSupported(STAR, { from: 'billing@starprotect.example' }));
   assert.ok(vendorLinkSupported(STAR, { from: 'ar@starprotect.example' }));
 });
+check('vendor link: ONE shared word is not evidence ("Lone Star Pool Management" is not Star Protection)', () => {
+  assert.strictEqual(vendorLinkSupported(STAR, { from: 'staff@bedrocktx.com', subject: 'Fw: Invoice 51327 from LONE STAR POOL MANAGEMENT' }), false);
+});
+check('vendor link: the vendor\'s domain in a forwarded header is evidence (vendor record has no email)', () => {
+  const bare = { name: 'Star Protection Agency', email: null, contact_email: null };
+  assert.ok(vendorLinkSupported(bare, { from: 'board@community.example', subject: 'Invoice 29253', body: 'Direct From: someone@starprotectiontx.com Sent: ...' }));
+});
+check('vendor link: a short name (NRG) matches as a whole word only', () => {
+  assert.ok(vendorLinkSupported({ name: 'NRG' }, { subject: 'NRG bill October' }));
+  assert.strictEqual(vendorLinkSupported({ name: 'NRG' }, { subject: 'energy bill' }), false);
+});
 check('vendor link: a shared webmail domain alone is NOT evidence', () => {
   assert.strictEqual(vendorLinkSupported({ name: 'Acme Pools', email: 'acme@gmail.com' }, { from: 'someone@gmail.com', subject: 'hello' }), false);
 });
