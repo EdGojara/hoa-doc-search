@@ -311,6 +311,30 @@ check('straggler: non-bill without payment ask is not; payment ask on "other" is
   assert.ok(isStraggler(M({ classification: 'other', subject: 'Please pay the attached invoice' }), { now: NOW }));
 });
 
+// ---------------------------------------------------------------- auto-record payment gate
+const { paymentConfirmationGate } = require('../lib/accounting/payment_confirmation');
+check('payment gate: the Cinco MUD invoice ("Please process ... auto pay ... add $1 to the draft") is NOT a payment', () => {
+  const g = paymentConfirmationGate({ subject: 'Canyon Gate at Cinco Ranch |MUD Invoice 728699', body: 'HI Emma, Please process. This is set to auto pay. Please add $1 to the draft amount.', from: 'cm@bedrocktx.com', hasAttachments: true });
+  assert.strictEqual(g.ok, false); assert.ok(/Payables/.test(g.reason));
+});
+check('payment gate: genuine confirmations still record (ENGIE charged, Payment Success, Auto-Pay submitted)', () => {
+  for (const s of ['Notice - Engie Payment was successfully charged', 'Payment Success', 'Auto-Pay Successfully Submitted - SIENV - FORT BEND CO MUD 162', 'Thank you for your payment']) {
+    assert.ok(paymentConfirmationGate({ subject: s, body: 'Your payment of $600.60 for account 123 was received.', from: 'noreply@vendor.example' }).ok, s);
+  }
+});
+check('payment gate: "your statement is ready" is a bill, not a payment', () => {
+  assert.strictEqual(paymentConfirmationGate({ subject: 'Your Comcast Business billing statement is ready', body: 'Your monthly bill is available in My Account.', from: 'billing@vendor.example' }).ok, false);
+});
+check('payment gate: a staff-forwarded email with attachments is never auto-recorded as a payment', () => {
+  assert.strictEqual(paymentConfirmationGate({ subject: 'Fw: Payment Success', body: 'see attached', from: 'cm@bedrocktx.com', hasAttachments: true }).ok, false);
+});
+check('wiring: the ingest auto-record is behind the payment gate', () => {
+  const g = src('lib/email/graph_ingest.js');
+  const gate = g.indexOf('paymentConfirmationGate(');
+  const rec = g.indexOf('await recordVendorPaymentToGL(');
+  assert.ok(gate > 0 && rec > gate && /if \(payGate\.ok\)/.test(g));
+});
+
 // ---------------------------------------------------------------- wiring guards
 check('wiring: live Emma intake uses the all-format fetch + one-outcome record', () => {
   const g = src('lib/email/graph_ingest.js');
