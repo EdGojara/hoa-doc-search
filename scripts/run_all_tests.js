@@ -177,6 +177,7 @@ const CHECKS = [
   'tests/test_recover_historical_letters.js',
   'tests/sql/476_apply_one_e2e.mjs',
   'tests/test_ai_router.js',
+  'tests/test_check_register_grouping.js',
   'scripts/check_model_ids.js',
   'scripts/check_migration_immutability.js',
   'scripts/check_migration_checks.js',
