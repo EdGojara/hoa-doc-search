@@ -149,6 +149,31 @@ check('replay preconditions: already done -> idempotent skip (payable on file, o
   // an existing exception does NOT block: the replay reuses it (exception de-dup)
   assert.ok(!preconditions({ ...OK_EMAIL, extracted: { ap_intake: { outcome: 'exception' } } }, { payables: [] }).skip);
 });
+// Ed 2026-10-01: Eaglewood's financials are kept in Vantaca (system of record),
+// never converted. Excluded from AP backfill and reconciliation; nothing changes.
+const EAGLEWOOD = { id: 'c-ew', name: 'Eaglewood', financials_active: false, books_of_record: 'vantaca' };
+check('books scope: a community whose books are kept in Vantaca is outside trustEd books; converted ones are not', () => {
+  const { outsideTrustedBooks } = require('../lib/ap/books_scope');
+  assert.ok(/kept in Vantaca, not trustEd/.test(outsideTrustedBooks(EAGLEWOOD)));
+  assert.ok(outsideTrustedBooks({ name: 'X', financials_active: false }));
+  assert.strictEqual(outsideTrustedBooks({ name: 'Waterview Estates', financials_active: true, books_of_record: 'trusted' }), null);
+  assert.strictEqual(outsideTrustedBooks({ name: 'Waterview Estates', financials_active: true, books_of_record: null }), null);
+  assert.strictEqual(outsideTrustedBooks(null), null);
+});
+check('replay preconditions: an Eaglewood email is REFUSED (no AP backfill for books kept in Vantaca)', () => {
+  const p = preconditions({ ...OK_EMAIL, community_id: 'c-ew' }, { payables: [] }, EAGLEWOOD);
+  assert.strictEqual(p.ok, false); assert.ok(/Vantaca/.test(p.problems[0]));
+  assert.ok(preconditions({ ...OK_EMAIL, community_id: 'c-wv' }, { payables: [] }, { name: 'Waterview Estates', financials_active: true }).ok);
+});
+check('straggler: an Eaglewood bill email is not listed (reconciliation excludes books kept in Vantaca)', () => {
+  const m = { ...MUD_WV, community_id: 'c-ew', classification: 'vendor_financial', subject: 'ENGIE bill past due' };
+  assert.strictEqual(stragglerReason(m, { now: NOW, excludedCommunityIds: new Set(['c-ew']) }), null);
+  assert.ok(stragglerReason(m, { now: NOW }), 'listed when the community is in trustEd books');
+});
+check('wiring: the replay script and the straggler finder both load the books scope', () => {
+  assert.ok(/preconditions\(m, before, m && m\.community_id \? comms\.get\(m\.community_id\)/.test(src('scripts/ap_replay_emails.js')));
+  assert.ok(/excludedCommunityIds = new Set\(\(comms \|\| \[\]\)\.filter\(\(c\) => outsideTrustedBooks\(c\)\)/.test(src('lib/ap/stragglers.js')));
+});
 check('replay diff: created vs reused records, triage and outcome changes', () => {
   const d = diffSnapshots({ payables: [], exceptions: [{ id: 'e1' }], triage_status: 'new', ap_intake_outcome: null },
     { payables: [{ id: 'p1', status: 'awaiting_approval' }], exceptions: [{ id: 'e1' }, { id: 'e2' }], triage_status: 'handled', ap_intake_outcome: 'payable' });

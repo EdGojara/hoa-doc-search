@@ -80,12 +80,15 @@ async function dryRun(m) {
   const { data: rows, error } = await supabase.from('email_messages').select(SELECT).in('id', args.ids);
   if (error) throw new Error(`load emails: ${error.message}`);
   const byId = new Map((rows || []).map((r) => [r.id, r]));
+  const cids = [...new Set((rows || []).map((r) => r.community_id).filter(Boolean))];
+  const comms = new Map();
+  if (cids.length) { const { data: cs, error: ce } = await supabase.from('communities').select('id, name, financials_active, books_of_record').in('id', cids); if (ce) throw new Error(`load communities: ${ce.message}`); (cs || []).forEach((c) => comms.set(c.id, c)); }
   let refused = 0;
   for (const id of args.ids) {
     const m = byId.get(id) || null;
     const entry = { id, subject: m && m.subject, received_at: m && m.received_at };
     const before = m ? await snapshot(supabase, m) : {};
-    const pre = preconditions(m, before);
+    const pre = preconditions(m, before, m && m.community_id ? comms.get(m.community_id) || null : null);
     Object.assign(entry, { preconditions: pre, before });
     console.log(`\n── ${id}  ${m ? `"${String(m.subject || '').slice(0, 60)}"  ${String(m.received_at || '').slice(0, 10)}` : ''}`);
     console.log(`   before: payables ${before.payables ? before.payables.length : '-'} · exceptions ${before.exceptions ? before.exceptions.length : '-'} · triage ${before.triage_status || '-'} · outcome ${before.ap_intake_outcome || '-'}`);
