@@ -239,7 +239,76 @@ check('wiring: /sweep-inbox and the replay script use the ONE shared path; live 
 check('replay script: dry run is the default and turns off telemetry; --apply is required to write', () => {
   const s = src('scripts/ap_replay_emails.js');
   assert.ok(/if \(!args\.apply\) process\.env\.AI_TELEMETRY = 'off'/.test(s));
-  assert.ok(/if \(!args\.apply\) \{\s*entry\.dry_run = await dryRun\(m\)/.test(s));
+  assert.ok(/if \(!args\.apply\) \{\s*entry\.dry_run = await dryRun\(m, /.test(s));
+});
+
+// ---------------------------------------------------------------- duplicate guard + dry-run parity
+// The NRG replay stop (2026-10-01): rule 2b called two different invoice numbers
+// a "certain" duplicate because the service periods overlapped. findDuplicates is
+// run here end to end against an in-memory ap_invoices with the REAL shapes.
+function apDb(rows) {
+  return { from() {
+    const f = []; let lim = 1e9;
+    const q = {
+      select() { return q; }, eq(c, v) { f.push((r) => r[c] === v); return q; }, neq(c, v) { f.push((r) => r[c] !== v); return q; },
+      order() { return q; }, limit(n) { lim = n; return q; },
+      then(res, rej) { return Promise.resolve({ data: rows.filter((r) => f.every((p) => p(r))).slice(0, lim), error: null }).then(res, rej); },
+    };
+    return q;
+  } };
+}
+const WV = 'c-wv';
+const NRG_AUG = { id: 'nrg-aug', community_id: WV, vendor_id: 'nrg', vendor_invoice_number: '302 008 234 841', account_number: '24 035 567 - 7', invoice_date: '2026-08-18', total_cents: 21731, status: 'paid', service_period_start: '2026-07-16', service_period_end: '2026-08-18', file_sha256: 'h-aug' };
+const MUD_AUG = { id: 'mud-aug', community_id: WV, vendor_id: 'm143', vendor_invoice_number: '29748558', account_number: '123285', invoice_date: '2026-08-14', total_cents: 14100, status: 'paid', service_period_start: '2026-07-03', service_period_end: '2026-08-14', file_sha256: 'h-maug' };
+const NRG_SEPT = { communityId: WV, vendorId: 'nrg', invoiceNumber: '302 008 342 079', totalCents: 9134, invoiceDate: '2026-09-17', fileSha256: 'h-sept', accountNumber: '24 035 567 - 7', servicePeriodStart: '2026-08-16', servicePeriodEnd: '2026-09-15' };
+const MUD_SEPT = { communityId: WV, vendorId: 'm143', invoiceNumber: '30358920', totalCents: 15080, invoiceDate: '2026-09-14', fileSha256: 'h-msept', accountNumber: '123285', servicePeriodStart: '2026-08-05', servicePeriodEnd: '2026-09-02' };
+const { findDuplicates } = require('../lib/ap/dedup');
+check('dedup (real shape): NRG Waterview Sept vs Aug, overlapping periods, different invoice #s -> unique', async () => {
+  const r = await findDuplicates(apDb([NRG_AUG]), NRG_SEPT);
+  assert.strictEqual(r.verdict, 'unique', JSON.stringify(r.matches.map((m) => m.reason)));
+});
+check('dedup (real shape): Fort Bend MUD 143 Sept vs Aug -> unique (fee held or not)', async () => {
+  assert.strictEqual((await findDuplicates(apDb([MUD_AUG]), MUD_SEPT)).verdict, 'unique');
+  assert.strictEqual((await findDuplicates(apDb([MUD_AUG]), { ...MUD_SEPT, totalCents: 15180 })).verdict, 'unique');
+});
+check('dedup: the SAME invoice # is still a certain duplicate', async () => {
+  const r = await findDuplicates(apDb([NRG_AUG]), { ...NRG_SEPT, invoiceNumber: '302-008-234-841' });
+  assert.strictEqual(r.verdict, 'certain'); assert.ok(/invoice #/.test(r.matches[0].reason));
+});
+check('dedup: the same FILE is still a certain duplicate', async () => {
+  assert.strictEqual((await findDuplicates(apDb([NRG_AUG]), { ...NRG_SEPT, fileSha256: 'h-aug' })).verdict, 'certain');
+});
+check('dedup: conservative when an invoice # is missing: same account + overlapping period stays certain', async () => {
+  const r = await findDuplicates(apDb([NRG_AUG]), { ...NRG_SEPT, invoiceNumber: null });
+  assert.strictEqual(r.verdict, 'certain'); assert.ok(/service period/.test(r.matches[0].reason));
+  const r2 = await findDuplicates(apDb([{ ...NRG_AUG, vendor_invoice_number: null }]), NRG_SEPT);
+  assert.strictEqual(r2.verdict, 'certain');
+});
+check('predictOutcome: certain -> BLOCKED (names the invoice); suspected -> held; unique -> payable; fee hold -> needs review', () => {
+  const { predictOutcome } = require('../lib/ap/replay_emails');
+  assert.ok(/^BLOCKED as a duplicate of nrg-aug/.test(predictOutcome({ dup: { verdict: 'certain', matches: [{ invoice: { id: 'nrg-aug' }, reason: 'Same account' }] } })));
+  assert.ok(/suspected duplicate/.test(predictOutcome({ dup: { verdict: 'suspected', matches: [{ reason: 'amount' }] } })));
+  assert.strictEqual(predictOutcome({ dup: { verdict: 'unique', matches: [] } }), 'payable, awaiting approval');
+  assert.strictEqual(predictOutcome({ dup: { verdict: 'unique', matches: [] }, feeHeld: true }), 'payable, awaiting approval, needs review (convenience fee held)');
+  assert.ok(/Payables exception \(vendor not on file\) · reuses the exception/.test(predictOutcome({ missing: ['vendor not on file'], exceptionReuse: 'the exception email 003c522b creates in this run' })));
+});
+check('dry-run PARITY: the script calls the SAME findDuplicates as intake, with the fee intake would add (0 when held)', () => {
+  const s = src('scripts/ap_replay_emails.js');
+  assert.ok(/require\('\.\.\/lib\/ap\/dedup'\)\.findDuplicates\(supabase, \{/.test(s));
+  for (const k of ['communityId: community.id', 'vendorId: vendor.id', 'invoiceNumber: x.invoice_number', 'totalCents: x.total_cents + feeAppliedCents', 'fileSha256: sha', 'servicePeriodStart', 'servicePeriodEnd']) assert.ok(s.includes(k), k);
+  assert.ok(/feeAppliedCents = opts\.feeHold \? 0 : feeCents/.test(s));
+  // intake applies the fee before dedup the same way
+  const i = src('lib/ap/intake.js');
+  assert.ok(i.indexOf('convenienceFeeHold) {') < i.indexOf('await findDuplicates(supabase, {'));
+});
+check('dry-run PARITY: the second petting-zoo forward is predicted to reuse the first one\'s exception (in-run de-dup)', () => {
+  const s = src('scripts/ap_replay_emails.js');
+  assert.ok(/opts\.runExceptions\.has\(runKey\)/.test(s) && /opts\.runExceptions\.set\(runKey, m\.id\)/.test(s));
+});
+check('no new payment or approval actions in the dedup / replay code', () => {
+  for (const f of ['lib/ap/dedup.js', 'lib/ap/replay_emails.js', 'scripts/ap_replay_emails.js', 'lib/ap/email_bill_intake.js']) {
+    assert.ok(!/approveInvoice|recordPayment|markPaid|mark-paid|createCheck|check_run/.test(src(f)), f);
+  }
 });
 
 // ---------------------------------------------------------------- autopay + fee hold
