@@ -260,6 +260,38 @@ check('mapReason: unreadable-file reasons map to the unreadable_attachment excep
   }
 });
 
+check('exceptions: the same bill forwarded in a second email reuses the pending exception (no second card)', async () => {
+  // Load recordException against an in-memory table (no network, no DB).
+  const rows = [];
+  const fake = () => ({ from: () => {
+    const f = []; let ins = null;
+    const q = {
+      select() { return q; }, eq(c, v) { f.push((r) => r[c] === v); return q; }, is(c, v) { f.push((r) => (r[c] ?? null) === v); return q; },
+      limit() { return Promise.resolve({ data: rows.filter((r) => f.every((p) => p(r))), error: null }); },
+      insert(r) { ins = { id: `E${rows.length + 1}`, ...r }; rows.push(ins); return q; },
+      single() { return Promise.resolve({ data: ins, error: null }); },
+    };
+    return q;
+  } });
+  const sbPath = require.resolve('@supabase/supabase-js');
+  const exPath = require.resolve('../lib/ap/intake_exceptions');
+  const saved = [require.cache[sbPath], require.cache[exPath]];
+  require.cache[sbPath] = { id: sbPath, filename: sbPath, loaded: true, exports: { createClient: fake } };
+  delete require.cache[exPath];
+  try {
+    const { recordException } = require('../lib/ap/intake_exceptions');
+    const a = await recordException({ emailMessageId: 'm917', sourceRef: 'email:g917', reason: 'unknown vendor', sha256: 'abc', communityId: 'WV' });
+    const b = await recordException({ emailMessageId: 'm921', sourceRef: 'email:g921', reason: 'unknown vendor', sha256: 'abc', communityId: 'WV' });
+    assert.ok(a.ok && b.ok); assert.strictEqual(b.id, a.id); assert.ok(b.same_file_other_email);
+    assert.strictEqual(rows.length, 1);
+    const c = await recordException({ emailMessageId: 'm9', sourceRef: 'email:g9', reason: 'x', sha256: 'abc', communityId: 'OTHER' });
+    assert.notStrictEqual(c.id, a.id, 'a different community is a different exception');
+  } finally {
+    if (saved[0]) require.cache[sbPath] = saved[0]; else delete require.cache[sbPath];
+    if (saved[1]) require.cache[exPath] = saved[1]; else delete require.cache[exPath];
+  }
+});
+
 // ---------------------------------------------------------------- vendor evidence
 const STAR = { name: 'Star Protection Agency', email: 'billing@starprotect.example', contact_email: null, dba: null };
 check('vendor link: a staff email about a DJ is NOT linked to a security vendor (the 64 mis-links)', () => {
