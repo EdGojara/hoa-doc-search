@@ -381,7 +381,10 @@ check('wiring: attachment names are fetched BEFORE entity resolution (the vendor
 check('wiring: /sweep-inbox uses the same path (not the old PDF-only filter)', () => {
   const s = src('api/ap_intake.js');
   const sweep = s.slice(s.indexOf("router.post('/sweep-inbox'"), s.indexOf("router.get('/exceptions/:id/file'"));
-  assert.ok(sweep.includes('prepareBillFiles') && sweep.includes('decideOutcome') && sweep.includes('intakeRecord'));
+  // The sweep delegates to the one shared path, which reads every format and records the outcome.
+  assert.ok(sweep.includes('intakeBillEmail(m)'));
+  const shared = src('lib/ap/email_bill_intake.js');
+  assert.ok(shared.includes('prepareBillFiles') && shared.includes('decideOutcome') && shared.includes('intakeRecord'));
   assert.ok(!/continue;\s*\n?.*\/\\\.pdf\$\/i/.test(sweep) && !sweep.includes("if (!/pdf/i.test(a.mime"), 'PDF-only filter removed');
 });
 check('wiring: intake never approves or pays (human approval preserved)', () => {

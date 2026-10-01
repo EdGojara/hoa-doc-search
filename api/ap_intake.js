@@ -266,60 +266,23 @@ router.post('/duplicate-vendors/merge', express.json(), async (req, res) => {
 router.post('/sweep-inbox', express.json(), async (req, res) => {
   const admin = await requireAdmin(req, res); if (!admin) return;
   try {
-    const { autoIntake } = require('../lib/ap/intake');
-    const { recordException } = require('../lib/ap/intake_exceptions');
-    const { prepareBillFiles } = require('../lib/ap/bill_files');
-    const { decideOutcome, intakeRecord } = require('../lib/ap/email_intake_outcome');
-    const { fetchBillAttachments } = require('../lib/email/graph_attachments');
-    const { hasPaymentIntent } = require('../lib/ap/reimbursement');
+    const { intakeBillEmail } = require('../lib/ap/email_bill_intake');
     // Vendor mail still showing in Emma's queue, with an attachment, no community.
-    const { data: emails } = await supabase.from('email_messages')
-      .select('id, mailbox, graph_id, subject, sender_name, sender_email, community_id, resolved_vendor_id, extracted, body_full, body_preview')
+    const { data: emails, error: qe } = await supabase.from('email_messages')
+      .select('id, mailbox, graph_id, subject, sender_name, sender_email, community_id, resolved_vendor_id, extracted, body_full, body_preview, classification')
       .eq('persona', 'emma').eq('direction', 'inbound').eq('has_attachments', true)
       .in('triage_status', ['new', 'needs_review', 'linked']).limit(200);
+    if (qe) throw qe;
     let filed = 0, exceptioned = 0, skipped = 0, handled = 0;
     for (const m of (emails || [])) {
       if (m.extracted && m.extracted.follow_up) { skipped += 1; continue; } // a chase needs a reply, not filing
-      // Prefer the archived attachments (the live message may be stale); fall back
-      // to Graph by id. Every bill format (PDF, image, Word, zip) through the same
-      // reader and the same one-outcome rule as live intake (Issue #14).
-      let atts = [];
-      try {
-        const { data: arch, error: ae } = await supabase.from('email_attachments').select('filename, storage_path, mime').eq('email_message_id', m.id);
-        if (ae) console.warn('[ap_intake] sweep archived-attachment read failed for', m.id, ae.message);
-        for (const a of (arch || [])) {
-          const { data: blob } = await supabase.storage.from('documents').download(a.storage_path);
-          if (blob) atts.push({ name: a.filename || 'attachment', contentType: a.mime || '', buffer: Buffer.from(await blob.arrayBuffer()) });
-        }
-      } catch (e) { console.warn('[ap_intake] sweep archive download failed for', m.id, e.message); }
-      if (!atts.length && m.graph_id) {
-        try { atts = await fetchBillAttachments(m.mailbox, m.graph_id); }
-        catch (e) { atts = []; console.warn('[ap_intake] sweep Graph fetch failed for', m.id, e.message); }
-      }
-      const prepared = await prepareBillFiles(atts);
-      if (!prepared.files.length && !prepared.skipped.length) { skipped += 1; continue; } // nothing recoverable: leave it (straggler report shows it)
-      const srcRef = `email:${m.graph_id || m.id}`;
-      const results = [];
-      for (const f of prepared.files) {
-        let out;
-        try { out = await autoIntake({ buffer: f.buffer, filename: f.name, file: f, intakeMethod: 'email', sourceRef: srcRef, communityId: m.community_id || null, vendorIdHint: m.resolved_vendor_id || null, achHintText: `${m.subject || ''} ${m.body_full || m.body_preview || ''}`, staffNote: m.body_full || m.body_preview || '', staffSenderEmail: m.sender_email || '', emailSubject: m.subject || '' }); }
-        catch (e) { out = { outcome: 'error', reason: e.message }; }
-        results.push({ file: f.name, kind: f.kind, outcome: (out && out.outcome) || 'error', invoice_id: out && out.invoice_id, duplicate_of: out && out.duplicate_of, reason: out && out.reason, _out: out });
-        if (out && (out.outcome === 'loaded' || out.outcome === 'held_suspected_duplicate')) filed += 1;
-      }
-      const paymentAsked = hasPaymentIntent(`${m.subject || ''}\n${m.body_full || m.body_preview || ''}`);
-      const decision = decideOutcome({ filesSeen: prepared.seen, results, skipped: prepared.skipped, paymentAsked, classification: 'vendor_financial' });
-      const exceptionIds = [];
-      for (const x of decision.exceptions) {
-        const o = x.fromReader && x.result && x.result._out ? x.result._out : null;
-        const r = await recordException({ emailMessageId: m.id, sourceRef: srcRef, reason: `${x.reason}${x.file ? ` [${x.file}]` : ''}`, extracted: (o && o.extracted) || {}, storagePath: o && o.storage_path, sha256: o && o.sha256, communityId: m.community_id || null });
-        if (r.ok) { exceptioned += 1; if (r.id) exceptionIds.push(r.id); }
-      }
-      const upd = { extracted: { ...(m.extracted || {}), ap_intake: intakeRecord(decision, { results: results.map(({ _out, ...r }) => r), skipped: prepared.skipped, exceptionIds }) } };
-      if (decision.handled) upd.triage_status = 'handled';
-      const { error: ue } = await supabase.from('email_messages').update(upd).eq('id', m.id);
-      if (ue) console.warn('[ap_intake] sweep could not record outcome on', m.id, ue.message);
-      if (decision.handled && !ue) handled += 1; else skipped += 1;
+      // The one shared path (lib/ap/email_bill_intake.js): every bill format, the
+      // same autoIntake + duplicate guards, one recorded outcome (Issue #14).
+      const out = await intakeBillEmail(m);
+      if (out.skipped) { skipped += 1; continue; } // nothing recoverable: the straggler report shows it
+      filed += out.results.filter((r) => r.outcome === 'loaded' || r.outcome === 'held_suspected_duplicate').length;
+      exceptioned += out.exceptionIds.length;
+      if (out.decision.handled && !out.recordError) handled += 1; else skipped += 1;
     }
     res.json({ ok: true, scanned: (emails || []).length, filed, exceptioned, handled, skipped });
   } catch (err) { console.error('[ap_intake] sweep failed:', err.message); res.status(500).json({ error: safeErrorMessage(err) }); }
