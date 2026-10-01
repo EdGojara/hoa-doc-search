@@ -305,6 +305,12 @@ check('wiring: live Emma intake uses the all-format fetch + one-outcome record',
   const g = src('lib/email/graph_ingest.js');
   assert.ok(g.includes('fetchBillAttachments') && g.includes('prepareBillFiles') && g.includes('decideOutcome') && g.includes('ap_intake: apIntake') || /ap_intake/.test(g));
 });
+check('wiring: attachment names are fetched BEFORE entity resolution (the vendor-evidence check reads them)', () => {
+  const g = src('lib/email/graph_ingest.js');
+  const names = g.indexOf('email.attachment_names = await fetchAttachmentNames');
+  const resolve = g.indexOf('await resolveEntities(ex, email, supabase)');
+  assert.ok(names > 0 && resolve > 0 && names < resolve, `names@${names} resolve@${resolve}`);
+});
 check('wiring: /sweep-inbox uses the same path (not the old PDF-only filter)', () => {
   const s = src('api/ap_intake.js');
   const sweep = s.slice(s.indexOf("router.post('/sweep-inbox'"), s.indexOf("router.get('/exceptions/:id/file'"));
