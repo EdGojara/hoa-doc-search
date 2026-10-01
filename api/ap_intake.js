@@ -183,6 +183,16 @@ router.get('/exceptions', async (req, res) => {
   } catch (err) { console.error('[ap_intake] list exceptions failed:', err.message); res.status(500).json({ error: safeErrorMessage(err) }); }
 });
 
+// GET /stragglers — bill emails to Emma with no outcome for 24h+ (Issue #14).
+router.get('/stragglers', async (req, res) => {
+  const admin = await requireAdmin(req, res); if (!admin) return;
+  try {
+    const hours = Math.max(1, Math.min(720, Number(req.query.hours) || 24));
+    const list = await require('../lib/ap/stragglers').findStragglers(supabase, { olderThanHours: hours });
+    res.json({ ok: true, hours, count: list.length, stragglers: list });
+  } catch (err) { console.error('[ap_intake] stragglers failed:', err.message); res.status(500).json({ error: safeErrorMessage(err) }); }
+});
+
 // POST /exceptions/:id/resolve — { community_id?, vendor_id? } -> load to Payables.
 router.post('/exceptions/:id/resolve', express.json(), async (req, res) => {
   const admin = await requireAdmin(req, res); if (!admin) return;
@@ -252,11 +262,16 @@ router.post('/duplicate-vendors/merge', express.json(), async (req, res) => {
 // into Payables (or the exceptions list) using the PDF we archived at ingest, so
 // the existing backlog clears the same way new mail now does. Idempotent per
 // email (source ref / sha dedup downstream). (Ed 2026-08-01 — "empty the inbox".)
+// Issue #14: reads every bill format and records one outcome per email.
 router.post('/sweep-inbox', express.json(), async (req, res) => {
   const admin = await requireAdmin(req, res); if (!admin) return;
   try {
     const { autoIntake } = require('../lib/ap/intake');
     const { recordException } = require('../lib/ap/intake_exceptions');
+    const { prepareBillFiles } = require('../lib/ap/bill_files');
+    const { decideOutcome, intakeRecord } = require('../lib/ap/email_intake_outcome');
+    const { fetchBillAttachments } = require('../lib/email/graph_attachments');
+    const { hasPaymentIntent } = require('../lib/ap/reimbursement');
     // Vendor mail still showing in Emma's queue, with an attachment, no community.
     const { data: emails } = await supabase.from('email_messages')
       .select('id, mailbox, graph_id, subject, sender_name, sender_email, community_id, resolved_vendor_id, extracted, body_full, body_preview')
@@ -265,29 +280,46 @@ router.post('/sweep-inbox', express.json(), async (req, res) => {
     let filed = 0, exceptioned = 0, skipped = 0, handled = 0;
     for (const m of (emails || [])) {
       if (m.extracted && m.extracted.follow_up) { skipped += 1; continue; } // a chase needs a reply, not filing
-      // Prefer the archived PDF (the live message may be stale); fall back to Graph.
-      let pdfs = [];
+      // Prefer the archived attachments (the live message may be stale); fall back
+      // to Graph by id. Every bill format (PDF, image, Word, zip) through the same
+      // reader and the same one-outcome rule as live intake (Issue #14).
+      let atts = [];
       try {
-        const { data: arch } = await supabase.from('email_attachments').select('filename, storage_path, mime').eq('email_message_id', m.id);
+        const { data: arch, error: ae } = await supabase.from('email_attachments').select('filename, storage_path, mime').eq('email_message_id', m.id);
+        if (ae) console.warn('[ap_intake] sweep archived-attachment read failed for', m.id, ae.message);
         for (const a of (arch || [])) {
-          if (!/pdf/i.test(a.mime || '') && !/\.pdf$/i.test(a.filename || '')) continue;
           const { data: blob } = await supabase.storage.from('documents').download(a.storage_path);
-          if (blob) pdfs.push({ filename: a.filename || 'invoice.pdf', buffer: Buffer.from(await blob.arrayBuffer()) });
+          if (blob) atts.push({ name: a.filename || 'attachment', contentType: a.mime || '', buffer: Buffer.from(await blob.arrayBuffer()) });
         }
-      } catch (_) {}
-      if (!pdfs.length && m.graph_id) {
-        try { const { fetchAttachmentBuffers } = require('../lib/email/graph_attachments'); pdfs = await fetchAttachmentBuffers(m.mailbox, m.graph_id); } catch (_) {}
+      } catch (e) { console.warn('[ap_intake] sweep archive download failed for', m.id, e.message); }
+      if (!atts.length && m.graph_id) {
+        try { atts = await fetchBillAttachments(m.mailbox, m.graph_id); }
+        catch (e) { atts = []; console.warn('[ap_intake] sweep Graph fetch failed for', m.id, e.message); }
       }
-      if (!pdfs.length) { skipped += 1; continue; } // no recoverable PDF (pre-archiver + stale) — leave it
+      const prepared = await prepareBillFiles(atts);
+      if (!prepared.files.length && !prepared.skipped.length) { skipped += 1; continue; } // nothing recoverable: leave it (straggler report shows it)
       const srcRef = `email:${m.graph_id || m.id}`;
-      let did = false;
-      for (const pdf of pdfs) {
-        const out = await autoIntake({ buffer: pdf.buffer, filename: pdf.filename, intakeMethod: 'email', sourceRef: srcRef, communityId: m.community_id || null, vendorIdHint: m.resolved_vendor_id || null, achHintText: `${m.subject || ''} ${m.body_full || m.body_preview || ''}`, staffNote: m.body_full || m.body_preview || '', staffSenderEmail: m.sender_email || '' });
-        if (out && (out.outcome === 'loaded' || out.outcome === 'held_suspected_duplicate')) { filed += 1; did = true; }
-        else if (out && out.outcome === 'needs_review') { const r = await recordException({ emailMessageId: m.id, sourceRef: srcRef, reason: out.reason, extracted: out.extracted || {}, storagePath: out.storage_path, sha256: out.sha256, communityId: m.community_id || null }); if (r.ok) { exceptioned += 1; did = true; } }
+      const results = [];
+      for (const f of prepared.files) {
+        let out;
+        try { out = await autoIntake({ buffer: f.buffer, filename: f.name, file: f, intakeMethod: 'email', sourceRef: srcRef, communityId: m.community_id || null, vendorIdHint: m.resolved_vendor_id || null, achHintText: `${m.subject || ''} ${m.body_full || m.body_preview || ''}`, staffNote: m.body_full || m.body_preview || '', staffSenderEmail: m.sender_email || '', emailSubject: m.subject || '' }); }
+        catch (e) { out = { outcome: 'error', reason: e.message }; }
+        results.push({ file: f.name, kind: f.kind, outcome: (out && out.outcome) || 'error', invoice_id: out && out.invoice_id, duplicate_of: out && out.duplicate_of, reason: out && out.reason, _out: out });
+        if (out && (out.outcome === 'loaded' || out.outcome === 'held_suspected_duplicate')) filed += 1;
       }
-      if (did) { try { await supabase.from('email_messages').update({ triage_status: 'handled' }).eq('id', m.id); handled += 1; } catch (_) {} }
-      else skipped += 1;
+      const paymentAsked = hasPaymentIntent(`${m.subject || ''}\n${m.body_full || m.body_preview || ''}`);
+      const decision = decideOutcome({ filesSeen: prepared.seen, results, skipped: prepared.skipped, paymentAsked, classification: 'vendor_financial' });
+      const exceptionIds = [];
+      for (const x of decision.exceptions) {
+        const o = x.fromReader && x.result && x.result._out ? x.result._out : null;
+        const r = await recordException({ emailMessageId: m.id, sourceRef: srcRef, reason: `${x.reason}${x.file ? ` [${x.file}]` : ''}`, extracted: (o && o.extracted) || {}, storagePath: o && o.storage_path, sha256: o && o.sha256, communityId: m.community_id || null });
+        if (r.ok) { exceptioned += 1; if (r.id) exceptionIds.push(r.id); }
+      }
+      const upd = { extracted: { ...(m.extracted || {}), ap_intake: intakeRecord(decision, { results: results.map(({ _out, ...r }) => r), skipped: prepared.skipped, exceptionIds }) } };
+      if (decision.handled) upd.triage_status = 'handled';
+      const { error: ue } = await supabase.from('email_messages').update(upd).eq('id', m.id);
+      if (ue) console.warn('[ap_intake] sweep could not record outcome on', m.id, ue.message);
+      if (decision.handled && !ue) handled += 1; else skipped += 1;
     }
     res.json({ ok: true, scanned: (emails || []).length, filed, exceptioned, handled, skipped });
   } catch (err) { console.error('[ap_intake] sweep failed:', err.message); res.status(500).json({ error: safeErrorMessage(err) }); }

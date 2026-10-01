@@ -139,10 +139,17 @@ t('a payment-intent email cannot finish as "not an invoice": it becomes needs_re
   const fyi = await run({ intent: noReimb, subject: 'Pool contract', body: 'FYI, the signed contract is attached.' });
   assert.strictEqual(fyi.out.outcome, 'not_an_invoice');
   assert.ok(R.hasPaymentIntent(`${SUBJECT}\n${BODY}`));
-  // The caller records every needs_review as a Payables exception (source contract).
+  // The caller records every needs_review as a Payables exception, and a payment
+  // ask with nothing readable is one too. Since Issue #14 that rule lives in
+  // decideOutcome (behaviour-tested here) and graph_ingest records every
+  // decision.exceptions entry (source contract).
+  const { decideOutcome } = require('../lib/ap/email_intake_outcome');
+  const nr = decideOutcome({ filesSeen: 1, results: [{ file: 'g.pdf', outcome: 'needs_review', reason: 'payment requested' }], paymentAsked: true });
+  assert.strictEqual(nr.outcome, 'exception'); assert.strictEqual(nr.exceptions.length, 1);
+  const none = decideOutcome({ filesSeen: 0, results: [], skipped: [], paymentAsked: true });
+  assert.strictEqual(none.outcome, 'exception');
   const src = require('fs').readFileSync(require.resolve('../lib/email/graph_ingest'), 'utf8');
-  assert.ok(/out\.outcome === 'needs_review'[\s\S]{0,200}recordException/.test(src));
-  assert.ok(/!pdfs\.length && paymentAsked[\s\S]{0,200}recordException/.test(src));
+  assert.ok(/for \(const x of decision\.exceptions\)[\s\S]{0,300}recordException/.test(src));
 });
 
 t('reply promise is removed when no payable exists; strong language only for an approved/paid item', () => {

@@ -72,6 +72,7 @@ function shell(){
     </div>
     <div id="preview"></div>
     <div style="margin:4px 0 10px;"><button class="btn ghost" id="sweepBtn" style="font-size:12px;padding:5px 11px;" onclick="sweepInbox(this)" title="Pull vendor bills already sitting in Emma's inbox into Payables (or the needs-attention list) using the archived PDF">🧹 Pull vendor bills from Emma’s inbox</button> <span id="sweepMsg" style="font-size:12px;color:#64748b;"></span></div>
+    <div id="stragglersWrap"></div>
     <div id="exceptionsWrap"></div>
     <div id="dupVendorsWrap"></div>
     <h2>Review queue</h2>
@@ -93,6 +94,7 @@ function shell(){
   analyze.addEventListener('click',()=>doIngest(chosen,document.getElementById('comm').value,analyze));
   loadQueue();
   loadExceptions();
+  loadStragglers();
   loadDuplicateVendors();
 }
 
@@ -137,7 +139,26 @@ async function mergeDupVendors(primaryId, dupeIds, btn){
 // Emma captured the PDF + the amount but couldn't place the bill (usually no
 // community). Clear each here: pick the community (and vendor if needed) and it
 // loads to Payables, or dismiss it if it isn't a bill. Empties Emma's inbox.
-const REASON_LABEL={no_community:'needs a community',no_vendor:'needs a vendor',vendor_ambiguous:'vendor is ambiguous',no_total:'no amount read',no_date:'no date read',other:'needs review'};
+const REASON_LABEL={no_community:'needs a community',no_vendor:'needs a vendor',vendor_ambiguous:'vendor is ambiguous',no_total:'no amount read',no_date:'no date read',unreadable_attachment:'attachment not readable',other:'needs review'};
+// Bills that reached Emma and went nowhere for 24h+ (Issue #14): no payable, no
+// exception, no recorded outcome. Hidden only when there are none; a failed load
+// says so rather than looking like an empty backlog.
+async function loadStragglers(){
+  const wrap=document.getElementById('stragglersWrap'); if(!wrap) return;
+  try{
+    const r=await af('/api/ap-intake/stragglers'); const j=await r.json().catch(()=>({}));
+    if(!r.ok) throw new Error(j.error||('HTTP '+r.status));
+    const items=(j&&j.stragglers)||[];
+    if(!items.length){ wrap.innerHTML=''; return; }
+    wrap.innerHTML=`<div style="border:2px solid #f3a5a5;background:#fff6f6;border-radius:11px;padding:12px 16px;margin:0 0 16px;">
+      <h2 style="color:#b91c1c;margin:0 0 4px;">⏳ ${items.length} bill email${items.length===1?'':'s'} to Emma with no result for 24h+</h2>
+      <div class="note" style="margin:0 0 8px;color:#7f1d1d;">Each one reached Emma's inbox but produced no payable, no exception and no recorded outcome. Open it in Emma's queue and enter the bill (or dismiss it if it isn't one).</div>
+      ${items.map(s=>`<div style="font-size:12.5px;padding:3px 0;border-top:1px solid #fbd5d5;">${escapeHtml(s.subject||'(no subject)')} · <span style="color:#64748b;">${d10(s.received_at)} · ${s.age_hours}h · ${escapeHtml(s.triage_status||'')}</span></div>`).join('')}</div>`;
+  }catch(e){
+    wrap.innerHTML=`<div style="margin:0 0 14px;padding:9px 12px;border:1px solid #f3c0c0;background:#fdecec;border-radius:9px;color:#b91c1c;font-size:12.5px;">Could not check for stuck bill emails (${escapeHtml(e.message)}).</div>`;
+  }
+}
+
 async function loadExceptions(){
   const wrap=document.getElementById('exceptionsWrap'); if(!wrap) return;
   try{
@@ -169,6 +190,7 @@ function excRow(x,commOpts){
       <div><b>${escapeHtml(vend)}</b> · <b>${x.total_cents?money(x.total_cents):'amount ?'}</b>${x.invoice_number?` · inv ${escapeHtml(x.invoice_number)}`:''}${x.invoice_date?` · ${d10(x.invoice_date)}`:''}</div>
       <span style="font-size:11px;font-weight:700;color:#92400e;background:#fde9c8;border-radius:20px;padding:2px 9px;">${REASON_LABEL[x.reason]||x.reason}</span>
     </div>
+    ${x.notes?`<div style="font-size:12px;color:#92400e;margin-top:4px;">${escapeHtml(x.notes)}</div>`:''}
     <div class="note" style="font-size:11.5px;color:#64748b;margin:3px 0 8px;">${x.community_hint?('reads as “'+escapeHtml(x.community_hint)+'” · '):''}${x.storage_path?`<a href="javascript:void(0)" onclick="openExcFile('${x.id}')" style="color:#0B1D34;font-weight:600;">📄 view the bill</a>`:'<span style="color:#b91c1c;">no PDF on file</span>'}</div>
     <div class="row" style="gap:8px;flex-wrap:wrap;align-items:center;">
       <select id="exc-comm-${x.id}" style="font-size:12px;padding:3px 6px;"><option value="">— community —</option>${commOpts}</select>
