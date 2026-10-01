@@ -25,7 +25,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
-const { parseArgs, preconditions, diffSnapshots, invariantViolations, snapshot } = require('../lib/ap/replay_emails');
+const { parseArgs, preconditions, diffSnapshots, invariantViolations, snapshot, predictOutcome } = require('../lib/ap/replay_emails');
 
 const args = parseArgs(process.argv.slice(2));
 if (args.error) { console.error(`ap_replay_emails: ${args.error}`); process.exit(2); }
@@ -36,7 +36,7 @@ const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY
 const money = (c) => (c == null ? '-' : `$${(c / 100).toFixed(2)}`);
 const SELECT = 'id, mailbox, graph_id, persona, direction, has_attachments, subject, sender_email, received_at, community_id, resolved_vendor_id, classification, triage_status, extracted, body_full, body_preview';
 
-async function dryRun(m) {
+async function dryRun(m, opts) {
   const { loadBillAttachments, withDeps } = require('../lib/ap/email_bill_intake');
   const { prepareBillFiles } = require('../lib/ap/bill_files');
   const { extractInvoice } = require('../lib/ap/invoice_extract');
@@ -54,7 +54,7 @@ async function dryRun(m) {
     if (vendor) { const { data, error } = await supabase.from('vendors').select('name, auto_pay_ach, convenience_fee_cents, w9_on_file').eq('id', vendor.id).maybeSingle(); if (error) throw error; vrow = data; }
     const { data: sameFile, error: e1 } = await supabase.from('ap_invoices').select('id, vendor_invoice_number, total_cents, status').eq('file_sha256', sha).neq('status', 'voided').limit(5);
     if (e1) throw e1;
-    const { data: sameExc, error: e2 } = await supabase.from('ap_intake_exceptions').select('id, status, intake_source_ref').eq('file_sha256', sha).limit(5);
+    const { data: sameExc, error: e2 } = await supabase.from('ap_intake_exceptions').select('id, status, intake_source_ref, community_id').eq('file_sha256', sha).limit(5);
     if (e2) throw e2;
     let sameInvoice = [];
     if (vendor && x && x.invoice_number) {
@@ -68,9 +68,30 @@ async function dryRun(m) {
     let community = m.community_id ? { id: m.community_id, via: 'email link' } : null;
     if (!community && x) { const r = await require('../lib/ap/vendor_community').resolveMapping({ accountNumber: x.account_number, vendorId: vendor && vendor.id, vendorName: x.vendor_name }); if (r.community_id) community = { id: r.community_id, via: r.via }; }
     const missing = [!vendor && 'vendor not on file', !community && 'community not resolved', !(x && x.total_cents) && 'no total', !(x && x.invoice_date) && 'no printed invoice date'].filter(Boolean);
-    const prediction = sameFile.length || sameInvoice.length ? 'blocked as a duplicate of what is on file'
-      : missing.length ? `Payables exception (${missing.join('; ')})` : 'payable, awaiting approval';
-    files.push({ file: f.name, kind: f.kind, sha256: sha, read_error: err, vendor: x && x.vendor_name, invoice_number: x && x.invoice_number, invoice_date: x && x.invoice_date, due_date: x && x.due_date, total_cents: x && x.total_cents, account_number: x && x.account_number, service_period: x ? [x.service_period_start, x.service_period_end] : null, known_vendor: vendor, community, vendor_autopay: vrow ? !!vrow.auto_pay_ach : null, vendor_fee_cents: vrow ? vrow.convenience_fee_cents || 0 : null, vendor_w9_on_file: vrow ? !!vrow.w9_on_file : null, on_file_same_file: sameFile, on_file_same_invoice: sameInvoice, exceptions_same_file: sameExc, prediction });
+    // PARITY with intake: commitInvoice adds the convenience fee, then runs the
+    // SAME findDuplicates (every rule, incl. account + service period). The dry
+    // run calls it with the same candidate, so its verdict is intake's verdict.
+    let dup = null, feeAppliedCents = 0;
+    if (!missing.length) {
+      const { getVendorConvenienceFee } = require('../lib/ap/convenience_fee');
+      const { staffAsksForConvenienceFee } = require('../lib/ap/intake');
+      const fee = await getVendorConvenienceFee(supabase, vendor.id);
+      const feeCents = fee.cents || (staffAsksForConvenienceFee(m.body_full || m.body_preview || '') ? 100 : 0);
+      feeAppliedCents = opts.feeHold ? 0 : feeCents;
+      dup = await require('../lib/ap/dedup').findDuplicates(supabase, {
+        communityId: community.id, vendorId: vendor.id, invoiceNumber: x.invoice_number,
+        totalCents: x.total_cents + feeAppliedCents, invoiceDate: x.invoice_date, fileSha256: sha,
+        accountNumber: x.account_number || null, servicePeriodStart: x.service_period_start || null, servicePeriodEnd: x.service_period_end || null,
+      });
+    }
+    // An exception for the same file + community, pending already or created by an
+    // earlier email in THIS run, is reused (recordException de-dup).
+    const runKey = community ? `${sha}|${community.id}` : null;
+    const pendingSame = (sameExc || []).find((e) => e.status === 'pending' && (!community || e.community_id === community.id));
+    const exceptionReuse = pendingSame ? `existing exception ${pendingSame.id}` : (runKey && opts.runExceptions.has(runKey) ? `the exception email ${opts.runExceptions.get(runKey).slice(0, 8)} creates in this run` : null);
+    const prediction = predictOutcome({ missing, dup, exceptionReuse, feeHeld: !!opts.feeHold && !missing.length });
+    if (/exception/.test(prediction) && runKey && !opts.runExceptions.has(runKey)) opts.runExceptions.set(runKey, m.id);
+    files.push({ file: f.name, kind: f.kind, sha256: sha, read_error: err, vendor: x && x.vendor_name, invoice_number: x && x.invoice_number, invoice_date: x && x.invoice_date, due_date: x && x.due_date, total_cents: x && x.total_cents, account_number: x && x.account_number, service_period: x ? [x.service_period_start, x.service_period_end] : null, known_vendor: vendor, community, vendor_autopay: vrow ? !!vrow.auto_pay_ach : null, vendor_fee_cents: vrow ? vrow.convenience_fee_cents || 0 : null, vendor_w9_on_file: vrow ? !!vrow.w9_on_file : null, on_file_same_file: sameFile, on_file_same_invoice: sameInvoice, exceptions_same_file: sameExc, fee_applied_cents: feeAppliedCents, duplicate_check: dup ? { verdict: dup.verdict, matches: dup.matches.map((mm) => ({ confidence: mm.confidence, reason: mm.reason, invoice_id: mm.invoice.id, invoice_number: mm.invoice.vendor_invoice_number })) } : null, prediction });
   }
   return { files_seen: prepared.seen, unreadable: prepared.skipped, files };
 }
@@ -84,6 +105,7 @@ async function dryRun(m) {
   const comms = new Map();
   if (cids.length) { const { data: cs, error: ce } = await supabase.from('communities').select('id, name, financials_active, books_of_record').in('id', cids); if (ce) throw new Error(`load communities: ${ce.message}`); (cs || []).forEach((c) => comms.set(c.id, c)); }
   let refused = 0;
+  const runExceptions = new Map(); // `${sha}|${community}` -> email id that would create the exception
   for (const id of args.ids) {
     const m = byId.get(id) || null;
     const entry = { id, subject: m && m.subject, received_at: m && m.received_at };
@@ -95,11 +117,12 @@ async function dryRun(m) {
     if (!pre.ok) { refused += 1; console.log(`   REFUSED: ${pre.problems.join('; ')}`); log.emails.push(entry); continue; }
     if (pre.skip) { console.log(`   SKIP (already done, no-op): ${pre.skip}`); log.emails.push(entry); continue; }
     if (!args.apply) {
-      entry.dry_run = await dryRun(m);
+      entry.dry_run = await dryRun(m, { feeHold: args.feeHold.has(id), runExceptions });
       for (const f of entry.dry_run.files) {
         console.log(`   file ${f.file} [${f.kind}] ${money(f.total_cents)} inv ${f.invoice_number || '-'} dated ${f.invoice_date || '(none printed)'} due ${f.due_date || '-'} acct ${f.account_number || '-'}`);
         console.log(`        vendor: ${f.known_vendor ? `${f.known_vendor.name} (on file, via ${f.known_vendor.via})` : `${f.vendor || '?'} (NOT on file)`}${f.vendor_autopay ? ' · AUTOPAY' : ''}${f.vendor_fee_cents ? ` · fee ${money(f.vendor_fee_cents)}${args.feeHold.has(id) ? ' (HELD)' : ' (would be added)'}` : ''}${f.vendor_w9_on_file === false ? ' · no W-9 on file' : ''}`);
         console.log(`        community: ${f.community ? `${f.community.id.slice(0, 8)} (via ${f.community.via})` : 'not resolved'}`);
+        console.log(`        duplicate check (same findDuplicates as intake): ${f.duplicate_check ? `${f.duplicate_check.verdict}${f.duplicate_check.matches.length ? ' · ' + f.duplicate_check.matches.map((x) => `${x.confidence}: ${x.reason}`).join(' | ') : ''}` : 'not reached (intake stops before it: ' + 'missing vendor/community/total/date)'}`);
         console.log(`        on file: same file ${f.on_file_same_file.length} · same invoice # ${f.on_file_same_invoice.length} · exception with same file ${f.exceptions_same_file.length}`);
         console.log(`        would be: ${f.prediction}${f.read_error ? ` · read error: ${f.read_error}` : ''}`);
       }
