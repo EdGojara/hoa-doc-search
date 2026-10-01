@@ -264,7 +264,43 @@
       "consequence": "high",
       "prior": "sonnet-4-5"
     },
-    "accounting.vantaca_extract": {
+    "accounting.vantaca_ap_ledger": {
+      "model": "tier:standard",
+      "fallback": null,
+      "consequence": "high",
+      "prior": "sonnet-4-5"
+    },
+    "accounting.vantaca_ar_aging": {
+      "model": "tier:standard",
+      "fallback": null,
+      "consequence": "high",
+      "prior": "sonnet-4-5"
+    },
+    "accounting.vantaca_bank_rec": {
+      "model": "tier:standard",
+      "fallback": null,
+      "consequence": "high",
+      "prior": "sonnet-4-5"
+    },
+    "accounting.vantaca_check_register": {
+      "model": "tier:standard",
+      "fallback": null,
+      "consequence": "high",
+      "prior": "sonnet-4-5"
+    },
+    "accounting.vantaca_gl_export": {
+      "model": "tier:standard",
+      "fallback": null,
+      "consequence": "high",
+      "prior": "sonnet-4-5"
+    },
+    "accounting.vantaca_txn_history": {
+      "model": "tier:standard",
+      "fallback": null,
+      "consequence": "high",
+      "prior": "sonnet-4-5"
+    },
+    "accounting.vantaca_trial_balance": {
       "model": "tier:standard",
       "fallback": null,
       "consequence": "high",

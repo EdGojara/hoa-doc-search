@@ -98,9 +98,13 @@ async function extractArFromPdf(pdfBuffer) {
   const t0 = Date.now();
   const pdfBase64 = pdfBuffer.toString('base64');
 
-  const completion = await anthropic.messages.create({
+  // Output cap 32k, streamed (the SDK requires streaming above ~16k). The LOPF
+  // 7/31 AR aging needed 15,805 of the old 16,000 tokens on Sonnet 4.5 and
+  // overflowed on 4.6 / 5, which write a few more tokens for the same rows
+  // (Issue #12). Truncation is still detected and still fails loudly.
+  const completion = await anthropic.messages.stream({
     model: aiRoute('accounting.owner_ar_extract'),
-    max_tokens: 16000,
+    max_tokens: 32000,
     messages: [{
       role: 'user',
       content: [
@@ -108,7 +112,7 @@ async function extractArFromPdf(pdfBuffer) {
         { type: 'text', text: AR_EXTRACTION_PROMPT }
       ]
     }]
-  });
+  }).finalMessage();
 
   const text = completion.content?.[0]?.text || '';
   const cleaned = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
@@ -653,4 +657,4 @@ router.get('/portfolio/at-legal', async (req, res) => {
   }
 });
 
-module.exports = { router };
+module.exports = { router, extractArFromPdf };
