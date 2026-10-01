@@ -202,6 +202,7 @@ const CHECKS = [
   'tests/test_ownership_history.js',
   'tests/test_ap_commit_review_flag.js',
   'tests/test_emma_intake_robust.js',
+  'tests/test_ap_replay_and_monitor.js',
 ];
 
 const args = process.argv.slice(2);
