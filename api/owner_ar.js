@@ -26,11 +26,12 @@
 //   GET    /api/owner-ar/portfolio/at-legal      cross-community at-legal list
 // =============================================================================
 
+const { route: aiRoute, executedModel: aiExecuted } = require('../lib/ai/router');
 const express = require('express');
 const multer = require('multer');
 const crypto = require('crypto');
 const { createClient } = require('@supabase/supabase-js');
-const Anthropic = require('@anthropic-ai/sdk');
+const Anthropic = require('../lib/ai/anthropic');
 const { resolveProperty } = require('../lib/entity_resolution');
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
@@ -98,7 +99,7 @@ async function extractArFromPdf(pdfBuffer) {
   const pdfBase64 = pdfBuffer.toString('base64');
 
   const completion = await anthropic.messages.create({
-    model: 'claude-sonnet-4-5',
+    model: aiRoute('accounting.owner_ar_extract'),
     max_tokens: 16000,
     messages: [{
       role: 'user',
@@ -121,7 +122,7 @@ async function extractArFromPdf(pdfBuffer) {
       : '';
     throw new Error(`AR extraction returned malformed JSON.${hint} Parse error: ${err.message}`);
   }
-  return { parsed, usage: completion.usage, duration_ms: Date.now() - t0 };
+  return { parsed, usage: completion.usage, model: completion.model, duration_ms: Date.now() - t0 };
 }
 
 // ----------------------------------------------------------------------------
@@ -155,7 +156,7 @@ router.post('/ingest', upload.single('pdf'), async (req, res) => {
     }
 
     // Run extraction
-    const { parsed } = await extractArFromPdf(req.file.buffer);
+    const { parsed, model: extractedModel } = await extractArFromPdf(req.file.buffer);
     const rows = Array.isArray(parsed.rows) ? parsed.rows : [];
 
     // Resolve each row's property_address → properties.id (match-only;
@@ -195,7 +196,7 @@ router.post('/ingest', upload.single('pdf'), async (req, res) => {
         rows_unmatched: rows.length - matchedCount,
         status: 'previewed',
         raw_extraction: { snapshot_date: parsed.snapshot_date, community_name: parsed.community_name, report_totals: parsed.report_totals, rows: resolved },
-        extraction_model: 'claude-sonnet-4-5',
+        extraction_model: aiExecuted({ model: extractedModel }, 'accounting.owner_ar_extract'),
       })
       .select('id')
       .single();

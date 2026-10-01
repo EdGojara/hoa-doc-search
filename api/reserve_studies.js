@@ -19,11 +19,12 @@
 //   GET    /community/:community_id/map         data for the board reserve map (pins + colors)
 // ============================================================================
 
+const { route: aiRoute, executedModel: aiExecuted } = require('../lib/ai/router');
 const express = require('express');
 const multer = require('multer');
 const crypto = require('crypto');
 const pdfParse = require('pdf-parse');
-const Anthropic = require('@anthropic-ai/sdk');
+const Anthropic = require('../lib/ai/anthropic');
 const { createClient } = require('@supabase/supabase-js');
 const { safeErrorMessage } = require('./_safe_error');
 const { parseReserveAdvisorsWorkbook } = require('../lib/reserve_advisors_parser');
@@ -896,7 +897,7 @@ Rules:
 - description should be the actual scope, not just "invoice from Vendor X".`;
 
     const aiResp = await anthropic.messages.create({
-      model: 'claude-sonnet-4-5',
+      model: aiRoute('accounting.reserve_study_extract'),
       max_tokens: 1200,
       messages: [{
         role: 'user',
@@ -990,7 +991,7 @@ Rules:
               file_size_bytes: req.file.size,
               page_count: pageCount,
               effective_date: extracted.invoice_date || null,
-              extraction_model: 'claude-sonnet-4-5',
+              extraction_model: aiExecuted(aiResp, 'accounting.reserve_study_extract'),
               extraction_confidence: 'medium',
               extraction_notes: extracted.description || null,
             });

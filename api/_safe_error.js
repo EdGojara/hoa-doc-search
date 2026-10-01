@@ -1,7 +1,7 @@
 // ============================================================================
 // safeErrorMessage — strip vendor names from any error before it reaches the
 // user. Errors from the Anthropic SDK and underlying fetch can include the
-// word "claude", the model ID ("claude-sonnet-4-6"), or "anthropic.com" —
+// word "claude", a model ID (claude-sonnet-N...), or "anthropic.com" —
 // none of which should ever land in front of a homeowner or board member.
 //
 // Apply at every "send error to client" boundary.

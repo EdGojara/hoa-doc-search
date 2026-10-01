@@ -14,6 +14,7 @@
 //   GET   /api/payment-plans/list              roster (optional community filter)
 //   PATCH /api/payment-plans/:id               update status / terms on a plan
 // ============================================================================
+const { executedModel: aiExecuted } = require('../lib/ai/router');
 const express = require('express');
 const multer = require('multer');
 const crypto = require('crypto');
@@ -288,7 +289,7 @@ router.post('/approve', express.json({ limit: '2mb' }), async (req, res) => {
         terms_summary: r.terms_summary || null,
         source_filename: r.source_filename || b.source_filename || null,
         source_document_path: r.source_storage_path || b.source_storage_path || null,
-        extraction_model: 'claude-sonnet-4-5',
+        extraction_model: aiExecuted(b.extraction_model ? { model: b.extraction_model } : null, 'accounting.payment_plans_extract'),
       };
 
       // One active plan per property: update the existing active one if present.

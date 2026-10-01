@@ -14,10 +14,11 @@
 // Builds on migration 009_vendor_master.sql.
 // ============================================================================
 
+const { route: aiRoute, executedModel: aiExecuted } = require('../lib/ai/router');
 const express = require('express');
 const crypto = require('crypto');
 const { createClient } = require('@supabase/supabase-js');
-const Anthropic = require('@anthropic-ai/sdk');
+const Anthropic = require('../lib/ai/anthropic');
 const multer = require('multer');
 const { findDuplicates } = require('../lib/ap/dedup');
 
@@ -142,7 +143,7 @@ Rules:
 - Return ONLY the JSON. No markdown fences, no preamble.`;
 
   const response = await anthropic.messages.create({
-    model: 'claude-sonnet-4-6',
+    model: aiRoute('ap.vendor_invoice_parse'),
     max_tokens: 4000,
     messages: [{
       role: 'user',
@@ -168,7 +169,7 @@ Rules:
   } catch (e) {
     throw new Error(`AI returned non-JSON: ${cleanText.slice(0, 300)}`);
   }
-  return { parsed, usage: response.usage };
+  return { parsed, usage: response.usage, model: response.model };
 }
 
 // ----------------------------------------------------------------------------
@@ -517,7 +518,7 @@ router.post('/invoices/upload', upload.single('pdf'), async (req, res) => {
     }
 
     // ---- Parse with the AI ----
-    const { parsed, usage } = await parseVendorInvoicePDF(req.file.buffer);
+    const { parsed, usage, model: extractedModel } = await parseVendorInvoicePDF(req.file.buffer);
 
     if (!parsed.vendor_name || !parsed.total_amount) {
       // Still create with whatever we have but flag low confidence.
@@ -668,7 +669,7 @@ router.post('/invoices/upload', upload.single('pdf'), async (req, res) => {
       request_input: { file_name: req.file.originalname, file_size: req.file.size, file_hash: fileHash, finding_id: finding_id || null, force_insert: forceInsert },
       retrieved_context: { vendor_id: matchResult.vendor.id, was_new_vendor: matchResult.was_created },
       prompt: 'parseVendorInvoicePDF',
-      model: 'claude-sonnet-4-6',
+      model: aiExecuted({ model: extractedModel }, 'ap.vendor_invoice_parse'),
       response: { extracted: parsed, match_method: matchResult.match_method, match_score: matchResult.match_score, ap_invoice_id: invoice.id, ap_payment_id: payment.id },
       input_tokens: usage ? usage.input_tokens : null,
       output_tokens: usage ? usage.output_tokens : null,
@@ -866,7 +867,7 @@ IMPORTANT:
 - Set extraction_confidence="low" if the PDF is scanned/handwritten/illegible, or if you had to guess on multiple critical fields.`;
 
   const response = await anthropic.messages.create({
-    model: 'claude-sonnet-4-5',
+    model: aiRoute('vendors.bid_extract'),
     max_tokens: 4096,
     messages: [{
       role: 'user',

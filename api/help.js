@@ -19,10 +19,11 @@
 //   - Fire-Myself Test — answers in Bedrock voice, not generic AI
 // ============================================================================
 
+const { route: aiRoute, executedModel: aiExecuted } = require('../lib/ai/router');
 const express = require('express');
 const crypto = require('crypto');
 const { createClient } = require('@supabase/supabase-js');
-const Anthropic = require('@anthropic-ai/sdk');
+const Anthropic = require('../lib/ai/anthropic');
 const OpenAI = require('openai');
 const multer = require('multer');
 const { extractLegalReferenceChunks } = require('../lib/legal_reference_ingest');
@@ -48,7 +49,7 @@ const router = express.Router();
 async function extractPdfPages(pdfBuffer) {
   const pdfBase64 = pdfBuffer.toString('base64');
   const completion = await anthropic.messages.create({
-    model: 'claude-sonnet-4-5',
+    model: aiRoute('help.pdf_pages'),
     max_tokens: 16000,
     messages: [{
       role: 'user',
@@ -377,7 +378,7 @@ Common pitfalls. Things that will make the action fail or backfire. Vendor-speci
 If the source material genuinely doesn't address the question well, your Action section should say: "I don't have a confident answer for this in the loaded knowledge base. Best next step: [contact the right team / search for a different doc to upload / ask Ed]."`;
 
     const completion = await anthropic.messages.create({
-      model: 'claude-sonnet-4-5',
+      model: aiRoute('help.query'),
       max_tokens: 2000,
       messages: [{ role: 'user', content: synthesisPrompt }]
     });
@@ -404,7 +405,7 @@ If the source material genuinely doesn't address the question well, your Action 
       request_input: { question, vendor_filter, source_filter, context: context || null },
       retrieved_context: { chunk_ids: chunks.map(c => c.chunk_id), top_similarity: chunks[0]?.similarity },
       prompt: 'askEd-template synthesis',
-      model: 'claude-sonnet-4-5 + openai-ada-002',
+      model: `${aiExecuted(completion, 'help.query')} + openai-ada-002`,
       response: { answer_length: answer.length, citation_count: citations.length },
       input_tokens: completion.usage?.input_tokens || null,
       output_tokens: completion.usage?.output_tokens || null,

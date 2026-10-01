@@ -1,6 +1,7 @@
 require('dotenv').config({ override: true });
+const { route: aiRoute, executedModel: aiExecuted, modelId: aiModelId } = require('./lib/ai/router');
 const express = require('express');
-const Anthropic = require('@anthropic-ai/sdk');
+const Anthropic = require('./lib/ai/anthropic');
 const { createClient } = require('@supabase/supabase-js');
 const OpenAI = require('openai');
 const BRAND = require('./lib/brand');
@@ -357,7 +358,7 @@ async function buildStructuredRFP({ community, vendorType, contractTerm, bidDead
     : '30 days from date of this request';
 
   const structureResponse = await anthropic.messages.create({
-    model: 'claude-sonnet-4-6',
+    model: aiRoute('vendors.rfp_build'),
     max_tokens: 3000,
     system: `You extract structured RFP scope-of-work data from raw scope text. Return ONLY valid JSON, no preamble, no markdown fences.`,
     messages: [{
@@ -1925,7 +1926,7 @@ app.post('/ask', async (req, res) => {
       }
     ];
     const response = await anthropic.messages.create({
-      model: 'claude-sonnet-4-6',
+      model: aiRoute('asked.legacy'),
       max_tokens: 1500,
       system: `You are a helpful assistant for ${BRAND.service.name}. You are currently answering questions about ${community || 'an HOA community'}. Be conversational, clear, and helpful. Cite the specific document when you find information. Law and General documents apply to all communities.`,
       messages
@@ -1959,7 +1960,7 @@ const playbookContext = playbookEntries?.length
     ).join('\n\n---\n\n')}\n`
   : '';
     const response = await anthropic.messages.create({
-      model: 'claude-sonnet-4-6',
+      model: aiRoute('asked.legacy'),
       max_tokens: 1500,
       system: `${GLOBAL_RULES}
 
@@ -2050,7 +2051,7 @@ async function assessAndDraftAcc({ community, typedDetails, notes, additionalCon
     // Opus 4.7 has the strongest vision recall for material/color/scale — use it
     // for the extract step. The downstream decision call stays on Sonnet 4.6 for cost.
     const extractResponse = await anthropic.messages.create({
-      model: 'claude-opus-4-7',
+      model: aiRoute('acc.vision_extract'),
       max_tokens: 2000,
       messages: [{ role: 'user', content: extractContent }],
     });
@@ -2084,7 +2085,7 @@ async function assessAndDraftAcc({ community, typedDetails, notes, additionalCon
     if (needsFallback && appDetails && appDetails.length > 100) {
       try {
         const fallback = await anthropic.messages.create({
-          model: 'claude-haiku-4-5-20251001',
+          model: aiRoute('acc.extract_repair'),
           max_tokens: 400,
           messages: [{ role: 'user', content:
             `From the ACC application extract below, output a single-line JSON object with these EXACT keys (use null only if truly absent — homeowner name is always required on these applications, do your best):\n\n` +
@@ -2200,7 +2201,7 @@ const playbookContext = playbookEntries?.length
     ).join('\n\n---\n\n')}\n`
   : '';
     const reviewResponse = await anthropic.messages.create({
-      model: 'claude-sonnet-4-6',
+      model: aiRoute('acc.rfp_and_review'),
       max_tokens: 3000,
       system: `${GLOBAL_RULES}
 
@@ -2419,7 +2420,7 @@ Write LETTER_BODY in the warm, professional voice the homeowner will receive. Th
     let letterTruncated = false;
     try {
       const letterResp = await anthropic.messages.create({
-        model: 'claude-haiku-4-5-20251001',
+        model: aiRoute('acc.decision_letter'),
         max_tokens: 2000,
         system:
           `You write CLEAN homeowner-facing decision letters for HOA architectural reviews. Output ONLY the prose body of the letter. The letterhead template will add the salutation ("Dear ___,"), the signature ("On behalf of the [Community] ACC, ${BRAND.service.name}, ${BRAND.service.phone} | ${BRAND.service.website}"), and the recipient/return address blocks. You output ONLY the salutation through the closing sentence — body paragraphs and numbered conditions if applicable.\n\n` +
@@ -3290,7 +3291,7 @@ app.post('/acc-review/decisions/:id/finalize', async (req, res) => {
             sent_at: new Date().toISOString(),
             sent_by_user_id: actor?.id || null,
             ai_drafted: true,
-            ai_model: 'claude-haiku-4-5-20251001',
+            ai_model: aiModelId('acc.decision_letter'), // letter drafted earlier by acc.decision_letter (high-consequence, never falls back)
           });
         } catch (e) { console.warn('[acc-finalize] mailing-history log failed:', e.message); }
       }
@@ -3479,7 +3480,7 @@ app.post('/acc-review/decisions/:id/redraft', express.json({ limit: '64kb' }), a
     let letterResp;
     try {
       letterResp = await anthropic.messages.create({
-        model: 'claude-haiku-4-5-20251001',
+        model: aiRoute('email.homeowner_reply'),
         max_tokens: 2000,
         system:
           `You write CLEAN homeowner-facing decision letters for HOA architectural reviews. Output ONLY the prose body of the letter. The letterhead template adds the salutation, signature, and address blocks.\n\n` +
@@ -4093,7 +4094,7 @@ app.post('/ask-ed-stream', upload.array('attachment', 10), async (req, res) => {
         }) || 'No relevant playbook examples for this question.');
 
     const reportedMode = quickMode ? 'quick' : (coachMode ? 'coach' : 'full');
-    send({ type: 'meta', model: 'claude-sonnet-4-6', mode: reportedMode });
+    send({ type: 'meta', model: aiModelId('asked.chat'), mode: reportedMode });
 
     const userContent = buildAskEdUserMessage({
       situation, community, communityContext, playbookContext, docContext, attachmentContents, attachmentNote
@@ -4107,7 +4108,7 @@ app.post('/ask-ed-stream', upload.array('attachment', 10), async (req, res) => {
     // Raw SSE iterator (stream:true on create). Avoids the listener-timing
     // race of the higher-level .stream() + .on('text') API.
     const streamResp = await anthropic.messages.create({
-      model: 'claude-sonnet-4-6',
+      model: aiRoute('asked.chat'),
       max_tokens: quickMode ? 400 : (coachMode ? 3000 : 4000),
       system: systemPrompt,
       messages: [{ role: 'user', content: userContent }],
@@ -4198,7 +4199,7 @@ async function rewriteQueryForRag(history, latestQuery) {
       .map((m) => `${m.role === 'assistant' ? 'Ed' : 'User'}: ${m.content.slice(0, 600)}`)
       .join('\n');
     const resp = await anthropic.messages.create({
-      model: 'claude-haiku-4-5-20251001',
+      model: aiRoute('asked.rag_rewrite'),
       max_tokens: 200,
       system: `You rewrite ambiguous follow-up questions into standalone search queries that an embedding model can use to retrieve relevant HOA management documents and past examples.
 
@@ -4325,7 +4326,7 @@ app.post('/ask-ed-chat-stream', upload.array('attachment', 10), async (req, res)
       attachmentNote = `\n\nNote: ${parts.join(' and ')} attached above. Examine each carefully (screenshots, letters, photos of property conditions, etc.) and factor them into your guidance.`;
     }
 
-    send({ type: 'meta', model: 'claude-sonnet-4-6', mode: conciseFlag ? 'chat-concise' : 'chat' });
+    send({ type: 'meta', model: aiModelId('asked.chat'), mode: conciseFlag ? 'chat-concise' : 'chat' });
 
     // STEP 1 — query rewrite to disambiguate follow-ups before RAG.
     const { rewritten: ragQuery, changed: queryWasRewritten } =
@@ -4412,7 +4413,7 @@ TOOL USE: You have a lookup_community_vendor tool that returns active vendor con
 
     for (let hop = 0; hop < MAX_TOOL_HOPS && !aborted; hop++) {
       const streamResp = await anthropic.messages.create({
-        model: 'claude-sonnet-4-6',
+        model: aiRoute('asked.chat'),
         max_tokens: maxTokensForCall,
         system: systemPrompt,
         tools: askEdTools.TOOLS,
@@ -4862,7 +4863,7 @@ app.post('/review-draft', async (req, res) => {
     const { draft, draftType, community } = req.body;
 
     const response = await anthropic.messages.create({
-      model: 'claude-sonnet-4-6',
+      model: aiRoute('board.draft_review'),
       max_tokens: 2000,
       system: `${GLOBAL_RULES}
 
@@ -4923,7 +4924,7 @@ app.post('/generate-agenda', async (req, res) => {
     const { community, meetingType, date, time, location, newBusiness, businessInProgress, committees, ratifications, nextMeeting, priorAgenda } = req.body;
 
     const response = await anthropic.messages.create({
-      model: 'claude-sonnet-4-6',
+      model: aiRoute('board.agenda'),
       max_tokens: 2000,
       system: `You are an expert HOA meeting coordinator for ${BRAND.service.name}. You generate professional, legally compliant board meeting agendas for Texas HOA communities.
 
@@ -5043,7 +5044,7 @@ app.post('/generate-bid', upload.single('contract'), async (req, res) => {
       sourceContractFilename = req.file.originalname;
       const pdfBase64 = req.file.buffer.toString('base64');
       const extractResponse = await anthropic.messages.create({
-        model: 'claude-sonnet-4-6',
+        model: aiRoute('proposals.extract'),
         max_tokens: 2000,
         messages: [{
           role: 'user',
@@ -5069,7 +5070,7 @@ app.post('/generate-bid', upload.single('contract'), async (req, res) => {
     const today = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
 
     const bidResponse = await anthropic.messages.create({
-      model: 'claude-sonnet-4-6',
+      model: aiRoute('vendors.bid_analysis'),
       max_tokens: 3000,
       system: `You are an expert HOA property manager and procurement specialist for ${BRAND.service.name}. You create professional, detailed bid request documents that allow HOA communities to get competitive bids from vendors. Your bid requests are clear, specific, and ensure vendors bid on exactly the same scope so bids are truly comparable.
 
@@ -5280,7 +5281,7 @@ CRITICAL RULES:
 Return ONLY the JSON. No preamble, no markdown fences.`;
 
     const response = await anthropic.messages.create({
-      model: 'claude-sonnet-4-5',
+      model: aiRoute('proposals.component_map'),
       max_tokens: 4000,
       messages: [{ role: 'user', content: prompt }]
     });
@@ -5352,7 +5353,7 @@ Return ONLY the JSON. No preamble, no markdown fences.`;
         endpoint: 'mapProposalComponents',
         request_input: { proposal_id: proposalId, service_category: serviceCategory, line_items_count: lineItems.length },
         prompt: 'COMPONENT_MAPPING_PROMPT',
-        model: 'claude-sonnet-4-5',
+        model: aiExecuted(response, 'proposals.component_map'),
         response: { mappings_count: (result.mappings || []).length, missing_count: missingKeys.length, overall_notes: result.overall_notes },
         input_tokens: response.usage?.input_tokens || null,
         output_tokens: response.usage?.output_tokens || null
@@ -5384,7 +5385,7 @@ app.post('/upload-proposal', upload.single('proposal'), async (req, res) => {
     const filename = req.file.originalname;
 
     const extractionResponse = await anthropic.messages.create({
-      model: 'claude-sonnet-4-6',
+      model: aiRoute('proposals.extract'),
       max_tokens: 4000,
       system: `You are a vendor proposal analyst for ${BRAND.service.name}. Your job is to extract structured data from vendor proposals so they can be compared apples-to-apples.
 
@@ -5676,7 +5677,7 @@ app.post('/generate-rfp-from-proposal', async (req, res) => {
     const today = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
 
     const bidResponse = await anthropic.messages.create({
-      model: 'claude-sonnet-4-6',
+      model: aiRoute('vendors.bid_analysis'),
       max_tokens: 3000,
       system: `You are an expert HOA property manager and procurement specialist for ${BRAND.service.name}. You create professional, detailed bid request documents that allow HOA communities to get competitive bids from vendors. Your bid requests are clear, specific, and ensure vendors bid on exactly the same scope so bids are truly comparable.
 
@@ -6698,7 +6699,7 @@ app.post('/run-comparison', async (req, res) => {
       : `\n\nNO INCUMBENT: This is a fresh comparison among bids. Recommend the best vendor on normalized cost + risk basis.\n`;
 
     const comparisonResponse = await anthropic.messages.create({
-      model: 'claude-sonnet-4-6',
+      model: aiRoute('vendors.market_value'),
       max_tokens: 8000,
       system: `You are a vendor decision analyst for ${BRAND.service.name}. You think like Ed Gojara — CPA with audit-firm training (Big Four + regional firm Principal) and an operations background from a high-frequency trading desk, applied to 15+ years HOA management. You produce DECISION SUPPORT, not scope inventories.
 
@@ -8271,7 +8272,7 @@ app.post('/api/nominations/cycles/:id/pre-flight-check', async (req, res) => {
     }
     let Anthropic, anthropic;
     try {
-      Anthropic = require('@anthropic-ai/sdk');
+      Anthropic = require('./lib/ai/anthropic');
       anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
     } catch (e) {
       return res.status(500).json({ error: 'Anthropic SDK unavailable: ' + e.message });
@@ -8331,7 +8332,7 @@ If no issues, return: { "flags": [] }`;
     for (const n of nominations) {
       try {
         const resp = await anthropic.messages.create({
-          model: 'claude-sonnet-4-5',
+          model: aiRoute('proposals.preflight'),
           max_tokens: 800,
           messages: [{ role: 'user', content: PRE_FLIGHT_PROMPT(n) }],
         });

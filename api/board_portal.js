@@ -25,6 +25,7 @@
 //        ARC decisions, interactions, and knowledge documents.
 // =============================================================================
 
+const { route: aiRoute } = require('../lib/ai/router');
 const express = require('express');
 const { createClient } = require('@supabase/supabase-js');
 
@@ -1142,7 +1143,7 @@ router.post('/learning/ask', express.json({ limit: '32kb' }), async (req, res) =
       console.warn('[board_portal] tutor retrieval failed:', e.message);
     }
 
-    const Anthropic = require('@anthropic-ai/sdk');
+    const Anthropic = require('../lib/ai/anthropic');
     const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
     const userContent = `Community: ${community.name}
 
@@ -1155,7 +1156,7 @@ ${context || '(no document excerpts were retrieved for this question)'}
 Answer as board education, following your rules. If the excerpts don't cover it, say so and point them to their documents, their manager, or counsel.`;
 
     const completion = await anthropic.messages.create({
-      model: 'claude-sonnet-4-5',
+      model: aiRoute('board.portal_learning_ask'),
       max_tokens: 900,
       system: BOARD_TUTOR_SYSTEM,
       messages: [{ role: 'user', content: userContent }],
@@ -1364,10 +1365,10 @@ ${docContext || '(no document excerpts were retrieved for this question)'}
 
 Answer the board member as Amanda, following your rules. Cite the snapshot numbers where they answer the question. If something asked for is not in the snapshot or excerpts, say so plainly.`;
 
-    const Anthropic = require('@anthropic-ai/sdk');
+    const Anthropic = require('../lib/ai/anthropic');
     const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
     const completion = await anthropic.messages.create({
-      model: 'claude-sonnet-4-5',
+      model: aiRoute('board.portal_ask'),
       max_tokens: 1000,
       system: AMANDA_SYSTEM,
       messages: [{ role: 'user', content: userContent }],

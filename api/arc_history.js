@@ -17,12 +17,13 @@
 // Always treated as INFORMATIONAL CONTEXT — never as binding precedent.
 // ============================================================================
 
+const { route: aiRoute, executedModel: aiExecuted } = require('../lib/ai/router');
 const express = require('express');
 const crypto = require('crypto');
 const multer = require('multer');
 const pdfParse = require('pdf-parse');
 const { createClient } = require('@supabase/supabase-js');
-const Anthropic = require('@anthropic-ai/sdk');
+const Anthropic = require('../lib/ai/anthropic');
 const OpenAI = require('openai');
 const { safeErrorMessage } = require('./_safe_error');
 const { resolveProperty, resolveContact } = require('../lib/entity_resolution');
@@ -33,7 +34,7 @@ const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 const { BEDROCK_MGMT_CO_ID } = require('../lib/company');
 const EMBEDDING_MODEL = 'text-embedding-ada-002';
-const EXTRACTION_MODEL = 'claude-sonnet-4-6';
+const EXTRACTION_MODEL = aiRoute('acc.arc_history_extract');
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024 } });
 const router = express.Router();
@@ -216,7 +217,7 @@ Return ONLY the JSON object.`;
   const raw = response.content[0]?.text || '';
   const cleaned = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
   try {
-    return { data: JSON.parse(cleaned), usage: response.usage };
+    return { data: JSON.parse(cleaned), usage: response.usage, model: response.model };
   } catch (err) {
     throw new Error('Extractor returned invalid JSON: ' + err.message);
   }
@@ -241,7 +242,7 @@ router.post('/extract', upload.single('file'), async (req, res) => {
     const communityName = comm?.name;
 
     const text = await extractFileText(req.file);
-    const { data: extracted } = await extractWithAi({ text, file: req.file, communityName });
+    const { data: extracted, model: extractedModel } = await extractWithAi({ text, file: req.file, communityName });
 
     res.json({
       preview: extracted,
@@ -364,7 +365,7 @@ router.post('/', upload.single('file'), async (req, res) => {
       reasoning: extracted.reasoning || null,
       summary: extracted.summary || null,
       embedding,
-      extracted_by_model: EXTRACTION_MODEL,
+      extracted_by_model: aiExecuted({ model: extractedModel }, 'acc.arc_history_extract'),
       extraction_confidence: extracted.confidence || null,
       raw_extraction: extracted,
       manually_edited: !!req.body.manually_edited

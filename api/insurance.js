@@ -29,10 +29,11 @@
 //     workpaper. Termination export filters accordingly.
 // ============================================================================
 
+const { route: aiRoute, executedModel: aiExecuted } = require('../lib/ai/router');
 const express = require('express');
 const crypto = require('crypto');
 const { createClient } = require('@supabase/supabase-js');
-const Anthropic = require('@anthropic-ai/sdk');
+const Anthropic = require('../lib/ai/anthropic');
 const multer = require('multer');
 const { safeErrorMessage } = require('./_safe_error');
 const { renderInsuranceRfpHTML } = require('../lib/insurance_rfp');
@@ -68,8 +69,8 @@ const POLICY_TYPE_LABELS = {
   package: 'Package (Bundled)',
 };
 
-const EXTRACTION_MODEL = 'claude-sonnet-4-5';
-const SYNTHESIS_MODEL  = 'claude-sonnet-4-5';
+const EXTRACTION_MODEL = aiRoute('insurance.extract');
+const SYNTHESIS_MODEL  = aiRoute('insurance.synthesis');
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -262,7 +263,7 @@ function quoteSummaryLine(q) {
   return parts.join(' · ');
 }
 
-async function generateSynthesis({ comparison, quotes, priorComp, priorQuotes, benchmark, communityName }) {
+async function generateSynthesis({ comparison, quotes, priorComp, priorQuotes, benchmark, communityName, meta }) {
   const summaries = quotes
     .map((q, i) => `Quote ${i + 1} — ${quoteSummaryLine(q)}`)
     .join('\n\n');
@@ -324,6 +325,7 @@ HARD RULES:
     messages: [{ role: 'user', content: prompt }],
   });
 
+  if (meta) meta.model = response && response.model;
   const text = response?.content?.[0]?.text || '';
   return text.trim();
 }
@@ -867,7 +869,9 @@ router.post('/comparisons/:id/synthesize', async (req, res) => {
       console.warn('[insurance] benchmark compute failed:', e.message);
     }
 
+    const synthMeta = {};
     const synthesis = await generateSynthesis({
+      meta: synthMeta,
       comparison: comp,
       quotes,
       priorComp,
@@ -881,7 +885,7 @@ router.post('/comparisons/:id/synthesize', async (req, res) => {
       .from('insurance_comparisons')
       .update({
         synthesis_text: synthesis,
-        synthesis_model: SYNTHESIS_MODEL,
+        synthesis_model: aiExecuted(synthMeta, 'insurance.synthesis'),
         synthesis_generated_at: nowIso,
         status: comp.status === 'draft' ? 'synthesized' : comp.status,
       })

@@ -28,6 +28,7 @@
 // multi-tenant gate flips on franchise rollout).
 // ============================================================================
 
+const { route: aiRoute } = require('../lib/ai/router');
 const express = require('express');
 const multer = require('multer');
 const { createClient } = require('@supabase/supabase-js');
@@ -122,7 +123,7 @@ async function trimPdfToFirstPages(pdfBuffer, maxPages) {
 // of plans live there; full construction drawings exceed Claude's API limits).
 async function extractMasterPlanFromPdfBuffer(pdfBuffer) {
   if (!process.env.ANTHROPIC_API_KEY) throw new Error('ANTHROPIC_API_KEY not configured');
-  const Anthropic = require('@anthropic-ai/sdk');
+  const Anthropic = require('../lib/ai/anthropic');
   const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
   const { buffer: claudeBuffer, total_pages, trimmed } = await trimPdfToFirstPages(pdfBuffer, 10);
@@ -131,7 +132,7 @@ async function extractMasterPlanFromPdfBuffer(pdfBuffer) {
   }
 
   const resp = await anthropic.messages.create({
-    model: 'claude-sonnet-4-5',
+    model: aiRoute('acc.builder_master_plan_extract'),
     max_tokens: 800,
     messages: [{
       role: 'user',
@@ -287,7 +288,7 @@ Return ONLY valid JSON.`;
 
 async function extractFromPdfBuffer(pdfBuffer, prompt, maxPagesToSend) {
   if (!process.env.ANTHROPIC_API_KEY) throw new Error('ANTHROPIC_API_KEY not configured');
-  const Anthropic = require('@anthropic-ai/sdk');
+  const Anthropic = require('../lib/ai/anthropic');
   const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
   const t0 = Date.now();
   const { buffer: claudeBuffer, total_pages, trimmed } = await trimPdfToFirstPages(pdfBuffer, maxPagesToSend);
@@ -308,7 +309,7 @@ async function extractFromPdfBuffer(pdfBuffer, prompt, maxPagesToSend) {
   let lastApiErr = null;
   for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt++) {
     const apiPromise = anthropic.messages.create({
-      model: 'claude-sonnet-4-5',
+      model: aiRoute('acc.builder_application_extract'),
       max_tokens: 1200,
       messages: [{
         role: 'user',
@@ -3306,7 +3307,7 @@ router.post('/master-plans/bulk-extract', uploadBulk.array('plan_pdfs', 30), asy
     // Anthropic SDK for the PDF-direct extraction
     let Anthropic, anthropic;
     try {
-      Anthropic = require('@anthropic-ai/sdk');
+      Anthropic = require('../lib/ai/anthropic');
       anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
     } catch (e) {
       return res.status(500).json({ error: 'Anthropic SDK unavailable: ' + e.message });

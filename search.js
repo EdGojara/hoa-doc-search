@@ -1,5 +1,6 @@
 require('dotenv').config();
-const Anthropic = require('@anthropic-ai/sdk');
+const { route: aiRoute } = require('./lib/ai/router');
+const Anthropic = require('./lib/ai/anthropic');
 const { createClient } = require('@supabase/supabase-js');
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -22,7 +23,7 @@ async function search(question) {
 
   // Ask Claude
   const response = await anthropic.messages.create({
-    model: 'claude-sonnet-4-6',
+    model: aiRoute('search.answer'),
     max_tokens: 1000,
     messages: [{
       role: 'user',

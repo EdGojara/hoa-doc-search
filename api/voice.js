@@ -18,6 +18,7 @@
 // server keeps everything on one port.
 // ============================================================================
 
+const { route: aiRoute } = require('../lib/ai/router');
 const express = require('express');
 const { createClient } = require('@supabase/supabase-js');
 const { CallBridge } = require('../lib/voice/bridge');
@@ -1084,7 +1085,7 @@ async function handleVapiLlmTurn(req, res, personaConfig) {
       // Don't keep flipping. This is the choice. Applies to Isabella too —
       // Spanish callers deserve the same warmth tier; the language is the
       // variable, not the model class.
-      model: 'claude-sonnet-4-5',
+      model: aiRoute('voice.portal_sse'),
       // Tool-use support — Claire/Isabella can call:
       //   • get_ar_for_property (LOCAL): runs server-side, loops back to Claude
       //     with the result. Caller hears the balance disclosure in Claire's

@@ -20,11 +20,12 @@
 // legal), and the interactions system-of-record per the routing matrix.
 // ============================================================================
 
+const { route: aiRoute, executedModel: aiExecuted } = require('../lib/ai/router');
 const express = require('express');
 const crypto = require('crypto');
 const multer = require('multer');
 const { createClient } = require('@supabase/supabase-js');
-const Anthropic = require('@anthropic-ai/sdk');
+const Anthropic = require('../lib/ai/anthropic');
 const { safeErrorMessage } = require('./_safe_error');
 const { createWorkItem } = require('./work_items');
 
@@ -33,7 +34,7 @@ const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024 } });
 const router = express.Router();
 
-const MODEL = 'claude-sonnet-4-6';                     // matches api/email_intake.js
+const MODEL = aiRoute('email.mail_scan');                     // matches api/email_intake.js
 const { BEDROCK_MGMT_CO_ID } = require('../lib/company');
 
 const CLASSIFY_PROMPT = `You are a mail classification system for Bedrock Association Management (BAM), a Texas HOA management company (~7 communities, ~3,500 homes). Communities include Canyon Gate at Cinco Ranch, Waterview Estates, Lakes of Pine Forest, August Meadows, Quail Ridge, Still Creek Ranch, Eaglewood.
@@ -142,6 +143,7 @@ router.post('/classify', upload.single('file'), async (req, res) => {
     const sha = crypto.createHash('sha256').update(req.file.buffer).digest('hex');
     const { data: dup } = await supabase.from('library_documents').select('id, title, uploaded_at').eq('file_hash', sha).maybeSingle();
 
+    if (parsed && typeof parsed === 'object') parsed._model = r.model;
     res.json({
       classification: parsed,
       community,
@@ -198,7 +200,7 @@ router.post('/log', upload.single('file'), async (req, res) => {
       title: meta.subject || `Scanned mail — ${meta.type || 'unclassified'}`,
       file_name_original: req.file.originalname || null,
       file_path: storagePath, file_hash: sha, file_size_bytes: req.file.size,
-      extraction_model: MODEL,
+      extraction_model: aiExecuted(meta && meta.classification && meta.classification._model ? { model: meta.classification._model } : null, 'email.mail_scan'),
       // Store the full classification JSON so the queue can re-display a filed
       // scan without re-classifying; falls back to a human summary line.
       extraction_notes: meta.classification

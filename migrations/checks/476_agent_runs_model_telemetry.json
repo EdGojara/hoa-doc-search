@@ -1,0 +1,68 @@
+{
+  "migration": "476_agent_runs_model_telemetry.sql",
+  "summary": "Per-call AI model telemetry on the existing trade tape (Issue #12): agent_runs gains run_kind, workflow, provider, requested_model, fallback_used/fallback_reason, route_source, ok and cache token columns, three CHECKs and two partial indexes. No existing row is changed.",
+  "requires": [
+    "475_historical_letter_recovery.sql"
+  ],
+  "preflight": [
+    {
+      "name": "agent_runs has no workflow column yet",
+      "sql": "SELECT count(*)::int FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'agent_runs' AND column_name IN ('run_kind', 'workflow', 'requested_model', 'fallback_used')",
+      "expect": 0
+    }
+  ],
+  "expected_changes": [
+    "Adds nullable columns run_kind, workflow, provider, requested_model, fallback_reason, route_source, ok, cache_read_tokens, cache_write_tokens and fallback_used (NOT NULL DEFAULT false) to agent_runs.",
+    "Adds CHECKs: run_kind is trade_tape|model_call; a model_call row names its workflow, requested model and outcome; a fallback states its reason.",
+    "Adds partial indexes for model-call rows by workflow/time and for fallbacks by time.",
+    "No existing agent_runs row is changed; no other table is touched."
+  ],
+  "objects": {
+    "added": [
+      "column:agent_runs.cache_read_tokens",
+      "column:agent_runs.cache_write_tokens",
+      "column:agent_runs.fallback_reason",
+      "column:agent_runs.fallback_used",
+      "column:agent_runs.ok",
+      "column:agent_runs.provider",
+      "column:agent_runs.requested_model",
+      "column:agent_runs.route_source",
+      "column:agent_runs.run_kind",
+      "column:agent_runs.workflow",
+      "constraint:agent_runs.agent_runs_fallback_reason",
+      "constraint:agent_runs.agent_runs_model_call_shape",
+      "constraint:agent_runs.agent_runs_run_kind_check",
+      "index:idx_agent_runs_fallbacks",
+      "index:idx_agent_runs_model_calls"
+    ],
+    "changed": [],
+    "removed": []
+  },
+  "row_changes": {
+    "agent_runs": 0
+  },
+  "protected": [
+    {
+      "table": "journal_entries",
+      "order_by": "id"
+    },
+    {
+      "table": "homeowner_transactions",
+      "order_by": "id"
+    }
+  ],
+  "verify": [
+    {
+      "name": "existing trade-tape rows untouched (all run_kind NULL, fallback_used false)",
+      "sql": "SELECT count(*)::int FROM agent_runs WHERE run_kind IS NOT NULL OR fallback_used",
+      "expect": 0
+    },
+    {
+      "name": "model-call index present",
+      "sql": "SELECT count(*)::int FROM pg_indexes WHERE indexname = 'idx_agent_runs_model_calls'",
+      "expect": 1
+    }
+  ],
+  "api_checks": [],
+  "reload_schema": true
+}

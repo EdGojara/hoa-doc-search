@@ -24,6 +24,7 @@
 // reviewer queue.
 // ============================================================================
 
+const { modelId: aiModelId } = require('../lib/ai/router');
 const express = require('express');
 const multer = require('multer');
 const { createClient } = require('@supabase/supabase-js');
@@ -1210,7 +1211,7 @@ router.post('/inspections/:id/photos', upload.single('photo'), async (req, res) 
                       delivery_method: (decision.mail_type === 'certified_mail') ? 'certified_mail' : 'first_class_mail',
                       status:          'draft',           // Phase 6d will flip to 'approved' or 'rejected'
                       ai_drafted:      true,
-                      ai_model:        'claude-sonnet-4-5',
+                      ai_model:        aiModelId('drv.vision'), // the drive decision came from drv.vision (high-consequence, never falls back)
                       // sent_at left NULL — set when approved
                     });
 

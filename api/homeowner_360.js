@@ -17,12 +17,13 @@
 //   GET /profile/:contactId   assembled 360 (no AI — fast)
 //   GET /recap/:contactId     AI briefing over the assembled 360
 // ============================================================================
+const { route: aiRoute } = require('../lib/ai/router');
 const express = require('express');
 const multer = require('multer');
 const { createClient } = require('@supabase/supabase-js');
 const { safeErrorMessage } = require('./_safe_error');
 const { evaluateAmenityAccess } = require('../lib/ar/amenity_access');
-const Anthropic = require('@anthropic-ai/sdk');
+const Anthropic = require('../lib/ai/anthropic');
 
 const router = express.Router();
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
@@ -630,7 +631,7 @@ Cover, in a few tight sentences (not a list unless it helps):
 If the record is thin, say so plainly ("Not much history on file"). No greeting, no sign-off — just the briefing.`;
 
     const resp = await anthropic.messages.create({
-      model: 'claude-sonnet-4-5', max_tokens: 500,
+      model: aiRoute('homeowner_360.summary'), max_tokens: 500,
       system: sys,
       messages: [{ role: 'user', content: [{ type: 'text', text: facts }] }],
     });

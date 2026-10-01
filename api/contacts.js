@@ -23,6 +23,7 @@
 // they approve. Diff sits in sync_log until then.
 // ============================================================================
 
+const { route: aiRoute } = require('../lib/ai/router');
 const express = require('express');
 const multer = require('multer');
 const { createClient } = require('@supabase/supabase-js');
@@ -2650,7 +2651,7 @@ router.post('/contacts/methods/import/:id/apply', express.json({ limit: '50mb' }
 // don't appear (idempotent — paste the same signature twice, second time
 // shows no suggestions).
 // ---------------------------------------------------------------------------
-const Anthropic = require('@anthropic-ai/sdk');
+const Anthropic = require('../lib/ai/anthropic');
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 async function _extractContactInfoFromClaude(input) {
@@ -2698,7 +2699,7 @@ Confidence guide:
   }
 
   const resp = await anthropic.messages.create({
-    model: 'claude-sonnet-4-5',
+    model: aiRoute('contacts.extract'),
     max_tokens: 1500,
     messages: [{ role: 'user', content }],
   });

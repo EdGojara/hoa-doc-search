@@ -32,10 +32,11 @@
 //   - askEd template: structured output even for non-Help responses (e.g., dedup explanations)
 // ============================================================================
 
+const { route: aiRoute, executedModel: aiExecuted } = require('../lib/ai/router');
 const express = require('express');
 const crypto = require('crypto');
 const { createClient } = require('@supabase/supabase-js');
-const Anthropic = require('@anthropic-ai/sdk');
+const Anthropic = require('../lib/ai/anthropic');
 const OpenAI = require('openai');
 const multer = require('multer');
 
@@ -146,7 +147,7 @@ async function extractDocumentMetadata(pdfBuffer) {
   for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt++) {
     try {
       const completion = await anthropic.messages.create({
-        model: 'claude-sonnet-4-5',
+        model: aiRoute('documents.metadata_extract'),
         max_tokens: 4000,
         messages: [{
           role: 'user',
@@ -158,7 +159,7 @@ async function extractDocumentMetadata(pdfBuffer) {
       });
       const text = completion.content?.[0]?.text || '';
       const cleaned = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
-      return { parsed: JSON.parse(cleaned), usage: completion.usage };
+      return { parsed: JSON.parse(cleaned), usage: completion.usage, model: completion.model };
     } catch (err) {
       lastError = err;
       // Only retry on rate-limit (429) or overload (529) errors
@@ -306,7 +307,7 @@ router.post('/upload', upload.single('pdf'), async (req, res) => {
     }
 
     // 2) Extract metadata via the AI
-    const { parsed, usage } = await extractDocumentMetadata(req.file.buffer);
+    const { parsed, usage, model: extractedModel } = await extractDocumentMetadata(req.file.buffer);
 
     // 3) Match community — caller can LOCK the community via form field
     //    community_id (e.g., the user picked "Lock to: Waterview" in the upload
@@ -492,7 +493,7 @@ router.post('/upload', upload.single('pdf'), async (req, res) => {
         page_count: parsed.page_count || null,
         created_by_mgmt_company: provenance.mgmt,
         predecessor_name: provenance.predecessor,
-        extraction_model: 'claude-sonnet-4-5',
+        extraction_model: aiExecuted({ model: extractedModel }, 'documents.metadata_extract'),
         extraction_confidence: parsed.extraction_confidence || 'medium',
         extraction_notes: parsed.extraction_notes || null,
         // Queue for background indexing. Null when there's no file in storage
@@ -645,7 +646,7 @@ router.post('/upload', upload.single('pdf'), async (req, res) => {
       request_input: { file_name: req.file.originalname, file_size: req.file.size, file_hash: fileHash },
       retrieved_context: { matched_community: community?.name, semantic_dup_id: semanticDup?.id || null },
       prompt: 'DOC_EXTRACTION_PROMPT',
-      model: 'claude-sonnet-4-5',
+      model: aiExecuted({ model: extractedModel }, 'documents.metadata_extract'),
       response: { document_id: doc.id, ...parsed },
       input_tokens: usage?.input_tokens || null,
       output_tokens: usage?.output_tokens || null,
@@ -1302,7 +1303,7 @@ router.post('/amendment-backfill', express.json(), async (req, res) => {
 
         // AI detection
         const resp = await anthropic.messages.create({
-          model: 'claude-sonnet-4-5',
+          model: aiRoute('documents.amendment_backfill'),
           max_tokens: 600,
           messages: [{
             role: 'user',
@@ -2405,7 +2406,7 @@ Return JSON:
 Return ONLY the JSON, no preamble.`;
 
     const parseRes = await anthropic.messages.create({
-      model: 'claude-sonnet-4-5',
+      model: aiRoute('documents.query'),
       max_tokens: 500,
       messages: [{ role: 'user', content: parsePrompt }]
     });
@@ -2703,7 +2704,7 @@ ${fullText.slice(0, 80000)}
 --- DOCUMENT TEXT ENDS ---`;
 
     const completion = await anthropic.messages.create({
-      model: 'claude-sonnet-4-5',
+      model: aiRoute('documents.metadata_extract'),
       max_tokens: 2000,
       messages: [{ role: 'user', content: textPrompt }]
     });
@@ -2751,7 +2752,7 @@ ${fullText.slice(0, 80000)}
         page_count: null,
         created_by_mgmt_company: provenance.mgmt,
         predecessor_name: provenance.predecessor,
-        extraction_model: 'claude-sonnet-4-5',
+        extraction_model: aiExecuted(completion, 'documents.metadata_extract'),
         extraction_confidence: parsed.extraction_confidence || 'medium',
         extraction_notes: `[Migrated from legacy askEd index, text-only extraction] ${parsed.extraction_notes || ''}`.trim(),
         source_origin: 'migrated_from_legacy'
@@ -2783,7 +2784,7 @@ ${fullText.slice(0, 80000)}
       request_input: { legacy_id, community: summary.community_name, filename: summary.filename, chunks: summary.chunk_count },
       retrieved_context: { matched_community: community?.name },
       prompt: 'DOC_EXTRACTION_PROMPT (text-only variant)',
-      model: 'claude-sonnet-4-5',
+      model: aiExecuted(completion, 'documents.metadata_extract'),
       response: { document_id: doc.id, ...parsed },
       input_tokens: completion.usage?.input_tokens || null,
       output_tokens: completion.usage?.output_tokens || null,

@@ -21,9 +21,10 @@
 // auditable. Layer-3 defensibility from day one.
 // ============================================================================
 
+const { route: aiRoute, executedModel: aiExecuted } = require('../lib/ai/router');
 const express = require('express');
 const { createClient } = require('@supabase/supabase-js');
-const Anthropic = require('@anthropic-ai/sdk');
+const Anthropic = require('../lib/ai/anthropic');
 const multer = require('multer');
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
@@ -98,7 +99,7 @@ Rules:
 Return ONLY the JSON object. No markdown fences, no preamble.`;
 
   const response = await anthropic.messages.create({
-    model: 'claude-sonnet-4-6',
+    model: aiRoute('accounting.financial_review'),
     max_tokens: 16000,
     messages: [{
       role: 'user',
@@ -174,7 +175,7 @@ Return ONLY a JSON array (no markdown, no preamble):
 If no findings warrant attention, return [].`;
 
   const response = await anthropic.messages.create({
-    model: 'claude-sonnet-4-6',
+    model: aiRoute('accounting.financial_review'),
     max_tokens: 4000,
     messages: [{ role: 'user', content: promptText }]
   });
@@ -188,7 +189,7 @@ If no findings warrant attention, return [].`;
     console.error('[fin-rev] aiJudgmentPass JSON parse failed:', cleanText.slice(0, 300));
     findings = [];
   }
-  return { findings, usage: response.usage };
+  return { findings, usage: response.usage, model: response.model };
 }
 
 // ============================================================================
@@ -502,7 +503,7 @@ router.post('/packages', upload.single('pdf'), async (req, res) => {
       management_company_id: BEDROCK_MGMT_CO_ID,
       community_id,
       run_kind: 'standard_review',
-      model: 'claude-sonnet-4-6',
+      model: aiExecuted(aiResult, 'accounting.financial_review'),
       input_token_count: (parseUsage?.input_tokens || 0) + (aiResult.usage?.input_tokens || 0),
       output_token_count: (parseUsage?.output_tokens || 0) + (aiResult.usage?.output_tokens || 0),
       duration_ms: Date.now() - t0,
