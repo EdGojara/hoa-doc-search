@@ -26,6 +26,7 @@
 //
 // ============================================================================
 
+const { route: aiRoute, executedModel: aiExecuted } = require('../lib/ai/router');
 const express = require('express');
 const multer = require('multer');
 const { createClient } = require('@supabase/supabase-js');
@@ -4254,7 +4255,7 @@ router.post('/mail-queue/lock-and-batch', express.json(), async (req, res) => {
 // ---------------------------------------------------------------------------
 
 async function _extractDocRefForCategory(communityId, categoryId, options = {}) {
-  const Anthropic = require('@anthropic-ai/sdk');
+  const Anthropic = require('../lib/ai/anthropic');
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) return { ok: false, reason: 'ANTHROPIC_API_KEY not set' };
 
@@ -4342,7 +4343,7 @@ ${chunkBlocks}`;
   let raw;
   try {
     const resp = await client.messages.create({
-      model: 'claude-sonnet-4-5',
+      model: aiRoute('drv.doc_ref_for_category'),
       max_tokens: 500,
       system: systemPrompt,
       messages: [{ role: 'user', content: userText }],
@@ -7215,7 +7216,7 @@ async function _runPreviewJob(jobId, fileBuffer, filename, mimetype, communityId
         const uniqueLabels = [...new Set(unresolved_category.map((r) => r.category_label).filter(Boolean))];
         const canonicalList = (cats || []).map((c) => `${c.slug} — "${c.label}"`).join('\n');
 
-        const Anthropic = require('@anthropic-ai/sdk');
+        const Anthropic = require('../lib/ai/anthropic');
         const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
         const prompt = `You are mapping Vantaca HOA violation category labels to trustEd's canonical enforcement category slugs.
@@ -7243,7 +7244,7 @@ RULES:
 Return ONLY the JSON object.`;
 
         const stream = anthropic.messages.stream({
-          model: 'claude-haiku-4-5-20251001',
+          model: aiRoute('drv.category_map'),
           max_tokens: 4000,
           messages: [{ role: 'user', content: prompt }],
         });
@@ -10072,7 +10073,7 @@ async function detectCategoryAliases({ force = false } = {}) {
       .map((c) => `- ${c.slug}: ${c.label} — ${c.description || '(no description)'}`)
       .join('\n');
 
-    const Anthropic = require('@anthropic-ai/sdk');
+    const Anthropic = require('../lib/ai/anthropic');
     const client = new Anthropic.default({ apiKey: process.env.ANTHROPIC_API_KEY });
 
     // Batch the categories. A single call truncates past ~30 categories
@@ -10081,6 +10082,7 @@ async function detectCategoryAliases({ force = false } = {}) {
     // unattended scheduled run.
     const BATCH = 20;
     const suggestions = [];
+    let aliasModel = null; // executed model, for the provenance label below
     for (let start = 0; start < toMap.length; start += BATCH) {
       const chunk = toMap.slice(start, start + BATCH);
       const toMapJson = chunk.map((c) => ({ id: c.id, slug: c.slug, label: c.label, description: c.description || null }));
@@ -10111,10 +10113,11 @@ Return a JSON array, one entry per non-standard category. Each entry:
 Return ONLY the JSON array, no preamble.`;
 
       const completion = await client.messages.create({
-        model: 'claude-sonnet-4-5',
+        model: aiRoute('drv.category_aliases'),
         max_tokens: 4000,
         messages: [{ role: 'user', content: prompt }],
       });
+      aliasModel = completion.model;
       let text = (completion.content && completion.content[0] && completion.content[0].text) || '';
       text = text.replace(/```json\s*/gi, '').replace(/```/g, ''); // strip code fences
       const match = text.match(/\[[\s\S]*\]/);
@@ -10148,7 +10151,7 @@ Return ONLY the JSON array, no preamble.`;
           status:                'ai_suggested',
           reasoning:             s.reasoning || null,
           ai_confidence:         (typeof s.confidence === 'number') ? Math.max(0, Math.min(1, s.confidence)) : null,
-          ai_model:              'claude-sonnet-4-5',
+          ai_model:              aiExecuted({ model: aliasModel }, 'drv.category_aliases'),
         });
       if (insErr) {
         // Probably the uq_active_alias constraint — already has a pending or

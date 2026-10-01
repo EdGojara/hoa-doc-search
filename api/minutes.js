@@ -19,17 +19,18 @@
 //   GET    /:id/pdf                        the rendered minutes PDF
 // ============================================================================
 
+const { route: aiRoute, executedModel: aiExecuted } = require('../lib/ai/router');
 const express = require('express');
 const crypto = require('crypto');
 const { createClient } = require('@supabase/supabase-js');
-const Anthropic = require('@anthropic-ai/sdk');
+const Anthropic = require('../lib/ai/anthropic');
 const puppeteer = require('puppeteer');
 const { safeErrorMessage } = require('./_safe_error');
 
 const router = express.Router();
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 const { BEDROCK_MGMT_CO_ID } = require('../lib/company');
-const MODEL = 'claude-sonnet-4-5';
+const MODEL = aiRoute('board.minutes');
 
 function anthropic() {
   if (!process.env.ANTHROPIC_API_KEY) return null;
@@ -191,7 +192,7 @@ Return ONLY the Markdown minutes body — no preamble, no code fences.`;
 
     const attendees = (board || []).map((b) => ({ name: b.name, role: b.position || null, present: true }));
     const { data: updated, error: uErr } = await supabase.from('meeting_minutes')
-      .update({ body_markdown: body, attendees, ai_drafted: true, ai_model: MODEL, status: m.status === 'final' ? 'final' : 'in_review' })
+      .update({ body_markdown: body, attendees, ai_drafted: true, ai_model: aiExecuted(r, 'board.minutes'), status: m.status === 'final' ? 'final' : 'in_review' })
       .eq('id', m.id).select('*').single();
     if (uErr) throw uErr;
     res.json({ minutes: updated, sources: { roster: roster.length, decisions: (decisions || []).length, attendance: attendance.length } });

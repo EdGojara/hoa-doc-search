@@ -27,9 +27,10 @@
 // is Bedrock's institutional intelligence, not transferable on termination.
 // ============================================================================
 
+const { route: aiRoute } = require('../lib/ai/router');
 const express = require('express');
 const { createClient } = require('@supabase/supabase-js');
-const Anthropic = require('@anthropic-ai/sdk');
+const Anthropic = require('../lib/ai/anthropic');
 const OpenAI = require('openai');
 const { safeErrorMessage } = require('./_safe_error');
 const { getRelevantPlaybook, formatPlaybookContext } = require('../playbook');
@@ -201,7 +202,7 @@ router.post('/turn', express.json({ limit: '64kb' }), async (req, res) => {
 
     // Call Claude
     const completion = await anthropic.messages.create({
-      model: 'claude-sonnet-4-5',
+      model: aiRoute('agent_training.retrieval_query'),
       max_tokens: 1024,
       system: systemPrompt,
       messages,

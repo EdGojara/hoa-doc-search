@@ -421,7 +421,7 @@ router.post('/session/:id/turn', async (req, res) => {
     const personaPack = packFor(who) || undefined;
 
     // Portal answer model is configurable for the speed/quality A/B (Ed
-    // 2026-09-10). Unset -> reason.js default (claude-sonnet-4-6), so behavior
+    // 2026-09-10). Unset -> the voice.doc route in lib/ai/routing.config.json, so behavior
     // is unchanged until CLAIRE_PORTAL_MODEL is set on Render. Measured: with
     // the profile prompt, Haiku 4.5 answers a fast-lane fact in ~0.6s to first
     // word vs ~2.6s for Sonnet — the grounding (retrieval/profile) is identical,

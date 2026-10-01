@@ -33,10 +33,11 @@
 //   - askEd template voice: AI-generated copy uses Action/Output/Reasoning/Watch Outs
 // ============================================================================
 
+const { route: aiRoute, executedModel: aiExecuted } = require('../lib/ai/router');
 const express = require('express');
 const crypto = require('crypto');
 const { createClient } = require('@supabase/supabase-js');
-const Anthropic = require('@anthropic-ai/sdk');
+const Anthropic = require('../lib/ai/anthropic');
 const multer = require('multer');
 const puppeteer = require('puppeteer');
 const BRAND = require('../lib/brand');
@@ -2773,7 +2774,7 @@ async function extractSectionFromPdf(sectionKey, pdfBuffer) {
   for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt++) {
     try {
       const completion = await anthropic.messages.create({
-        model: 'claude-sonnet-4-5',
+        model: aiRoute('board.packet_section_extract'),
         // Fund-balance BS + 12-month IS extractions can produce 6-10k tokens
         // of structured JSON. Stay generous to avoid mid-string truncation.
         max_tokens: 16000,
@@ -2789,7 +2790,7 @@ async function extractSectionFromPdf(sectionKey, pdfBuffer) {
       const stopReason = completion.stop_reason;
       const cleaned = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
       try {
-        return { parsed: JSON.parse(cleaned), usage: completion.usage };
+        return { parsed: JSON.parse(cleaned), usage: completion.usage, model: completion.model };
       } catch (parseErr) {
         const truncated = stopReason === 'max_tokens';
         const hint = truncated
@@ -3102,7 +3103,7 @@ router.post('/:id/sections/:section_key/upload', upload.single('pdf'), async (re
       return res.status(400).json({ error: `Section "${sectionKey}" does not support upload extraction` });
     }
     // Run the AI
-    const { parsed, usage } = await extractSectionFromPdf(sectionKey, req.file.buffer);
+    const { parsed, usage, model: extractedModel } = await extractSectionFromPdf(sectionKey, req.file.buffer);
 
     // For 'financials', merge with existing input_data — operators often
     // upload the Balance Sheet PDF and Income Statement PDF separately. Without
@@ -3159,7 +3160,7 @@ router.post('/:id/sections/:section_key/upload', upload.single('pdf'), async (re
         input_mode: 'upload',
         input_data: nextInput,
         status: 'ready',
-        extraction_model: 'claude-sonnet-4-5',
+        extraction_model: aiExecuted({ model: extractedModel }, 'board.packet_section_extract'),
         extraction_confidence: 'medium',
         extraction_notes: `Uploaded ${req.file.originalname} (${req.file.size} bytes)`
       })
@@ -3176,7 +3177,7 @@ router.post('/:id/sections/:section_key/upload', upload.single('pdf'), async (re
       endpoint: `POST /api/board-packets/${req.params.id}/sections/${sectionKey}/upload`,
       request_input: { filename: req.file.originalname, size: req.file.size, section: sectionKey },
       prompt: `SECTION_EXTRACTION_PROMPTS[${sectionKey}]`,
-      model: 'claude-sonnet-4-5',
+      model: aiExecuted({ model: extractedModel }, 'board.packet_section_extract'),
       response: { parsed },
       input_tokens: usage?.input_tokens || null,
       output_tokens: usage?.output_tokens || null,
@@ -3618,7 +3619,7 @@ Return ONLY the JSON.`;
     }
 
     const completion = await anthropic.messages.create({
-      model: 'claude-sonnet-4-5',
+      model: aiRoute('board.packet_context'),
       max_tokens: 2500,
       messages: [{ role: 'user', content: prompt }]
     });
@@ -3632,7 +3633,7 @@ Return ONLY the JSON.`;
         input_mode: 'ai_generated',
         input_data: parsed,
         status: 'ready',
-        extraction_model: 'claude-sonnet-4-5',
+        extraction_model: aiExecuted(completion, 'board.packet_context'),
         extraction_confidence: 'medium'
       })
       .eq('packet_id', req.params.id)
@@ -3648,7 +3649,7 @@ Return ONLY the JSON.`;
       endpoint: `POST /api/board-packets/${req.params.id}/sections/${sectionKey}/ai-generate`,
       request_input: { section: sectionKey },
       prompt: 'AI section generation',
-      model: 'claude-sonnet-4-5',
+      model: aiExecuted(completion, 'board.packet_context'),
       response: parsed,
       input_tokens: completion.usage?.input_tokens || null,
       output_tokens: completion.usage?.output_tokens || null,

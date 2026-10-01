@@ -1,0 +1,962 @@
+{
+  "_comment": "PRODUCTION model routing: the single source of truth for which model every AI workflow uses (Issue #12). Business code names a WORKFLOW (route('drv.citation')); only this file and lib/ai/router.js know model ids. Change or roll back a workflow here, or without a deploy via env: AI_ROUTE_OVERRIDES='{\"drv.citation\":\"sonnet-4-6\",\"email.*\":\"sonnet-4-6\"}' or AI_ROUTE__DRV__CITATION=sonnet-4-6. 'model'/'fallback' are aliases from 'models' below or a tier ('tier:standard', lib/ai/tiers.config.json). consequence 'high' = never falls back automatically: if the primary is unavailable the call fails loudly. 'prior' records the model before the Sonnet 5 migration (2026-10-01) so a rollback target is always on file. Prices USD per 1M tokens; price_verified:false means estimate only.",
+  "policy_version": "2026-10-01.v1",
+  "models": {
+    "sonnet-5": {
+      "provider": "anthropic",
+      "id": "claude-sonnet-5",
+      "price_in": 2,
+      "price_out": 10,
+      "price_verified": false,
+      "request_defaults": {
+        "thinking": {
+          "type": "disabled"
+        }
+      }
+    },
+    "sonnet-5-5": {
+      "provider": "anthropic",
+      "id": "claude-sonnet-5-5",
+      "price_in": null,
+      "price_out": null,
+      "price_verified": false,
+      "request_defaults": {
+        "thinking": {
+          "type": "disabled"
+        }
+      }
+    },
+    "sonnet-4-6": {
+      "provider": "anthropic",
+      "id": "claude-sonnet-4-6",
+      "price_in": 3,
+      "price_out": 15,
+      "price_verified": false
+    },
+    "sonnet-4-5": {
+      "provider": "anthropic",
+      "id": "claude-sonnet-4-5",
+      "price_in": 3,
+      "price_out": 15,
+      "price_verified": false,
+      "retires": "2026-11-24"
+    },
+    "haiku-4-5": {
+      "provider": "anthropic",
+      "id": "claude-haiku-4-5-20251001",
+      "price_in": 1,
+      "price_out": 5,
+      "price_verified": false
+    },
+    "opus-4-7": {
+      "provider": "anthropic",
+      "id": "claude-opus-4-7",
+      "price_in": 5,
+      "price_out": 25,
+      "price_verified": false
+    },
+    "opus-5": {
+      "provider": "anthropic",
+      "id": "claude-opus-5",
+      "price_in": 5,
+      "price_out": 25,
+      "price_verified": false,
+      "request_defaults": {
+        "thinking": {
+          "type": "disabled"
+        }
+      }
+    }
+  },
+  "workflows": {
+    "acc.application_document_extract": {
+      "model": "tier:standard",
+      "fallback": null,
+      "consequence": "high",
+      "prior": "sonnet-4-5"
+    },
+    "acc.application_document_classify": {
+      "model": "haiku-4-5",
+      "fallback": null,
+      "consequence": "high",
+      "prior": "haiku-4-5"
+    },
+    "acc.application_email_header": {
+      "model": "tier:standard",
+      "fallback": null,
+      "consequence": "high",
+      "prior": "sonnet-4-5"
+    },
+    "acc.assessment": {
+      "model": "sonnet-4-6",
+      "fallback": null,
+      "consequence": "high",
+      "prior": "sonnet-4-6"
+    },
+    "acc.builder_master_plan_extract": {
+      "model": "tier:standard",
+      "fallback": null,
+      "consequence": "high",
+      "prior": "sonnet-4-5"
+    },
+    "acc.builder_application_extract": {
+      "model": "tier:standard",
+      "fallback": null,
+      "consequence": "high",
+      "prior": "sonnet-4-5"
+    },
+    "acc.master_plan_extract": {
+      "model": "tier:standard",
+      "fallback": null,
+      "consequence": "high",
+      "prior": "sonnet-4-5"
+    },
+    "acc.pending_intake_classify": {
+      "model": "haiku-4-5",
+      "fallback": null,
+      "consequence": "high",
+      "prior": "haiku-4-5"
+    },
+    "acc.arc_history_extract": {
+      "model": "sonnet-4-6",
+      "fallback": null,
+      "consequence": "high",
+      "prior": "sonnet-4-6"
+    },
+    "acc.rfp_and_review": {
+      "model": "sonnet-4-6",
+      "fallback": null,
+      "consequence": "high",
+      "prior": "sonnet-4-6",
+      "note": "ARC assess-and-draft decision call (server.js assessAndDraftAcc)"
+    },
+    "acc.vision_extract": {
+      "model": "opus-4-7",
+      "fallback": null,
+      "consequence": "high",
+      "prior": "opus-4-7"
+    },
+    "acc.extract_repair": {
+      "model": "haiku-4-5",
+      "fallback": null,
+      "consequence": "high",
+      "prior": "haiku-4-5"
+    },
+    "acc.decision_letter": {
+      "model": "haiku-4-5",
+      "fallback": null,
+      "consequence": "high",
+      "prior": "haiku-4-5"
+    },
+    "drv.citation": {
+      "model": "tier:standard",
+      "fallback": null,
+      "consequence": "high",
+      "prior": "sonnet-4-5"
+    },
+    "drv.enforcement_citation": {
+      "model": "tier:standard",
+      "fallback": null,
+      "consequence": "high",
+      "prior": "sonnet-4-5"
+    },
+    "drv.doc_ref_for_category": {
+      "model": "tier:standard",
+      "fallback": null,
+      "consequence": "high",
+      "prior": "sonnet-4-5"
+    },
+    "drv.category_aliases": {
+      "model": "tier:standard",
+      "fallback": null,
+      "consequence": "high",
+      "prior": "sonnet-4-5"
+    },
+    "drv.category_map": {
+      "model": "haiku-4-5",
+      "fallback": null,
+      "consequence": "high",
+      "prior": "haiku-4-5"
+    },
+    "drv.vision": {
+      "model": "sonnet-4-6",
+      "fallback": null,
+      "consequence": "high",
+      "prior": "sonnet-4-5",
+      "held_back": "2026-10-01 production eval, 20 reviewer-confirmed violation photos: Sonnet 5 said CLEAN on 7/20 (missed violations); 4.5 and 4.6 missed 0, and 4.6 matched the confirmed category 12/20 vs 4.5 10/20. Held on 4.6 until a Sonnet 5 vision prompt is re-calibrated and re-evaluated."
+    },
+    "drv.vantaca_import": {
+      "model": "tier:standard",
+      "fallback": null,
+      "consequence": "high",
+      "prior": "sonnet-4-5"
+    },
+    "drv.reply": {
+      "model": "tier:standard",
+      "fallback": null,
+      "consequence": "high",
+      "prior": "sonnet-4-5"
+    },
+    "drv.monthly_summary": {
+      "model": "tier:standard",
+      "fallback": "sonnet-4-6",
+      "consequence": "standard",
+      "prior": "sonnet-4-5"
+    },
+    "drv.vantaca_report_extract": {
+      "model": "tier:standard",
+      "fallback": null,
+      "consequence": "high",
+      "prior": "sonnet-4-5"
+    },
+    "ap.invoice_extract": {
+      "model": "tier:standard",
+      "fallback": null,
+      "consequence": "high",
+      "prior": "sonnet-4-5"
+    },
+    "ap.reimbursement_intent": {
+      "model": "tier:standard",
+      "fallback": "sonnet-4-6",
+      "consequence": "standard",
+      "prior": "sonnet-4-5"
+    },
+    "ap.receipt_allocation": {
+      "model": "tier:standard",
+      "fallback": null,
+      "consequence": "high",
+      "prior": "sonnet-4-5"
+    },
+    "ap.vendor_invoice_parse": {
+      "model": "sonnet-4-6",
+      "fallback": null,
+      "consequence": "high",
+      "prior": "sonnet-4-6"
+    },
+    "accounting.budget_extract": {
+      "model": "tier:standard",
+      "fallback": null,
+      "consequence": "high",
+      "prior": "sonnet-4-5"
+    },
+    "accounting.kat_review": {
+      "model": "tier:standard",
+      "fallback": "sonnet-4-6",
+      "consequence": "standard",
+      "prior": "sonnet-4-5",
+      "legacy_env": "KAT_REVIEW_MODEL"
+    },
+    "accounting.vendor_contract_extract": {
+      "model": "tier:standard",
+      "fallback": null,
+      "consequence": "high",
+      "prior": "sonnet-4-5"
+    },
+    "accounting.bank_statement_extract": {
+      "model": "tier:standard",
+      "fallback": null,
+      "consequence": "high",
+      "prior": "sonnet-4-5"
+    },
+    "accounting.vantaca_classify": {
+      "model": "tier:standard",
+      "fallback": null,
+      "consequence": "high",
+      "prior": "sonnet-4-5"
+    },
+    "accounting.vantaca_ap_ledger": {
+      "model": "tier:standard",
+      "fallback": null,
+      "consequence": "high",
+      "prior": "sonnet-4-5"
+    },
+    "accounting.vantaca_ar_aging": {
+      "model": "tier:standard",
+      "fallback": null,
+      "consequence": "high",
+      "prior": "sonnet-4-5"
+    },
+    "accounting.vantaca_bank_rec": {
+      "model": "tier:standard",
+      "fallback": null,
+      "consequence": "high",
+      "prior": "sonnet-4-5"
+    },
+    "accounting.vantaca_check_register": {
+      "model": "tier:standard",
+      "fallback": null,
+      "consequence": "high",
+      "prior": "sonnet-4-5"
+    },
+    "accounting.vantaca_gl_export": {
+      "model": "tier:standard",
+      "fallback": null,
+      "consequence": "high",
+      "prior": "sonnet-4-5"
+    },
+    "accounting.vantaca_txn_history": {
+      "model": "tier:standard",
+      "fallback": null,
+      "consequence": "high",
+      "prior": "sonnet-4-5"
+    },
+    "accounting.vantaca_trial_balance": {
+      "model": "tier:standard",
+      "fallback": null,
+      "consequence": "high",
+      "prior": "sonnet-4-5"
+    },
+    "accounting.owner_ar_extract": {
+      "model": "tier:standard",
+      "fallback": null,
+      "consequence": "high",
+      "prior": "sonnet-4-5"
+    },
+    "accounting.payment_plans_extract": {
+      "model": "tier:standard",
+      "fallback": null,
+      "consequence": "high",
+      "prior": "sonnet-4-5"
+    },
+    "accounting.reserve_study_extract": {
+      "model": "tier:standard",
+      "fallback": null,
+      "consequence": "high",
+      "prior": "sonnet-4-5"
+    },
+    "accounting.assessment_cap": {
+      "model": "tier:standard",
+      "fallback": null,
+      "consequence": "high",
+      "prior": "sonnet-4-5"
+    },
+    "accounting.vendor_contract_books": {
+      "model": "tier:standard",
+      "fallback": null,
+      "consequence": "high",
+      "prior": "sonnet-4-5"
+    },
+    "accounting.vault_receipt_extract": {
+      "model": "tier:standard",
+      "fallback": null,
+      "consequence": "high",
+      "prior": "sonnet-4-5"
+    },
+    "accounting.vault_statement_extract": {
+      "model": "tier:standard",
+      "fallback": null,
+      "consequence": "high",
+      "prior": "sonnet-4-5"
+    },
+    "accounting.w9_extract": {
+      "model": "tier:standard",
+      "fallback": null,
+      "consequence": "high",
+      "prior": "sonnet-4-5"
+    },
+    "accounting.financial_review": {
+      "model": "sonnet-4-6",
+      "fallback": null,
+      "consequence": "high",
+      "prior": "sonnet-4-6"
+    },
+    "accounting.financial_statement_parse": {
+      "model": "opus-4-7",
+      "fallback": null,
+      "consequence": "high",
+      "prior": "opus-4-7"
+    },
+    "accounting.financial_statement_findings": {
+      "model": "sonnet-4-6",
+      "fallback": null,
+      "consequence": "high",
+      "prior": "sonnet-4-6"
+    },
+    "billing.contract_parse": {
+      "model": "tier:standard",
+      "fallback": null,
+      "consequence": "high",
+      "prior": "sonnet-4-5"
+    },
+    "billing.vantaca_violation_import": {
+      "model": "sonnet-4-6",
+      "fallback": null,
+      "consequence": "high",
+      "prior": "sonnet-4-6"
+    },
+    "billing.email_intake": {
+      "model": "tier:standard",
+      "fallback": "sonnet-4-6",
+      "consequence": "standard",
+      "prior": "sonnet-4-5"
+    },
+    "legal.invoice_extract": {
+      "model": "tier:standard",
+      "fallback": null,
+      "consequence": "high",
+      "prior": "sonnet-4-5"
+    },
+    "collections.winstead_extract": {
+      "model": "tier:standard",
+      "fallback": null,
+      "consequence": "high",
+      "prior": "sonnet-4-5"
+    },
+    "team.amanda_reply": {
+      "model": "tier:standard",
+      "fallback": "sonnet-4-6",
+      "consequence": "standard",
+      "prior": "sonnet-4-5"
+    },
+    "team.amanda_review": {
+      "model": "tier:standard",
+      "fallback": "sonnet-4-6",
+      "consequence": "standard",
+      "prior": "sonnet-4-5"
+    },
+    "team.amanda_staff_assist": {
+      "model": "tier:standard",
+      "fallback": "sonnet-4-6",
+      "consequence": "standard",
+      "prior": "sonnet-4-5",
+      "legacy_env": "AMANDA_ASSIST_MODEL"
+    },
+    "team.attachment_vision": {
+      "model": "tier:standard",
+      "fallback": "sonnet-4-6",
+      "consequence": "standard",
+      "prior": "sonnet-4-5"
+    },
+    "team.bedrock_ops_reply": {
+      "model": "tier:standard",
+      "fallback": "sonnet-4-6",
+      "consequence": "standard",
+      "prior": "sonnet-4-5"
+    },
+    "team.grounding": {
+      "model": "tier:standard",
+      "fallback": "sonnet-4-6",
+      "consequence": "standard",
+      "prior": "sonnet-4-5"
+    },
+    "team.operator_chat": {
+      "model": "tier:standard",
+      "fallback": "sonnet-4-6",
+      "consequence": "standard",
+      "prior": "sonnet-4-5"
+    },
+    "team.operator_reply": {
+      "model": "tier:standard",
+      "fallback": "sonnet-4-6",
+      "consequence": "standard",
+      "prior": "sonnet-4-5"
+    },
+    "team.reconcile": {
+      "model": "tier:standard",
+      "fallback": "sonnet-4-6",
+      "consequence": "standard",
+      "prior": "sonnet-4-5"
+    },
+    "team.shadow": {
+      "model": "tier:standard",
+      "fallback": "sonnet-4-6",
+      "consequence": "standard",
+      "prior": "sonnet-4-5"
+    },
+    "email.triage": {
+      "model": "tier:standard",
+      "fallback": "sonnet-4-6",
+      "consequence": "standard",
+      "prior": "sonnet-4-5"
+    },
+    "email.draft_reply": {
+      "model": "tier:standard",
+      "fallback": "sonnet-4-6",
+      "consequence": "standard",
+      "prior": "sonnet-4-5"
+    },
+    "email.persona_reply": {
+      "model": "tier:standard",
+      "fallback": "sonnet-4-6",
+      "consequence": "standard",
+      "prior": "sonnet-4-5"
+    },
+    "email.emma_reply": {
+      "model": "tier:standard",
+      "fallback": "sonnet-4-6",
+      "consequence": "standard",
+      "prior": "sonnet-4-5"
+    },
+    "email.compose_draft": {
+      "model": "sonnet-4-6",
+      "fallback": "sonnet-5",
+      "consequence": "standard",
+      "prior": "sonnet-4-5",
+      "held_back": "2026-10-01: Sonnet 5 failed the forward-note first-person voice check 3/3 (tests/test_forward_note_voice.js); 4.5 and 4.6 passed 3/3. Held on 4.6 (4.5 retires) until the prompt is re-tuned and re-evaluated."
+    },
+    "email.suggest_reviewer": {
+      "model": "haiku-4-5",
+      "fallback": "sonnet-4-6",
+      "consequence": "standard",
+      "prior": "haiku-4-5"
+    },
+    "email.distill_query": {
+      "model": "haiku-4-5",
+      "fallback": "sonnet-4-6",
+      "consequence": "standard",
+      "prior": "haiku-4-5"
+    },
+    "email.promised_followup": {
+      "model": "haiku-4-5",
+      "fallback": "sonnet-4-6",
+      "consequence": "standard",
+      "prior": "haiku-4-5"
+    },
+    "email.proofread": {
+      "model": "haiku-4-5",
+      "fallback": "sonnet-4-6",
+      "consequence": "standard",
+      "prior": "haiku-4-5"
+    },
+    "email.commitment_capture": {
+      "model": "haiku-4-5",
+      "fallback": "sonnet-4-6",
+      "consequence": "standard",
+      "prior": "haiku-4-5",
+      "legacy_env": "COMMITMENT_MODEL"
+    },
+    "email.translate": {
+      "model": "sonnet-4-6",
+      "fallback": "sonnet-5",
+      "consequence": "standard",
+      "prior": "sonnet-4-6",
+      "legacy_env": "EMAIL_TRANSLATE_MODEL"
+    },
+    "email.translate_detect": {
+      "model": "haiku-4-5",
+      "fallback": "sonnet-4-6",
+      "consequence": "standard",
+      "prior": "haiku-4-5",
+      "legacy_env": "EMAIL_DETECT_MODEL"
+    },
+    "email.intake_extract": {
+      "model": "sonnet-4-6",
+      "fallback": "sonnet-5",
+      "consequence": "standard",
+      "prior": "sonnet-4-6"
+    },
+    "email.intake_recap": {
+      "model": "sonnet-4-6",
+      "fallback": "sonnet-5",
+      "consequence": "standard",
+      "prior": "sonnet-4-6"
+    },
+    "email.mail_scan": {
+      "model": "sonnet-4-6",
+      "fallback": "sonnet-5",
+      "consequence": "standard",
+      "prior": "sonnet-4-6"
+    },
+    "correspondence.classify": {
+      "model": "haiku-4-5",
+      "fallback": "sonnet-4-6",
+      "consequence": "standard",
+      "prior": "haiku-4-5"
+    },
+    "correspondence.draft_response": {
+      "model": "tier:standard",
+      "fallback": "sonnet-4-6",
+      "consequence": "standard",
+      "prior": "sonnet-4-5"
+    },
+    "tessa.draft": {
+      "model": "tier:standard",
+      "fallback": "sonnet-4-6",
+      "consequence": "standard",
+      "prior": "sonnet-4-5"
+    },
+    "tessa.request": {
+      "model": "tier:standard",
+      "fallback": "sonnet-4-6",
+      "consequence": "standard",
+      "prior": "sonnet-4-5"
+    },
+    "tessa.voice_route": {
+      "model": "tier:standard",
+      "fallback": "sonnet-4-6",
+      "consequence": "standard",
+      "prior": "sonnet-4-5"
+    },
+    "tessa.lunch_parse": {
+      "model": "haiku-4-5",
+      "fallback": "sonnet-4-6",
+      "consequence": "standard",
+      "prior": "haiku-4-5"
+    },
+    "interactions.summarize": {
+      "model": "tier:standard",
+      "fallback": "sonnet-4-6",
+      "consequence": "standard",
+      "prior": "sonnet-4-5"
+    },
+    "board.packet_section_extract": {
+      "model": "tier:standard",
+      "fallback": "sonnet-4-6",
+      "consequence": "standard",
+      "prior": "sonnet-4-5"
+    },
+    "board.packet_context": {
+      "model": "tier:standard",
+      "fallback": "sonnet-4-6",
+      "consequence": "standard",
+      "prior": "sonnet-4-5"
+    },
+    "board.portal_ask": {
+      "model": "tier:standard",
+      "fallback": "sonnet-4-6",
+      "consequence": "standard",
+      "prior": "sonnet-4-5"
+    },
+    "board.portal_learning_ask": {
+      "model": "tier:standard",
+      "fallback": "sonnet-4-6",
+      "consequence": "standard",
+      "prior": "sonnet-4-5"
+    },
+    "board.doc_intake_extract": {
+      "model": "tier:standard",
+      "fallback": "sonnet-4-6",
+      "consequence": "standard",
+      "prior": "sonnet-4-5"
+    },
+    "board.paige_doc_review": {
+      "model": "tier:standard",
+      "fallback": "sonnet-4-6",
+      "consequence": "standard",
+      "prior": "sonnet-4-5"
+    },
+    "board.minutes": {
+      "model": "tier:standard",
+      "fallback": "sonnet-4-6",
+      "consequence": "standard",
+      "prior": "sonnet-4-5"
+    },
+    "board.vote_intent": {
+      "model": "haiku-4-5",
+      "fallback": null,
+      "consequence": "high",
+      "prior": "haiku-4-5"
+    },
+    "board.nomination_scan_extract": {
+      "model": "sonnet-4-6",
+      "fallback": null,
+      "consequence": "high",
+      "prior": "sonnet-4-6"
+    },
+    "events.detect": {
+      "model": "tier:standard",
+      "fallback": "sonnet-4-6",
+      "consequence": "standard",
+      "prior": "sonnet-4-5"
+    },
+    "events.key_events": {
+      "model": "tier:standard",
+      "fallback": "sonnet-4-6",
+      "consequence": "standard",
+      "prior": "sonnet-4-5"
+    },
+    "events.project_decisions": {
+      "model": "tier:standard",
+      "fallback": "sonnet-4-6",
+      "consequence": "standard",
+      "prior": "sonnet-4-5"
+    },
+    "documents.metadata_extract": {
+      "model": "tier:standard",
+      "fallback": "sonnet-4-6",
+      "consequence": "standard",
+      "prior": "sonnet-4-5"
+    },
+    "documents.amendment_backfill": {
+      "model": "tier:standard",
+      "fallback": "sonnet-4-6",
+      "consequence": "standard",
+      "prior": "sonnet-4-5"
+    },
+    "documents.query": {
+      "model": "tier:standard",
+      "fallback": "sonnet-4-6",
+      "consequence": "standard",
+      "prior": "sonnet-4-5"
+    },
+    "documents.ocr": {
+      "model": "sonnet-4-6",
+      "fallback": "sonnet-5",
+      "consequence": "standard",
+      "prior": "sonnet-4-6"
+    },
+    "help.pdf_pages": {
+      "model": "tier:standard",
+      "fallback": "sonnet-4-6",
+      "consequence": "standard",
+      "prior": "sonnet-4-5"
+    },
+    "help.query": {
+      "model": "tier:standard",
+      "fallback": "sonnet-4-6",
+      "consequence": "standard",
+      "prior": "sonnet-4-5"
+    },
+    "legal_updates.extract": {
+      "model": "tier:standard",
+      "fallback": "sonnet-4-6",
+      "consequence": "standard",
+      "prior": "sonnet-4-5"
+    },
+    "insurance.extract": {
+      "model": "tier:standard",
+      "fallback": "sonnet-4-6",
+      "consequence": "standard",
+      "prior": "sonnet-4-5"
+    },
+    "insurance.synthesis": {
+      "model": "tier:standard",
+      "fallback": "sonnet-4-6",
+      "consequence": "standard",
+      "prior": "sonnet-4-5"
+    },
+    "amenities.contract_extract": {
+      "model": "tier:standard",
+      "fallback": "sonnet-4-6",
+      "consequence": "standard",
+      "prior": "sonnet-4-5"
+    },
+    "contacts.extract": {
+      "model": "tier:standard",
+      "fallback": "sonnet-4-6",
+      "consequence": "standard",
+      "prior": "sonnet-4-5"
+    },
+    "contacts.extract_from_email": {
+      "model": "haiku-4-5",
+      "fallback": "sonnet-4-6",
+      "consequence": "standard",
+      "prior": "haiku-4-5"
+    },
+    "appraisal.column_map": {
+      "model": "haiku-4-5",
+      "fallback": "sonnet-4-6",
+      "consequence": "standard",
+      "prior": "haiku-4-5"
+    },
+    "home_sales.scan": {
+      "model": "tier:standard",
+      "fallback": "sonnet-4-6",
+      "consequence": "standard",
+      "prior": "sonnet-4-5"
+    },
+    "homeowner_360.summary": {
+      "model": "tier:standard",
+      "fallback": "sonnet-4-6",
+      "consequence": "standard",
+      "prior": "sonnet-4-5"
+    },
+    "partner_portal.answer": {
+      "model": "tier:standard",
+      "fallback": "sonnet-4-6",
+      "consequence": "standard",
+      "prior": "sonnet-4-5"
+    },
+    "pool_access.extract": {
+      "model": "tier:standard",
+      "fallback": "sonnet-4-6",
+      "consequence": "standard",
+      "prior": "sonnet-4-5"
+    },
+    "vendors.bid_extract": {
+      "model": "tier:standard",
+      "fallback": "sonnet-4-6",
+      "consequence": "standard",
+      "prior": "sonnet-4-5"
+    },
+    "vendors.bid_analysis": {
+      "model": "sonnet-4-6",
+      "fallback": "sonnet-5",
+      "consequence": "standard",
+      "prior": "sonnet-4-6"
+    },
+    "vendors.market_value": {
+      "model": "sonnet-4-6",
+      "fallback": "sonnet-5",
+      "consequence": "standard",
+      "prior": "sonnet-4-6"
+    },
+    "newsletters.write": {
+      "model": "tier:standard",
+      "fallback": "sonnet-4-6",
+      "consequence": "standard",
+      "prior": "sonnet-4-5"
+    },
+    "newsletters.generate": {
+      "model": "tier:standard",
+      "fallback": "sonnet-4-6",
+      "consequence": "standard",
+      "prior": "sonnet-4-5"
+    },
+    "newsletters.resident_qa": {
+      "model": "tier:standard",
+      "fallback": "sonnet-4-6",
+      "consequence": "standard",
+      "prior": "sonnet-4-5"
+    },
+    "newsletters.annual_recap": {
+      "model": "tier:standard",
+      "fallback": "sonnet-4-6",
+      "consequence": "standard",
+      "prior": "sonnet-4-5"
+    },
+    "agent_training.retrieval_query": {
+      "model": "tier:standard",
+      "fallback": "sonnet-4-6",
+      "consequence": "standard",
+      "prior": "sonnet-4-5"
+    },
+    "proposals.component_map": {
+      "model": "tier:standard",
+      "fallback": "sonnet-4-6",
+      "consequence": "standard",
+      "prior": "sonnet-4-5"
+    },
+    "proposals.extract": {
+      "model": "sonnet-4-6",
+      "fallback": "sonnet-5",
+      "consequence": "standard",
+      "prior": "sonnet-4-6"
+    },
+    "proposals.preflight": {
+      "model": "tier:standard",
+      "fallback": "sonnet-4-6",
+      "consequence": "standard",
+      "prior": "sonnet-4-5"
+    },
+    "asked.chat": {
+      "model": "sonnet-4-6",
+      "fallback": "sonnet-5",
+      "consequence": "standard",
+      "prior": "sonnet-4-6"
+    },
+    "asked.tools": {
+      "model": "sonnet-4-6",
+      "fallback": "sonnet-5",
+      "consequence": "standard",
+      "prior": "sonnet-4-6"
+    },
+    "asked.rag_rewrite": {
+      "model": "haiku-4-5",
+      "fallback": "sonnet-4-6",
+      "consequence": "standard",
+      "prior": "haiku-4-5"
+    },
+    "asked.legacy": {
+      "model": "sonnet-4-6",
+      "fallback": "sonnet-5",
+      "consequence": "standard",
+      "prior": "sonnet-4-6"
+    },
+    "search.answer": {
+      "model": "sonnet-4-6",
+      "fallback": "sonnet-5",
+      "consequence": "standard",
+      "prior": "sonnet-4-6"
+    },
+    "ask.answer": {
+      "model": "sonnet-4-6",
+      "fallback": "sonnet-5",
+      "consequence": "standard",
+      "prior": "sonnet-4-6"
+    },
+    "email.homeowner_reply": {
+      "model": "haiku-4-5",
+      "fallback": "sonnet-4-6",
+      "consequence": "standard",
+      "prior": "haiku-4-5"
+    },
+    "voice.llm": {
+      "model": "haiku-4-5",
+      "fallback": "sonnet-4-6",
+      "consequence": "standard",
+      "prior": "haiku-4-5",
+      "legacy_env": "CLAIRE_LLM_MODEL"
+    },
+    "voice.fact": {
+      "model": "haiku-4-5",
+      "fallback": "sonnet-4-6",
+      "consequence": "standard",
+      "prior": "haiku-4-5",
+      "legacy_env": "CLAIRE_FACT_MODEL"
+    },
+    "voice.doc": {
+      "model": "sonnet-4-6",
+      "fallback": "sonnet-5",
+      "consequence": "standard",
+      "prior": "sonnet-4-6",
+      "legacy_env": "CLAIRE_DOC_MODEL"
+    },
+    "voice.portal_sse": {
+      "model": "sonnet-4-6",
+      "fallback": "sonnet-5",
+      "consequence": "standard",
+      "prior": "sonnet-4-5",
+      "held_back": "Precautionary: Ed chose Sonnet 4.5 here after a live warmth A/B (2026-05-24); Sonnet 5 voice tone untested. Held on the nearest model (4.6) until a listen test."
+    },
+    "voice.call_brief": {
+      "model": "haiku-4-5",
+      "fallback": "sonnet-4-6",
+      "consequence": "standard",
+      "prior": "haiku-4-5"
+    },
+    "voice.emotional_load": {
+      "model": "haiku-4-5",
+      "fallback": "sonnet-4-6",
+      "consequence": "standard",
+      "prior": "haiku-4-5"
+    },
+    "voice.post_call_review": {
+      "model": "haiku-4-5",
+      "fallback": "sonnet-4-6",
+      "consequence": "standard",
+      "prior": "haiku-4-5"
+    },
+    "voice.sentence_completeness": {
+      "model": "haiku-4-5",
+      "fallback": "sonnet-4-6",
+      "consequence": "standard",
+      "prior": "haiku-4-5"
+    },
+    "vendors.rfp_build": {
+      "model": "sonnet-4-6",
+      "fallback": "sonnet-5",
+      "consequence": "standard",
+      "prior": "sonnet-4-6"
+    },
+    "board.draft_review": {
+      "model": "sonnet-4-6",
+      "fallback": "sonnet-5",
+      "consequence": "standard",
+      "prior": "sonnet-4-6"
+    },
+    "board.agenda": {
+      "model": "sonnet-4-6",
+      "fallback": "sonnet-5",
+      "consequence": "standard",
+      "prior": "sonnet-4-6"
+    },
+    "unrouted": {
+      "model": "tier:standard",
+      "fallback": null,
+      "consequence": "high",
+      "prior": null
+    }
+  },
+  "_comment_request_defaults": "request_defaults are applied to a routed call only when the caller did not set that parameter. Sonnet 5 / Opus 5 think ADAPTIVELY by default and then put a thinking block BEFORE the text; every call site was written for Sonnet 4.5 (no thinking) and reads content[0].text, so thinking is disabled by default to preserve the response shape (Issue #12, found by the Vantaca PDF fixture). To try thinking on one workflow, set that workflow request_defaults: {\"thinking\": {\"type\": \"enabled\", \"budget_tokens\": N}} after an eval."
+}

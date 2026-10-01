@@ -34,12 +34,13 @@
 // All routes scoped to BEDROCK_MGMT_CO_ID.
 // ============================================================================
 
+const { route: aiRoute, executedModel: aiExecuted } = require('../lib/ai/router');
 const express = require('express');
 const crypto = require('crypto');
 const multer = require('multer');
 const pdfParse = require('pdf-parse');
 const { createClient } = require('@supabase/supabase-js');
-const Anthropic = require('@anthropic-ai/sdk');
+const Anthropic = require('../lib/ai/anthropic');
 const OpenAI = require('openai');
 const { safeErrorMessage } = require('./_safe_error');
 const { resolveProperty, resolveContact } = require('../lib/entity_resolution');
@@ -84,8 +85,8 @@ function hashContent(raw) {
 
 const { BEDROCK_MGMT_CO_ID } = require('../lib/company');
 const EMBEDDING_MODEL = 'text-embedding-ada-002';
-const EXTRACTION_MODEL = 'claude-sonnet-4-6';
-const RECAP_MODEL = 'claude-sonnet-4-6';
+const EXTRACTION_MODEL = aiRoute('email.intake_extract');
+const RECAP_MODEL = aiRoute('email.intake_recap');
 
 const router = express.Router();
 
@@ -281,7 +282,7 @@ ${rawContent}`;
   const text = response.content[0]?.text || '';
   const cleaned = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
   try {
-    return { data: JSON.parse(cleaned), usage: response.usage };
+    return { data: JSON.parse(cleaned), usage: response.usage, model: response.model };
   } catch (err) {
     throw new Error('Extractor returned invalid JSON: ' + err.message + '\n---\n' + cleaned.slice(0, 500));
   }
@@ -466,10 +467,11 @@ router.post('/', express.json({ limit: '2mb' }), async (req, res) => {
     }
 
     // 6. Run extraction
-    let extracted, extractionError = null;
+    let extracted, extractionError = null, extractedModel = null;
     try {
       const result = await extractEmailWithAi(raw_content, communityName);
       extracted = result.data;
+      extractedModel = result.model;
     } catch (err) {
       extractionError = err.message;
     }
@@ -505,7 +507,7 @@ router.post('/', express.json({ limit: '2mb' }), async (req, res) => {
           extraction_status: 'error',
           extraction_error: extractionError,
           extracted_at: new Date().toISOString(),
-          extraction_model: EXTRACTION_MODEL
+          extraction_model: aiExecuted({ model: extractedModel }, 'email.intake_extract')
         }
       : {
           extraction_status: 'extracted',
@@ -517,7 +519,7 @@ router.post('/', express.json({ limit: '2mb' }), async (req, res) => {
           property_id: resolvedPropertyId,
           contact_id: resolvedContactId,
           extracted_at: new Date().toISOString(),
-          extraction_model: EXTRACTION_MODEL
+          extraction_model: aiExecuted({ model: extractedModel }, 'email.intake_extract')
         };
 
     const { data: updated } = await supabase
@@ -601,7 +603,7 @@ router.post('/:id/re-extract', async (req, res) => {
         urgency: result.data.urgency || null,
         extraction_error: null,
         extracted_at: new Date().toISOString(),
-        extraction_model: EXTRACTION_MODEL
+        extraction_model: aiExecuted(result, 'email.intake_extract')
       })
       .eq('id', id)
       .select()
@@ -1161,7 +1163,7 @@ router.patch('/decisions/:id', express.json(), async (req, res) => {
 // RECAPS — generate + list + send
 // ============================================================================
 
-async function generateRecapMarkdown({ communityName, audience, periodStart, periodEnd, decisions, intakes, newFacts, events }) {
+async function generateRecapMarkdown({ communityName, audience, periodStart, periodEnd, decisions, intakes, newFacts, events, meta }) {
   const audienceFraming = {
     board: `You are writing a recap for the BOARD of directors of ${communityName}. Tone: respectful of their time, high-level, no operational noise. Group items by category. Highlight financial / governance / homeowner-impact items. Keep under 400 words. Use markdown headings (##) and bullet lists.`,
     internal: `You are writing a recap for the BEDROCK MANAGEMENT TEAM about ${communityName}. Tone: practical, detailed, action-oriented. Include open action items, vendor follow-ups, decisions made. Use markdown headings.`,
@@ -1207,6 +1209,7 @@ Write the recap. Lead with a one-sentence overview. Then sections. Then close wi
     max_tokens: 2000,
     messages: [{ role: 'user', content: prompt }]
   });
+  if (meta) meta.model = response.model;
   let recap = response.content[0]?.text || '';
 
   // IP-leak guard: recaps land in front of the board, which includes
@@ -1270,7 +1273,9 @@ router.post('/recaps', express.json(), async (req, res) => {
         .gte('scheduled_start_at', startIso).lte('scheduled_start_at', endIso)
     ]);
 
+    const recapMeta = {};
     const summary = await generateRecapMarkdown({
+      meta: recapMeta,
       communityName, audience, periodStart: period_start, periodEnd: period_end,
       decisions: decisions || [],
       intakes: intakes || [],
@@ -1290,7 +1295,7 @@ router.post('/recaps', express.json(), async (req, res) => {
       included_fact_ids: (newFacts || []).map((f) => f.id),
       included_event_ids: (events || []).map((e) => e.id),
       included_intake_ids: (intakes || []).map((i) => i.id),
-      generation_model: RECAP_MODEL,
+      generation_model: aiExecuted(recapMeta, 'email.intake_recap'),
       status: 'draft'
     }).select().single();
     if (error) throw error;

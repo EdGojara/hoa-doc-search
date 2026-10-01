@@ -23,11 +23,12 @@
 //   - The application data itself
 // ============================================================================
 
+const { route: aiRoute, executedModel: aiExecuted, modelId: aiModelId } = require('../lib/ai/router');
 const crypto = require('crypto');
 const express = require('express');
 const multer = require('multer');
 const { createClient } = require('@supabase/supabase-js');
-const Anthropic = require('@anthropic-ai/sdk');
+const Anthropic = require('../lib/ai/anthropic');
 const OpenAI = require('openai');
 const { safeErrorMessage } = require('./_safe_error');
 const { requireActingUser, actorDisplayName } = require('./_acting_user');
@@ -60,7 +61,7 @@ const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 const { BEDROCK_MGMT_CO_ID } = require('../lib/company');
 const EMBEDDING_MODEL = 'text-embedding-ada-002';
-const ASSESSMENT_MODEL = 'claude-sonnet-4-6';
+const ASSESSMENT_MODEL = aiRoute('acc.assessment');
 const ASSESSMENT_MAX_TOKENS = 2500;
 
 // ============================================================================
@@ -548,7 +549,7 @@ Return the JSON assessment now.`;
         contamination_ratio: contamination.contaminationRatio,
         community_chunk_count: contamination.community,
         law_general_chunk_count: contamination.lawGeneral,
-        ai_model: ASSESSMENT_MODEL,
+        ai_model: aiExecuted(completion, 'acc.assessment'),
         ai_max_tokens: ASSESSMENT_MAX_TOKENS,
         ai_duration_ms: durationMs,
         guards_fired: [{ code: 'AI_CALL_FAILED', severity: 'block', detail: String(err.message || err).slice(0, 200) }],
@@ -586,7 +587,7 @@ Return the JSON assessment now.`;
     contamination_ratio: contamination.contaminationRatio,
     community_chunk_count: contamination.community,
     law_general_chunk_count: contamination.lawGeneral,
-    ai_model: ASSESSMENT_MODEL,
+    ai_model: aiExecuted(completion, 'acc.assessment'),
     ai_input_tokens: completion?.usage?.input_tokens || null,
     ai_output_tokens: completion?.usage?.output_tokens || null,
     ai_max_tokens: ASSESSMENT_MAX_TOKENS,
@@ -629,7 +630,7 @@ Return the JSON assessment now.`;
       confidence: parsed.confidence,
       draft_response: parsed.draft_response || null,
       recommended_action: parsed.recommended_action || null,
-      ai_model: ASSESSMENT_MODEL,
+      ai_model: aiExecuted(completion, 'acc.assessment'),
       ai_input_tokens: completion.usage?.input_tokens || null,
       ai_output_tokens: completion.usage?.output_tokens || null,
       ai_duration_ms: durationMs,
@@ -1494,7 +1495,7 @@ router.post('/:id/finalize', express.json({ limit: '1mb' }), async (req, res) =>
             reasoning: reasoning,
             summary: summary,
             embedding,
-            extracted_by_model: ASSESSMENT_MODEL,
+            extracted_by_model: aiModelId('acc.assessment'), // finalize runs after the assessment request; acc.assessment never falls back
             extraction_confidence: 'high',
             manually_edited: true,
             raw_extraction: { source: 'internal_application_finalize', application_id: app.id }

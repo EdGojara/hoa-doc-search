@@ -13,6 +13,7 @@
 //   POST /ask               -> "Ask CLMA", grounded ONLY in entitled documents
 //   GET  /document/:id/url  -> a signed URL, but ONLY for an entitled document
 // ============================================================================
+const { route: aiRoute } = require('../lib/ai/router');
 const express = require('express');
 const router = express.Router();
 const { createClient } = require('@supabase/supabase-js');
@@ -85,10 +86,10 @@ ${context || '(no entitled document content is available for this association ye
 
 Answer following your rules. If the excerpts do not contain the answer, say so plainly and offer to have the team follow up.`;
 
-    const Anthropic = require('@anthropic-ai/sdk');
+    const Anthropic = require('../lib/ai/anthropic');
     const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
     const completion = await anthropic.messages.create({
-      model: 'claude-sonnet-4-5',
+      model: aiRoute('partner_portal.answer'),
       max_tokens: 1000,
       system: ASK_CLMA_SYSTEM,
       messages: [{ role: 'user', content: userContent }],

@@ -23,6 +23,7 @@
 //   - Vantaca import → JE replay
 // ============================================================================
 
+const { route: aiRoute, executedModel: aiExecuted } = require('../lib/ai/router');
 const express = require('express');
 const multer = require('multer');
 const crypto = require('crypto');
@@ -38,7 +39,7 @@ const phasing = require('../lib/accounting/budget_phasing');
 const { loadBudgetPlan } = require('../lib/accounting/budget_plan_data');
 const LOCKED_BUDGET_STATUSES = ['approved', 'active'];
 const { safeErrorMessage } = require('./_safe_error');
-const Anthropic = require('@anthropic-ai/sdk');
+const Anthropic = require('../lib/ai/anthropic');
 const { COUNTED_JE_STATUSES, countsInGl } = require('../lib/accounting/je_status');
 const _anthropic = new Anthropic();
 
@@ -1244,7 +1245,7 @@ EXCERPTS:
 ${String(chunks).slice(0, 24000)}
 
 Return ONLY the JSON.`;
-    const resp = await _anthropic.messages.create({ model: 'claude-sonnet-4-5', max_tokens: 1200, messages: [{ role: 'user', content: prompt }] });
+    const resp = await _anthropic.messages.create({ model: aiRoute('accounting.assessment_cap'), max_tokens: 1200, messages: [{ role: 'user', content: prompt }] });
     const rawTxt = (resp.content || []).map((b) => b.text || '').join('').trim();
     console.log('[books] assessment-cap extracted:', rawTxt.slice(0, 400));
     let ex; try { ex = JSON.parse(rawTxt.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim()); } catch (_) { ex = { found: false }; }
@@ -1315,7 +1316,7 @@ router.post('/vendor-contracts', express.json({ limit: '512kb' }), async (req, r
       payment_terms: b.payment_terms || null, auto_renews: !!b.auto_renews,
       renewal_notice_days: b.renewal_notice_days != null ? parseInt(b.renewal_notice_days, 10) : null,
       file_path: b.file_path || null, file_hash: b.file_hash || null, file_size_bytes: b.file_size_bytes || null,
-      extracted_data: b.extracted_data || null, extraction_model: 'claude-sonnet-4-5',
+      extracted_data: b.extracted_data || null, extraction_model: aiExecuted(b.extracted_data, 'accounting.vendor_contract_extract'),
       extraction_confidence: b.extraction_confidence || null, status: 'active',
     };
     const { data: ins, error } = await supabase.from('vendor_contracts').insert(row).select('id').single();
@@ -1518,7 +1519,7 @@ ${table}
 Return ONLY a JSON array, one object per account, no prose:
 [{"account_number":"5200","suggested_annual_dollars":12345,"rationale":"..."}]`;
 
-    const resp = await _anthropic.messages.create({ model: 'claude-sonnet-4-5', max_tokens: 4000, messages: [{ role: 'user', content: prompt }] });
+    const resp = await _anthropic.messages.create({ model: aiRoute('accounting.vendor_contract_books'), max_tokens: 4000, messages: [{ role: 'user', content: prompt }] });
     let text = (resp.content && resp.content[0] && resp.content[0].text || '').trim();
     const mm = text.match(/\[[\s\S]*\]/); if (mm) text = mm[0];
     let ai;

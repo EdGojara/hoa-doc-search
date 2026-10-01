@@ -22,6 +22,7 @@
 //     we don't ship without verifying the indexing landed.
 // ============================================================================
 
+const { executedModel: aiExecuted } = require('../lib/ai/router');
 const express = require('express');
 const multer = require('multer');
 const crypto = require('crypto');
@@ -151,7 +152,7 @@ router.post('/', upload.single('file'), async (req, res) => {
         file_path: filePath,
         file_hash: fileHash,
         file_size_bytes: req.file.size,
-        extraction_model: 'claude-sonnet-4-5',
+        extraction_model: aiExecuted(extraction && extraction.modelMessage, 'legal_updates.extract'),
         extraction_confidence: parsed.confidence || 'medium',
         extraction_notes: missingRequired.length ? `Missing: ${missingRequired.join(', ')}` : null,
         index_status: 'pending',

@@ -10,6 +10,7 @@
 // web view of a PUBLISHED issue is served separately (server.js) without auth.
 // ============================================================================
 
+const { route: aiRoute } = require('../lib/ai/router');
 const express = require('express');
 const crypto = require('crypto');
 const multer = require('multer');
@@ -23,7 +24,7 @@ const { scanProjectDecisions, persistProposals } = require('../lib/events/projec
 const { buildAnnualRecapSections } = require('../lib/newsletters/annual_recap');
 const { renderNewsletterHTML } = require('../lib/newsletters/render');
 const { sendEmail } = require('../lib/notifications/email');
-const Anthropic = require('@anthropic-ai/sdk');
+const Anthropic = require('../lib/ai/anthropic');
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
@@ -305,7 +306,7 @@ Rules: warm, welcoming, service-oriented; write for homeowners, not HOA professi
 Topic / facts from staff: "${String(b.prompt).trim()}"
 ${b.title ? 'Suggested title: ' + b.title : ''}
 Return JSON: { "title": "a short friendly title", "markdown": "the article body in simple markdown (paragraphs, and - bullet lists if useful), ~120-260 words" }`;
-    const resp = await anthropic.messages.create({ model: 'claude-sonnet-4-5', max_tokens: 1200, system: sys, messages: [{ role: 'user', content: user }] });
+    const resp = await anthropic.messages.create({ model: aiRoute('newsletters.write'), max_tokens: 1200, system: sys, messages: [{ role: 'user', content: user }] });
     const text = (resp.content || []).map((c) => c.text || '').join('');
     console.log('[newsletter.ai-write] returned:', text.slice(0, 200));
     const a = text.indexOf('{'), z = text.lastIndexOf('}');
@@ -460,7 +461,7 @@ Rules: warm and inviting; NEVER invent dates, times, prices, or locations (those
         const user = `Event description from staff: "${String(b.prompt).trim()}"
 Known facts (do not restate literally unless natural): community=${community.name}, date=${fields.event_date || ''}, time=${fields.event_time || ''}, location=${[fields.location_name, fields.location_address].filter(Boolean).join(' ')}.
 Return JSON: { "kicker": "<= 4 words, e.g. community name or 'You're invited'", "headline": "the big flyer title, <= 5 words, exciting", "tagline": "one inviting line, <= 16 words", "description": "1-2 warm sentences about the event" }`;
-        const resp = await anthropic.messages.create({ model: 'claude-sonnet-4-5', max_tokens: 600, system: sys, messages: [{ role: 'user', content: user }] });
+        const resp = await anthropic.messages.create({ model: aiRoute('newsletters.write'), max_tokens: 600, system: sys, messages: [{ role: 'user', content: user }] });
         const text = (resp.content || []).map((c) => c.text || '').join('');
         const a = text.indexOf('{'), z = text.lastIndexOf('}');
         if (a >= 0 && z > a) { const p = JSON.parse(text.slice(a, z + 1)); copy = { headline: p.headline || copy.headline, tagline: p.tagline || copy.tagline, description: p.description || copy.description, kicker: p.kicker || copy.kicker }; }
@@ -505,7 +506,7 @@ Rules: warm and inviting; NEVER invent dates, times, prices, or locations (suppl
     const user = `Event description from staff: "${String(b.prompt).trim()}"
 Known facts: community=${communityName}, date=${fields.event_date || ''}, time=${fields.event_time || ''}, location=${[fields.location_name, fields.location_address].filter(Boolean).join(' ')}.
 Return JSON: { "kicker": "<= 4 words", "headline": "big title <= 5 words", "tagline": "one inviting line <= 16 words", "description": "1-2 warm sentences" }`;
-    const resp = await anthropic.messages.create({ model: 'claude-sonnet-4-5', max_tokens: 600, system: sys, messages: [{ role: 'user', content: user }] });
+    const resp = await anthropic.messages.create({ model: aiRoute('newsletters.write'), max_tokens: 600, system: sys, messages: [{ role: 'user', content: user }] });
     const text = (resp.content || []).map((c) => c.text || '').join('');
     const a = text.indexOf('{'), z = text.lastIndexOf('}');
     const copy = (a >= 0 && z > a) ? JSON.parse(text.slice(a, z + 1)) : {};

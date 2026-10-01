@@ -20,6 +20,7 @@
 // drafts are scoped to a single submitter email at creation time.
 // ============================================================================
 
+const { route: aiRoute, executedModel: aiExecuted } = require('../lib/ai/router');
 const express = require('express');
 const multer = require('multer');
 const crypto = require('crypto');
@@ -29,7 +30,7 @@ const crypto = require('crypto');
 // schedule. Same hole found in api/pool_access.js the same day.
 const { requireStaff } = require('./_require_admin');
 const pdfParse = require('pdf-parse');
-const Anthropic = require('@anthropic-ai/sdk');
+const Anthropic = require('../lib/ai/anthropic');
 const { createClient } = require('@supabase/supabase-js');
 const { safeErrorMessage } = require('./_safe_error');
 
@@ -1071,7 +1072,7 @@ The PDF is attached to this message. Read the form-field values as they appear v
     // way to read interactive Adobe PDF forms where the values sit on top
     // of the underlying underscores.
     const response = await anthropic.messages.create({
-      model: 'claude-sonnet-4-5',
+      model: aiRoute('amenities.contract_extract'),
       max_tokens: 2000,
       messages: [{
         role: 'user',
@@ -1286,7 +1287,7 @@ The PDF is attached to this message. Read the form-field values as they appear v
               page_count: pageCount,
               effective_date: extracted.contract_start_date || null,
               expiration_date: extracted.contract_end_date || null,
-              extraction_model: 'claude-sonnet-4-5',
+              extraction_model: aiExecuted(response, 'amenities.contract_extract'),
               extraction_confidence: 'medium',
               extraction_notes: extracted.notes || null,
             });

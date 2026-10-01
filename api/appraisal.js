@@ -34,11 +34,12 @@
 //   GET    /api/appraisal/community/:id/coverage  match coverage stats
 // =============================================================================
 
+const { route: aiRoute, executedModel: aiExecuted } = require('../lib/ai/router');
 const express = require('express');
 const multer = require('multer');
 const crypto = require('crypto');
 const { createClient } = require('@supabase/supabase-js');
-const Anthropic = require('@anthropic-ai/sdk');
+const Anthropic = require('../lib/ai/anthropic');
 const { safeErrorMessage } = require('./_safe_error');
 const { resolveProperty } = require('../lib/entity_resolution');
 const { getActingUser } = require('./_acting_user');
@@ -148,7 +149,7 @@ async function detectColumnMapping(headerRow, sampleRows) {
     sampleRows.slice(0, 10).map((r) => r.join('|')).join('\n')
   }`;
   const completion = await anthropic.messages.create({
-    model: 'claude-haiku-4-5-20251001',
+    model: aiRoute('appraisal.column_map'),
     max_tokens: 1500,
     messages: [{ role: 'user', content: MAPPING_PROMPT + '\n\n' + payload }],
   });
@@ -161,7 +162,7 @@ async function detectColumnMapping(headerRow, sampleRows) {
   } catch (e) {
     throw new Error(`column mapping returned invalid JSON: ${e.message}`);
   }
-  return { mapping: parsed, duration_ms: Date.now() - t0 };
+  return { mapping: parsed, model: completion.model, duration_ms: Date.now() - t0 };
 }
 
 // ----------------------------------------------------------------------------
@@ -270,7 +271,7 @@ router.post('/ingest', upload.single('csv'), async (req, res) => {
     }
 
     // AI column mapping — one call, fixed cost
-    const { mapping } = await detectColumnMapping(headerRow, dataRows);
+    const { mapping, model: mappingModel } = await detectColumnMapping(headerRow, dataRows);
     const countySource = ['FBCAD', 'HCAD', 'OTHER'].includes(mapping.county_source) ? mapping.county_source : 'OTHER';
     const pullDate = overridePullDate || mapping.pull_date_hint || new Date().toISOString().slice(0, 10);
 
@@ -317,7 +318,7 @@ router.post('/ingest', upload.single('csv'), async (req, res) => {
         status: 'previewed',
         raw_extraction: { rows: resolved, pull_date: pullDate },
         column_mapping: mapping,
-        extraction_model: 'claude-haiku-4-5-20251001',
+        extraction_model: aiExecuted({ model: mappingModel }, 'appraisal.column_map'),
       })
       .select('id')
       .single();

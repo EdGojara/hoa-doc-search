@@ -19,11 +19,12 @@
 // 'needs_review' status; operator picks GL before approval.
 // ============================================================================
 
+const { route: aiRoute } = require('../lib/ai/router');
 const express = require('express');
 const multer = require('multer');
 const crypto = require('crypto');
 const { createClient } = require('@supabase/supabase-js');
-const Anthropic = require('@anthropic-ai/sdk');
+const Anthropic = require('../lib/ai/anthropic');
 const { createInvoice, attachSourceAndRecode, approveInvoice, recordPayment, autoCodeGlAccount } = require('../lib/accounting/ap_engine');
 const { safeErrorMessage } = require('./_safe_error');
 const { captureServerError } = require('../lib/capture_error');
@@ -92,7 +93,7 @@ Return ONLY the JSON.`;
 async function extractInvoice(pdfBuffer) {
   const t0 = Date.now();
   const response = await anthropic.messages.create({
-    model: 'claude-sonnet-4-5',
+    model: aiRoute('ap.invoice_extract'),
     max_tokens: 4000,
     messages: [{
       role: 'user',

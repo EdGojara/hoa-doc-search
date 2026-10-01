@@ -220,7 +220,7 @@ the SDK's `document` content type:
 
 ```js
 const response = await anthropic.messages.create({
-  model: 'claude-sonnet-4-5',
+  model: aiRoute('<workflow>'),   // never a model id; see "Model selection" below
   max_tokens: 2000,
   messages: [{
     role: 'user',
@@ -1027,8 +1027,20 @@ shape or it will reproduce the bug. (`fetchAttachmentBlocks`, `fetchAllAttachmen
   perfect 95% of the time, the 5% failures hit billion-dollar
   consequences for HOA management. Regex / heuristic / largest-dollar
   scan / etc. as a safety net.
-- **Model name**: `'claude-sonnet-4-5'` is the standard. Don't change
-  per-feature without a reason.
+- **Model selection is central** (Issue #12, 2026-10-01). Code names a
+  WORKFLOW, never a model: `const Anthropic = require('../lib/ai/anthropic')`
+  (the routed client) and `model: aiRoute('drv.citation')`. Which model each
+  workflow uses lives ONLY in `lib/ai/routing.config.json` (standard tier =
+  Sonnet 5; deliberate 4.6 / Haiku / Opus pins). Rollback or test without a
+  code edit: `AI_ROUTE_OVERRIDES='{"drv.*":"sonnet-4-6"}'` or
+  `AI_ROUTE__DRV__CITATION=sonnet-4-6`. Provenance fields record
+  `aiExecuted(resp, '<workflow>')` (the model that actually ran), never a
+  constant. High-consequence workflows never fall back automatically.
+  Sonnet 5 thinks adaptively; routed calls disable thinking unless a call or
+  workflow asks, because readers use `content[0].text`. **ENFORCED**:
+  `scripts/check_model_ids.js` (in `npm test`) fails the build on a
+  hard-coded model id, a raw `@anthropic-ai/sdk` client, or an unknown
+  workflow key. New AI feature = add a workflow to the config.
 
 ---
 

@@ -15,6 +15,7 @@
 //   POST /api/collections-ingest/ingest/:id/discard     throw the batch away
 //   GET  /api/collections-ingest/batches                ingest history
 // ============================================================================
+const { executedModel: aiExecuted } = require('../lib/ai/router');
 const express = require('express');
 const multer = require('multer');
 const crypto = require('crypto');
@@ -62,7 +63,7 @@ router.post('/ingest', upload.single('pdf'), async (req, res) => {
       await supabase.storage.from('documents').upload(storagePath, req.file.buffer, { contentType: 'application/pdf', upsert: true });
     } catch (e) { console.warn('[collections_ingest] storage upload failed (non-fatal):', e.message); storagePath = null; }
 
-    const { parsed, matters } = await extractWinsteadMatters(req.file.buffer);
+    const { parsed, matters, model: extractedModel } = await extractWinsteadMatters(req.file.buffer);
 
     // Current state for this community — to compute deltas.
     const { data: existing } = await supabase.from('ar_account_collections')
@@ -106,7 +107,7 @@ router.post('/ingest', upload.single('pdf'), async (req, res) => {
       total_matters: matters.length, matters_matched: matched, matters_unmatched: matters.length - matched,
       status: 'previewed',
       raw_extraction: { report_as_of: parsed.report_as_of, association_name: parsed.association_name, rows: resolved, resolved_candidates: resolvedCandidates },
-      extraction_model: 'claude-sonnet-4-5',
+      extraction_model: aiExecuted({ model: extractedModel }, 'collections.winstead_extract'),
     }).select('id').single();
     if (bErr) throw bErr;
 

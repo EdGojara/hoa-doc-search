@@ -18,11 +18,12 @@
 // All endpoints scoped to BEDROCK_MGMT_CO_ID for now (single-tenant).
 // ============================================================================
 
+const { route: aiRoute } = require('../lib/ai/router');
 const express = require('express');
 const multer = require('multer');
 const { createClient } = require('@supabase/supabase-js');
 const OpenAI = require('openai');
-const Anthropic = require('@anthropic-ai/sdk');
+const Anthropic = require('../lib/ai/anthropic');
 const { safeErrorMessage } = require('./_safe_error');
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
@@ -114,7 +115,7 @@ router.post('/extract-contact-from-email', express.json({ limit: '256kb' }), asy
       "Never fabricate. If unsure of vendor_category, use 'other'.";
 
     const response = await anthropic.messages.create({
-      model: 'claude-haiku-4-5-20251001',
+      model: aiRoute('contacts.extract_from_email'),
       max_tokens: 600,
       system,
       messages: [{ role: 'user', content: 'Email:\n\n' + email_text }],

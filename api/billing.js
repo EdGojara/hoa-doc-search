@@ -28,9 +28,10 @@
 // now (eventually a privileged-user action in the UI).
 // ============================================================================
 
+const { route: aiRoute, executedModel: aiExecuted } = require('../lib/ai/router');
 const express = require('express');
 const { createClient } = require('@supabase/supabase-js');
-const Anthropic = require('@anthropic-ai/sdk');
+const Anthropic = require('../lib/ai/anthropic');
 const multer = require('multer');
 const puppeteer = require('puppeteer');
 const { renderInvoiceHTML } = require('./invoice_template');
@@ -1525,7 +1526,7 @@ Return ONLY a JSON object with these keys (use 0 if a status is not present in t
 Return ONLY the JSON. No markdown, no preamble, no commentary.`;
 
     const aiResp = await anthropic.messages.create({
-      model: 'claude-sonnet-4-6',
+      model: aiRoute('billing.vantaca_violation_import'),
       max_tokens: 800,
       messages: [{
         role: 'user',
@@ -1631,7 +1632,7 @@ Return ONLY the JSON. No markdown, no preamble, no commentary.`;
         contract_owner_charges: (ownerCharges || []).map(r => r.category)
       },
       prompt: promptText,
-      model: 'claude-sonnet-4-6',
+      model: aiExecuted(aiResp, 'billing.vantaca_violation_import'),
       response: { extracted: parsed, line_items_created: newLines.length, subtotal },
       input_tokens: aiResp.usage ? aiResp.usage.input_tokens : null,
       output_tokens: aiResp.usage ? aiResp.usage.output_tokens : null,
@@ -2134,7 +2135,7 @@ router.post('/contracts/parse', upload.single('pdf'), async (req, res) => {
     const pdfBase64 = req.file.buffer.toString('base64');
 
     const completion = await anthropic.messages.create({
-      model: 'claude-sonnet-4-5',
+      model: aiExecuted(completion, 'billing.contract_parse'),
       max_tokens: 4000,
       messages: [{
         role: 'user',
@@ -2168,7 +2169,7 @@ router.post('/contracts/parse', upload.single('pdf'), async (req, res) => {
       request_input: { file_name: req.file.originalname, file_size: req.file.size },
       retrieved_context: null,
       prompt: 'CONTRACT_EXTRACTION_PROMPT',
-      model: 'claude-sonnet-4-5',
+      model: aiRoute('billing.contract_parse'),
       response: parsed,
       input_tokens: completion.usage?.input_tokens || null,
       output_tokens: completion.usage?.output_tokens || null,

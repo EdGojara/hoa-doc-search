@@ -16,10 +16,11 @@
 // delivery stays on HomeWise until that's cut over too.
 // ============================================================================
 
+const { route: aiRoute } = require('../lib/ai/router');
 const express = require('express');
 const multer = require('multer');
 const { createClient } = require('@supabase/supabase-js');
-const Anthropic = require('@anthropic-ai/sdk');
+const Anthropic = require('../lib/ai/anthropic');
 const { safeErrorMessage } = require('./_safe_error');
 const { getLegalFlag } = require('../lib/enforcement/legal_flag');
 const { resolveCurrentAR } = require('../lib/ar/resolve_current_ar');
@@ -363,7 +364,7 @@ router.post('/scan', upload.single('file'), async (req, res) => {
       : { type: 'image', source };
 
     const completion = await anthropic.messages.create({
-      model: 'claude-sonnet-4-5',
+      model: aiRoute('home_sales.scan'),
       max_tokens: 1500,
       messages: [{ role: 'user', content: [docBlock, { type: 'text', text: SCAN_PROMPT }] }],
     });
