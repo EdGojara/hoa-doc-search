@@ -451,10 +451,11 @@
       "prior": "sonnet-4-5"
     },
     "email.compose_draft": {
-      "model": "tier:standard",
-      "fallback": "sonnet-4-6",
+      "model": "sonnet-4-6",
+      "fallback": "sonnet-5",
       "consequence": "standard",
-      "prior": "sonnet-4-5"
+      "prior": "sonnet-4-5",
+      "held_back": "2026-10-01: Sonnet 5 failed the forward-note first-person voice check 3/3 (tests/test_forward_note_voice.js); 4.5 and 4.6 passed 3/3. Held on 4.6 (4.5 retires) until the prompt is re-tuned and re-evaluated."
     },
     "email.suggest_reviewer": {
       "model": "haiku-4-5",
@@ -562,12 +563,6 @@
       "prior": "sonnet-4-5"
     },
     "board.packet_section_extract": {
-      "model": "tier:standard",
-      "fallback": "sonnet-4-6",
-      "consequence": "standard",
-      "prior": "sonnet-4-5"
-    },
-    "board.packet_flags": {
       "model": "tier:standard",
       "fallback": "sonnet-4-6",
       "consequence": "standard",
