@@ -179,10 +179,11 @@
       "prior": "haiku-4-5"
     },
     "drv.vision": {
-      "model": "tier:standard",
+      "model": "sonnet-4-6",
       "fallback": null,
       "consequence": "high",
-      "prior": "sonnet-4-5"
+      "prior": "sonnet-4-5",
+      "held_back": "2026-10-01 production eval, 20 reviewer-confirmed violation photos: Sonnet 5 said CLEAN on 7/20 (missed violations); 4.5 and 4.6 missed 0, and 4.6 matched the confirmed category 12/20 vs 4.5 10/20. Held on 4.6 until a Sonnet 5 vision prompt is re-calibrated and re-evaluated."
     },
     "drv.vantaca_import": {
       "model": "tier:standard",
@@ -866,10 +867,11 @@
       "legacy_env": "CLAIRE_DOC_MODEL"
     },
     "voice.portal_sse": {
-      "model": "tier:standard",
-      "fallback": "sonnet-4-6",
+      "model": "sonnet-4-6",
+      "fallback": "sonnet-5",
       "consequence": "standard",
-      "prior": "sonnet-4-5"
+      "prior": "sonnet-4-5",
+      "held_back": "Precautionary: Ed chose Sonnet 4.5 here after a live warmth A/B (2026-05-24); Sonnet 5 voice tone untested. Held on the nearest model (4.6) until a listen test."
     },
     "voice.call_brief": {
       "model": "haiku-4-5",

@@ -58,7 +58,7 @@ const last = () => records[records.length - 1];
     router.modelId('asked.chat') === 'claude-sonnet-4-6' && router.modelId('voice.llm') === 'claude-haiku-4-5-20251001' && router.modelId('acc.vision_extract') === 'claude-opus-4-7');
   let threw = null; try { router.route('no.such.workflow'); } catch (e) { threw = e.message; }
   check('an unknown workflow throws at route() time (fails at module load, not mid-request)', /unknown workflow/.test(threw || ''));
-  check('route() returns a token, labelFor turns it into the model id', router.labelFor(router.route('drv.vision')) === 'claude-sonnet-5' && router.labelFor('claude-x') === 'claude-x');
+  check('route() returns a token, labelFor turns it into the model id', router.labelFor(router.route('drv.citation')) === 'claude-sonnet-5' && router.labelFor(router.route('drv.vision')) === 'claude-sonnet-4-6' && router.labelFor('claude-x') === 'claude-x');
 
   // ---- overrides / rollback ------------------------------------------------
   process.env.AI_ROUTE_OVERRIDES = JSON.stringify({ 'drv.*': 'sonnet-4-5', 'drv.vision': 'sonnet-4-6' });
