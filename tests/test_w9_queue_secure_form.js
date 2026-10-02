@@ -199,6 +199,50 @@ check('queue: a read failure is LOUD (throws -> API 500 with a clear panel messa
   await assert.rejects(() => quiet(() => Q().loadW9Queue(db, { year: 2026 })));
   assert.ok(/W-9 compliance queue could not load .*Payments are not affected/.test(src('public/index.html')));
 });
+// Query shape guard (Ed 2026-10-02: the first build took 4.4 s with 23 serial
+// requests, re-reading vendors 5x and payments 3x). Each fact is read once; the
+// request count does not grow with vendors or associations; no read puts the
+// whole vendor table in an .in() list.
+function counted(db) {
+  const reads = []; const orig = db.from;
+  db.from = (t) => {
+    const qq = orig(t); const ins = qq.in; const entry = { table: t, inSizes: [] }; reads.push(entry);
+    qq.in = (c, vs) => { entry.inSizes.push([c, vs.length]); return ins(c, vs); };
+    return qq;
+  };
+  return reads;
+}
+function bigWorld(nVendors) {
+  const db = world();
+  for (let i = 0; i < nVendors; i++) {
+    const id = `v-big-${i}`; db.T.vendors.push(V(id, `Big Vendor ${i}`));
+    db.T.ap_payments.push(PAY(`pb-${i}-1`, id, C1, 300000), PAY(`pb-${i}-2`, id, C2, 300000));
+    db.T.ap_invoices.push({ id: `bb-${i}`, vendor_id: id, community_id: C1, total_cents: 5000, amount_paid_cents: 0, status: 'awaiting_approval' });
+  }
+  return db;
+}
+check('query shape: each table read once per load (vendors twice: contact + tax), no per-vendor queries', async () => {
+  const db = bigWorld(40); const reads = counted(db);
+  const q = await quiet(() => Q().loadW9Queue(db, { year: 2026 }));
+  assert.ok(q.vendors.length >= 40);
+  const per = {}; for (const r of reads) per[r.table] = (per[r.table] || 0) + 1;
+  const CAP = { communities: 1, vendors: 2, ap_payments: 1, vendor_documents: 1, email_attachments: 1, vendor_ach_requests: 1, management_companies: 1, ap_payment_applications: 1, ap_invoices: 3 };
+  for (const [t, n] of Object.entries(per)) assert.ok(n <= (CAP[t] ?? 0), `${t} read ${n}x (cap ${CAP[t] ?? 0}): ${JSON.stringify(per)}`);
+});
+check('query shape: request count is the SAME for 5 and 200 vendors (no N+1), and no .in() exceeds 200 ids', async () => {
+  const small = bigWorld(5); const rs = counted(small); await quiet(() => Q().loadW9Queue(small, { year: 2026 }));
+  const large = bigWorld(200); const rl = counted(large); await quiet(() => Q().loadW9Queue(large, { year: 2026 }));
+  // 200 vendors -> 400 payments: one extra 200-id chunk each for applications/categories is the only growth allowed.
+  assert.ok(rl.length - rs.length <= 4, `requests grew from ${rs.length} to ${rl.length}`);
+  for (const r of rl) for (const [c, n] of r.inSizes) assert.ok(n <= 200, `${r.table}.${c} .in() with ${n} values`);
+  assert.ok(!rl.some((r) => r.table === 'vendors' && r.inSizes.length), 'vendors are never read by an id list');
+});
+check('query shape: the queue computes flags with the SAME projectBills (context), not a copy', () => {
+  const qsrc = code('lib/tax/w9_queue.js');
+  assert.ok(/projectBills\(supabase, bills\.map/.test(qsrc) && /context: \{ outside, vendors: taxV, totals, categories: billCats \}/.test(qsrc));
+  assert.ok(!/evaluatePayment\(/.test(qsrc), 'no second evaluation path in the queue');
+});
+
 check('queue API + panel are wired; panel is vendor-first and expandable; no stored queue state', () => {
   assert.ok(/router\.get\('\/w9-queue'/.test(src('api/ap.js')) && /loadW9Queue\(supabase, \{ year \}\)/.test(src('api/ap.js')));
   const ui = src('public/index.html');
