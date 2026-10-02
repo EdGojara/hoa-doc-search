@@ -46505,17 +46505,24 @@ ${questionsPage}
     window.apLoadW9Queue = async function () {
       const el = document.getElementById('ap-w9-queue');
       if (!el) return;
+      // A stalled request must not leave the panel silently missing: give up
+      // after 30s and say so (it normally answers in well under a second).
+      const ctl = (typeof AbortController === 'function') ? new AbortController() : null;
+      const timer = ctl ? setTimeout(() => ctl.abort(), 30000) : null;
       try {
         const fetchFn = window._authFetch || fetch;
-        const r = await fetchFn('/api/ap/w9-queue');
+        const r = await fetchFn('/api/ap/w9-queue', ctl ? { signal: ctl.signal } : {});
         const j = await r.json();
         if (!r.ok) throw new Error(j.error || 'failed');
         apW9Data = j;
         apRenderW9Queue();
       } catch (e) {
+        if (e && e.name === 'AbortError') e = new Error('timed out after 30 seconds');
         // Loud, never silent, and never in the way of paying bills.
         el.style.display = '';
         el.innerHTML = `<div class="panel" style="border-left:4px solid #b91c1c; padding:10px 14px; font-size:12.5px; color:#991b1b;">W-9 compliance queue could not load (${apEsc(e.message)}). Payments are not affected.</div>`;
+      } finally {
+        if (timer) clearTimeout(timer);
       }
     };
     window.apW9Toggle = function () { apW9Open = !apW9Open; apRenderW9Queue(); };

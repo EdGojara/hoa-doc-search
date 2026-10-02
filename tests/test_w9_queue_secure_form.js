@@ -198,6 +198,8 @@ check('queue: a read failure is LOUD (throws -> API 500 with a clear panel messa
   const db = world(); const orig = db.from; db.from = (t) => (t === 'vendor_documents' ? { select() { return this; }, eq() { return this; }, order() { return this; }, range() { return Promise.resolve({ data: null, error: { message: 'boom' } }); } } : orig(t));
   await assert.rejects(() => quiet(() => Q().loadW9Queue(db, { year: 2026 })));
   assert.ok(/W-9 compliance queue could not load .*Payments are not affected/.test(src('public/index.html')));
+  // A stalled request is aborted and reported, never a silently missing panel.
+  assert.ok(/setTimeout\(\(\) => ctl\.abort\(\), 30000\)/.test(src('public/index.html')) && /timed out after 30 seconds/.test(src('public/index.html')));
 });
 // Query shape guard (Ed 2026-10-02: the first build took 4.4 s with 23 serial
 // requests, re-reading vendors 5x and payments 3x). Each fact is read once; the
@@ -246,7 +248,7 @@ check('query shape: the queue computes flags with the SAME projectBills (context
 check('queue API + panel are wired; panel is vendor-first and expandable; no stored queue state', () => {
   assert.ok(/router\.get\('\/w9-queue'/.test(src('api/ap.js')) && /loadW9Queue\(supabase, \{ year \}\)/.test(src('api/ap.js')));
   const ui = src('public/index.html');
-  assert.ok(/id="ap-w9-queue"/.test(ui) && /apW9ToggleVendor/.test(ui) && /fetchFn\('\/api\/ap\/w9-queue'\)/.test(ui) && /try \{ apLoadW9Queue\(\); \} catch/.test(ui));
+  assert.ok(/id="ap-w9-queue"/.test(ui) && /apW9ToggleVendor/.test(ui) && /fetchFn\('\/api\/ap\/w9-queue'/.test(ui) && /try \{ apLoadW9Queue\(\); \} catch/.test(ui));
   assert.ok(!/from\('[a-z_]+'\)\.(insert|update|upsert|delete)/.test(code('lib/tax/w9_queue.js')), 'queue module never writes');
 });
 
