@@ -2442,6 +2442,7 @@ Write LETTER_BODY in the warm, professional voice the homeowner will receive. Th
           '- NO signature line at the end — that\'s template-rendered.\n' +
           `- NO "Re:" line, "Sincerely,", "${BRAND.service.name}" — all template-rendered.\n` +
           '- Warm professional voice, paragraphs separated by blank lines.\n' +
+          '- Name a governing document exactly as the analysis does (the Declaration, the CC&Rs, the Design Guidelines, the Bylaws) with the section it gives. Never call a Declaration or CC&R provision "the bylaws"; they are different documents.\n' +
           `- Sign off as ${BRAND.service.name} — but the template adds that, so DO NOT include it in your output.\n\n` +
           'Output ONLY the letter body. Do not preface with "Here is the letter:" or explain anything.',
         messages: [{
@@ -2500,7 +2501,7 @@ Write LETTER_BODY in the warm, professional voice the homeowner will receive. Th
 
     // Run the customer-bound letter body through the leak filter (audience='customer').
     const letterScreen = letterBody
-      ? screenForLeaks(letterBody, { audience: 'customer', autoRewrite: true })
+      ? screenForLeaks(letterBody, { audience: 'customer', autoRewrite: true, formalLetter: true })
       : { ok: true, text: '', violations: [], blocks: [], rewrites: [] };
     if (letterScreen.blocks.length > 0) {
       console.warn('[acc-review] letter_body BLOCKED by leak filter:',
@@ -2623,7 +2624,7 @@ app.post('/acc-review/letter', upload.any(), async (req, res) => {
     // (e.g., they hand-edited and pasted in something internal). The leak
     // filter scrubs auto-rewritable phrases and BLOCKS if a hard-banned
     // phrase remains — better to fail loud than render a leaky letter.
-    const bodyScreen = screenForLeaks(body.body_text, { audience: 'customer', autoRewrite: true });
+    const bodyScreen = screenForLeaks(body.body_text, { audience: 'customer', autoRewrite: true, formalLetter: true });
     if (bodyScreen.blocks.length > 0) {
       console.warn('[acc-review/letter] body BLOCKED by leak filter:',
         bodyScreen.blocks.map((b) => `${b.reason} ("${b.matches.join('", "')}")`).join('; '));
@@ -3155,7 +3156,7 @@ app.post('/acc-review/decisions/:id/finalize', async (req, res) => {
 
     // IP-leak guard — same discipline as /acc-review/letter. Auto-rewrite soft
     // phrases; hard-block if an internal-only phrase survives.
-    const bodyScreen = screenForLeaks(bodyText, { audience: 'customer', autoRewrite: true });
+    const bodyScreen = screenForLeaks(bodyText, { audience: 'customer', autoRewrite: true, formalLetter: true });
     if (bodyScreen.blocks.length > 0) {
       return res.status(400).json({
         error: 'Letter contains internal-only phrases that cannot be sent to a homeowner. Edit the highlighted phrases before sending. ' +
@@ -3506,6 +3507,7 @@ app.post('/acc-review/decisions/:id/redraft', express.json({ limit: '64kb' }), a
           `- End with EXACTLY: "Please retain a copy of this letter for your records. If you have any questions please contact our office at ${BRAND.service.phone} or ${BRAND.service.email}."\n` +
           '- NO markdown (#, **, *, _, ---). NO internal section labels. NO letterhead/return/recipient/signature blocks. NO "Re:", "Sincerely,", company name — all template-rendered.\n' +
           '- Warm professional voice; paragraphs separated by blank lines.\n' +
+          '- Name a governing document exactly as the analysis does (the Declaration, the CC&Rs, the Design Guidelines, the Bylaws) with the section it gives. Never call a Declaration or CC&R provision "the bylaws"; they are different documents.\n' +
           '- FACTS: use ONLY what is in the case details, the staff instructions and the internal analysis. Never invent a provision or section number, a measurement, a date, a fee, a requirement or a prior communication. If the letter needs a fact that is not provided, write a bracketed placeholder like [STAFF: what is needed] instead of guessing; staff must fill it before the letter can be sent.\n\n' +
           'Output ONLY the letter body. Do not preface or explain.',
         messages: [{
@@ -3527,7 +3529,7 @@ app.post('/acc-review/decisions/:id/redraft', express.json({ limit: '64kb' }), a
     if (letterResp.stop_reason === 'max_tokens' || !/contact our office at .{4,200}\.?\s*$/i.test(bodyText)) {
       return res.status(502).json({ error: 'The draft came back incomplete — try again.' });
     }
-    const screen = screenForLeaks(bodyText, { audience: 'customer', autoRewrite: true });
+    const screen = screenForLeaks(bodyText, { audience: 'customer', autoRewrite: true, formalLetter: true });
     if (screen.blocks.length > 0) {
       return res.status(400).json({ error: 'The draft contained internal-only phrasing — try again or edit by hand.', blocked_phrases: screen.blocks });
     }
@@ -3549,7 +3551,7 @@ app.post('/acc-review/render-letter', express.json({ limit: '256kb' }), async (r
   try {
     const b = req.body || {};
     if (!b.body_text || !b.body_text.trim()) return res.status(400).json({ error: 'letter body is empty' });
-    const screen = screenForLeaks(b.body_text, { audience: 'customer', autoRewrite: true });
+    const screen = screenForLeaks(b.body_text, { audience: 'customer', autoRewrite: true, formalLetter: true });
     if (screen.blocks.length > 0) {
       return res.status(400).json({ error: 'Letter contains internal-only phrases that cannot go to a homeowner — edit them first. Blocked: ' + screen.blocks.map((x) => `"${x.matches.join('", "')}"`).join(', ') });
     }

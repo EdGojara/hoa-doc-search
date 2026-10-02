@@ -214,6 +214,7 @@ const CHECKS = [
   'tests/test_w9_queue_secure_form.js',
   'tests/test_acc_finalize.js',
   'tests/test_acc_documents.js',
+  'tests/test_acc_letter_citations.js',
 ];
 
 const args = process.argv.slice(2);
