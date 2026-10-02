@@ -1,0 +1,23 @@
+                           Example Creek Homeowners Association, Inc
+                                                Balance Sheet For 3/31/2026
+
+   Assets
+          1000 - Operating Cash Account                                               $1,435.00
+          1100 - Savings Account                                                       $2,000.73
+          1300 - Accounts Receivable                                                     $510.00
+   Total Assets                                                                                     $3,945.73
+                                                                               Total Assets         $3,945.73
+
+
+   Liabilities
+          2400 - Prepaid Owners Assessments                                               $85.00
+   Total Liabilities                                                                                   $85.00
+
+   Equity
+          3000 - Current Year Surplus/(Deficit)                                       $3,860.73
+   Total Equity                                                                                     $3,860.73
+                                                                   Total Liabilities / Equity       $3,945.73
+
+
+
+Report generated on 4/1/2026 9:00 AM - V3.11                                                               Page 1

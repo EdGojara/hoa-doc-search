@@ -1,0 +1,147 @@
+{
+  "migration": "481_onboarding_engine.sql",
+  "summary": "Trusted Onboarding Engine schema (Issue #15), extending the 452 conversion staging tables. Creates append-only onboarding_artifacts (immutable source intake: hash, size, provider, report type, period/cutoff, provenance) and onboarding_stage_events (stage completions, advances, waivers, preflight approvals; advances/waivers/approvals must be human, waivers need a reason, approvals need the preflight hash). Adds onboarding_stage / write_locked / approved_preflight_sha256 to conversion_batches with a guard trigger: one step forward only, only with a human advance event, execute only with a human-approved preflight hash, write lock open only in execute. Lets staged rows reference an artifact (domain, locator, raw source), widens conversion_runs.run_kind, records control level and declared tolerance (a tolerance needs a reason). No rows change; existing batches (stage NULL) are untouched.",
+  "requires": [
+    "452_conversion_staging.sql",
+    "480_acc_finalization_record.sql"
+  ],
+  "preflight": [
+    {
+      "name": "onboarding tables do not exist yet",
+      "sql": "SELECT count(*)::int FROM information_schema.tables WHERE table_schema = 'public' AND table_name IN ('onboarding_artifacts','onboarding_stage_events')",
+      "expect": 0
+    },
+    {
+      "name": "conversion_batches has no onboarding columns yet",
+      "sql": "SELECT count(*)::int FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'conversion_batches' AND column_name IN ('onboarding_stage','write_locked','approved_preflight_sha256')",
+      "expect": 0
+    }
+  ],
+  "expected_changes": [
+    "Creates onboarding_artifacts (append-only via trg_onboarding_artifacts_append_only; SELECT/INSERT grants; UNIQUE(batch_id, sha256); sha256/bytes/record_ownership CHECKs).",
+    "Creates onboarding_stage_events (append-only; CHECKs: human-only advance/waiver/approval, advance target, waiver reason, approval hash).",
+    "Creates function onboarding_append_only() and function conversion_batches_onboarding_guard() + trigger trg_conversion_batches_onboarding_guard.",
+    "Adds conversion_batches.onboarding_stage (nullable), write_locked (default true), approved_preflight_sha256 + CHECKs onboarding_stage_check and write_lock_only_in_execute.",
+    "Adds conversion_staged_rows.artifact_id (FK), canonical_domain, source_locator, raw_source; relaxes source_file_id to nullable with CHECK conversion_staged_rows_has_source.",
+    "Replaces conversion_runs_run_kind_check to allow the stage run kinds.",
+    "Adds conversion_control_results.level, tolerance_cents (default 0), tolerance_reason + CHECK tolerance_declared.",
+    "No row changes."
+  ],
+  "objects": {
+    "added": [
+      "column:conversion_batches.approved_preflight_sha256",
+      "column:conversion_batches.onboarding_stage",
+      "column:conversion_batches.write_locked",
+      "column:conversion_control_results.level",
+      "column:conversion_control_results.tolerance_cents",
+      "column:conversion_control_results.tolerance_reason",
+      "column:conversion_staged_rows.artifact_id",
+      "column:conversion_staged_rows.canonical_domain",
+      "column:conversion_staged_rows.raw_source",
+      "column:conversion_staged_rows.source_locator",
+      "column:onboarding_artifacts.artifact_type",
+      "column:onboarding_artifacts.batch_id",
+      "column:onboarding_artifacts.bytes",
+      "column:onboarding_artifacts.community_id",
+      "column:onboarding_artifacts.cutoff_date",
+      "column:onboarding_artifacts.derived_from_sha256",
+      "column:onboarding_artifacts.filename",
+      "column:onboarding_artifacts.id",
+      "column:onboarding_artifacts.period_end",
+      "column:onboarding_artifacts.period_start",
+      "column:onboarding_artifacts.provenance",
+      "column:onboarding_artifacts.received_at",
+      "column:onboarding_artifacts.record_ownership",
+      "column:onboarding_artifacts.sha256",
+      "column:onboarding_artifacts.source_system",
+      "column:onboarding_artifacts.storage_path",
+      "column:onboarding_artifacts.supplied_by",
+      "column:onboarding_artifacts.version_label",
+      "column:onboarding_stage_events.actor_id",
+      "column:onboarding_stage_events.actor_kind",
+      "column:onboarding_stage_events.batch_id",
+      "column:onboarding_stage_events.control_code",
+      "column:onboarding_stage_events.created_at",
+      "column:onboarding_stage_events.event_type",
+      "column:onboarding_stage_events.id",
+      "column:onboarding_stage_events.preflight_sha256",
+      "column:onboarding_stage_events.reason",
+      "column:onboarding_stage_events.result",
+      "column:onboarding_stage_events.stage",
+      "column:onboarding_stage_events.to_stage",
+      "constraint:conversion_batches.conversion_batches_onboarding_stage_check",
+      "constraint:conversion_batches.conversion_batches_write_lock_only_in_execute",
+      "constraint:conversion_control_results.conversion_control_results_tolerance_declared",
+      "constraint:conversion_staged_rows.conversion_staged_rows_artifact_id_fkey",
+      "constraint:conversion_staged_rows.conversion_staged_rows_has_source",
+      "constraint:onboarding_artifacts.onboarding_artifacts_batch_id_fkey",
+      "constraint:onboarding_artifacts.onboarding_artifacts_batch_id_sha256_key",
+      "constraint:onboarding_artifacts.onboarding_artifacts_bytes_check",
+      "constraint:onboarding_artifacts.onboarding_artifacts_community_id_fkey",
+      "constraint:onboarding_artifacts.onboarding_artifacts_derived_from_sha256_check",
+      "constraint:onboarding_artifacts.onboarding_artifacts_pkey",
+      "constraint:onboarding_artifacts.onboarding_artifacts_record_ownership_check",
+      "constraint:onboarding_artifacts.onboarding_artifacts_sha256_check",
+      "constraint:onboarding_stage_events.onboarding_events_advance_target",
+      "constraint:onboarding_stage_events.onboarding_events_approval_hash",
+      "constraint:onboarding_stage_events.onboarding_events_human_gates",
+      "constraint:onboarding_stage_events.onboarding_events_waiver_reason",
+      "constraint:onboarding_stage_events.onboarding_stage_events_actor_kind_check",
+      "constraint:onboarding_stage_events.onboarding_stage_events_batch_id_fkey",
+      "constraint:onboarding_stage_events.onboarding_stage_events_event_type_check",
+      "constraint:onboarding_stage_events.onboarding_stage_events_pkey",
+      "constraint:onboarding_stage_events.onboarding_stage_events_preflight_sha256_check",
+      "function:conversion_batches_onboarding_guard",
+      "function:onboarding_append_only",
+      "index:idx_conversion_staged_rows_artifact",
+      "index:idx_onboarding_artifacts_batch",
+      "index:idx_onboarding_stage_events_batch",
+      "index:onboarding_artifacts_batch_id_sha256_key",
+      "index:onboarding_artifacts_pkey",
+      "index:onboarding_stage_events_pkey",
+      "table:onboarding_artifacts",
+      "table:onboarding_stage_events",
+      "trigger:conversion_batches.trg_conversion_batches_onboarding_guard",
+      "trigger:onboarding_artifacts.trg_onboarding_artifacts_append_only",
+      "trigger:onboarding_stage_events.trg_onboarding_stage_events_append_only"
+    ],
+    "changed": [
+      "column:conversion_staged_rows.source_file_id",
+      "constraint:conversion_runs.conversion_runs_run_kind_check"
+    ],
+    "removed": []
+  },
+  "row_changes": {
+    "conversion_batches": 0,
+    "conversion_staged_rows": 0
+  },
+  "protected": [
+    {
+      "table": "conversion_batches",
+      "order_by": "id"
+    },
+    {
+      "table": "journal_entries",
+      "order_by": "id"
+    }
+  ],
+  "verify": [
+    {
+      "name": "no batch is enrolled in the engine yet",
+      "sql": "SELECT count(*)::int FROM conversion_batches WHERE onboarding_stage IS NOT NULL OR write_locked = false",
+      "expect": 0
+    },
+    {
+      "name": "no artifacts or stage events yet",
+      "sql": "SELECT (SELECT count(*) FROM onboarding_artifacts) + (SELECT count(*) FROM onboarding_stage_events)::int AS n",
+      "expect": 0
+    },
+    {
+      "name": "batch guard trigger present",
+      "sql": "SELECT count(*)::int FROM pg_trigger WHERE tgname = 'trg_conversion_batches_onboarding_guard'",
+      "expect": 1
+    }
+  ],
+  "api_checks": [],
+  "reload_schema": true
+}
