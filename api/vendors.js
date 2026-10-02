@@ -465,9 +465,17 @@ router.patch('/:vendorId', async (req, res) => {
   // vendor record, which sets the flag itself). Switching it OFF is allowed.
   if (req.body && req.body.w9_on_file === true) {
     // Already on file (a form re-sending its checkbox): nothing to prove, no change.
-    const { data: cur, error: curErr } = await supabase.from('vendors').select('w9_on_file').eq('id', vendorId).maybeSingle();
+    const { data: cur, error: curErr } = await supabase.from('vendors').select('w9_on_file, w9_uploaded_at').eq('id', vendorId).maybeSingle();
     if (curErr) return res.status(500).json({ error: 'could not read the vendor' });
-    if (cur && cur.w9_on_file === true) { delete update.w9_on_file; }
+    if (cur && cur.w9_on_file === true) {
+      // ...unless a newer W-9 has arrived since the last confirmation (e.g. a
+      // replacement through the secure form): then this re-confirms it, and
+      // w9_uploaded_at moves forward so the W-9 queue clears the review.
+      const { data: curDoc, error: cdErr } = await supabase.from('vendor_documents').select('uploaded_at').eq('vendor_id', vendorId).eq('doc_type', 'w9').eq('is_current', true).limit(1);
+      if (cdErr) return res.status(500).json({ error: 'could not check for a W-9 document' });
+      const newer = curDoc && curDoc[0] && Date.parse(curDoc[0].uploaded_at) > (cur.w9_uploaded_at ? Date.parse(cur.w9_uploaded_at) : 0) + 1000;
+      if (!newer) delete update.w9_on_file;
+    }
   }
   if (req.body && req.body.w9_on_file === true && 'w9_on_file' in update) {
     const { data: w9doc, error: w9err } = await supabase.from('vendor_documents').select('id').eq('vendor_id', vendorId).eq('doc_type', 'w9').eq('is_current', true).limit(1);
@@ -1432,22 +1440,17 @@ router.post('/:vendorId/w9', upload.single('pdf'), async (req, res) => {
       await supabase.storage.from('documents').upload(storagePath, req.file.buffer, { contentType: 'application/pdf', upsert: true });
     } catch (e) { console.warn('[vendors] W-9 storage upload failed (non-fatal):', e.message); storagePath = null; }
 
-    // Supersede the current W-9 (keep it as history), then file the new one as current.
-    const hadPriorCurrent = priors.some(d => d.is_current);
-    if (hadPriorCurrent) {
-      await supabase.from('vendor_documents')
-        .update({ is_current: false, superseded_at: new Date().toISOString() })
-        .eq('vendor_id', vendorId).eq('doc_type', 'w9').eq('is_current', true);
-    }
-
+    // File it as the vendor's current W-9 (prior kept as history). One shared
+    // path with the secure form: lib/vendors/w9_documents.js (Issue #14).
     const today = new Date().toISOString().slice(0, 10);
-    const { data: doc, error: docErr } = await supabase.from('vendor_documents').insert({
-      vendor_id: vendorId, doc_type: 'w9',
-      file_name: req.file.originalname || 'W-9.pdf', file_url: storagePath,
-      effective_date: today, is_current: true, file_hash: fileHash, content_hash: contentHash,
+    const filed = await require('../lib/vendors/w9_documents').fileW9Document(supabase, {
+      vendorId, fileHash, contentHash, source: 'staff_upload',
+      fileName: req.file.originalname || 'W-9.pdf', fileUrl: storagePath,
       notes: ex.parsed ? `${ex.parsed.tax_classification}${ex.parsed.tin ? ' · TIN on file' : ''}` : 'W-9 (not auto-read)',
-    }).select().single();
-    if (docErr) throw docErr;
+    });
+    if (filed.duplicate) return res.json({ ok: true, duplicate: true, reason: filed.duplicate, message: 'That W-9 is already on file — nothing changed.' });
+    const doc = filed.document;
+    const hadPriorCurrent = filed.replaced_prior;
 
     // Flip w9_on_file + capture tax fields + set the SUGGESTED 1099 flag.
     const vUpdate = { w9_on_file: true, w9_uploaded_at: new Date().toISOString(), w9_received_date: today };

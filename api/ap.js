@@ -809,6 +809,21 @@ router.get('/ed-queue', async (req, res) => {
 // to find the four that needed them. Nobody does that, so nothing ever got
 // approved and every bill fell through to "release anyway". A control nobody is
 // routed to isn't a control. This is the route. (Ed 2026-07-15.)
+// GET /w9-queue (Issue #14): the W-9 compliance queue, one row per vendor with
+// association detail. Read-only and derived from stored facts (lib/tax/w9_queue);
+// informational, never blocks a payment. ?year= defaults to the current year.
+router.get('/w9-queue', async (req, res) => {
+  try {
+    const year = Number(req.query.year) || new Date().getFullYear();
+    if (year < 2020 || year > 2100) return res.status(400).json({ error: 'invalid_year' });
+    const q = await require('../lib/tax/w9_queue').loadW9Queue(supabase, { year });
+    res.json({ ok: true, ...q });
+  } catch (err) {
+    console.error('[ap] w9-queue failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
 router.get('/manager-queue', async (req, res) => {
   try {
     const { data: invs, error } = await supabase.from('ap_invoices')

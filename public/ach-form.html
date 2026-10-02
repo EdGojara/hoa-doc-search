@@ -38,13 +38,14 @@
   <div class="card">
     <div class="hd">
       <div class="co">Bedrock Association Management</div>
-      <div class="t">Secure vendor ACH enrollment</div>
+      <div class="t" id="hd-t">Secure vendor ACH enrollment</div>
       <div class="lock">🔒 Encrypted connection. Your details are not sent by email.</div>
     </div>
     <div id="loading" class="state"><p>Loading your secure form…</p></div>
 
     <div id="form" class="bd" hidden>
       <div class="ctx" id="ctx"></div>
+      <div id="ach-fields">
       <p style="font-size:13.5px;color:var(--body);margin:0 0 4px">Please enter the bank account where you would like to receive electronic (ACH) payments.</p>
 
       <label for="holder">Account holder name (as it appears on the account)</label>
@@ -75,11 +76,12 @@
       <input id="doc" type="file" accept="application/pdf,image/*" style="padding:8px 10px">
       <div class="hint">Helps us confirm the account. PDF or photo. Optional.</div>
 
-      <label for="w9doc" style="margin-top:16px">W-9 (recommended)</label>
+      </div>
+      <label for="w9doc" style="margin-top:16px" id="w9-label">W-9 (recommended)</label>
       <input id="w9doc" type="file" accept="application/pdf,image/*" style="padding:8px 10px">
-      <div class="hint">Attach your current IRS Form W-9 so we have it on file for tax reporting. PDF or photo. Optional.</div>
+      <div class="hint" id="w9-hint">Attach your current IRS Form W-9 so we have it on file for tax reporting. PDF or photo. Optional.</div>
 
-      <div style="margin-top:22px;border-top:1px solid var(--line);padding-top:16px">
+      <div style="margin-top:22px;border-top:1px solid var(--line);padding-top:16px" id="auth-fields">
         <div style="font-size:13px;font-weight:600;color:var(--ink);margin-bottom:8px">Authorization &amp; electronic signature</div>
         <div style="font-size:12.5px;color:var(--body);background:#f7f9fc;border:1px solid var(--line);border-radius:8px;padding:11px 13px;margin-bottom:12px" id="auth-stmt">
           I authorize Bedrock Association Management to initiate electronic (ACH) payments to the account above, and to make corrections by electronic entry if needed. I certify that I am authorized to provide this banking information and that it is accurate. This authorization stays in effect until I notify Bedrock to cancel or change it.
@@ -96,13 +98,13 @@
 
       <button id="submit">Sign &amp; submit securely</button>
       <div id="msg" class="msg"></div>
-      <div class="foot">Bedrock verifies every enrollment by phone before any payment is processed. If you did not expect this request, please do not enter anything and contact us.</div>
+      <div class="foot" id="foot">Bedrock verifies every enrollment by phone before any payment is processed. If you did not expect this request, please do not enter anything and contact us.</div>
     </div>
 
     <div id="done" class="state" hidden>
       <div class="ok-badge">✓</div>
       <div class="big">Thank you</div>
-      <p>Your banking information was received securely. A member of the Bedrock team will confirm the details with you by phone before any payment is set up.</p>
+      <p id="done-p">Your banking information was received securely. A member of the Bedrock team will confirm the details with you by phone before any payment is set up.</p>
     </div>
 
     <div id="unusable" class="state" hidden>
@@ -115,6 +117,19 @@
 <script>
   var token = location.pathname.split('/').filter(Boolean).pop();
   var $ = function(id){return document.getElementById(id);};
+  var w9Only = false;
+  // W-9-only link (Issue #14): same secure one-time form, collects only the W-9.
+  function applyW9Only(){
+    w9Only = true;
+    document.title = 'Secure W-9 Upload · Bedrock Association Management';
+    $('hd-t').textContent = 'Secure W-9 upload';
+    $('ach-fields').hidden = true; $('auth-fields').hidden = true;
+    $('w9-label').textContent = 'Your current IRS Form W-9';
+    $('w9-hint').textContent = 'PDF or a clear photo of the signed form. Required.';
+    $('submit').textContent = 'Submit W-9 securely';
+    $('foot').textContent = 'Your W-9 is sent over an encrypted connection, not by email. If you did not expect this request, please do not upload anything and contact us.';
+    $('done-p').textContent = 'Your W-9 was received securely. Thank you.';
+  }
   function show(id){['loading','form','done','unusable'].forEach(function(x){$(x).hidden = (x!==id);});}
 
   fetch('/api/ach/form/'+encodeURIComponent(token)).then(function(r){return r.json().then(function(j){return {ok:r.ok,j:j};});}).then(function(res){
@@ -123,10 +138,13 @@
     if(!j.usable){
       show('unusable');
       $('unusable-t').textContent = j.status==='submitted' ? 'Already submitted' : (j.status==='expired' ? 'This link has expired' : 'This link is no longer active');
-      $('unusable-p').textContent = j.status==='submitted' ? 'We have already received your banking information. Thank you.' : 'Please contact Bedrock Association Management for a new secure link.';
+      $('unusable-p').textContent = j.status==='submitted' ? (j.request_kind==='w9_only' ? 'We have already received your W-9. Thank you.' : 'We have already received your banking information. Thank you.') : 'Please contact Bedrock Association Management for a new secure link.';
       return;
     }
-    var ctx = '<b>'+esc(j.vendor_name)+'</b>, you are enrolling to receive ACH payments'+(j.community_name?(' for <b>'+esc(j.community_name)+'</b>'):'')+', requested by '+esc(j.requested_by)+'.';
+    if (j.request_kind === 'w9_only') applyW9Only();
+    var ctx = w9Only
+      ? '<b>'+esc(j.vendor_name)+'</b>, please upload your current W-9'+(j.community_name?(' for <b>'+esc(j.community_name)+'</b>'):'')+', requested by '+esc(j.requested_by)+'.'
+      : '<b>'+esc(j.vendor_name)+'</b>, you are enrolling to receive ACH payments'+(j.community_name?(' for <b>'+esc(j.community_name)+'</b>'):'')+', requested by '+esc(j.requested_by)+'.';
     $('ctx').innerHTML = ctx;
     show('form');
   }).catch(function(){ show('unusable'); });
@@ -137,9 +155,14 @@
 
   $('submit').addEventListener('click', function(){
     var msg=$('msg'); msg.className='msg'; msg.style.display='none';
+    var fd=new FormData();
+    if(w9Only){
+      if(!($('w9doc').files && $('w9doc').files[0])){ msg.textContent='Please attach your W-9.'; msg.className='msg err'; return; }
+      fd.append('w9',$('w9doc').files[0]);
+      return send(fd, 'Submit W-9 securely');
+    }
     if(!$('agree').checked){ msg.textContent='Please check the authorization box to sign.'; msg.className='msg err'; return; }
     if(!$('signer').value.trim()){ msg.textContent='Please type your full name to sign.'; msg.className='msg err'; return; }
-    var fd=new FormData();
     fd.append('account_holder_name',$('holder').value.trim());
     fd.append('bank_name',$('bank').value.trim());
     fd.append('account_type',$('atype').value);
@@ -151,6 +174,11 @@
     fd.append('authorization_agreed','true');
     if($('doc').files && $('doc').files[0]) fd.append('document',$('doc').files[0]);
     if($('w9doc').files && $('w9doc').files[0]) fd.append('w9',$('w9doc').files[0]);
+    send(fd, 'Sign & submit securely');
+  });
+
+  function send(fd, label){
+    var msg=$('msg');
     $('submit').disabled=true; $('submit').textContent='Submitting…';
     fetch('/api/ach/form/'+encodeURIComponent(token),{method:'POST',body:fd})
       .then(function(r){return r.json().then(function(j){return {ok:r.ok,j:j};});})
@@ -158,13 +186,13 @@
         if(res.ok && res.j.ok){ show('done'); return; }
         msg.textContent = (res.j && res.j.error) || 'Something went wrong. Please try again.';
         msg.className='msg err';
-        $('submit').disabled=false; $('submit').textContent='Sign & submit securely';
+        $('submit').disabled=false; $('submit').textContent=label;
       }).catch(function(){
         msg.textContent='Could not submit. Please check your connection and try again.';
         msg.className='msg err';
-        $('submit').disabled=false; $('submit').textContent='Sign & submit securely';
+        $('submit').disabled=false; $('submit').textContent=label;
       });
-  });
+  }
 </script>
 </body>
 </html>

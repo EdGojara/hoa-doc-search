@@ -42,6 +42,8 @@
   <div class="panel">
     <h2>Create a secure link</h2>
     <div class="grid">
+      <div><label>Collect</label><select id="c-kind"><option value="ach">ACH enrollment (banking + optional W-9)</option><option value="w9_only">W-9 only</option></select></div>
+      <div id="c-vpick-wrap" style="display:none"><label>Vendor record (the W-9 is filed here)</label><select id="c-vpick"><option value="">Loading vendors…</option></select></div>
       <div><label>Vendor name</label><input id="c-vendor" placeholder="e.g. UPS"></div>
       <div><label>Contact name</label><input id="c-contact" placeholder="optional"></div>
       <div><label>Contact email</label><input id="c-email" placeholder="optional"></div>
@@ -87,16 +89,39 @@
     }).catch(function(){});
   }
 
+  // W-9-only links (Issue #14) must name the vendor record the W-9 is filed to.
+  var vendorsLoaded=false;
+  function loadVendors(){
+    if(vendorsLoaded) return; vendorsLoaded=true;
+    af('/api/vendors?limit=2000').then(function(r){return r.json();}).then(function(j){
+      var list=(j.vendors||j.data||j||[]).filter(function(v){return v && v.id && v.name;}).sort(function(a,b){return a.name.localeCompare(b.name);});
+      var sel=$('c-vpick'); sel.innerHTML='<option value="">Choose the vendor…</option>';
+      list.forEach(function(v){var o=document.createElement('option');o.value=v.id;o.textContent=v.name;o.dataset.email=v.contact_email||v.email||'';sel.appendChild(o);});
+    }).catch(function(){ $('c-vpick').innerHTML='<option value="">Could not load vendors</option>'; vendorsLoaded=false; });
+  }
+  $('c-kind').addEventListener('change',function(){
+    var w9=this.value==='w9_only';
+    $('c-vpick-wrap').style.display=w9?'':'none';
+    $('c-btn').textContent=w9?'Generate secure W-9 link':'Generate secure link';
+    if(w9) loadVendors();
+  });
+  $('c-vpick').addEventListener('change',function(){
+    var o=this.selectedOptions[0]; if(!o||!o.value) return;
+    $('c-vendor').value=o.textContent; if(!$('c-email').value.trim() && o.dataset.email) $('c-email').value=o.dataset.email;
+  });
+
   $('c-btn').addEventListener('click',function(){
     var msg=$('c-msg'); msg.className='msg'; msg.style.display='none';
-    var body={vendor_name:$('c-vendor').value.trim(),contact_name:$('c-contact').value.trim(),contact_email:$('c-email').value.trim(),community_id:$('c-comm').value||null,ttl_days:$('c-ttl').value};
+    var kind=$('c-kind').value;
+    var body={request_kind:kind,vendor_name:$('c-vendor').value.trim(),contact_name:$('c-contact').value.trim(),contact_email:$('c-email').value.trim(),community_id:$('c-comm').value||null,ttl_days:$('c-ttl').value};
+    if(kind==='w9_only'){ body.vendor_id=$('c-vpick').value||null; if(!body.vendor_id){msg.textContent='Choose the vendor record the W-9 belongs to.';msg.className='msg err';return;} }
     if(!body.vendor_name){msg.textContent='Enter a vendor name.';msg.className='msg err';return;}
     $('c-btn').disabled=true;$('c-btn').textContent='Generating…';
     af('/api/ach/requests',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
       .then(function(r){return r.json().then(function(j){return {ok:r.ok,j:j};});})
       .then(function(res){
-        $('c-btn').disabled=false;$('c-btn').textContent='Generate secure link';
-        if(!res.ok){msg.textContent=res.j.error||'Could not create link.';msg.className='msg err';return;}
+        $('c-btn').disabled=false;$('c-btn').textContent=kind==='w9_only'?'Generate secure W-9 link':'Generate secure link';
+        if(!res.ok){msg.textContent=res.j.detail||res.j.error||'Could not create link.';msg.className='msg err';return;}
         $('c-link').textContent=res.j.link; $('c-linkbox').style.display='block';
         $('c-sendmsg').style.display='none'; $('c-sendmsg').className='msg';
         $('c-sendto').value=$('c-email').value.trim();
@@ -137,7 +162,7 @@
         if(r.supporting_doc_name){acts+=' <button class="btn sm g" onclick="downloadDoc(\''+r.id+'\',\'support\')" title="'+esc(r.supporting_doc_name)+'">Voided check</button>';}
         if(r.w9_doc_name){acts+=' <button class="btn sm g" onclick="downloadDoc(\''+r.id+'\',\'w9\')" title="'+esc(r.w9_doc_name)+'">W-9</button>';}
         if(r.status==='sent'||r.status==='submitted'){acts+=' <button class="btn sm g" onclick="cancelReq(\''+r.id+'\')">Cancel</button>';}
-        h+='<tr id="row-'+r.id+'"><td><b>'+esc(r.vendor_name)+'</b>'+(r.contact_email?('<br><span style="color:#6b7a8d;font-size:12px">'+esc(r.contact_email)+'</span>'):'')+'</td>'+
+        h+='<tr id="row-'+r.id+'"><td><b>'+esc(r.vendor_name)+'</b>'+(r.request_kind==='w9_only'?' <span style="font-size:11px;font-weight:700;color:#92400e;background:#fef3c7;border-radius:6px;padding:1px 6px">W-9 only</span>':'')+(r.contact_email?('<br><span style="color:#6b7a8d;font-size:12px">'+esc(r.contact_email)+'</span>'):'')+'</td>'+
            '<td>'+(r.community_id?'✓':'<span style="color:#96a0ad">company</span>')+'</td>'+
            '<td><span class="chip '+r.status+'">'+r.status+'</span></td>'+
            '<td>'+acct+'</td><td>'+fmt(r.created_at)+'</td><td>'+fmt(r.expires_at)+'</td><td><div class="acts">'+acts+'</div></td></tr>';

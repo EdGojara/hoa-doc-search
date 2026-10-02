@@ -1,0 +1,78 @@
+{
+  "migration": "478_w9_secure_form_provenance.sql",
+  "summary": "W-9 secure-form provenance (Issue #14): vendor_ach_requests gains request_kind ('ach' default, or 'w9_only' for a W-9-only secure link). vendor_documents gains source ('staff_upload' | 'secure_form') and vendor_ach_request_id (FK to the secure-form request, RESTRICT), with a rule that a secure-form document names its request and a unique index so one request can file at most one document. No rows are written; nothing sets w9_on_file, a classification or an exemption.",
+  "requires": [
+    "477_vendor_tax_reporting_status.sql"
+  ],
+  "preflight": [
+    {
+      "name": "vendor_ach_requests has no request_kind column yet",
+      "sql": "SELECT count(*)::int FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'vendor_ach_requests' AND column_name = 'request_kind'",
+      "expect": 0
+    },
+    {
+      "name": "vendor_documents has no source / vendor_ach_request_id columns yet",
+      "sql": "SELECT count(*)::int FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'vendor_documents' AND column_name IN ('source', 'vendor_ach_request_id')",
+      "expect": 0
+    }
+  ],
+  "expected_changes": [
+    "Adds vendor_ach_requests.request_kind (NOT NULL DEFAULT 'ach') with CHECK vendor_ach_requests_request_kind_check ('ach' | 'w9_only'). Existing requests read 'ach'.",
+    "Adds vendor_documents.source (nullable) with CHECK vendor_documents_source_check ('staff_upload' | 'secure_form'). Existing documents keep NULL.",
+    "Adds vendor_documents.vendor_ach_request_id (nullable, FK vendor_ach_requests, ON DELETE RESTRICT) and CHECK vendor_documents_secure_form_provenance (a 'secure_form' document must name its request).",
+    "Creates unique partial index uq_vendor_documents_ach_request (one document per secure-form request).",
+    "No row changes."
+  ],
+  "objects": {
+    "added": [
+      "column:vendor_ach_requests.request_kind",
+      "column:vendor_documents.source",
+      "column:vendor_documents.vendor_ach_request_id",
+      "constraint:vendor_ach_requests.vendor_ach_requests_request_kind_check",
+      "constraint:vendor_documents.vendor_documents_secure_form_provenance",
+      "constraint:vendor_documents.vendor_documents_source_check",
+      "constraint:vendor_documents.vendor_documents_vendor_ach_request_id_fkey",
+      "index:uq_vendor_documents_ach_request"
+    ],
+    "changed": [],
+    "removed": []
+  },
+  "row_changes": {
+    "vendor_documents": 0,
+    "vendor_ach_requests": 0,
+    "vendors": 0
+  },
+  "protected": [
+    {
+      "table": "vendors",
+      "order_by": "id"
+    },
+    {
+      "table": "ap_payments",
+      "order_by": "id"
+    },
+    {
+      "table": "journal_entries",
+      "order_by": "id"
+    }
+  ],
+  "verify": [
+    {
+      "name": "every existing request reads 'ach'",
+      "sql": "SELECT count(*)::int FROM vendor_ach_requests WHERE request_kind <> 'ach'",
+      "expect": 0
+    },
+    {
+      "name": "no existing document was given a source or request link",
+      "sql": "SELECT count(*)::int FROM vendor_documents WHERE source IS NOT NULL OR vendor_ach_request_id IS NOT NULL",
+      "expect": 0
+    },
+    {
+      "name": "one-document-per-request index present",
+      "sql": "SELECT count(*)::int FROM pg_indexes WHERE indexname = 'uq_vendor_documents_ach_request'",
+      "expect": 1
+    }
+  ],
+  "api_checks": [],
+  "reload_schema": true
+}
