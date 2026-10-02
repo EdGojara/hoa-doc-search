@@ -2725,7 +2725,7 @@
     if (!invs.length) { $('chkPay').innerHTML = (excBanner||'') + cashBanner + '<div class="card muted" style="padding:20px;">No approved bills waiting to be paid. Enter and approve bills in Bills (AP), then come back to print checks.</div>'; return; }
     const rows = invs.map((i)=>`<tr>
       <td>${i.w9_required_before_payment ? `<input type="checkbox" disabled title="${esc(i.w9_reason||'W-9 needed before payment')}">` : `<input type="checkbox" class="chk-inv" value="${i.id}" data-amt="${i.balance_cents}" checked onchange="chkUpdateBar()">`}</td>
-      <td>${esc(i.vendor_name)}${i.w9_required_before_payment ? ` <span title="${esc(i.w9_reason||'')}" style="font-size:11px; font-weight:700; color:#b91c1c; background:#fdecec; border-radius:6px; padding:1px 6px;">W-9 needed before payment</span>` : ''}</td><td>${esc(i.vendor_invoice_number||'—')}</td>
+      <td>${esc(i.vendor_name)}${i.w9_required_before_payment ? ` <span title="${esc(i.w9_reason||'')}" style="font-size:11px; font-weight:700; color:#b91c1c; background:#fdecec; border-radius:6px; padding:1px 6px;">W-9 needed before payment</span>` : ''}${i.w9_warning ? ` <span title="${esc(i.w9_reason||'')} (warn mode: payable now; will be refused once the W-9 gate is enforced)" style="font-size:11px; font-weight:700; color:#92400e; background:#fef3c7; border-radius:6px; padding:1px 6px;">W-9 needed (warn)</span>` : ''}</td><td>${esc(i.vendor_invoice_number||'—')}</td>
       <td>${esc(fmtDate(i.invoice_date))}</td><td>${esc(i.description||'')}</td>
       <td>${i.support_doc_url?`<a href="${i.support_doc_url}" target="_blank" rel="noopener" title="Open the invoice">📎 View</a>`:'<span class="muted">—</span>'}</td>
       <td class="num">${fmt(i.balance_cents)}</td></tr>`).join('');
@@ -2795,6 +2795,11 @@
     const n = j.check_count || 0;
     await renderChecks();
     const pay = $('chkPay');
+    // W-9 gate in WARN mode (Issue #14): say which checks enforce mode would have refused.
+    const tg = j.tax_gate || {};
+    if (pay && ((tg.would_block && tg.would_block.length) || tg.config_error)) pay.insertAdjacentHTML('afterbegin', `<div class="card" style="margin-bottom:12px; background:#fef3c7; border:1px solid #fcd34d; font-size:12.5px;">
+      ${tg.config_error ? `<div style="font-weight:700; color:#92400e;">W-9 gate setting problem: ${esc(tg.config_error)}</div>` : ''}
+      ${(tg.would_block||[]).length ? `<div style="font-weight:700; color:#92400e;">W-9 needed (warn mode): ${tg.would_block.length} check${tg.would_block.length===1?'':'s'} in this run would be refused once the gate is enforced.</div><div class="muted">${tg.would_block.map(b=>esc(b.reason)).join('<br>')}</div>` : ''}</div>`);
     if (pay) pay.insertAdjacentHTML('afterbegin', `<div class="card" style="margin-bottom:12px; background:#f0fdf4; border:1px solid #86efac;">
       <div style="font-weight:700; color:#166534;">✓ ${n?`${n} check${n===1?'':'s'} issued`:'Checks issued'}${j.total_cents!=null?' · '+fmt(j.total_cents):''}.</div>
       <div class="muted" style="font-size:12.5px; margin:5px 0 10px;">The bills moved out of the pay list into the check register below.${win?'':' <b style="color:#92400e;">Your browser blocked the print window — use the button below.</b>'}</div>

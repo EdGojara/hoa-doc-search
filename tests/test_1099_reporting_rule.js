@@ -154,7 +154,7 @@ check('vendor read works BEFORE migration 477 (falls back to existing columns; n
   assert.ok(m.get('v1') && R.vendorReportability(m.get('v1')).reportable);
 });
 check('check run: crossing vendor is refused with a plain reason; under-threshold vendor passes', async () => {
-  const { assertCheckRunAllowed } = require('../lib/tax/payment_gate');
+  const assertCheckRunAllowed = (d, o) => require('../lib/tax/payment_gate').assertCheckRunAllowed(d, o, { env: { TAX_W9_GATE: 'enforce' } }); // these cases test ENFORCE
   const d = db({ ap_payments: PAYS, vendors: [UNKNOWN, W9] });
   await assert.rejects(assertCheckRunAllowed(d, { community_id: 'c1', vendorBills: new Map([['v1', [{ invoice_id: 'i-x', cents: 70000 }]]]), payment_date: '2026-10-02' }),
     (e) => e.code === 'w9_required_for_payment' && /\$2,000\.00/.test(e.detail) && e.vendors[0].vendor_id === 'v1');
@@ -162,7 +162,7 @@ check('check run: crossing vendor is refused with a plain reason; under-threshol
   await assertCheckRunAllowed(d, { community_id: 'c1', vendorBills: new Map([['v2', [{ invoice_id: 'i-y', cents: 900000 }]]]), payment_date: '2026-10-02' });
 });
 check('check run fails CLOSED: a read error refuses the run (no check cut on an unknown)', async () => {
-  const { assertCheckRunAllowed } = require('../lib/tax/payment_gate');
+  const assertCheckRunAllowed = (d, o) => require('../lib/tax/payment_gate').assertCheckRunAllowed(d, o, { env: { TAX_W9_GATE: 'enforce' } }); // these cases test ENFORCE
   await assert.rejects(assertCheckRunAllowed(db({}, { failOn: 'ap_payments' }), { community_id: 'c1', vendorBills: new Map([['v1', [{ invoice_id: 'i-x', cents: 100 }]]]), payment_date: '2026-10-02' }), (e) => e.code === 'tax_check_failed');
 });
 check('recording fails OPEN: a read error never stops recording real bank activity', async () => {
@@ -245,7 +245,7 @@ check('cumulative is split by the bills each payment paid (fees vs gross proceed
   assert.deepStrictEqual(totalsByCategory(t, 'va', 'c1'), { attorney_fees: 50000, attorney_gross_proceeds: 30000 });
 });
 check('check run: a gross-proceeds bill that reaches $600 is refused; the same amount as fees is not', async () => {
-  const { assertCheckRunAllowed } = require('../lib/tax/payment_gate');
+  const assertCheckRunAllowed = (d, o) => require('../lib/tax/payment_gate').assertCheckRunAllowed(d, o, { env: { TAX_W9_GATE: 'enforce' } }); // these cases test ENFORCE
   const base = { ap_payments: [], ap_payment_applications: [], vendors: [ATTY] };
   await assert.rejects(assertCheckRunAllowed(db({ ...base, ap_invoices: [{ id: 'g1', tax_reporting_category: 'attorney_gross_proceeds' }] }), { community_id: 'c1', vendorBills: new Map([['va', [{ invoice_id: 'g1', cents: 60000 }]]]), payment_date: '2026-10-02' }),
     (e) => e.code === 'w9_required_for_payment' && /gross proceeds paid to an attorney/.test(e.detail));
@@ -259,7 +259,7 @@ check('bill category is set only by an admin, never on a paid/voided bill, and i
   assert.ok(/'attorney_gross_proceeds'/.test(m) && /'attorney_fees'/.test(m));
 });
 check('check run is ATOMIC: one blocked vendor/category refuses the WHOLE run before any check number or payment', async () => {
-  const { assertCheckRunAllowed } = require('../lib/tax/payment_gate');
+  const assertCheckRunAllowed = (d, o) => require('../lib/tax/payment_gate').assertCheckRunAllowed(d, o, { env: { TAX_W9_GATE: 'enforce' } }); // these cases test ENFORCE
   const d = db({ ap_payments: [], ap_payment_applications: [], vendors: [ATTY, W9], ap_invoices: [{ id: 'g1', tax_reporting_category: 'attorney_gross_proceeds' }, { id: 'ok1', tax_reporting_category: null }] });
   // vendor W9 alone would pass; the attorney's gross-proceeds bill blocks -> the whole run is refused
   await assert.rejects(assertCheckRunAllowed(d, { community_id: 'c1', vendorBills: new Map([['v2', [{ invoice_id: 'ok1', cents: 900000 }]], ['va', [{ invoice_id: 'g1', cents: 60000 }]]]), payment_date: '2026-10-02' }),
@@ -280,6 +280,79 @@ check('NULL bill categories resolve to the vendor default; 477 rewrites no bill'
   const m = src('migrations/477_vendor_tax_reporting_status.sql').replace(/--.*$/gm, '');
   assert.ok(!/UPDATE\s+ap_invoices/i.test(m) && /ADD COLUMN IF NOT EXISTS tax_reporting_category TEXT;/.test(m), 'nullable, no default, no backfill');
 });
+// ---------------------------------------------------------------- rollout mode (TAX_W9_GATE)
+const { gateMode } = require('../lib/tax/gate_mode');
+check('mode: unset -> WARN (rollout default); warn/enforce accepted, case and spaces forgiven', () => {
+  assert.deepStrictEqual(gateMode({}), { mode: 'warn', configured: false, error: null });
+  assert.strictEqual(gateMode({ TAX_W9_GATE: 'enforce' }).mode, 'enforce');
+  assert.strictEqual(gateMode({ TAX_W9_GATE: ' ENFORCE ' }).mode, 'enforce');
+  assert.strictEqual(gateMode({ TAX_W9_GATE: 'Warn' }).mode, 'warn');
+});
+check('mode: a malformed value is a CONFIGURATION ERROR, runs in warn, and says so', () => {
+  for (const v of ['enforced', 'true', '1', 'block', 'on']) { const g = gateMode({ TAX_W9_GATE: v }); assert.strictEqual(g.mode, 'warn', v); assert.ok(/not warn or enforce/.test(g.error), v); }
+});
+const WARN_ENV = { env: {} };
+const gateDb = () => db({ ap_payments: [], ap_payment_applications: [], vendors: [ATTY], ap_invoices: [{ id: 'g1', tax_reporting_category: 'attorney_gross_proceeds' }] });
+const RUN = { community_id: 'c1', vendorBills: new Map([['va', [{ invoice_id: 'g1', cents: 60000 }]]]), payment_date: '2026-10-02' };
+check('WARN mode computes the SAME decision as enforce but refuses nothing', async () => {
+  const { assertCheckRunAllowed: gate } = require('../lib/tax/payment_gate');
+  let enforceErr = null; try { await gate(gateDb(), RUN, { env: { TAX_W9_GATE: 'enforce' } }); } catch (e) { enforceErr = e; }
+  assert.ok(enforceErr && enforceErr.code === 'w9_required_for_payment');
+  const w = await gate(gateDb(), RUN, WARN_ENV);
+  assert.strictEqual(w.ok, true); assert.strictEqual(w.mode, 'warn');
+  assert.strictEqual(w.would_block.length, 1); assert.strictEqual(w.would_block[0].vendor_id, 'va');
+  assert.strictEqual(w.detail, enforceErr.detail, 'identical decision text');
+});
+check('WARN mode with a malformed setting: same, plus the configuration error in the result', async () => {
+  const { assertCheckRunAllowed: gate } = require('../lib/tax/payment_gate');
+  const w = await gate(gateDb(), RUN, { env: { TAX_W9_GATE: 'enforced' } });
+  assert.strictEqual(w.ok, true); assert.ok(/not warn or enforce/.test(w.config_error)); assert.strictEqual(w.would_block.length, 1);
+});
+check('read error: ENFORCE fails closed; WARN continues (logged), never refusing for W-9 reasons', async () => {
+  const { assertCheckRunAllowed: gate } = require('../lib/tax/payment_gate');
+  await assert.rejects(gate(db({}, { failOn: 'ap_payments' }), RUN, { env: { TAX_W9_GATE: 'enforce' } }), (e) => e.code === 'tax_check_failed');
+  const w = await gate(db({}, { failOn: 'ap_payments' }), RUN, WARN_ENV);
+  assert.strictEqual(w.ok, true); assert.ok(w.check_failed);
+});
+check('check run surfaces warn-mode results: run result carries tax_gate; list shows a warning badge, checkbox stays enabled', () => {
+  const s = src('lib/accounting/check_run.js');
+  assert.ok(/tax_gate: taxGate \? \{ mode: taxGate\.mode, would_block: taxGate\.would_block \|\| \[\]/.test(s));
+  const ui = src('public/accounting.html');
+  assert.ok(/W-9 needed \(warn\)/.test(ui) && /would be refused once the gate is enforced/.test(ui));
+});
+
+// ---------------------------------------------------------------- books-of-record scope
+const SCOPE_DB = (extra = {}) => db({ communities: [{ id: 'c1', name: 'Waterview', financials_active: true, books_of_record: 'trusted' }, { id: 'cEW', name: 'Eaglewood', financials_active: false, books_of_record: 'vantaca' }], vendors: [UNKNOWN], ap_payment_applications: [], ap_invoices: [], ...extra });
+check('scope: payments at an association whose books are not in trustEd are NOT counted (data-driven rule)', async () => {
+  const { reportableTotals } = require('../lib/tax/reportable_payments');
+  const t = await reportableTotals(SCOPE_DB({ ap_payments: [
+    { id: 'w1', vendor_id: 'v1', community_id: 'c1', amount_cents: 50000, payment_method: 'check', status: 'completed', payment_date: '2026-03-01' },
+    { id: 'e1', vendor_id: 'v1', community_id: 'cEW', amount_cents: 900000, payment_method: 'check', status: 'completed', payment_date: '2026-03-01' }] }), { vendorIds: ['v1'], year: 2026 });
+  assert.strictEqual(t.get('v1|c1|services'), 50000); assert.strictEqual(t.get('v1|cEW|services'), undefined);
+});
+check('scope: a check run for an out-of-scope association is not evaluated (even in enforce)', async () => {
+  const { assertCheckRunAllowed: gate } = require('../lib/tax/payment_gate');
+  const r = await gate(SCOPE_DB({ ap_payments: [] }), { community_id: 'cEW', vendorBills: new Map([['v1', [{ invoice_id: 'x', cents: 900000 }]]]), payment_date: '2026-10-02' }, { env: { TAX_W9_GATE: 'enforce' } });
+  assert.ok(r.ok && r.out_of_scope);
+});
+check('scope: projections and recorded-payment checks skip out-of-scope associations', async () => {
+  const { projectBills, evaluateRecordedPayment } = require('../lib/tax/payment_gate');
+  const m = await projectBills(SCOPE_DB({ ap_payments: [] }), [{ id: 'b-ew', vendor_id: 'v1', community_id: 'cEW', balance_cents: 900000 }, { id: 'b-wv', vendor_id: 'v1', community_id: 'c1', balance_cents: 900000 }]);
+  assert.strictEqual(m.has('b-ew'), false); assert.strictEqual(m.get('b-wv').decision, 'block');
+  const r = await evaluateRecordedPayment(SCOPE_DB({ ap_payments: [] }), { community_id: 'cEW', vendor_id: 'v1', amount_cents: 900000, payment_date: '2026-10-02', payment_method: 'ach' });
+  assert.ok(r.out_of_scope && r.decision === 'allow');
+});
+check('scope uses the SAME rule as AP recovery (lib/ap/books_scope), no community names in code; spend report labels the rows', () => {
+  const rp = src('lib/tax/reportable_payments.js');
+  assert.ok(/require\('\.\.\/ap\/books_scope'\)/.test(rp) && /outsideTrustedBooks\(c\)/.test(rp));
+  for (const f of ['lib/tax/reportable_payments.js', 'lib/tax/payment_gate.js', 'lib/tax/info_reporting.js']) assert.ok(!/eaglewood/i.test(src(f).replace(/\/\/.*$/gm, '')), f);
+  assert.ok(/tax_scope: 'outside_trusted_books'/.test(src('api/vendors.js')));
+});
+check('Bedrock Association Management gets NO special treatment in the tax code', () => {
+  for (const f of ['lib/tax/reportable_payments.js', 'lib/tax/payment_gate.js', 'lib/tax/info_reporting.js', 'lib/tax/gate_mode.js']) {
+    assert.ok(!/bedrock|BEDROCK_MGMT_CO_ID|management_compan/i.test(src(f).replace(/\/\/.*$/gm, '')), f);
+  }
+});
 check('bill category read is tolerant before 477 (no column -> vendor default, no failure)', async () => {
   const { invoiceCategories } = require('../lib/tax/reportable_payments');
   const d = { from() { const q = { select() { return q; }, in() { return Promise.resolve({ data: null, error: { message: 'column ap_invoices.tax_reporting_category does not exist' } }); } }; return q; } };
@@ -290,7 +363,7 @@ check('bill category read is tolerant before 477 (no column -> vendor default, n
 check('PATH check run: the 1099 gate runs BEFORE any check number is reserved', () => {
   const s = src('lib/accounting/check_run.js');
   assert.ok(s.indexOf('assertCheckRunAllowed(supabase, { community_id, vendorBills, payment_date })') < s.indexOf("rpc('reserve_next_check_number'"));
-  assert.ok(/return \{ w9_required_before_payment: stop, w9_reason: stop \? ev\.reason : null \}/.test(s), 'list flags the bill');
+  assert.ok(s.includes('return { w9_required_before_payment: stop && enforce, w9_warning: stop && !enforce, w9_reason: stop ? ev.reason : null }'), 'list flags the bill (disabled only in enforce; warning badge in warn)');
   assert.ok(/i\.w9_required_before_payment \? `<input type="checkbox" disabled/.test(src('public/accounting.html')), 'UI: not selectable, with the reason');
   assert.ok(/err\.code === 'w9_required_for_payment' \|\| err\.code === 'threshold_unconfigured'\) return res\.status\(409\)/.test(src('api/checks.js')) && /tax_check_failed'\) return res\.status\(503\)/.test(src('api/checks.js')));
 });
@@ -320,7 +393,7 @@ check('no hard-coded $600 left in the 1099 / W-9 logic; thresholds come from thr
   assert.ok(!/\$600 per community/.test(ui) && !/c\.ytd_cents>=60000/.test(ui));
 });
 check('check run: an unconfigured year refuses with its OWN code (threshold_unconfigured), not "W-9 needed"', async () => {
-  const { assertCheckRunAllowed } = require('../lib/tax/payment_gate');
+  const assertCheckRunAllowed = (d, o) => require('../lib/tax/payment_gate').assertCheckRunAllowed(d, o, { env: { TAX_W9_GATE: 'enforce' } }); // these cases test ENFORCE
   await assert.rejects(assertCheckRunAllowed(db({ ap_payments: [], vendors: [UNKNOWN] }), { community_id: 'c1', vendorBills: new Map([['v1', [{ invoice_id: 'i-x', cents: 100 }]]]), payment_date: '2027-01-15' }),
     (e) => e.code === 'threshold_unconfigured' && /1099 threshold not configured/.test(e.detail));
   assert.ok(/'w9_required_for_payment' \|\| err\.code === 'threshold_unconfigured'\) return res\.status\(409\)/.test(src('api/checks.js')));

@@ -391,6 +391,8 @@ router.get('/:vendorId', async (req, res) => {
       const { data: allPays } = await supabase.from('ap_payments')
         .select('amount_cents, payment_date, community_id, payment_method, status, community:communities(name)').eq('vendor_id', vendorId).limit(2000);
       const { reportingChannel } = require('../lib/tax/info_reporting');
+      let outsideBooks = new Set();
+      try { outsideBooks = await require('../lib/tax/reportable_payments').communitiesOutsideBooks(supabase); } catch (_) { /* badge best-effort */ }
       for (const p of (allPays || [])) {
         const amt = Number(p.amount_cents || 0);
         const inYear = p.payment_date && String(p.payment_date) >= yearStart;
@@ -399,7 +401,7 @@ router.get('/:vendorId', async (req, res) => {
         if (!byComm[key]) byComm[key] = { community_id: p.community_id || null, community_name: (p.community && p.community.name) || 'Unassigned', ytd_cents: 0, lifetime_cents: 0, reportable_ytd_cents: 0 };
         byComm[key].lifetime_cents += amt; if (inYear) byComm[key].ytd_cents += amt;
         // 1099-reportable (Issue #14): pending/completed, not card (1099-K).
-        if (inYear && ['pending', 'completed'].includes(p.status) && reportingChannel(p.payment_method) === 'form_1099_nec_misc') byComm[key].reportable_ytd_cents += amt;
+        if (inYear && !outsideBooks.has(p.community_id) && ['pending', 'completed'].includes(p.status) && reportingChannel(p.payment_method) === 'form_1099_nec_misc') byComm[key].reportable_ytd_cents += amt;
       }
     } catch (_) { /* spend rollup best-effort */ }
     const spend_by_community = Object.values(byComm).sort((a, b) => b.lifetime_cents - a.lifetime_cents);
@@ -1573,8 +1575,11 @@ router.get('/spend', async (req, res) => {
     // the rule's vendor fields (exemption + provenance).
     const { reportableTotals, loadVendorsForTax } = require('../lib/tax/reportable_payments');
     const [repTotals, taxV] = await Promise.all([reportableTotals(supabase, { vendorIds, year }), loadVendorsForTax(supabase, vendorIds)]);
-    const { totalsByCategory } = require('../lib/tax/reportable_payments');
+    const { totalsByCategory, communitiesOutsideBooks } = require('../lib/tax/reportable_payments');
     const { vendorYearStatus } = require('../lib/tax/info_reporting');
+    // Associations whose books are not in trustEd (e.g. Eaglewood, Vantaca) are
+    // out of 1099 scope here: labeled, never counted (lib/ap/books_scope rule).
+    const outsideBooks = await communitiesOutsideBooks(supabase);
     const statusOf = (r) => vendorYearStatus({ vendor: taxV.get(r.vendor_id) || vById[r.vendor_id] || {}, year, byCategory: totalsByCategory(repTotals, r.vendor_id, r.community_id) });
     const cById = Object.fromEntries((comms || []).map(c => [c.id, c.name]));
     const w9ById = {}; for (const d of (w9docs || [])) if (!w9ById[d.vendor_id]) w9ById[d.vendor_id] = d.id; // latest per vendor
@@ -1598,7 +1603,10 @@ router.get('/spend', async (req, res) => {
         w9_doc_id: w9ById[r.vendor_id] || null,
         tax_id: v.tax_id || null,
         tax_classification: v.tax_classification || null,
-        ...(() => { const st = statusOf(r); return { reportable_cents: st.reportable_cents, over_threshold: st.over_threshold, needs_w9: st.needs_w9, threshold_provisional: st.provisional, reporting_categories: st.categories }; })(),
+        ...(() => {
+          if (outsideBooks.has(r.community_id)) return { reportable_cents: 0, over_threshold: false, needs_w9: false, threshold_provisional: false, reporting_categories: [], tax_scope: 'outside_trusted_books' };
+          const st = statusOf(r); return { reportable_cents: st.reportable_cents, over_threshold: st.over_threshold, needs_w9: st.needs_w9, threshold_provisional: st.provisional, reporting_categories: st.categories, tax_scope: 'trusted_books' };
+        })(),
       };
     }).sort((a, b) => b.total_cents - a.total_cents);
 
