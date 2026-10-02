@@ -1766,7 +1766,7 @@ router.post('/:id/to-payables', express.json(), async (req, res) => {
         // Held (e.g. a reimbursement needing its account): it goes to the Payables
         // exceptions list with its PDF, never silently "handled". (Issue #3.)
         const { recordException } = require('../lib/ap/intake_exceptions');
-        const r = await recordException({ emailMessageId: m.id, sourceRef: `email:${m.graph_id}`, reason: out.reason, extracted: out.extracted || {}, storagePath: out.storage_path, sha256: out.sha256, communityId: m.community_id || null });
+        const r = await recordException({ emailMessageId: m.id, sourceRef: `email:${m.graph_id}`, reason: out.reason, extracted: out.extracted || {}, storagePath: out.storage_path, sha256: out.sha256, communityId: m.community_id || null, suggestedVendorId: out.suggested_vendor_id || null });
         if (r.ok) { exceptioned += 1; held.push(out.reason); }
       }
     }

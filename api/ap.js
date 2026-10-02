@@ -235,7 +235,7 @@ router.post('/invoices/upload', upload.single('pdf'), async (req, res) => {
       const ex = await recordException({
         sourceRef, reason: result.outcome === 'not_an_invoice' ? 'not an invoice' : result.reason,
         extracted: result.extracted || {}, storagePath: result.storage_path || null, sha256: result.sha256 || sha,
-        communityId: pickedCommunityId,
+        communityId: pickedCommunityId, suggestedVendorId: result.suggested_vendor_id || null,
       });
       if (!ex.ok) console.warn('[ap] upload exception not recorded:', ex.reason);
       ctx.exceptionId = ex.ok ? ex.id : null;
