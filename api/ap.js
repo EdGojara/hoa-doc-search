@@ -978,6 +978,18 @@ router.get('/invoices/:id', async (req, res) => {
   }
 });
 
+// 1099 W-9 projection for a bill being approved (Issue #14): approval never
+// blocks; if PAYING this bill would need a W-9 first, say so now. Never throws.
+async function approvalTaxNote(id) {
+  try {
+    const { data: b, error } = await supabase.from('ap_invoices').select('id, vendor_id, community_id, total_cents, amount_paid_cents').eq('id', id).maybeSingle();
+    if (error || !b) return null;
+    const m = await require('../lib/tax/payment_gate').projectBills(supabase, [{ id: b.id, vendor_id: b.vendor_id, community_id: b.community_id, balance_cents: (b.total_cents || 0) - (b.amount_paid_cents || 0) }], { initiation: 'approve' });
+    const ev = m.get(b.id);
+    return ev && ev.decision === 'warn' ? { decision: 'warn', reason: ev.reason } : null;
+  } catch (_) { return null; }
+}
+
 // POST /invoices/:id/approve — TWO-KEY approval (Ed 2026-07-15).
 //   Key 1 (manager: staff/assistant) — attests the bill is legitimate. Records
 //     WHO and WHEN. Does NOT release money.
@@ -1018,7 +1030,7 @@ router.post('/invoices/:id/approve', express.json(), async (req, res) => {
         return res.json({ ok: true, stage: 'manager_rejected', by: userName });
       }
       await supabase.from('ap_invoice_approvals').insert({ invoice_id: id, action: 'approved', user_id: userId, user_name: userName, amount_at_time_cents: inv.total_cents, notes });
-      return res.json({ ok: true, stage: 'manager_approved', by: userName, at: new Date().toISOString() });
+      return res.json({ ok: true, stage: 'manager_approved', by: userName, at: new Date().toISOString(), tax_reporting: await approvalTaxNote(id) });
     }
 
     // ---- Key 2: admin release ----
@@ -1051,7 +1063,7 @@ router.post('/invoices/:id/approve', express.json(), async (req, res) => {
     const finalNotes = solo ? [notes, soloNote].filter(Boolean).join(' — ') : notes;
     const result = await approveInvoice({ invoice_id: id, user_id: userId, user_name: userName, notes: finalNotes, action: 'released_for_payment' });
     return res.json({
-      ...result, stage: 'released_for_payment', by: userName,
+      ...result, stage: 'released_for_payment', by: userName, tax_reporting: await approvalTaxNote(id),
       manager_approved_by: mgr ? (mgr.user_name || null) : null,
       solo_release: solo, path: policy ? policy.path : null,
     });

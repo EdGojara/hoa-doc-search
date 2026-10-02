@@ -2136,7 +2136,7 @@
         <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
           <input id="ven-search" type="text" placeholder="Search vendors by name…" oninput="venSearch()" style="flex:1; min-width:240px; padding:9px 12px; border:1px solid #cbd5e1; border-radius:8px; font-size:14px;">
           <input id="ven-1099-year" type="number" placeholder="Year" title="1099 tax year" style="width:88px; padding:9px 10px; border:1px solid #cbd5e1; border-radius:8px; font-size:14px;">
-          <button class="secondary-btn" onclick="venExport1099()" title="Download every vendor's paid total for the year with W-9 / over-$600 status — the 1099 filing worklist">⬇ 1099 export</button>
+          <button class="secondary-btn" onclick="venExport1099()" title="Download every vendor's paid total for the year with W-9 / over-threshold status ($600 through 2025, $2,000 in 2026) — the 1099 filing worklist">⬇ 1099 export</button>
           <a class="secondary-btn" href="/admin/ach" target="_blank" style="text-decoration:none;" title="Send a vendor a secure one-time link to enter their banking details and e-sign the ACH authorization — no banking info by email">🔒 ACH enrollment</a>
           <span id="ven-export-msg" style="font-size:12px; color:#64748b;"></span>
         </div>
@@ -11372,7 +11372,7 @@
         <h3 style="margin-top:0;">📊 Spend & 1099 Report</h3>
         <p style="color:#888; font-size:12px; margin:0 0 12px 0;">
           Total paid per vendor by community, keyed on the <strong>paid date</strong> (cash basis, what 1099s use). Combines historical uploads + what Emma pays.
-          1099 threshold is <strong>$600 per community</strong> (each association is its own filer/EIN).
+          1099 threshold is <strong>$600 through 2025, $2,000 for 2026, per community</strong> (each association is its own filer/EIN), on reportable payments (card payments are reported on 1099-K and not counted).
         </p>
         <div style="display:grid; grid-template-columns: auto auto auto 1fr auto; gap:10px; align-items:end; margin-bottom:12px;">
           <div>
@@ -11389,7 +11389,7 @@
             <label style="display:block; font-size:12px; color:#666; margin-bottom:4px;">View</label>
             <select id="vendors-spend-mode" onchange="vendorsRenderSpend()" style="padding:8px; font-size:14px;">
               <option value="all">All spend</option>
-              <option value="1099">1099 file ($600+)</option>
+              <option value="1099">1099 file (at/over the year's threshold)</option>
             </select>
           </div>
           <div></div>
@@ -43194,6 +43194,7 @@ ${questionsPage}
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'load failed');
       vendorsSpendData = data.rows || [];
+      window._vendorsSpendThreshold = data.threshold_cents || null;
       vendorsRenderSpend();
     } catch (e) {
       container.innerHTML = `<div style="color:#a00;">Could not run the report: ${escapeHtml(e.message)}</div>`;
@@ -43210,7 +43211,7 @@ ${questionsPage}
   function vendorsRenderSpend() {
     const container = document.getElementById('vendors-spend-container');
     const { mode, rows } = vendorsSpendRows();
-    if (!rows.length) { container.innerHTML = `<div style="color:#888; padding:20px;">No ${mode === '1099' ? 'reportable 1099' : 'vendor'} spend for this year${mode === '1099' ? ' (nothing at or above $600, and no vendor flagged 1099)' : ''}.</div>`; return; }
+    if (!rows.length) { container.innerHTML = `<div style="color:#888; padding:20px;">No ${mode === '1099' ? 'reportable 1099' : 'vendor'} spend for this year${mode === '1099' ? ' (nothing at or above the ${window._vendorsSpendThreshold ? '$' + (window._vendorsSpendThreshold / 100).toLocaleString('en-US') : 'year\'s'} threshold, and no vendor flagged 1099)' : ''}.</div>`; return; }
     const totalCents = rows.reduce((s, r) => s + r.total_cents, 0);
     const needW9 = rows.filter(r => r.needs_w9).length;
     const body = rows.map(r => {
@@ -43247,7 +43248,7 @@ ${questionsPage}
           <tbody>${body}</tbody>
         </table>
       </div>
-      <div style="margin-top:8px; font-size:11px; color:#888;">${mode === '1099' ? 'Showing vendors at/above $600 for the community, or flagged 1099. Each community is its own filer/EIN.' : 'All vendor spend for the year.'} <span style="color:#a06400;">*</span> = paid date estimated from the invoice date.</div>`;
+      <div style="margin-top:8px; font-size:11px; color:#888;">${mode === '1099' ? 'Showing vendors at/above ' + (window._vendorsSpendThreshold ? '$' + (window._vendorsSpendThreshold / 100).toLocaleString('en-US') : 'the year\'s threshold') + ' in reportable payments for the community (card payments excluded), or flagged 1099. Each community is its own filer/EIN.' : 'All vendor spend for the year.'} <span style="color:#a06400;">*</span> = paid date estimated from the invoice date.</div>`;
   }
 
   function vendorsExportSpendCsv() {
@@ -46582,7 +46583,7 @@ ${questionsPage}
           <span id="ven-savemsg" style="font-size:12px;"></span>
         </div>
         ${byComm.length? `<div style="margin-bottom:14px;"><div style="font-weight:700; color:#0B1D34; font-size:13px; margin-bottom:6px;">Spend by association <span style="font-weight:400; color:#64748b; font-size:11.5px;">— 1099 is filed per association (each is its own EIN)</span></div>
-          <div style="display:flex; flex-wrap:wrap; gap:8px;">${byComm.map(c=>`<div style="border:1px solid #e2e8f0; border-radius:8px; padding:6px 11px; font-size:12px; background:#fbfcfe;"><div style="color:#0B1D34; font-weight:600;">${apEsc(c.community_name)}</div><div style="color:#64748b;">YTD ${venMoney(c.ytd_cents)} · life ${venMoney(c.lifetime_cents)}${c.ytd_cents>=60000?' <span style="color:#166534; font-weight:700;" title="Over the $600 1099 threshold for this association this year">1099</span>':''}</div></div>`).join('')}</div></div>` : ''}
+          <div style="display:flex; flex-wrap:wrap; gap:8px;">${byComm.map(c=>`<div style="border:1px solid #e2e8f0; border-radius:8px; padding:6px 11px; font-size:12px; background:#fbfcfe;"><div style="color:#0B1D34; font-weight:600;">${apEsc(c.community_name)}</div><div style="color:#64748b;">YTD ${venMoney(c.ytd_cents)} · life ${venMoney(c.lifetime_cents)}${(sp && sp.w9_threshold_cents && (c.reportable_ytd_cents||0)>=sp.w9_threshold_cents)?` <span style="color:#166534; font-weight:700;" title="Reportable payments from this association this year are at/over the ${apEsc(sp.w9_threshold_basis||'')} 1099 threshold (card payments excluded)">1099</span>`:''}</div></div>`).join('')}</div></div>` : ''}
         <div style="display:grid; grid-template-columns:1fr 1fr; gap:14px;">
           <div><div style="font-weight:700; color:#0B1D34; font-size:13px; margin-bottom:6px;">Invoices (${inv.length + hist.length})</div>
             ${(inv.length||hist.length)? '<div style="max-height:280px; overflow:auto;">'
@@ -46613,7 +46614,7 @@ ${questionsPage}
         venLoadList();
       } catch(e){ if(msg){ msg.style.color='#dc2626'; msg.textContent='Could not save: '+e.message; } }
     };
-    // One-click 1099 worklist: download the year's vendor spend + W-9 / over-$600
+    // One-click 1099 worklist: download the year's vendor spend + W-9 / over-threshold (year-aware)
     // status as CSV (auth'd fetch -> blob, since the endpoint needs the token).
     window.venExport1099 = async function(){
       const year = ((document.getElementById('ven-1099-year')||{}).value||'').trim() || new Date().getFullYear();
