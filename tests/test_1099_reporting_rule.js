@@ -258,6 +258,28 @@ check('bill category is set only by an admin, never on a paid/voided bill, and i
   assert.ok(/ADD COLUMN IF NOT EXISTS tax_reporting_category TEXT/.test(m) && /ap_invoices_tax_reporting_category_check/.test(m) && /trg_ap_invoice_tax_category_audit/.test(m));
   assert.ok(/'attorney_gross_proceeds'/.test(m) && /'attorney_fees'/.test(m));
 });
+check('check run is ATOMIC: one blocked vendor/category refuses the WHOLE run before any check number or payment', async () => {
+  const { assertCheckRunAllowed } = require('../lib/tax/payment_gate');
+  const d = db({ ap_payments: [], ap_payment_applications: [], vendors: [ATTY, W9], ap_invoices: [{ id: 'g1', tax_reporting_category: 'attorney_gross_proceeds' }, { id: 'ok1', tax_reporting_category: null }] });
+  // vendor W9 alone would pass; the attorney's gross-proceeds bill blocks -> the whole run is refused
+  await assert.rejects(assertCheckRunAllowed(d, { community_id: 'c1', vendorBills: new Map([['v2', [{ invoice_id: 'ok1', cents: 900000 }]], ['va', [{ invoice_id: 'g1', cents: 60000 }]]]), payment_date: '2026-10-02' }),
+    (e) => e.code === 'w9_required_for_payment' && e.vendors.length === 1 && e.vendors[0].vendor_id === 'va');
+  // a multi-bill check where only ONE bill's category crosses is refused as a whole check
+  await assert.rejects(assertCheckRunAllowed(d, { community_id: 'c1', vendorBills: new Map([['va', [{ invoice_id: 'ok1', cents: 1000 }, { invoice_id: 'g1', cents: 60000 }]]]), payment_date: '2026-10-02' }), (e) => e.code === 'w9_required_for_payment');
+  const s = src('lib/accounting/check_run.js');
+  const gate = s.indexOf('assertCheckRunAllowed(supabase, { community_id, vendorBills, payment_date })');
+  assert.ok(gate > 0 && gate < s.indexOf("rpc('reserve_next_check_number'") && gate < s.indexOf("await recordPayment({ community_id, vendor_id, amount_cents, payment_date, payment_method: 'check'"), 'gate runs before any check number or payment');
+});
+check('category lock does not trust the status: the endpoint also refuses when ANY payment application exists', () => {
+  const ap = src('api/ap.js'); const ep = ap.slice(ap.indexOf("router.post('/invoices/:id/tax-category'"), ap.indexOf('// POST /invoices/:id/approve'));
+  assert.ok(ep.includes("from('ap_payment_applications').select('id').eq('invoice_id', inv.id)") && ep.includes('(apps && apps.length)'));
+  assert.ok(/ap_invoice_tax_category_lock/.test(src('migrations/477_vendor_tax_reporting_status.sql')), 'and the DB refuses it (477 trigger)');
+});
+check('NULL bill categories resolve to the vendor default; 477 rewrites no bill', () => {
+  assert.strictEqual(R.categoryFor(null, ATTY), 'attorney_fees'); assert.strictEqual(R.categoryFor(undefined, UNKNOWN), 'services');
+  const m = src('migrations/477_vendor_tax_reporting_status.sql').replace(/--.*$/gm, '');
+  assert.ok(!/UPDATE\s+ap_invoices/i.test(m) && /ADD COLUMN IF NOT EXISTS tax_reporting_category TEXT;/.test(m), 'nullable, no default, no backfill');
+});
 check('bill category read is tolerant before 477 (no column -> vendor default, no failure)', async () => {
   const { invoiceCategories } = require('../lib/tax/reportable_payments');
   const d = { from() { const q = { select() { return q; }, in() { return Promise.resolve({ data: null, error: { message: 'column ap_invoices.tax_reporting_category does not exist' } }); } }; return q; } };

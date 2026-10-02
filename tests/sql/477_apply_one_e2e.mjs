@@ -42,6 +42,7 @@ async function buildWorld({ preColumn = false } = {}) {
     CREATE TABLE journal_entries (id uuid PRIMARY KEY DEFAULT gen_random_uuid());
     CREATE TABLE ap_payments (id uuid PRIMARY KEY DEFAULT gen_random_uuid());
     CREATE TABLE ap_invoices (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), vendor_id uuid REFERENCES vendors(id), total_cents bigint);
+    CREATE TABLE ap_payment_applications (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), payment_id uuid, invoice_id uuid REFERENCES ap_invoices(id), applied_cents bigint);
     CREATE TABLE schema_migrations (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), filename text NOT NULL UNIQUE, sha256 text NOT NULL,
       applied_at timestamptz NOT NULL DEFAULT now(), applied_by text, duration_ms integer, error text);
     INSERT INTO vendors (id, name, w9_on_file, tax_classification) VALUES ('${V1}', 'Lawn Co', true, 'c_corporation');
@@ -99,6 +100,11 @@ if (r.status === 'applied') {
   const okCat = await tryErr(`UPDATE ap_invoices SET tax_reporting_category = 'attorney_gross_proceeds' WHERE id = '00000000-0000-0000-0000-0000000000b1'`);
   const ev4 = await q1(`SELECT count(*)::int n FROM vendor_tax_status_events WHERE after->>'tax_reporting_category' = 'attorney_gross_proceeds' AND after->>'invoice_id' = '00000000-0000-0000-0000-0000000000b1'`);
   check('audit: changing a bill from fees to gross proceeds is recorded', okCat === null && ev4.n === 1 && (await q1(`SELECT count(*)::int n FROM vendor_tax_status_events`)).n === before4 + 1, okCat || JSON.stringify(ev4));
+  // A bill with a payment applied: category locked even though its status column is 'awaiting_approval' (stale)
+  await db.query(`INSERT INTO ap_invoices (id, vendor_id, total_cents) VALUES ('00000000-0000-0000-0000-0000000000b2', '${V1}', 50000)`);
+  await db.query(`INSERT INTO ap_payment_applications (payment_id, invoice_id, applied_cents) VALUES (gen_random_uuid(), '00000000-0000-0000-0000-0000000000b2', 50000)`);
+  check('rule: category is LOCKED once any payment is applied (DB trigger, status not consulted)', /locked: a payment has been applied/.test(await tryErr(`UPDATE ap_invoices SET tax_reporting_category = 'attorney_gross_proceeds' WHERE id = '00000000-0000-0000-0000-0000000000b2'`) || ''));
+  check('rule: other edits to a paid bill are not blocked by the lock', (await tryErr(`UPDATE ap_invoices SET total_cents = 50000 WHERE id = '00000000-0000-0000-0000-0000000000b2'`)) === null);
   check('rule: the proof document cannot be deleted while it backs an exemption',
     /foreign key|violates/.test(await tryErr(`DELETE FROM vendor_documents WHERE id = '00000000-0000-0000-0000-0000000000d1'`) || ''));
 }

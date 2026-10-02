@@ -1006,7 +1006,11 @@ router.post('/invoices/:id/tax-category', express.json(), async (req, res) => {
     const { data: inv, error: ie } = await supabase.from('ap_invoices').select('id, status, amount_paid_cents').eq('id', req.params.id).maybeSingle();
     if (ie) throw ie;
     if (!inv) return res.status(404).json({ error: 'not_found' });
-    if (['paid', 'partially_paid', 'voided'].includes(inv.status) || (inv.amount_paid_cents || 0) > 0) {
+    // Locked once ANY payment has been applied, whatever the status says (a stale
+    // status must not reopen history). Migration 477 enforces the same in the DB.
+    const { data: apps, error: ae } = await supabase.from('ap_payment_applications').select('id').eq('invoice_id', inv.id).limit(1);
+    if (ae) throw ae;
+    if (['paid', 'partially_paid', 'voided'].includes(inv.status) || (inv.amount_paid_cents || 0) > 0 || (apps && apps.length)) {
       return res.status(409).json({ error: 'category_locked', detail: 'This bill has a payment recorded (or is voided); its 1099 category is part of history and is not changed here.' });
     }
     const { data, error } = await supabase.from('ap_invoices').update({ tax_reporting_category: cat }).eq('id', inv.id).select('id, tax_reporting_category').single();

@@ -120,6 +120,23 @@ BEGIN
   RETURN NEW;
 END $$;
 
+-- Once ANY payment has been applied to a bill, its reporting category is part
+-- of history: refuse the change in the database, whatever the bill's status says
+-- (a stale status must not reopen it). Setting it on an unpaid bill is fine.
+CREATE OR REPLACE FUNCTION ap_invoice_tax_category_lock() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  IF NEW.tax_reporting_category IS DISTINCT FROM OLD.tax_reporting_category
+     AND EXISTS (SELECT 1 FROM ap_payment_applications a WHERE a.invoice_id = NEW.id) THEN
+    RAISE EXCEPTION 'tax_reporting_category is locked: a payment has been applied to bill %', NEW.id
+      USING ERRCODE = 'check_violation';
+  END IF;
+  RETURN NEW;
+END $$;
+
+DROP TRIGGER IF EXISTS trg_ap_invoice_tax_category_lock ON ap_invoices;
+CREATE TRIGGER trg_ap_invoice_tax_category_lock BEFORE UPDATE ON ap_invoices
+  FOR EACH ROW EXECUTE FUNCTION ap_invoice_tax_category_lock();
+
 DROP TRIGGER IF EXISTS trg_ap_invoice_tax_category_audit ON ap_invoices;
 CREATE TRIGGER trg_ap_invoice_tax_category_audit AFTER UPDATE ON ap_invoices
   FOR EACH ROW EXECUTE FUNCTION ap_invoice_tax_category_audit();

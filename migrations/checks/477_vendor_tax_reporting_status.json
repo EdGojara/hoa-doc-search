@@ -22,6 +22,7 @@
     "Creates vendor_tax_status_events (append-only audit) with an index and service_role/authenticated grants.",
     "Creates function vendor_tax_status_audit() and trigger trg_vendor_tax_status_audit (AFTER UPDATE ON vendors) that records before/after of the tax fields when they change.",
     "Adds ap_invoices.tax_reporting_category (nullable) with CHECK ap_invoices_tax_reporting_category_check, and function ap_invoice_tax_category_audit() + trigger trg_ap_invoice_tax_category_audit recording category changes in vendor_tax_status_events.",
+    "Adds function ap_invoice_tax_category_lock() + BEFORE UPDATE trigger trg_ap_invoice_tax_category_lock: a bill's tax_reporting_category cannot change once any ap_payment_applications row exists for it, whatever its status.",
     "No existing vendor value changes; existing vendors read as 'unknown' (potentially reportable)."
   ],
   "objects": {
@@ -50,11 +51,13 @@
       "constraint:vendors.vendors_tax_exemption_source_check",
       "constraint:vendors.vendors_tax_reporting_status_check",
       "function:ap_invoice_tax_category_audit",
+      "function:ap_invoice_tax_category_lock",
       "function:vendor_tax_status_audit",
       "index:idx_vendor_tax_status_events_vendor",
       "index:vendor_tax_status_events_pkey",
       "table:vendor_tax_status_events",
       "trigger:ap_invoices.trg_ap_invoice_tax_category_audit",
+      "trigger:ap_invoices.trg_ap_invoice_tax_category_lock",
       "trigger:vendors.trg_vendor_tax_status_audit"
     ],
     "changed": [],
