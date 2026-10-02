@@ -497,7 +497,8 @@ function renderQueue(){
   for(const r0 of queue){
     const link = r0.source_storage_path?`<a class="view" href="javascript:void(0)" onclick="openInvoice('${r0.id}')">📄 View</a>`:'—';
     const onHold = r0.status==='on_hold';
-    const statusBadge = onHold ? '<span class="badge" style="background:#fef3c7;color:#92400e;">on hold</span>' : '<span class="badge b-ok">awaiting approval</span>';
+    const statusBadge = (onHold ? '<span class="badge" style="background:#fef3c7;color:#92400e;">on hold</span>' : '<span class="badge b-ok">awaiting approval</span>')
+      + (r0.w9_needed ? ` <span class="badge" title="${esc(r0.w9_reason||'')}" style="background:#fef3c7;color:#92400e;border:1px solid #fcd34d;">W-9 needed</span>` : '');
     h+=`<tr><td><b>${esc(r0.vendor?r0.vendor.name:'—')}</b></td><td>${esc(r0.community?r0.community.name:'—')} <a href="javascript:void(0)" onclick="changeAssoc('${r0.id}',this)" title="Wrong association? Move it — the platform learns for next time." style="font-size:11px;color:#64748b;text-decoration:none;">✎</a></td><td>${esc(r0.vendor_invoice_number||'—')}</td><td>${d10(r0.invoice_date)}</td><td>${d10(r0.due_date)}</td><td class="m">${money(r0.total_cents)}</td><td>${statusBadge}</td><td>${link}</td><td><span class="badge b-ok">${esc(r0.intake_method||'—')}</span></td></tr>`;
   }
   h+='</tbody></table>';

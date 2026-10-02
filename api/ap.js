@@ -986,7 +986,7 @@ async function approvalTaxNote(id) {
     if (error || !b) return null;
     const m = await require('../lib/tax/payment_gate').projectBills(supabase, [{ id: b.id, vendor_id: b.vendor_id, community_id: b.community_id, balance_cents: (b.total_cents || 0) - (b.amount_paid_cents || 0) }], { initiation: 'approve' });
     const ev = m.get(b.id);
-    return ev && ev.decision === 'warn' ? { decision: 'warn', reason: ev.reason } : null;
+    return ev && require('../lib/tax/payment_gate').FLAG.has(ev.decision) ? { decision: ev.decision, reason: ev.reason } : null;
   } catch (_) { return null; }
 }
 

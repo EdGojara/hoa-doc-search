@@ -93,6 +93,14 @@ router.get('/queue', async (req, res) => {
       .order('received_at', { ascending: false }).limit(300);
     if (error) throw error;
     const rows = data || [];
+    // W-9 compliance flag per bill (Issue #14): informational, never blocks.
+    try {
+      const { data: vrows } = await supabase.from('ap_invoices').select('id, vendor_id, amount_paid_cents').in('id', rows.map((r) => r.id));
+      const vmap = new Map((vrows || []).map((x) => [x.id, x]));
+      const flags = await require('../lib/tax/payment_gate').projectBills(supabase, rows.map((r) => ({ id: r.id, vendor_id: (vmap.get(r.id) || {}).vendor_id, community_id: r.community_id, balance_cents: (r.total_cents || 0) - ((vmap.get(r.id) || {}).amount_paid_cents || 0) })), { initiation: 'approve' });
+      const FLAG = require('../lib/tax/payment_gate').FLAG;
+      for (const r of rows) { const ev = flags.get(r.id); if (ev && FLAG.has(ev.decision)) { r.w9_needed = true; r.w9_reason = ev.reason; } }
+    } catch (e) { console.error('[ap_intake] W-9 flags skipped (queue shown without them):', e.message); }
     res.json({
       ok: true,
       suspected: rows.filter((r) => r.dedup_status === 'suspected_duplicate'),
