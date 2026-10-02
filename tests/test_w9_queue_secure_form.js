@@ -248,7 +248,7 @@ check('query shape: the queue computes flags with the SAME projectBills (context
 check('queue API + panel are wired; panel is vendor-first and expandable; no stored queue state', () => {
   assert.ok(/router\.get\('\/w9-queue'/.test(src('api/ap.js')) && /loadW9Queue\(supabase, \{ year \}\)/.test(src('api/ap.js')));
   const ui = src('public/index.html');
-  assert.ok(/id="ap-w9-queue"/.test(ui) && /apW9ToggleVendor/.test(ui) && /fetchFn\('\/api\/ap\/w9-queue'\)/.test(ui) && /try \{ apLoadW9Queue\(\); \} catch/.test(ui));
+  assert.ok(/id="ap-w9-queue"/.test(ui) && /apW9ToggleVendor/.test(ui) && /fetchFn\('\/api\/ap\/w9-queue'/.test(ui) && /try \{ apLoadW9Queue\(\); \} catch/.test(ui));
   assert.ok(!/from\('[a-z_]+'\)\.(insert|update|upsert|delete)/.test(code('lib/tax/w9_queue.js')), 'queue module never writes');
 });
 
