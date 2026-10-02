@@ -205,7 +205,10 @@ const sessionId = params.get('session_id');
 
   // Reserved, not yet paid. The date is held and the association will invoice
   // the usual way, so this is a confirmation and not an error.
-  if (payByCheck && refParam) {
+  // A flag, not a top-level `return` (a SyntaxError in a classic script that
+  // stopped this whole page from rendering, 2026-08-21 to 2026-10-02).
+  const reservedByCheck = !!(payByCheck && refParam);
+  if (reservedByCheck) {
     document.getElementById('app').innerHTML = `
       <div class="check-circle">✓</div>
       <h1>Your date is reserved</h1>
@@ -220,13 +223,12 @@ const sessionId = params.get('session_id');
       <p style="margin-top:14px;color:#6b7a8d;font-size:13.5px;">
         Questions? Call Bedrock at (832) 588-2485.
       </p>`;
-    return;
   }
 
 const slugMatch = window.location.pathname.match(/^\/clubhouse\/([^/?#]+)/);
 const slug = slugMatch ? slugMatch[1] : '';
 
-if (!sessionId) {
+if (!reservedByCheck && !sessionId) {
   renderError('Missing session reference. If you completed a payment, your reservation is still recorded — check your email for the confirmation, or contact Bedrock at (832) 588-2485.');
 }
 
@@ -383,7 +385,7 @@ function downloadIcs() {
   URL.revokeObjectURL(url);
 }
 
-init();
+if (!reservedByCheck) init();
 </script>
 </body>
 </html>

@@ -15,6 +15,7 @@
 //   test_board_vote_token       — vote token security
 //   check_owner_concentration   — the guard added after the owner-collapse
 //   check_pagination            — the 1000-row truncation control
+//   check_inline_scripts        — a page script that won't parse (every tab dead)
 //   check_credential_claims     — CPA/assurance language in customer copy
 //   check_stored_email_body     — a stored message that kept only its preview
 //   test_balance_asof           — stale balances shown as current
@@ -128,6 +129,7 @@ const CHECKS = [
   'tests/test_claire_scope.js',
   'scripts/check_owner_concentration.js',
   'scripts/check_pagination.js',
+  'scripts/check_inline_scripts.js',
   'scripts/check_credential_claims.js',
   'scripts/check_stored_email_body.js',
   'scripts/check_retrieval_truncation.js',
