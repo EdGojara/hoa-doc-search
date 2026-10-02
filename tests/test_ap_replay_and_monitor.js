@@ -295,7 +295,7 @@ check('predictOutcome: certain -> BLOCKED (names the invoice); suspected -> held
 check('dry-run PARITY: the script calls the SAME findDuplicates as intake, with the fee intake would add (0 when held)', () => {
   const s = src('scripts/ap_replay_emails.js');
   assert.ok(/require\('\.\.\/lib\/ap\/dedup'\)\.findDuplicates\(supabase, \{/.test(s));
-  for (const k of ['communityId: community.id', 'vendorId: vendor.id', 'invoiceNumber: x.invoice_number', 'totalCents: x.total_cents + feeAppliedCents', 'fileSha256: sha', 'servicePeriodStart', 'servicePeriodEnd']) assert.ok(s.includes(k), k);
+  for (const k of ['communityId: community.id', 'vendorId: (vendor && vendor.id) || null', 'invoiceNumber: x.invoice_number', 'totalCents: x.total_cents + feeAppliedCents', 'fileSha256: sha', 'servicePeriodStart', 'servicePeriodEnd']) assert.ok(s.includes(k), k);
   assert.ok(/feeAppliedCents = opts\.feeHold \? 0 : feeCents/.test(s));
   // intake applies the fee before dedup the same way
   const i = src('lib/ap/intake.js');
@@ -315,8 +315,10 @@ check('no new payment or approval actions in the dedup / replay code', () => {
 check('autopay: a CHECK cannot be recorded against an auto-drafted bill (no second payment)', async () => {
   const sbPath = require.resolve('@supabase/supabase-js'); const enPath = require.resolve('../lib/accounting/ap_engine');
   const saved = [require.cache[sbPath], require.cache[enPath]];
-  const inv = { id: 'i1', vendor_invoice_number: '302 008 342 079', is_ach_autopay: true, invoice_date: '2026-09-17' };
-  const fake = () => ({ from: () => { const q = { select() { return q; }, in() { return Promise.resolve({ data: [inv], error: null }); }, eq() { return q; } }; return q; } });
+  const inv = { id: 'i1', vendor_id: 'nrg', vendor_invoice_number: '302 008 342 079', is_ach_autopay: true, invoice_date: '2026-09-17' };
+  // The vendor has a W-9 on file, so the W-9 gate passes and the AUTOPAY guard is what's tested.
+  const vendor = { id: 'nrg', name: 'NRG Business', w9_on_file: true, is_mud: false };
+  const fake = () => ({ from: (t) => { const q = { select() { return q; }, in() { return Promise.resolve({ data: [t === 'vendors' ? vendor : inv], error: null }); }, eq() { return q; } }; return q; } });
   require.cache[sbPath] = { id: sbPath, filename: sbPath, loaded: true, exports: { createClient: fake } };
   delete require.cache[enPath];
   try {

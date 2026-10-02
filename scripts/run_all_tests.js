@@ -203,6 +203,7 @@ const CHECKS = [
   'tests/test_ap_commit_review_flag.js',
   'tests/test_emma_intake_robust.js',
   'tests/test_ap_replay_and_monitor.js',
+  'tests/test_replay_vendor_parity.js',
 ];
 
 const args = process.argv.slice(2);
