@@ -15354,7 +15354,9 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
       const j = await r.json();
       if (j.error) throw new Error(j.error);
       accCurrent = j.decision;
+      window.accCurrentFinalization = j.finalization || null;
       accRenderDetail();
+      accRenderStaleBanner();
     } catch (err) { alert('Load failed: ' + err.message); }
   }
 
@@ -15403,6 +15405,11 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
       : (!a.letter_body && a.current_letter_body) ? (a.current_ai_recommendation || '')
       : (a.ai_recommendation || a.decision_type || '');
     window.accDraftFor = _draftRec === 'approved' ? 'approved_no_conditions' : _draftRec;
+    // The review the letter in the box was drafted FROM (Issue #14): a saved
+    // working draft -> letter_draft_review_at (null for drafts saved before
+    // provenance was tracked); the current review's draft -> current_review_at;
+    // the original intake draft -> created_at.
+    window.accDraftBasis = a.letter_body ? (a.letter_draft_review_at || null) : (a.current_letter_body ? a.current_review_at : (a.created_at || null));
 
     view.innerHTML = `
       <div style="margin-bottom:14px;">
@@ -15487,6 +15494,8 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
           </div>
         </div>
         ${isOpen && a.acknowledged_at ? `<div style="margin:0 0 10px; padding:8px 12px; background:#f5f8fc; border:1px solid #dce6f2; border-radius:8px; font-size:12px; color:#334155;">Annie already emailed ${accEsc(a.acknowledged_to || 'the homeowner')} on ${accEsc(String(a.acknowledged_at).slice(0, 10))} (an acknowledgment, reply or request for information). That does not stop this decision from being sent.</div>` : ''}
+        <div id="acc-stale-banner"></div>
+        ${accFinalizedCard(a)}
         <div class="acc-ai-actions">
           ${isOpen
             ? `<button class="acc-action-btn approve acc-send-btn" onclick="accSend('${a.id}', true)">✉ Send to homeowner (as Annie)</button>
@@ -15526,6 +15535,45 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
         ${open && docs.length ? `<div style="margin-top:10px; display:flex; gap:8px; align-items:center; flex-wrap:wrap;"><button class="secondary-btn" style="font-size:12px;" onclick="accReassess('${a.id}')">🔄 Re-review with current documents</button><span style="font-size:11px; color:#5a7390;">Annie re-reads every document above. The original analysis is kept; nothing is decided or sent.</span><span id="acc-reassess-status" style="font-size:12px;"></span></div>` : ''}
       </div>`;
   }
+  // Stale-draft check (mirror of lib/acc/staleness.js; the server enforces it).
+  function accDraftStale(a) {
+    const t = (x) => (x ? Date.parse(x) : NaN);
+    const reviewAt = a.current_review_at || a.created_at || null;
+    const reasons = [];
+    if (a.last_document_added_at && reviewAt && t(a.last_document_added_at) > t(reviewAt) + 1000) reasons.push('New documents arrived after the latest review. Re-review, then redraft or explicitly review the current letter before sending.');
+    const basis = window.accDraftBasis;
+    if (!basis) { if (a.current_review_at) reasons.push('This saved letter was drafted before the current review. Redraft or explicitly review the current letter before sending.'); }
+    else if (reviewAt && t(basis) + 1000 < t(reviewAt)) reasons.push('A newer review is available. Redraft or explicitly review the current letter before sending.');
+    return reasons;
+  }
+  function accRenderStaleBanner(serverMsg) {
+    const el = document.getElementById('acc-stale-banner'); const a = accCurrent || {};
+    if (!el) return;
+    const open = a.status === 'pending_review' || a.status === 'awaiting_info';
+    const reasons = open ? accDraftStale(a) : [];
+    if (serverMsg && !reasons.includes(serverMsg)) reasons.unshift(serverMsg);
+    if (!reasons.length) { el.innerHTML = ''; return; }
+    el.innerHTML = `<div style="margin:0 0 10px; padding:10px 12px; background:#fff7ed; border:1px solid #fdba74; border-radius:8px; font-size:12.5px; color:#9a3412;">
+      <b>⚠ ${accEsc(reasons[0])}</b>
+      <div style="margin-top:8px; display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+        <button class="secondary-btn" style="font-size:12px;" onclick="accRedraft('${a.id}', false, true)">🔄 Redraft from the current review</button>
+        <label style="font-size:12px; display:flex; gap:6px; align-items:center; cursor:pointer;"><input type="checkbox" id="acc-stale-ack"> I reviewed the letter below and want to send it as it is</label>
+      </div></div>`;
+  }
+  window.accRenderStaleBanner = accRenderStaleBanner;
+  // The finalized record (migration 480): exactly what was sent, sealed.
+  function accFinalizedCard(a) {
+    if (a.status === 'finalizing') return '<div style="margin:0 0 10px; padding:10px 12px; background:#fef3c7; border:1px solid #fcd34d; border-radius:8px; font-size:12.5px; color:#92400e;"><b>Sending in progress.</b> If this stays for more than a few minutes the send was interrupted: check Annie\'s Sent box before doing anything, and tell Ed. It is never re-sent automatically.</div>';
+    const f = window.accCurrentFinalization && window.accCurrentFinalization.latest;
+    if (!f) return '';
+    const e = f.email || null; const short = (h) => h ? String(h).slice(0, 12) + '…' : '—';
+    return `<div style="margin:0 0 10px; padding:10px 12px; background:#f0fdf4; border:1px solid #bbf7d0; border-radius:8px; font-size:12.5px; color:#14532d;">
+      <b>🔒 Finalized record (cannot be changed)</b> · ${accEsc(String(f.finalized_at || '').slice(0, 16).replace('T', ' '))} · ${accEsc(String(f.decision_type || '').replace(/_/g, ' '))}
+      <div style="margin-top:4px;">${e ? 'Emailed to ' + accEsc(e.to) + ' from ' + accEsc(e.from) + ' · "' + accEsc(e.subject) + '"' : 'Marked done without emailing'}</div>
+      <div style="margin-top:2px; color:#166534;">Letter sha256 ${short(f.letter_sha256)} · Complete record sha256 ${short(f.packet_sha256)} · ${(f.documents || []).length} source document(s)${window.accCurrentFinalization.versions.length > 1 ? ' · ' + (window.accCurrentFinalization.versions.length - 1) + ' correction(s) on file' : ''}</div>
+    </div>`;
+  }
+
   async function accReassess(id) {
     const st = document.getElementById('acc-reassess-status');
     if (st) { st.textContent = 'Re-reviewing… (about a minute)'; st.style.color = '#a16207'; }
@@ -15580,9 +15628,10 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
       const r = await fetch('/acc-review/decisions/' + id + '/finalize', {
         method: 'POST',
         headers,
-        body: JSON.stringify({ decision_type: decision, body_text, to_email, send }),
+        body: JSON.stringify({ decision_type: decision, body_text, to_email, send, draft_basis_review_at: window.accDraftBasis || null, acknowledge_stale: !!(document.getElementById('acc-stale-ack') || {}).checked }),
       });
       const j = await r.json();
+      if (j.stale) { btns.forEach((b) => { b.disabled = false; b.style.opacity = ''; }); accRenderStaleBanner(j.error); status.textContent = '✗ ' + j.error; status.style.color = '#b91c1c'; return; }
       if (j.error) {
         // Already decided (another click / tab / earlier send): nothing was sent
         // again. Leave the buttons off and go back to the list.
@@ -15631,6 +15680,8 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
       if (!r.ok || j.error) throw new Error(j.detail || j.error || 'draft failed');
       ta.value = j.body_text;
       window.accDraftFor = j.decision_type || decision;   // the letter now matches this decision
+      window.accDraftBasis = j.basis_review_at || window.accDraftBasis;   // ...and the current review
+      accRenderStaleBanner();
       if (withConditions && condEl) condEl.value = '';
       if (j.has_placeholders) { status.textContent = '⚠ Letter redrafted, but it has a [STAFF: ...] placeholder where a fact was missing (e.g. the governing provision). Fill it in before sending.'; status.style.color = '#b45309'; }
       else { status.textContent = '✓ Letter redrafted — review and edit before sending.'; status.style.color = '#15803d'; }
@@ -15662,7 +15713,7 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
     try {
       const r = await fetch('/acc-review/render-letter', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: a.id, body_text, decision_type: decision, homeowner_name: a.homeowner_name, homeowner_address: a.homeowner_address, community: a.community_name, project_summary: a.project_summary, reference_number: a.reference_number }),
+        body: JSON.stringify({ id: a.id, body_text, decision_type: decision, homeowner_name: a.homeowner_name, homeowner_address: a.homeowner_address, community: a.community_name, project_summary: a.project_summary, reference_number: a.reference_number, draft_basis_review_at: window.accDraftBasis || null }),
       });
       if (!r.ok) { const j = await r.json().catch(() => ({})); throw new Error(j.error || 'render failed'); }
       const url = URL.createObjectURL(await r.blob());

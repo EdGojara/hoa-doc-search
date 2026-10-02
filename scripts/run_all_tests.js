@@ -181,6 +181,7 @@ const CHECKS = [
   'tests/sql/477_apply_one_e2e.mjs',
   'tests/sql/478_apply_one_e2e.mjs',
   'tests/sql/479_apply_one_e2e.mjs',
+  'tests/sql/480_apply_one_e2e.mjs',
   'tests/test_ai_router.js',
   'tests/test_check_register_grouping.js',
   'scripts/check_model_ids.js',
@@ -216,6 +217,7 @@ const CHECKS = [
   'tests/test_acc_documents.js',
   'tests/test_acc_letter_citations.js',
   'tests/test_acc_completion.js',
+  'tests/test_acc_finalization_record.js',
 ];
 
 const args = process.argv.slice(2);

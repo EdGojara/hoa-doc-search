@@ -1,0 +1,112 @@
+{
+  "migration": "480_acc_finalization_record.sql",
+  "summary": "ACC finalization record (Issue #14): adds status finalizing, draft provenance (letter_draft_review_at / letter_draft_saved_at), finalizing_started_at and finalization_id on acc_decisions; creates the append-only acc_finalizations table (exact letter/packet/documents/email with sha256s; corrections are new versions); and a guard trigger that makes a finalized case (finalization_id set) write-once and undeletable, allowing only decided -> archived/withdrawn. No rows written; cases decided before this migration are unaffected.",
+  "requires": [
+    "479_acc_document_manifest_current_review.sql"
+  ],
+  "preflight": [
+    {
+      "name": "acc_finalizations does not exist yet",
+      "sql": "SELECT count(*)::int FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'acc_finalizations'",
+      "expect": 0
+    },
+    {
+      "name": "acc_decisions has no finalization_id yet",
+      "sql": "SELECT count(*)::int FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'acc_decisions' AND column_name IN ('finalization_id','letter_draft_review_at','letter_draft_saved_at','finalizing_started_at')",
+      "expect": 0
+    }
+  ],
+  "expected_changes": [
+    "Replaces acc_decisions_status_check to also allow finalizing.",
+    "Adds acc_decisions.letter_draft_review_at, letter_draft_saved_at, finalizing_started_at (timestamptz) and finalization_id (uuid), all nullable.",
+    "Creates acc_finalizations (append-only via trigger trg_acc_finalizations_append_only + SELECT/INSERT-only grants) with version-chain and email/delivery CHECKs and two indexes.",
+    "Creates function acc_decisions_finalized_guard() + trigger trg_acc_decisions_finalized_guard (BEFORE UPDATE OR DELETE): a finalized case is write-once and undeletable; status may only go decided -> archived/withdrawn.",
+    "No row changes."
+  ],
+  "objects": {
+    "added": [
+      "column:acc_decisions.finalization_id",
+      "column:acc_decisions.finalizing_started_at",
+      "column:acc_decisions.letter_draft_review_at",
+      "column:acc_decisions.letter_draft_saved_at",
+      "column:acc_finalizations.acc_decision_id",
+      "column:acc_finalizations.community_id",
+      "column:acc_finalizations.correction_reason",
+      "column:acc_finalizations.decided_by_user_id",
+      "column:acc_finalizations.decision_type",
+      "column:acc_finalizations.delivery",
+      "column:acc_finalizations.documents",
+      "column:acc_finalizations.email",
+      "column:acc_finalizations.finalized_at",
+      "column:acc_finalizations.homeowner_address",
+      "column:acc_finalizations.homeowner_name",
+      "column:acc_finalizations.id",
+      "column:acc_finalizations.letter_archive_path",
+      "column:acc_finalizations.letter_sha256",
+      "column:acc_finalizations.letter_text",
+      "column:acc_finalizations.packet_archive_path",
+      "column:acc_finalizations.packet_sha256",
+      "column:acc_finalizations.property_id",
+      "column:acc_finalizations.record_ownership",
+      "column:acc_finalizations.reference_number",
+      "column:acc_finalizations.supersedes_id",
+      "column:acc_finalizations.version",
+      "constraint:acc_finalizations.acc_finalizations_acc_decision_id_fkey",
+      "constraint:acc_finalizations.acc_finalizations_acc_decision_id_version_key",
+      "constraint:acc_finalizations.acc_finalizations_delivery_check",
+      "constraint:acc_finalizations.acc_finalizations_email_matches_delivery",
+      "constraint:acc_finalizations.acc_finalizations_pkey",
+      "constraint:acc_finalizations.acc_finalizations_supersedes_id_fkey",
+      "constraint:acc_finalizations.acc_finalizations_version_chain",
+      "function:acc_decisions_finalized_guard",
+      "function:acc_finalizations_append_only",
+      "index:acc_finalizations_acc_decision_id_version_key",
+      "index:acc_finalizations_pkey",
+      "index:idx_acc_finalizations_community",
+      "index:idx_acc_finalizations_decision",
+      "table:acc_finalizations",
+      "trigger:acc_decisions.trg_acc_decisions_finalized_guard",
+      "trigger:acc_finalizations.trg_acc_finalizations_append_only"
+    ],
+    "changed": [
+      "constraint:acc_decisions.acc_decisions_status_check"
+    ],
+    "removed": []
+  },
+  "row_changes": {
+    "acc_decisions": 0
+  },
+  "protected": [
+    {
+      "table": "acc_decisions",
+      "order_by": "id"
+    },
+    {
+      "table": "ap_payments",
+      "order_by": "id"
+    },
+    {
+      "table": "journal_entries",
+      "order_by": "id"
+    }
+  ],
+  "verify": [
+    {
+      "name": "no case is finalizing or linked to a finalization",
+      "sql": "SELECT count(*)::int FROM acc_decisions WHERE status = 'finalizing' OR finalization_id IS NOT NULL",
+      "expect": 0
+    },
+    {
+      "name": "no finalization records",
+      "sql": "SELECT count(*)::int FROM acc_finalizations",
+      "expect": 0
+    },
+    {
+      "name": "guard trigger present",
+      "sql": "SELECT count(*)::int FROM pg_trigger WHERE tgname = 'trg_acc_decisions_finalized_guard'",
+      "expect": 1
+    }
+  ],
+  "api_checks": [],
+  "reload_schema": true
+}

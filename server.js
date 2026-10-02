@@ -2660,11 +2660,14 @@ app.post('/acc-review/letter', upload.any(), async (req, res) => {
     let reuseId = body.decision_id || null;
     if (!reuseId && accCommunityId && body.homeowner_address) {
       const sinceIso = new Date(Date.now() - 4 * 24 * 60 * 60 * 1000).toISOString();
-      const { data: recent } = await supabase.from('acc_decisions')
-        .select('id, homeowner_address, project_summary, created_at')
+      const recentQ = (cols) => supabase.from('acc_decisions').select(cols)
         .eq('community_id', accCommunityId).gte('created_at', sinceIso)
         .order('created_at', { ascending: false }).limit(50);
-      const match = (recent || []).find((r) =>
+      let { data: recent, error: rErr } = await recentQ('id, homeowner_address, project_summary, created_at, status, finalization_id');
+      if (rErr && /finalization_id/.test(rErr.message || '')) ({ data: recent } = await recentQ('id, homeowner_address, project_summary, created_at, status'));
+      // Never reuse (rewrite) a case finalized through "Send to homeowner": a
+      // finalized record is immutable (Issue #14, migration 480).
+      const match = (recent || []).find((r) => r.status !== 'finalizing' && !r.finalization_id &&
         _nrm(r.homeowner_address) === _nrm(body.homeowner_address) &&
         _nrm(r.project_summary).slice(0, 60) === _nrm(body.project_summary).slice(0, 60));
       if (match) reuseId = match.id;
@@ -2938,7 +2941,10 @@ app.get('/acc-review/decisions/:id/full', async (req, res) => {
       .eq('management_company_id', BEDROCK_MGMT_CO_ID)
       .single();
     if (error || !data) return res.status(404).json({ error: 'Decision not found' });
-    res.json({ decision: data });
+    // The finalized record (exact email, hashes, documents), when there is one.
+    let finalization = null;
+    try { finalization = await require('./lib/acc/finalized').finalizationFor(supabase, data); } catch (_) {}
+    res.json({ decision: data, finalization });
   } catch (err) {
     console.error('[acc-review/decisions/:id/full] failed:', err.message);
     res.status(500).json({ error: err.message });
@@ -2958,10 +2964,37 @@ app.post('/acc-review/decisions/:id/reassess', async (req, res) => {
     const r = await require('./lib/acc/pending_intake').reassessCase(dec.id, 'staff');
     if (r.status === 'unavailable') return res.status(409).json({ error: 'Re-review needs migration 479 to be applied first.' });
     if (r.status === 'no_documents') return res.status(422).json({ error: 'No readable documents are stored on this case.', unreadable: r.unreadable });
+    if (r.status === 'not_open') return res.status(409).json({ error: `This application is no longer open (${r.case_status}); a finalized record is never re-reviewed.` });
     if (r.status !== 'reviewed') return res.status(500).json({ error: r.status });
     res.json({ ok: true, ...r });
   } catch (err) {
     console.error('[acc-review/decisions/:id/reassess] failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// POST /acc-review/decisions/:id/release-finalizing (Issue #14): a send that was
+// interrupted after the case was claimed ('finalizing') but before it completed.
+// Owner only. Requires a note confirming Annie's Sent box was checked and the
+// homeowner was NOT emailed; returns the case to the queue. If they WERE emailed,
+// do not release: the record must be completed by Ed, never re-sent.
+app.post('/acc-review/decisions/:id/release-finalizing', express.json({ limit: '8kb' }), async (req, res) => {
+  const { requireOwner } = require('./api/_require_admin');
+  const owner = await requireOwner(req, res); if (!owner) return;
+  try {
+    const note = String((req.body || {}).confirmed_not_sent_note || '').trim();
+    if (note.length < 10) return res.status(400).json({ error: 'Describe how you confirmed the homeowner was NOT emailed (e.g. checked Annie\'s Sent box).' });
+    const { data: dec, error } = await supabase.from('acc_decisions').select('id, status, finalizing_started_at').eq('id', req.params.id).eq('management_company_id', BEDROCK_MGMT_CO_ID).maybeSingle();
+    if (error) throw error;
+    if (!dec) return res.status(404).json({ error: 'Decision not found' });
+    if (dec.status !== 'finalizing') return res.status(409).json({ error: `This case is ${dec.status}, not an interrupted send.` });
+    if (dec.finalizing_started_at && Date.now() - Date.parse(dec.finalizing_started_at) < 10 * 60 * 1000) return res.status(409).json({ error: 'The send started less than 10 minutes ago; it may still be in progress.' });
+    const { error: uErr } = await supabase.from('acc_decisions').update({ status: 'pending_review', finalizing_started_at: null, updated_at: new Date().toISOString() }).eq('id', dec.id).eq('status', 'finalizing');
+    if (uErr) throw uErr;
+    console.warn(`[acc-release-finalizing] ${dec.id} returned to the queue by ${owner.email}: ${note}`);
+    res.json({ ok: true, status: 'pending_review' });
+  } catch (err) {
+    console.error('[acc-review/decisions/:id/release-finalizing] failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
   }
 });
@@ -2971,14 +3004,16 @@ app.get('/acc-review/decisions/:id/letter', async (req, res) => {
     const { id } = req.params;
     const { data: dec, error: qErr } = await supabase
       .from('acc_decisions')
-      .select('id, letter_pdf_storage_path, letter_body, ai_letter_body, homeowner_address, homeowner_name, community_name, project_summary, reference_number, decision_type, created_at')
+      .select('*')
       .eq('id', id)
       .eq('management_company_id', BEDROCK_MGMT_CO_ID)
       .single();
     if (qErr || !dec) return res.status(404).json({ error: 'Decision not found' });
 
-    let pdfBuffer = null;
-    if (dec.letter_pdf_storage_path) {
+    // A finalized case serves the SEALED letter that was sent (hash-checked),
+    // never a regeneration (Issue #14).
+    let pdfBuffer = await require('./lib/acc/finalized').sealedArtifact(supabase, dec, 'letter');
+    if (!pdfBuffer && dec.letter_pdf_storage_path) {
       const { data: blob, error: dErr } = await supabase.storage
         .from('documents')
         .download(dec.letter_pdf_storage_path);
@@ -3034,7 +3069,10 @@ app.get('/acc-review/decisions/:id/packet', async (req, res) => {
 
     const download = async (p) => { const { data, error } = await supabase.storage.from('documents').download(p); if (error || !data) return null; return Buffer.from(await data.arrayBuffer()); };
     let bytes = null;
-    if (dec.status === 'decided' && dec.packet_pdf_storage_path) bytes = await download(dec.packet_pdf_storage_path);
+    // A finalized case serves the SEALED packet from the write-once archive.
+    const sealed = await require('./lib/acc/finalized').sealedArtifact(supabase, dec, 'packet');
+    if (sealed) bytes = sealed;
+    if (!bytes && dec.status === 'decided' && dec.packet_pdf_storage_path) bytes = await download(dec.packet_pdf_storage_path);
     if (!bytes) {
       const pk = await require('./lib/acc/packet').buildAccPacket({ dec, download });
       if (!pk.ok) return res.status(422).json({ error: 'No document on this case could be included in a packet.', omitted: pk.omitted });
@@ -3100,6 +3138,18 @@ app.post('/acc-review/decisions/:id/finalize', async (req, res) => {
       return res.status(409).json({ error: `This application is no longer open (${dec.status}${dec.decided_at ? ', decided ' + String(dec.decided_at).slice(0, 10) : ''}). Nothing was sent again.`, already_decided: true });
     }
 
+    // A STALE letter (drafted before the current review, or before evidence
+    // received since) cannot go out as a final decision unless it is redrafted
+    // or a person explicitly confirms they reviewed it (Issue #14). A staff-
+    // edited draft is never replaced automatically.
+    if (isFinal) {
+      const { draftStaleness, MESSAGES } = require('./lib/acc/staleness');
+      const st = draftStaleness(dec, { basisReviewAt: body.draft_basis_review_at || null });
+      if (st.stale && body.acknowledge_stale !== true) {
+        return res.status(409).json({ stale: true, reasons: st.reasons, review_at: st.review_at, error: MESSAGES[st.reasons[0]] || 'A newer review is available. Redraft or explicitly review the current letter before sending.' });
+      }
+    }
+
     // The letter body the reviewer approved. If the request doesn't carry an
     // explicit body, fall back to the WORKING draft (letter_body) before the
     // original engine draft (ai_letter_body) — same precedence as the queue view
@@ -3148,66 +3198,79 @@ app.post('/acc-review/decisions/:id/finalize', async (req, res) => {
       }
     }
 
-    // Communicate back to the homeowner (opt-in via send=true). Sent AS Annie,
-    // the ACC specialist mailbox, so it threads with her acknowledgment.
+    // Communicate back to the homeowner (opt-in via send=true). Sent AS Annie.
+    // SENT MEANS FINAL, ARCHIVED AND IMMUTABLE (Issue #14): lib/acc/finalize.js
+    // claims the case ('finalizing'), seals the exact letter + complete record,
+    // sends the email, appends the finalization record (exact email, hashes,
+    // documents) and only then marks the case decided. A failure before the
+    // email leaves the case back in the queue; nothing was sent.
     const toEmail = (body.to_email || dec.submitter_email || '').trim();
-    // AT MOST ONCE, without letting earlier correspondence block the decision
-    // (Issue #14, Ed 2026-10-02). The old guard treated acknowledged_at as
-    // "decision already emailed", but the receipt acknowledgment, replies and
-    // request-more-info emails also stamp it, so a FINAL decision after any of
-    // those was silently never sent. lib/acc/finalize.js now claims the case
-    // (open -> decided) atomically before sending: a double-click or retry finds
-    // it decided and is refused; a failed email puts the case back as it was.
-    const sendDecisionEmail = async () => {
-        const graph = require('./lib/email/graph_send');
-        if (!graph.isConfigured()) throw new Error('email_not_configured');
-        const verb = decisionType.startsWith('approved') ? 'Approved'
-                   : decisionType === 'denied' ? 'Decision'
-                   : decisionType === 'request_more_info' ? 'More information needed'
-                   : 'Decision';
-        const subject = `${dec.community_name} architectural request — ${verb}${dec.reference_number ? ' (' + dec.reference_number + ')' : ''}`;
-        // The EMAIL body is a short, warm cover note from Annie (decision-aware),
-        // NOT a restatement of the formal letter — the full letter with all
-        // conditions is the attached PDF + the sealed record (Ed 2026-07-25).
-        // For request-more-info the cover note surfaces the actual items, since
-        // the homeowner has to act.
-        const { composeAccCoverNote } = require('./lib/email/acc_cover_note');
-        const coverNote = composeAccCoverNote({
-          decisionType, homeownerName: dec.homeowner_name,
-          projectSummary: dec.project_summary, letterBody: bodyText,
-        });
-        // Shared Annie signature builder — every Annie email carries her sign-off
-        // + inline logo. Returns { html, attachments }; merge the logo with the PDF.
-        const { buildAnnieEmail } = require('./lib/email/annie_signature');
-        const built = buildAnnieEmail(coverNote, dec.community_name);
-        await graph.sendAs({
-          from: graph.ANNIE_MAILBOX,
-          to: toEmail,
-          subject,
-          html: built.html,
-          attachments: [
-            ...(built.attachments || []),
-            {
-              '@odata.type': '#microsoft.graph.fileAttachment',
-              name: `${(dec.reference_number || 'ACC_decision').replace(/[^A-Za-z0-9._-]+/g, '_')}.pdf`,
-              contentType: 'application/pdf',
-              contentBytes: pdfBuffer.toString('base64'),
-            },
-          ],
-        });
+    const graph = require('./lib/email/graph_send');
+    const _sha256 = (b) => require('crypto').createHash('sha256').update(b).digest('hex');
+    const attemptId = Date.now().toString(36);
+    const letterFileName = `${(dec.reference_number || 'ACC_decision').replace(/[^A-Za-z0-9._-]+/g, '_')}.pdf`;
+    const download = async (p) => { const { data, error } = await supabase.storage.from('documents').download(p); if (error || !data) return null; return Buffer.from(await data.arrayBuffer()); };
+    // The email: SHORT for a final decision (the attached letter is the one
+    // authoritative statement of conditions / reasons); conversational with the
+    // needed items for a request for more information.
+    const composeEmail = async () => {
+      if (!graph.isConfigured()) throw new Error('email_not_configured');
+      const { composeAccDecisionEmail } = require('./lib/email/acc_cover_note');
+      const m = composeAccDecisionEmail({ decisionType, homeownerName: dec.homeowner_name, homeownerAddress: dec.homeowner_address, projectSummary: dec.project_summary, letterBody: bodyText, communityName: dec.community_name });
+      const built = require('./lib/email/annie_signature').buildAnnieEmail(m.text, dec.community_name);
+      const pdfAtt = { '@odata.type': '#microsoft.graph.fileAttachment', name: letterFileName, contentType: 'application/pdf', contentBytes: pdfBuffer.toString('base64') };
+      return { from: graph.ANNIE_MAILBOX, to: toEmail, subject: m.subject, text: m.text, html: built.html,
+        attachments: [...(built.attachments || []), pdfAtt],
+        archive_attachments: [{ name: letterFileName, content_type: 'application/pdf', sha256: _sha256(pdfBuffer), bytes: pdfBuffer.length }] };
     };
+    const sendEmail = async (c) => { await graph.sendAs({ from: c.from, to: c.to, subject: c.subject, html: c.html, attachments: c.attachments }); };
+    // The exact final letter + the complete ACC record (letter, application,
+    // every supporting document, every photo), sealed write-once with sha256s.
+    // Attempt-scoped archive paths: a failed attempt can never collide with the
+    // record of the attempt that is finally sent.
+    const sealRecord = async () => {
+      const { sealFinalizedRecord } = require('./lib/record_archive');
+      const base = `acc_decision/${dec.community_id || 'unknown'}/${id}/${attemptId}`;
+      const meta = { decision_type: decisionType, reference_number: dec.reference_number || null };
+      const L = await sealFinalizedRecord(supabase, { record_type: 'acc_letter', record_id: id, community_id: dec.community_id || null, archive_path: `${base}-letter.pdf`, buffer: pdfBuffer, sent_at: new Date().toISOString(), metadata: meta });
+      if (!L || !L.sha256) throw new Error('the final letter could not be sealed');
+      const { buildAccPacket } = require('./lib/acc/packet');
+      const pk = await buildAccPacket({ dec: { ...dec, letter_pdf_storage_path: letterStoragePath }, letterBuffer: pdfBuffer, download });
+      if (!pk.ok) throw new Error(pk.error);
+      if (pk.omitted.length) throw new Error('these documents could not be included in the complete record: ' + pk.omitted.map((o) => o.what).join(', '));
+      const packetPath = `acc_decisions/${id}/packet.pdf`;
+      const up = await supabase.storage.from('documents').upload(packetPath, pk.bytes, { contentType: 'application/pdf', upsert: true });
+      if (up && up.error) throw new Error(`packet upload failed: ${up.error.message || up.error}`);
+      const P = await sealFinalizedRecord(supabase, { record_type: 'acc_packet', record_id: id, community_id: dec.community_id || null, archive_path: `${base}-packet.pdf`, buffer: pk.bytes, sent_at: new Date().toISOString(), metadata: { ...meta, included: pk.included.map((x) => x.what) } });
+      if (!P || !P.sha256) throw new Error('the complete record could not be sealed');
+      return {
+        letter: { sha256: L.sha256, archive_path: L.archive_path },
+        packet: { sha256: P.sha256, archive_path: P.archive_path, path: packetPath },
+        documents: pk.included.filter((x) => x.what !== 'decision letter').map((x) => ({ what: x.what, path: x.path, sha256: x.sha256, bytes: x.bytes, pages: x.pages })),
+      };
+    };
+    const recordFinalization = async (row) => {
+      const { data, error } = await supabase.from('acc_finalizations').insert(row).select('id').single();
+      if (error) throw new Error(error.message);
+      return data;
+    };
+    let propertyId = null;
+    try { const { resolveProperty } = require('./lib/entity_resolution'); const pr = dec.community_id ? await resolveProperty(supabase, dec.community_id, dec.homeowner_address).catch(() => null) : null; propertyId = (pr && pr.id) || null; } catch (_) {}
 
-    // Claim -> send -> revert-on-failure / record. decided_at is stamped on a
-    // final decision so billing counts it in the month it was DECIDED (mig 330).
     const fin = await require('./lib/acc/finalize').finalizeAccDecision(supabase, {
       dec, decisionType, bodyText, toEmail, send: !!body.send, actorId: actor?.id || null,
-      letterStoragePath, sendEmail: sendDecisionEmail,
+      letterStoragePath, propertyId, sealRecord, composeEmail, sendEmail, recordFinalization,
     });
     if (!fin.ok) {
       if (fin.email && fin.email.error) console.error('[acc-finalize] email send failed:', fin.email.error);
-      return res.status(fin.httpStatus || 500).json({ error: fin.error, email: fin.email || null, already_decided: !!fin.already_decided, current: fin.current || null });
+      return res.status(fin.httpStatus || 500).json({ error: fin.error, email: fin.email || null, already_decided: !!fin.already_decided, current: fin.current || null, reverted: fin.reverted });
     }
     const emailResult = fin.email;
+    const composed = fin.composed || null;
+    if (fin.record_error) console.error(`[acc-finalize] finalization record NOT written for ${id}: ${fin.record_error}`);
+    const filing = fin.filing
+      ? { letter_sealed: true, letter_sha256: fin.filing.letter.sha256, packet: { ok: true, path: fin.filing.packet.path, sealed: true, sha256: fin.filing.packet.sha256, included: fin.filing.documents.length + 1, omitted: [] }, finalization_id: fin.finalization_id, record_error: fin.record_error || null }
+      : { letter_sealed: false, packet: null };
 
     // ONE-BRAIN sync-out (Ed 2026-07-25). If this decision came IN through the
     // portal, push the outcome back onto its community_applications row so the
@@ -3227,61 +3290,7 @@ app.post('/acc-review/decisions/:id/finalize', async (req, res) => {
       } catch (e) { console.warn('[acc-finalize] portal sync-back failed:', e.message); }
     }
 
-    // DURABLE RECORD + MAILING HISTORY (Ed 2026-07-25). A decided ACC decision
-    // must be a permanent, auditable record — the same treatment as an
-    // enforcement letter: (1) SEAL the sent letter into the immutable,
-    // hash-verified archive so it can never silently change, and (2) log the
-    // mailing on the homeowner's timeline (`interactions` is what Homeowner 360
-    // reads), so "when it was mailed, to whom, and the letter itself" is on the
-    // 360. Only on a FINAL decision. Both best-effort — the decision is already
-    // saved above, so a failure here never undoes it, but we log loudly.
-    // What the final step filed, reported back so a failure is never silent.
-    const filing = { letter_sealed: false, packet: null };
     if (isFinal) {
-      try {
-        const { sealFinalizedRecord } = require('./lib/record_archive');
-        const sealed = await sealFinalizedRecord(supabase, {
-          record_type: 'acc_letter', record_id: id, community_id: dec.community_id || null,
-          archive_path: `acc_decision/${dec.community_id || 'unknown'}/${id}-letter.pdf`,
-          buffer: pdfBuffer, sent_at: new Date().toISOString(),
-          metadata: { decision_type: decisionType, reference_number: dec.reference_number || null },
-        });
-        filing.letter_sealed = !!sealed;
-        if (!sealed) console.error(`[acc-finalize] letter NOT sealed for decision ${id}`);
-      } catch (e) { console.error('[acc-finalize] letter seal failed:', e.message); }
-
-      // THE COMPLETE ACC RECORD (Issue #14): the final letter + application +
-      // every supporting document + every photo, as one PDF, filed on the case
-      // and sealed in the immutable archive. Built here, in the request that won
-      // the claim, so it is created exactly once per decision. The homeowner's
-      // email stays letter-only (Ed 2026-10-02); the packet is the record.
-      try {
-        const { buildAccPacket } = require('./lib/acc/packet');
-        const decNow = { ...dec, letter_pdf_storage_path: letterStoragePath };
-        const pk = await buildAccPacket({
-          dec: decNow, letterBuffer: pdfBuffer,
-          download: async (p) => { const { data, error } = await supabase.storage.from('documents').download(p); if (error || !data) return null; return Buffer.from(await data.arrayBuffer()); },
-        });
-        if (!pk.ok) throw new Error(pk.error);
-        const packetPath = `acc_decisions/${id}/packet.pdf`;
-        const up = await supabase.storage.from('documents').upload(packetPath, pk.bytes, { contentType: 'application/pdf', upsert: true });
-        if (up && up.error) throw new Error(`packet upload failed: ${up.error.message || up.error}`);
-        const { error: pErr } = await supabase.from('acc_decisions').update({ packet_pdf_storage_path: packetPath }).eq('id', id);
-        if (pErr) throw new Error(`packet link failed: ${pErr.message}`);
-        const { sealFinalizedRecord } = require('./lib/record_archive');
-        const sealedPk = await sealFinalizedRecord(supabase, {
-          record_type: 'acc_packet', record_id: id, community_id: dec.community_id || null,
-          archive_path: `acc_decision/${dec.community_id || 'unknown'}/${id}-packet.pdf`,
-          buffer: pk.bytes, sent_at: new Date().toISOString(),
-          metadata: { decision_type: decisionType, reference_number: dec.reference_number || null, included: pk.included.map((x) => x.what), omitted: pk.omitted.map((x) => x.what) },
-        });
-        filing.packet = { ok: true, path: packetPath, sealed: !!sealedPk, included: pk.included.length, omitted: pk.omitted };
-        if (pk.omitted.length) console.error(`[acc-finalize] packet for ${id} is missing ${pk.omitted.length} document(s):`, pk.omitted.map((x) => `${x.what} (${x.error})`).join('; '));
-      } catch (e) {
-        filing.packet = { ok: false, error: e.message };
-        console.error(`[acc-finalize] complete ACC packet NOT filed for decision ${id}: ${e.message}`);
-      }
-
       // Mailing history on the homeowner timeline. community_id is NOT NULL on
       // interactions, so only log when we can scope it.
       if (dec.community_id) {
@@ -3299,7 +3308,7 @@ app.post('/acc-review/decisions/:id/finalize', async (req, res) => {
             content: bodyText.slice(0, 4000),
             attachments: [
               { type: 'acc_letter', storage_path: letterStoragePath, label: 'ACC decision letter' },
-              ...(filing.packet && filing.packet.ok ? [{ type: 'acc_packet', storage_path: filing.packet.path, label: 'Complete ACC record (letter, application, documents, photos)' }] : []),
+              ...(filing.packet && filing.packet.ok ? [{ type: 'acc_packet', storage_path: filing.packet.path, label: 'Complete ACC record (letter, application, documents, photos)', sha256: filing.packet.sha256 }] : []),
             ],
             source: 'forward',
             status: 'sent',
@@ -3351,8 +3360,8 @@ app.post('/acc-review/decisions/:id/finalize', async (req, res) => {
           sender_email: annie,
           sender_name: 'Annie Reeves (Bedrock AI)',
           recipients: [toEmail],
-          subject: `${dec.community_name} architectural request — ${verb}${dec.reference_number ? ' (' + dec.reference_number + ')' : ''}`,
-          body_preview: bodyText.slice(0, 400),
+          subject: (composed && composed.subject) || `${dec.community_name} architectural request (${dec.reference_number || ''})`,
+          body_preview: ((composed && composed.text) || bodyText).slice(0, 400),
           classification: 'outbound_reply',
           classification_confidence: 'high',
           persona: 'annie',
@@ -3443,6 +3452,7 @@ app.post('/acc-review/decisions/:id/finalize', async (req, res) => {
       email: emailResult,
       fee_charge: feeCharge,
       filing,
+      finalization_id: fin.finalization_id || null,
     });
   } catch (err) {
     console.error('[acc-review/decisions/:id/finalize] failed:', err.message);
@@ -3466,6 +3476,8 @@ app.post('/acc-review/decisions/:id/redraft', express.json({ limit: '64kb' }), a
     const { data: dec } = await supabase.from('acc_decisions').select('*')
       .eq('id', id).eq('management_company_id', BEDROCK_MGMT_CO_ID).maybeSingle();
     if (!dec) return res.status(404).json({ error: 'Decision not found' });
+    // A finalized / closed case is never redrafted (Issue #14).
+    if (!require('./lib/acc/finalize').OPEN_STATUSES.includes(dec.status)) return res.status(409).json({ error: `This application is no longer open (${dec.status}); its final letter cannot be redrafted.` });
 
     // Survey/waiver guard (Ed 2026-08-03): the approval template used to invite a
     // "survey requirement is waived" sentence. When the internal analysis still
@@ -3538,7 +3550,9 @@ app.post('/acc-review/decisions/:id/redraft', express.json({ limit: '64kb' }), a
     }
     // A "[STAFF: ...]" placeholder marks a fact the case did not provide; the
     // screen flags it and finalize refuses to send until it is filled.
-    res.json({ ok: true, decision_type: decisionType, body_text: screen.text, has_placeholders: require('./lib/acc/finalize').PLACEHOLDER_RE.test(screen.text) });
+    res.json({ ok: true, decision_type: decisionType, body_text: screen.text, has_placeholders: require('./lib/acc/finalize').PLACEHOLDER_RE.test(screen.text),
+      // The review this draft was written from (stale-draft check, Issue #14).
+      basis_review_at: dec.current_review_at || dec.created_at || null });
   } catch (err) {
     console.error('[acc-review/decisions/:id/redraft] failed:', err.message);
     res.status(500).json({ error: err.message });
@@ -3576,8 +3590,16 @@ app.post('/acc-review/render-letter', express.json({ limit: '256kb' }), async (r
       try {
         const draftPatch = { letter_body: screen.text, updated_at: new Date().toISOString() };
         if (b.decision_type) draftPatch.decision_type = String(b.decision_type).trim();
-        await supabase.from('acc_decisions').update(draftPatch)
-          .eq('id', b.id).eq('management_company_id', BEDROCK_MGMT_CO_ID).eq('status', 'pending_review');
+        // Which review this working draft was drafted from (Issue #14): a draft
+        // older than the current review is flagged and blocks a final send.
+        const withBasis = { ...draftPatch, letter_draft_review_at: b.draft_basis_review_at || null, letter_draft_saved_at: new Date().toISOString() };
+        let dr = await supabase.from('acc_decisions').update(withBasis)
+          .eq('id', b.id).eq('management_company_id', BEDROCK_MGMT_CO_ID).in('status', ['pending_review', 'awaiting_info']);
+        if (dr.error && /letter_draft_/.test(dr.error.message || '')) {
+          dr = await supabase.from('acc_decisions').update(draftPatch)
+            .eq('id', b.id).eq('management_company_id', BEDROCK_MGMT_CO_ID).in('status', ['pending_review', 'awaiting_info']);
+        }
+        if (dr.error) console.warn('[acc-render-letter] draft save skipped:', dr.error.message);
       } catch (e) { console.warn('[acc-render-letter] draft save skipped:', e.message); }
     }
     const stem = (b.homeowner_address || b.homeowner_name || b.community || 'decision').toString().replace(/[^A-Za-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'decision';

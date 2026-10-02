@@ -202,7 +202,7 @@ check('no automatic decision or send: intake + re-review never set a decision, d
   for (const k of ['decision_type', 'decided_at', 'decided_by_user_id', 'acknowledged_at', 'letter_body', 'ai_review_text', 'ai_recommendation', 'ai_letter_body']) assert.ok(!keys.has(k), `wrote ${k}`);
   assert.ok(!db.writes.some((w) => w.payload.status && w.payload.status !== 'pending_review'));
   assert.strictEqual(db.row().decision_type, null); assert.strictEqual(db.row().decided_at, null);
-  for (const f of ['lib/acc/documents.js', 'lib/acc/pending_intake.js']) assert.ok(!/graph_send|sendAs\(|finalize/.test(src(f)), f + ' sends nothing');
+  for (const f of ['lib/acc/documents.js', 'lib/acc/pending_intake.js']) assert.ok(!/graph_send|sendAs\(|require\('\.\/finalize'\)/.test(src(f)), f + ' sends nothing');
   assert.ok(/app\.post\('\/acc-review\/decisions\/:id\/reassess'/.test(src('server.js')));
 });
 
