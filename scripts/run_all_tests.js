@@ -215,6 +215,7 @@ const CHECKS = [
   'tests/test_acc_finalize.js',
   'tests/test_acc_documents.js',
   'tests/test_acc_letter_citations.js',
+  'tests/test_acc_completion.js',
 ];
 
 const args = process.argv.slice(2);
