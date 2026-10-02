@@ -64,6 +64,13 @@ check('a permit condition WITH a governing-document basis survives; one the staf
   assert.strictEqual(pruneConditions(asked, { reviewDate: OCT2, staffInstructions: 'add: city permit required' }).removed.length, 0);
   assert.strictEqual(pruneConditions(asked, { reviewDate: OCT2 }).removed.length, 1, 'no basis -> removed');
 });
+check('the bare word "section" is not a citation: a permit condition about "the sidewalk section" is still removed (live re-review shape)', () => {
+  const t = '5. The homeowner is solely responsible for determining whether Fort Bend County or the City of Richmond requires a permit for work within the public right-of-way (the sidewalk section) and for obtaining any such permit before or concurrent with that portion of the work. This HOA approval does not constitute or replace any required governmental authorization.';
+  const r = pruneConditions(t, { reviewDate: OCT2 });
+  assert.strictEqual(r.removed.length, 1); assert.strictEqual(r.removed[0].reason, 'unsupported_boilerplate');
+  assert.strictEqual(pruneConditions('1. A permit is required under Article IV of the Declaration.', { reviewDate: OCT2 }).removed.length, 0, 'a real Article citation still counts');
+  assert.strictEqual(pruneConditions('1. A permit is required per § 7 of the rules.', { reviewDate: OCT2 }).removed.length, 0, '§ citation counts');
+});
 check('licensing / insurance / liability boilerplate without a basis is removed', () => {
   for (const t of ['1. Contractor must be licensed and insured.', '1. Homeowner assumes all liability for the work.', '1. You agree to indemnify the association.']) {
     assert.strictEqual(pruneConditions(t, { reviewDate: OCT2 }).removed[0].reason, 'unsupported_boilerplate', t);
