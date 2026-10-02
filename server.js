@@ -1997,8 +1997,12 @@ CRITICAL RULES:
 // the bottom) so non-HTTP callers (the email + portal intake) invoke the exact
 // same engine. Throws { status } on bad input; returns the responseBody object.
 async function assessAndDraftAcc({ community, typedDetails, notes, additionalContext, decision, conditions, files = [], isAdmin = false }) {
-    const pdfFile = files.find((f) => f.fieldname === 'pdf');
-    const imageFiles = files.filter((f) => f.fieldname === 'images');
+    // The first 'pdf' is the application form. Any further 'pdf' files are read
+    // as supporting documents too: reading only the first one is how a survey
+    // emailed with the application was reported "not submitted" (Issue #14).
+    const pdfFiles = files.filter((f) => f.fieldname === 'pdf');
+    const pdfFile = pdfFiles[0];
+    const imageFiles = pdfFiles.slice(1).concat(files.filter((f) => f.fieldname === 'images'));
     if (!pdfFile && imageFiles.length === 0 && !(typedDetails && typedDetails.trim())) {
       const e = new Error('Provide application details, a PDF, or photos.'); e.status = 400; throw e;
     }
@@ -2041,6 +2045,9 @@ async function assessAndDraftAcc({ community, typedDetails, notes, additionalCon
       `FROM THE APPLICATION FORM:\n- Homeowner name, address, phone, email\n- Project type (fence, pool, deck, paint, roof, room addition, etc.)\n- Written description / scope of work\n- Materials stated (with brand/grade if given)\n- Colors stated (with color name / hex / sample number if given)\n- Dimensions (height, length, width, square footage)\n- Setbacks / distances from property lines\n- Contractor name + license if listed\n- Start / completion dates\n- Estimated cost\n- Anything signed or dated\n\n` +
       `FROM EACH PHOTO (label them Photo 1, Photo 2, etc.):\n- Describe what you see plainly — the structure, the material, the color, the surroundings\n- Estimate scale where possible (compare to a door, person, car if visible)\n- Note neighbor properties visible in frame (e.g., adjacent fence height, paint color)\n- Note property condition issues that may matter to the review (drainage slope, easement markers, utility boxes, trees)\n- If a photo appears to be a contractor rendering vs an existing condition, say so\n\n` +
       `CROSS-CHECK:\n- If the application says one thing and a photo shows another, flag the discrepancy explicitly\n- If something a complete application normally has is MISSING (no survey, no dimensions, no contractor), flag it explicitly\n\n` +
+      // Every file in the package, by its ORIGINAL name, so a document is never
+      // judged "missing" when it was attached (Issue #14, Sweetspire survey).
+      (files.length ? `FILES IN THIS PACKAGE (in the order attached above; the first PDF is the application form):\n${[pdfFile, ...imageFiles].filter(Boolean).map((f, i) => `${i + 1}. ${f.originalname || (f === pdfFile ? 'application form (PDF)' : 'attachment')}`).join('\n')}\nA file that is named, or reads as, a survey / plot plan / site plan IS the survey for this review; do not call the survey missing when one is in this package.\n\n` : '') +
       (typedDetails && typedDetails.trim() ? `\nALSO factor in these additional details typed by the manager:\n${typedDetails.trim()}\n` : '') +
       `\nOutput a clear structured summary the ACC reviewer can use to make a decision. Do not approve or deny — just extract.\n\n` +
       `IMPORTANT: At the very end of your output, on its own line, append a single-line JSON object with these exact keys (use null when a field truly is not present — do NOT invent values):\n` +
@@ -2795,6 +2802,9 @@ app.get('/acc-review/decisions', async (req, res) => {
   // renders; the ack badges just stay hidden until 298 lands.
   const BASE = 'id, community_name, homeowner_name, homeowner_address, project_summary, reference_number, decision_type, status, source, ai_recommendation, submitter_email, created_at, updated_at';
   const WITH_ACK = `${BASE}, acknowledged_at, acknowledgment_error`;
+  // Migration 479: the current review's recommendation (re-run on the documents
+  // now on the case) so the queue doesn't show a stale one (Issue #14).
+  const WITH_CURRENT = `${WITH_ACK}, current_ai_recommendation, current_review_at`;
   const run = async (cols) => {
     const { address, community, q, status, source } = req.query;
     let query = supabase
@@ -2815,7 +2825,8 @@ app.get('/acc-review/decisions', async (req, res) => {
     return query;
   };
   try {
-    let { data, error } = await run(WITH_ACK);
+    let { data, error } = await run(WITH_CURRENT);
+    if (error && /current_ai_recommendation|current_review_at|does not exist/i.test(error.message || '')) ({ data, error } = await run(WITH_ACK));
     if (error && /acknowledged_at|acknowledgment_error|does not exist/i.test(error.message || '')) {
       console.warn('[acc-review/decisions] ack columns missing (migration 298 not applied) — serving without them');
       ({ data, error } = await run(BASE));
@@ -2934,6 +2945,26 @@ app.get('/acc-review/decisions/:id/full', async (req, res) => {
 });
 
 // /acc-review/decisions/:id/letter — re-download the saved decision letter
+// POST /acc-review/decisions/:id/reassess (Issue #14): re-run the review against
+// the documents CURRENTLY on the case and store it as the case's current review.
+// The original intake analysis is kept as history. Never decides, changes
+// status or sends anything.
+app.post('/acc-review/decisions/:id/reassess', async (req, res) => {
+  try {
+    const { data: dec, error } = await supabase.from('acc_decisions').select('id').eq('id', req.params.id).eq('management_company_id', BEDROCK_MGMT_CO_ID).maybeSingle();
+    if (error) throw error;
+    if (!dec) return res.status(404).json({ error: 'Decision not found' });
+    const r = await require('./lib/acc/pending_intake').reassessCase(dec.id, 'staff');
+    if (r.status === 'unavailable') return res.status(409).json({ error: 'Re-review needs migration 479 to be applied first.' });
+    if (r.status === 'no_documents') return res.status(422).json({ error: 'No readable documents are stored on this case.', unreadable: r.unreadable });
+    if (r.status !== 'reviewed') return res.status(500).json({ error: r.status });
+    res.json({ ok: true, ...r });
+  } catch (err) {
+    console.error('[acc-review/decisions/:id/reassess] failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
 app.get('/acc-review/decisions/:id/letter', async (req, res) => {
   try {
     const { id } = req.params;
@@ -3442,7 +3473,10 @@ app.post('/acc-review/decisions/:id/redraft', express.json({ limit: '64kb' }), a
       ...(Array.isArray(dec.supporting_docs_storage_paths) ? dec.supporting_docs_storage_paths : []),
       ...(Array.isArray(dec.photo_storage_paths) ? dec.photo_storage_paths : []),
     ].map(String);
-    const _hasSurvey = _docPaths.some((p) => /surv|plat|plot/i.test(p));
+    // Look at the ORIGINAL filenames too (manifest), not just storage paths: the
+    // Sweetspire survey was stored as "photo_2.pdf" (Issue #14).
+    const _docNames = require('./lib/acc/documents').caseDocuments(dec).map((d) => d.filename);
+    const _hasSurvey = _docPaths.concat(_docNames).some((p) => /surv|plat|plot/i.test(p));
     const _hasDocs = _docPaths.length > 0 || !!dec.application_pdf_storage_path;
     const _surveyGuidance = _hasSurvey
       ? 'The homeowner HAS PROVIDED a survey/site plan and it is attached to this application. Acknowledge the submitted survey as received. NEVER say or imply the survey requirement was waived, and NEVER ask for a survey.'
@@ -3479,7 +3513,9 @@ app.post('/acc-review/decisions/:id/redraft', express.json({ limit: '64kb' }), a
           content:
             `Community: ${dec.community_name || ''}\nHomeowner: ${dec.homeowner_name || '(name not on file)'}\nProperty: ${dec.homeowner_address || ''}\nProject: ${dec.project_summary || ''}\n\n${directive}\n\n` +
             (instructions ? `STAFF CONDITIONS / INSTRUCTIONS (authoritative — fold these in as numbered conditions, in substance):\n${instructions}\n\n` : '') +
-            (dec.ai_review_text ? `Internal review analysis (source for content; do NOT include labels/analysis in the letter):\n${dec.ai_review_text}\n\n` : '') +
+            // The CURRENT review (re-run on the documents now on the case) when
+            // there is one; else the original intake analysis (Issue #14).
+            ((dec.current_review_text || dec.ai_review_text) ? `Internal review analysis (source for content; do NOT include labels/analysis in the letter):\n${dec.current_review_text || dec.ai_review_text}\n\n` : '') +
             `Write the clean homeowner letter body now. Start with "Dear" and end with the contact-our-office sentence.`,
         }],
       });
