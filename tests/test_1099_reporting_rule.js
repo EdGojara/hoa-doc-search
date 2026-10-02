@@ -222,6 +222,9 @@ check('lists/projections flag w9_needed; out-of-scope bills are not flagged; pro
 });
 check('Payables queue and check-run list carry the W-9 flag; vendor list / reports keep needs_w9', () => {
   const q = code('api/ap_intake.js'); assert.ok(/r\.w9_needed = true; r\.w9_reason = ev\.reason;/.test(q));
+  // vendor + paid come from the queue's own (error-checked) query, never an unchecked second read
+  assert.ok(/\.select\('id, vendor_id, amount_paid_cents, vendor_invoice_number/.test(q) && /vendor_id: r\.vendor_id, community_id: r\.community_id/.test(q));
+  assert.ok(!/const \{ data: vrows \}/.test(q), 'no unchecked { data } read');
   assert.ok(/r0\.w9_needed \?/.test(src('public/ap-invoices.html')));
   assert.ok(/return \{ w9_needed: flag, w9_reason: flag \? ev\.reason : null \}/.test(code('lib/accounting/check_run.js')));
   assert.ok(/needs_w9: st\.needs_w9/.test(src('api/vendors.js')) && /if \(v\.needs_w9\) b\.push\(chip\('#fff4e0', '#a06400', 'W-9 needed'\)\)/.test(src('public/index.html')));
