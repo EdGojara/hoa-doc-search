@@ -978,6 +978,48 @@ router.get('/invoices/:id', async (req, res) => {
   }
 });
 
+// 1099 W-9 projection for a bill being approved (Issue #14): approval never
+// blocks; if PAYING this bill would need a W-9 first, say so now. Never throws.
+async function approvalTaxNote(id) {
+  try {
+    const { data: b, error } = await supabase.from('ap_invoices').select('id, vendor_id, community_id, total_cents, amount_paid_cents').eq('id', id).maybeSingle();
+    if (error || !b) return null;
+    const m = await require('../lib/tax/payment_gate').projectBills(supabase, [{ id: b.id, vendor_id: b.vendor_id, community_id: b.community_id, balance_cents: (b.total_cents || 0) - (b.amount_paid_cents || 0) }], { initiation: 'approve' });
+    const ev = m.get(b.id);
+    return ev && require('../lib/tax/payment_gate').FLAG.has(ev.decision) ? { decision: ev.decision, reason: ev.reason } : null;
+  } catch (_) { return null; }
+}
+
+// POST /invoices/:id/tax-category  { category | null, note }  (Issue #14)
+// The bill's 1099 reporting category decides which threshold applies (e.g.
+// attorney fees for services: $2,000 NEC in 2026; gross proceeds paid to an
+// attorney, IRC 6045(f): $600 MISC). NULL = the vendor default. Admin only;
+// not for paid/partially paid/voided bills (history stays as it was). Every
+// change is audited by migration 477's trigger.
+router.post('/invoices/:id/tax-category', express.json(), async (req, res) => {
+  const { requireAdmin } = require('./_require_admin');
+  const admin = await requireAdmin(req, res); if (!admin) return;
+  try {
+    const { CATEGORIES } = require('../lib/tax/info_reporting');
+    const cat = (req.body || {}).category == null || (req.body || {}).category === '' ? null : String(req.body.category);
+    if (cat !== null && !CATEGORIES[cat]) return res.status(400).json({ error: 'invalid_category', detail: `category must be one of ${Object.keys(CATEGORIES).join(', ')}, or empty for the vendor default` });
+    const { data: inv, error: ie } = await supabase.from('ap_invoices').select('id, status, amount_paid_cents').eq('id', req.params.id).maybeSingle();
+    if (ie) throw ie;
+    if (!inv) return res.status(404).json({ error: 'not_found' });
+    // Locked once ANY payment has been applied, whatever the status says (a stale
+    // status must not reopen history). Migration 477 enforces the same in the DB.
+    const { data: apps, error: ae } = await supabase.from('ap_payment_applications').select('id').eq('invoice_id', inv.id).limit(1);
+    if (ae) throw ae;
+    if (['paid', 'partially_paid', 'voided'].includes(inv.status) || (inv.amount_paid_cents || 0) > 0 || (apps && apps.length)) {
+      return res.status(409).json({ error: 'category_locked', detail: 'This bill has a payment recorded (or is voided); its 1099 category is part of history and is not changed here.' });
+    }
+    const { data, error } = await supabase.from('ap_invoices').update({ tax_reporting_category: cat }).eq('id', inv.id).select('id, tax_reporting_category').single();
+    if (error) throw error;
+    console.log(`[ap] tax category for ${inv.id} -> ${cat || '(vendor default)'} by ${admin.email || admin.full_name || 'admin'}${req.body && req.body.note ? ': ' + String(req.body.note).slice(0, 200) : ''}`);
+    res.json({ ok: true, invoice: data });
+  } catch (err) { console.error('[ap] tax category failed:', err.message); res.status(500).json({ error: safeErrorMessage(err) }); }
+});
+
 // POST /invoices/:id/approve — TWO-KEY approval (Ed 2026-07-15).
 //   Key 1 (manager: staff/assistant) — attests the bill is legitimate. Records
 //     WHO and WHEN. Does NOT release money.
@@ -1018,7 +1060,7 @@ router.post('/invoices/:id/approve', express.json(), async (req, res) => {
         return res.json({ ok: true, stage: 'manager_rejected', by: userName });
       }
       await supabase.from('ap_invoice_approvals').insert({ invoice_id: id, action: 'approved', user_id: userId, user_name: userName, amount_at_time_cents: inv.total_cents, notes });
-      return res.json({ ok: true, stage: 'manager_approved', by: userName, at: new Date().toISOString() });
+      return res.json({ ok: true, stage: 'manager_approved', by: userName, at: new Date().toISOString(), tax_reporting: await approvalTaxNote(id) });
     }
 
     // ---- Key 2: admin release ----
@@ -1051,7 +1093,7 @@ router.post('/invoices/:id/approve', express.json(), async (req, res) => {
     const finalNotes = solo ? [notes, soloNote].filter(Boolean).join(' — ') : notes;
     const result = await approveInvoice({ invoice_id: id, user_id: userId, user_name: userName, notes: finalNotes, action: 'released_for_payment' });
     return res.json({
-      ...result, stage: 'released_for_payment', by: userName,
+      ...result, stage: 'released_for_payment', by: userName, tax_reporting: await approvalTaxNote(id),
       manager_approved_by: mgr ? (mgr.user_name || null) : null,
       solo_release: solo, path: policy ? policy.path : null,
     });

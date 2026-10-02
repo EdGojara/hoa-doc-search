@@ -258,6 +258,12 @@ router.get('/', async (req, res) => {
       const { data: flags } = await supabase.from('vendors')
         .select('id, is_1099_vendor, w9_received_date, tax_classification')
         .in('id', vendors.map(v => v.id));
+      // The 1099 rule's vendor fields (exemption + provenance), tolerant of the
+      // pre-migration-477 schema (lib/tax/reportable_payments).
+      try {
+        const tax = await require('../lib/tax/reportable_payments').loadVendorsForTax(supabase, vendors.map(v => v.id));
+        vendors = vendors.map(v => ({ ...v, _tax: tax.get(v.id) || null }));
+      } catch (e) { console.warn('[vendors] tax fields skipped:', e.message); }
       const byId = Object.fromEntries((flags || []).map(f => [f.id, f]));
       vendors = vendors.map(v => ({ ...v, ...(byId[v.id] || {}) }));
     }
@@ -278,7 +284,7 @@ router.get('/', async (req, res) => {
       // to the selected community when one is filtered.
       const pays = await fetchAllQuery(() => {
         let pq = supabase.from('ap_payments')
-          .select('vendor_id, amount_cents, payment_date, community_id')
+          .select('vendor_id, amount_cents, payment_date, community_id, payment_method, status')
           .in('vendor_id', ids)
           .gte('payment_date', yearStart);
         if (community_id) pq = pq.eq('community_id', community_id);
@@ -286,6 +292,15 @@ router.get('/', async (req, res) => {
       }, { orderBy: 'payment_date' });
       const ytdByVendor = {};
       for (const p of pays) ytdByVendor[p.vendor_id] = (ytdByVendor[p.vendor_id] || 0) + Number(p.amount_cents || 0);
+      // 1099-REPORTABLE payments (Issue #14): pending/completed, not card
+      // (1099-K), per payer (community) and per reporting category (attorney
+      // gross proceeds keep a $600 threshold in 2026). The same per-category
+      // evaluation as the check-run gate (lib/tax).
+      const { thresholdFor, vendorYearStatus } = require('../lib/tax/info_reporting');
+      const { reportableTotals, totalsByCategory } = require('../lib/tax/reportable_payments');
+      let repTotals = new Map();
+      try { repTotals = await reportableTotals(supabase, { vendorIds: ids, year }); } catch (e) { console.warn('[vendors] reportable totals skipped:', e.message); }
+      const thr = thresholdFor(year);
 
       vendors = vendors.map((v) => {
         const ytd = ytdByVendor[v.id] || 0;
@@ -294,9 +309,18 @@ router.get('/', async (req, res) => {
           const days = Math.floor((new Date(v.earliest_coi_expiry) - new Date()) / 86400000);
           coi_state = days < 0 ? 'expired' : (days <= 30 ? 'expiring' : 'ok');
         }
-        // Reportable, no W-9 on file, and paid at/over $600 this year.
-        const needs_w9 = !!v.is_1099_vendor && !v.w9_received_date && !v.w9_on_file && ytd >= 60000;
-        return { ...v, ytd_spend_cents: ytd, ytd_year: year, spend_scope, coi_state, needs_w9, has_action: coi_state === 'expired' || coi_state === 'expiring' || needs_w9 };
+        // Potentially reportable (not verified exempt), no W-9 with a tax
+        // classification, and reportable payments from one association at/over
+        // the YEAR's threshold ($600 through 2025, $2,000 in 2026). Issue #14.
+        const tv = v._tax || v;
+        // Each association is its own filer: the vendor needs a W-9 if ANY
+        // association's category total is over that category's threshold.
+        const comms = [...new Set([...repTotals.keys()].filter((k) => k.startsWith(v.id + '|')).map((k) => k.split('|')[1]))];
+        const sts = comms.map((c) => vendorYearStatus({ vendor: tv, year, byCategory: totalsByCategory(repTotals, v.id, c) }));
+        const reportable_ytd_cents = sts.reduce((m, x) => Math.max(m, x.reportable_cents), 0);
+        const needs_w9 = sts.some((x) => x.needs_w9);
+        const { _tax, ...rest } = v;
+        return { ...rest, ytd_spend_cents: ytd, ytd_year: year, spend_scope, coi_state, needs_w9, reportable_ytd_cents, w9_threshold_cents: thr.cents, has_action: coi_state === 'expired' || coi_state === 'expiring' || needs_w9 };
       });
 
       // Lead with what needs doing: expired COI, then W-9 owed, then expiring
@@ -365,14 +389,19 @@ router.get('/:vendorId', async (req, res) => {
     const byComm = {};
     try {
       const { data: allPays } = await supabase.from('ap_payments')
-        .select('amount_cents, payment_date, community_id, community:communities(name)').eq('vendor_id', vendorId).limit(2000);
+        .select('amount_cents, payment_date, community_id, payment_method, status, community:communities(name)').eq('vendor_id', vendorId).limit(2000);
+      const { reportingChannel } = require('../lib/tax/info_reporting');
+      let outsideBooks = new Set();
+      try { outsideBooks = await require('../lib/tax/reportable_payments').communitiesOutsideBooks(supabase); } catch (_) { /* badge best-effort */ }
       for (const p of (allPays || [])) {
         const amt = Number(p.amount_cents || 0);
         const inYear = p.payment_date && String(p.payment_date) >= yearStart;
         lifeCents += amt; if (inYear) ytdCents += amt;
         const key = p.community_id || 'unassigned';
-        if (!byComm[key]) byComm[key] = { community_id: p.community_id || null, community_name: (p.community && p.community.name) || 'Unassigned', ytd_cents: 0, lifetime_cents: 0 };
+        if (!byComm[key]) byComm[key] = { community_id: p.community_id || null, community_name: (p.community && p.community.name) || 'Unassigned', ytd_cents: 0, lifetime_cents: 0, reportable_ytd_cents: 0 };
         byComm[key].lifetime_cents += amt; if (inYear) byComm[key].ytd_cents += amt;
+        // 1099-reportable (Issue #14): pending/completed, not card (1099-K).
+        if (inYear && !outsideBooks.has(p.community_id) && ['pending', 'completed'].includes(p.status) && reportingChannel(p.payment_method) === 'form_1099_nec_misc') byComm[key].reportable_ytd_cents += amt;
       }
     } catch (_) { /* spend rollup best-effort */ }
     const spend_by_community = Object.values(byComm).sort((a, b) => b.lifetime_cents - a.lifetime_cents);
@@ -407,7 +436,7 @@ router.get('/:vendorId', async (req, res) => {
       proposals: proposals || [],
       correspondence: correspondence || [],
       documents: documents || [],
-      spend: { ytd_cents: ytdCents, lifetime_cents: lifeCents, year: new Date().getFullYear() },
+      spend: { ytd_cents: ytdCents, lifetime_cents: lifeCents, year: new Date().getFullYear(), ...(() => { const t = require('../lib/tax/info_reporting').thresholdFor(new Date().getFullYear()); return { w9_threshold_cents: t.cents, w9_threshold_basis: t.basis }; })() },
       spend_by_community,
     });
   } catch (err) {
@@ -424,16 +453,34 @@ router.patch('/:vendorId', async (req, res) => {
                    'is_mud','convenience_fee_cents','payment_terms_days','payee_name','auto_pay_ach',
                    // Contact person + remittance — single source of truth for who/where. (Ed 2026-08-01.)
                    'contact_name','contact_email','contact_phone',
-                   'remit_address_line1','remit_address_line2','remit_city','remit_state','remit_zip'];
+                   'remit_address_line1','remit_address_line2','remit_city','remit_state','remit_zip',
+                   // Attorney / medical: these only ADD 1099 reporting (Issue #14).
+                   'is_legal_counsel','is_medical_provider'];
+  // Tax-exemption fields are NOT editable here: an exemption is confirmed only
+  // through POST /:vendorId/tax-exemption, with its provenance (Issue #14).
   const update = {};
   for (const k of allowed) if (k in (req.body || {})) update[k] = req.body[k];
+  // No W-9 flag without the W-9 (Issue #14): "W-9 on file" can be switched ON
+  // only when a current W-9 document is stored for this vendor (upload it on the
+  // vendor record, which sets the flag itself). Switching it OFF is allowed.
+  if (req.body && req.body.w9_on_file === true) {
+    // Already on file (a form re-sending its checkbox): nothing to prove, no change.
+    const { data: cur, error: curErr } = await supabase.from('vendors').select('w9_on_file').eq('id', vendorId).maybeSingle();
+    if (curErr) return res.status(500).json({ error: 'could not read the vendor' });
+    if (cur && cur.w9_on_file === true) { delete update.w9_on_file; }
+  }
+  if (req.body && req.body.w9_on_file === true && 'w9_on_file' in update) {
+    const { data: w9doc, error: w9err } = await supabase.from('vendor_documents').select('id').eq('vendor_id', vendorId).eq('doc_type', 'w9').eq('is_current', true).limit(1);
+    if (w9err) return res.status(500).json({ error: 'could not check for a W-9 document' });
+    if (!w9doc || !w9doc.length) return res.status(400).json({ error: 'w9_document_required', detail: "Upload the vendor's W-9 (Vendors → the vendor → W-9) to mark it on file. The flag cannot be set without the document." });
+  }
   // A MUD vendor carries the standard $1 convenience fee unless a specific
   // amount was set alongside the flag. Turning the flag off clears the fee.
   if ('is_mud' in (req.body || {})) {
     if (req.body.is_mud === true && !('convenience_fee_cents' in (req.body || {}))) update.convenience_fee_cents = 100;
     if (req.body.is_mud === false && !('convenience_fee_cents' in (req.body || {}))) update.convenience_fee_cents = 0;
   }
-  if (req.body && req.body.w9_on_file === true) update.w9_uploaded_at = new Date().toISOString();
+  if (update.w9_on_file === true) update.w9_uploaded_at = new Date().toISOString();
   if (Object.keys(update).length === 0) return res.status(400).json({ error: 'no updatable fields supplied' });
   try {
     const { data, error } = await supabase
@@ -1413,9 +1460,69 @@ router.post('/:vendorId/w9', upload.single('pdf'), async (req, res) => {
     const { data: updated, error: upErr } = await supabase.from('vendors').update(vUpdate).eq('id', vendorId).select().single();
     if (upErr) throw upErr;
 
-    res.json({ ok: true, document: doc, vendor: updated, parsed: ex.parsed, suggested_1099: ex.suggested_1099, degraded: ex.degraded, replaced_prior: hadPriorCurrent });
+    // Suggest (never set) a corporate exemption from the W-9's line 3; a person
+    // confirms it via POST /:vendorId/tax-exemption with this document (Issue #14).
+    const sug = ex.parsed ? require('../lib/tax/info_reporting').suggestExemptionFromW9(ex.parsed.tax_classification) : null;
+    const suggested_exemption = sug ? { ...sug, document_id: doc.id } : null;
+    res.json({ ok: true, document: doc, vendor: updated, parsed: ex.parsed, suggested_1099: ex.suggested_1099, suggested_exemption, degraded: ex.degraded, replaced_prior: hadPriorCurrent });
   } catch (err) {
     console.error('[vendors] W-9 upload failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/vendors/:vendorId/tax-exemption  (Issue #14) — a PERSON confirms
+// (or revokes) that a vendor is exempt from 1099 reporting. Admin only.
+//   { action: 'confirm', basis, source, document_id?, note }
+//   { action: 'revoke', note }
+// Rules: basis + source required; a 'w9_document' source needs that vendor's
+// stored W-9 and, for basis 'corporation', a corporate line-3 classification;
+// a government / tax-exempt basis needs a supporting note (the record relied on).
+// Verified-by comes from the SESSION, never the body. Migration 477 enforces the
+// provenance and audits every change (vendor_tax_status_events).
+router.post('/:vendorId/tax-exemption', express.json(), async (req, res) => {
+  const { requireAdmin } = require('./_require_admin');
+  const admin = await requireAdmin(req, res); if (!admin) return;
+  const { vendorId } = req.params;
+  const b = req.body || {};
+  const who = admin.email || admin.full_name || 'admin';
+  try {
+    const { data: v, error: ve } = await supabase.from('vendors').select('id, name, tax_classification').eq('id', vendorId).maybeSingle();
+    if (ve) throw ve;
+    if (!v) return res.status(404).json({ error: 'vendor_not_found' });
+    if (b.action === 'revoke') {
+      const { data, error } = await supabase.from('vendors').update({ tax_reporting_status: 'unknown', tax_exemption_basis: null, tax_exemption_source: null, tax_exemption_document_id: null, tax_exemption_verified_by: who, tax_exemption_verified_at: new Date().toISOString(), tax_exemption_note: String(b.note || 'Exemption revoked').slice(0, 500) }).eq('id', vendorId).select().single();
+      if (error) throw error;
+      return res.json({ ok: true, vendor: data });
+    }
+    if (b.action !== 'confirm') return res.status(400).json({ error: 'action_required', detail: 'action must be confirm or revoke' });
+    const BASES = ['corporation', 'government', 'tax_exempt_org', 'foreign_person', 'other'];
+    const SOURCES = ['w9_document', 'irs_document', 'government_entity_record', 'manual_review'];
+    if (!BASES.includes(b.basis)) return res.status(400).json({ error: 'basis_required', detail: `basis must be one of ${BASES.join(', ')}` });
+    if (!SOURCES.includes(b.source)) return res.status(400).json({ error: 'source_required', detail: `source must be one of ${SOURCES.join(', ')}` });
+    let docId = null;
+    if (b.source === 'w9_document') {
+      if (!b.document_id) return res.status(400).json({ error: 'document_required', detail: 'A W-9 source needs the stored W-9 document.' });
+      const { data: d, error: de } = await supabase.from('vendor_documents').select('id, vendor_id, doc_type').eq('id', b.document_id).maybeSingle();
+      if (de) throw de;
+      if (!d || d.vendor_id !== vendorId || d.doc_type !== 'w9') return res.status(400).json({ error: 'document_mismatch', detail: 'That document is not this vendor\'s W-9.' });
+      docId = d.id;
+      if (b.basis === 'corporation' && !require('../lib/tax/info_reporting').suggestExemptionFromW9(v.tax_classification)) {
+        return res.status(400).json({ error: 'not_corporate_on_w9', detail: `The W-9 classification on file is ${v.tax_classification || 'not captured'}; a corporate exemption needs a corporate line-3 classification.` });
+      }
+    }
+    if (['government', 'tax_exempt_org', 'other'].includes(b.basis) && !String(b.note || '').trim()) {
+      return res.status(400).json({ error: 'note_required', detail: 'Say what record shows this (e.g. the district\'s creation order or the IRS determination letter).' });
+    }
+    const { data, error } = await supabase.from('vendors').update({
+      tax_reporting_status: 'exempt_verified', tax_exemption_basis: b.basis, tax_exemption_source: b.source,
+      tax_exemption_document_id: docId, tax_exemption_verified_by: who, tax_exemption_verified_at: new Date().toISOString(),
+      tax_exemption_note: b.note ? String(b.note).slice(0, 500) : null,
+    }).eq('id', vendorId).select().single();
+    if (error) throw error;
+    res.json({ ok: true, vendor: data });
+  } catch (err) {
+    console.error('[vendors] tax exemption failed:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
@@ -1440,16 +1547,20 @@ router.get('/documents/:docId/file', async (req, res) => {
 // paid date, with the 1099 flag + W-9 status. Drives the spend report AND the
 // 1099 file (the frontend filters to >= $600 for the 1099 view). 1099 is per
 // filer (community/EIN), so rows stay per (vendor x community).
-const CENTS_1099_THRESHOLD = 60000; // $600
+// Threshold is YEAR-AWARE (Issue #14): $600 through 2025, $2,000 in 2026; later
+// indexed years are not guessed (lib/tax/info_reporting.thresholdFor).
 router.get('/spend', async (req, res) => {
   try {
     const year = parseInt(req.query.year, 10) || new Date().getFullYear();
+    const { thresholdFor } = require('../lib/tax/info_reporting');
+    const thr = thresholdFor(year);
+    const CENTS_1099_THRESHOLD = thr.cents;
     let q = supabase.from('v_vendor_annual_spend').select('*').eq('paid_year', year);
     if (req.query.community_id) q = q.eq('community_id', req.query.community_id);
     const { data: spendRows, error } = await q;
     if (error) throw error;
     const rows = spendRows || [];
-    if (!rows.length) return res.json({ year, threshold_cents: CENTS_1099_THRESHOLD, rows: [] });
+    if (!rows.length) return res.json({ year, threshold_cents: CENTS_1099_THRESHOLD, threshold_basis: thr.basis, threshold_provisional: thr.provisional, rows: [] });
 
     const vendorIds = [...new Set(rows.map(r => r.vendor_id).filter(Boolean))];
     const communityIds = [...new Set(rows.map(r => r.community_id).filter(Boolean))];
@@ -1460,6 +1571,16 @@ router.get('/spend', async (req, res) => {
       supabase.from('vendor_documents').select('id, vendor_id, uploaded_at').eq('doc_type', 'w9').eq('is_current', true).in('vendor_id', vendorIds).order('uploaded_at', { ascending: false }),
     ]);
     const vById = Object.fromEntries((vendors || []).map(v => [v.id, v]));
+    // Reportable (non-card, pending/completed) totals per vendor x community, and
+    // the rule's vendor fields (exemption + provenance).
+    const { reportableTotals, loadVendorsForTax } = require('../lib/tax/reportable_payments');
+    const [repTotals, taxV] = await Promise.all([reportableTotals(supabase, { vendorIds, year }), loadVendorsForTax(supabase, vendorIds)]);
+    const { totalsByCategory, communitiesOutsideBooks } = require('../lib/tax/reportable_payments');
+    const { vendorYearStatus } = require('../lib/tax/info_reporting');
+    // Associations whose books are not in trustEd (e.g. Eaglewood, Vantaca) are
+    // out of 1099 scope here: labeled, never counted (lib/ap/books_scope rule).
+    const outsideBooks = await communitiesOutsideBooks(supabase);
+    const statusOf = (r) => vendorYearStatus({ vendor: taxV.get(r.vendor_id) || vById[r.vendor_id] || {}, year, byCategory: totalsByCategory(repTotals, r.vendor_id, r.community_id) });
     const cById = Object.fromEntries((comms || []).map(c => [c.id, c.name]));
     const w9ById = {}; for (const d of (w9docs || [])) if (!w9ById[d.vendor_id]) w9ById[d.vendor_id] = d.id; // latest per vendor
 
@@ -1482,8 +1603,10 @@ router.get('/spend', async (req, res) => {
         w9_doc_id: w9ById[r.vendor_id] || null,
         tax_id: v.tax_id || null,
         tax_classification: v.tax_classification || null,
-        over_threshold: total >= CENTS_1099_THRESHOLD,
-        needs_w9: !!v.is_1099_vendor && !v.w9_on_file,
+        ...(() => {
+          if (outsideBooks.has(r.community_id)) return { reportable_cents: 0, over_threshold: false, needs_w9: false, threshold_provisional: false, reporting_categories: [], tax_scope: 'outside_trusted_books' };
+          const st = statusOf(r); return { reportable_cents: st.reportable_cents, over_threshold: st.over_threshold, needs_w9: st.needs_w9, threshold_provisional: st.provisional, reporting_categories: st.categories, tax_scope: 'trusted_books' };
+        })(),
       };
     }).sort((a, b) => b.total_cents - a.total_cents);
 
@@ -1493,17 +1616,17 @@ router.get('/spend', async (req, res) => {
       const only1099 = String(req.query.only_1099 || '') === '1';
       const rowsOut = only1099 ? out.filter((r) => r.is_1099_vendor || r.over_threshold) : out;
       const cell = (s) => `"${String(s == null ? '' : s).replace(/"/g, '""')}"`;
-      const header = ['Vendor', 'TIN', 'Tax classification', 'Community', 'Year', 'Total paid', 'Payments', '1099 vendor', 'W-9 on file', 'Over $600', 'Needs W-9'];
+      const header = ['Vendor', 'TIN', 'Tax classification', 'Community', 'Year', 'Total paid', 'Reportable (excl. card)', 'Payments', '1099 vendor', 'W-9 on file', 'Over its 1099 threshold (by category)', 'Needs W-9'];
       const lines = [header.map(cell).join(',')];
       for (const r of rowsOut) {
-        lines.push([r.vendor_name, r.tax_id, r.tax_classification, r.community_name, r.year, (r.total_cents / 100).toFixed(2), r.payment_count, r.is_1099_vendor ? 'Yes' : 'No', r.w9_on_file ? 'Yes' : 'No', r.over_threshold ? 'Yes' : 'No', r.needs_w9 ? 'Yes' : 'No'].map(cell).join(','));
+        lines.push([r.vendor_name, r.tax_id, r.tax_classification, r.community_name, r.year, (r.total_cents / 100).toFixed(2), (r.reportable_cents / 100).toFixed(2), r.payment_count, r.is_1099_vendor ? 'Yes' : 'No', r.w9_on_file ? 'Yes' : 'No', r.over_threshold ? 'Yes' : 'No', r.needs_w9 ? 'Yes' : 'No'].map(cell).join(','));
       }
       res.setHeader('Content-Type', 'text/csv; charset=utf-8');
       res.setHeader('Content-Disposition', `attachment; filename="1099-vendor-spend-${year}.csv"`);
       return res.send(lines.join('\r\n'));
     }
 
-    res.json({ year, threshold_cents: CENTS_1099_THRESHOLD, rows: out });
+    res.json({ year, threshold_cents: CENTS_1099_THRESHOLD, threshold_basis: thr.basis, threshold_provisional: thr.provisional, rows: out });
   } catch (err) {
     console.error('[vendors] spend report failed:', err.message);
     res.status(500).json({ error: err.message });

@@ -2136,7 +2136,7 @@
         <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
           <input id="ven-search" type="text" placeholder="Search vendors by name…" oninput="venSearch()" style="flex:1; min-width:240px; padding:9px 12px; border:1px solid #cbd5e1; border-radius:8px; font-size:14px;">
           <input id="ven-1099-year" type="number" placeholder="Year" title="1099 tax year" style="width:88px; padding:9px 10px; border:1px solid #cbd5e1; border-radius:8px; font-size:14px;">
-          <button class="secondary-btn" onclick="venExport1099()" title="Download every vendor's paid total for the year with W-9 / over-$600 status — the 1099 filing worklist">⬇ 1099 export</button>
+          <button class="secondary-btn" onclick="venExport1099()" title="Download every vendor's paid total for the year with W-9 / over-threshold status ($600 through 2025, $2,000 in 2026) — the 1099 filing worklist">⬇ 1099 export</button>
           <a class="secondary-btn" href="/admin/ach" target="_blank" style="text-decoration:none;" title="Send a vendor a secure one-time link to enter their banking details and e-sign the ACH authorization — no banking info by email">🔒 ACH enrollment</a>
           <span id="ven-export-msg" style="font-size:12px; color:#64748b;"></span>
         </div>
@@ -11372,7 +11372,7 @@
         <h3 style="margin-top:0;">📊 Spend & 1099 Report</h3>
         <p style="color:#888; font-size:12px; margin:0 0 12px 0;">
           Total paid per vendor by community, keyed on the <strong>paid date</strong> (cash basis, what 1099s use). Combines historical uploads + what Emma pays.
-          1099 threshold is <strong>$600 per community</strong> (each association is its own filer/EIN).
+          1099 threshold is <strong>$600 through 2025, $2,000 for 2026, per community</strong> (each association is its own filer/EIN), on reportable payments (card payments are reported on 1099-K and not counted).
         </p>
         <div style="display:grid; grid-template-columns: auto auto auto 1fr auto; gap:10px; align-items:end; margin-bottom:12px;">
           <div>
@@ -11389,7 +11389,7 @@
             <label style="display:block; font-size:12px; color:#666; margin-bottom:4px;">View</label>
             <select id="vendors-spend-mode" onchange="vendorsRenderSpend()" style="padding:8px; font-size:14px;">
               <option value="all">All spend</option>
-              <option value="1099">1099 file ($600+)</option>
+              <option value="1099">1099 file (at/over the year's threshold)</option>
             </select>
           </div>
           <div></div>
@@ -43194,6 +43194,7 @@ ${questionsPage}
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'load failed');
       vendorsSpendData = data.rows || [];
+      window._vendorsSpendThreshold = data.threshold_cents || null;
       vendorsRenderSpend();
     } catch (e) {
       container.innerHTML = `<div style="color:#a00;">Could not run the report: ${escapeHtml(e.message)}</div>`;
@@ -43210,7 +43211,7 @@ ${questionsPage}
   function vendorsRenderSpend() {
     const container = document.getElementById('vendors-spend-container');
     const { mode, rows } = vendorsSpendRows();
-    if (!rows.length) { container.innerHTML = `<div style="color:#888; padding:20px;">No ${mode === '1099' ? 'reportable 1099' : 'vendor'} spend for this year${mode === '1099' ? ' (nothing at or above $600, and no vendor flagged 1099)' : ''}.</div>`; return; }
+    if (!rows.length) { container.innerHTML = `<div style="color:#888; padding:20px;">No ${mode === '1099' ? 'reportable 1099' : 'vendor'} spend for this year${mode === '1099' ? ' (nothing at or above the ${window._vendorsSpendThreshold ? '$' + (window._vendorsSpendThreshold / 100).toLocaleString('en-US') : 'year\'s'} threshold, and no vendor flagged 1099)' : ''}.</div>`; return; }
     const totalCents = rows.reduce((s, r) => s + r.total_cents, 0);
     const needW9 = rows.filter(r => r.needs_w9).length;
     const body = rows.map(r => {
@@ -43247,7 +43248,7 @@ ${questionsPage}
           <tbody>${body}</tbody>
         </table>
       </div>
-      <div style="margin-top:8px; font-size:11px; color:#888;">${mode === '1099' ? 'Showing vendors at/above $600 for the community, or flagged 1099. Each community is its own filer/EIN.' : 'All vendor spend for the year.'} <span style="color:#a06400;">*</span> = paid date estimated from the invoice date.</div>`;
+      <div style="margin-top:8px; font-size:11px; color:#888;">${mode === '1099' ? 'Showing vendors at/above ' + (window._vendorsSpendThreshold ? '$' + (window._vendorsSpendThreshold / 100).toLocaleString('en-US') : 'the year\'s threshold') + ' in reportable payments for the community (card payments excluded), or flagged 1099. Each community is its own filer/EIN.' : 'All vendor spend for the year.'} <span style="color:#a06400;">*</span> = paid date estimated from the invoice date.</div>`;
   }
 
   function vendorsExportSpendCsv() {
@@ -46548,6 +46549,34 @@ ${questionsPage}
     function venField(id, label, val){
       return `<label style="font-size:11.5px; color:#64748b; display:block;">${label}<br><input id="ven-f-${id}" type="text" value="${apEsc(val==null?'':val)}" style="width:100%; padding:6px 8px; border:1px solid #cbd5e1; border-radius:6px; font-size:13px; margin-top:2px; box-sizing:border-box;"></label>`;
     }
+    // 1099 status (Issue #14): an exemption is CONFIRMED by a person, with its
+    // provenance; the W-9's corporate line 3 only suggests it. Server: admin only.
+    function venTaxPanel(v, docs){
+      if (!('tax_reporting_status' in v)) return ''; // before migration 477
+      const w9 = (docs||[]).find(d => d.doc_type === 'w9' && d.is_current);
+      const corp = ['c_corporation','s_corporation','llc_c','llc_s'].includes(String(v.tax_classification||'').toLowerCase());
+      const ex = v.tax_reporting_status === 'exempt_verified';
+      const line = ex
+        ? `<b style="color:#166534;">Verified exempt from 1099</b>: ${apEsc(v.tax_exemption_basis||'')} · ${apEsc(v.tax_exemption_source||'')} · confirmed by ${apEsc(v.tax_exemption_verified_by||'')} ${v.tax_exemption_verified_at?apEsc(String(v.tax_exemption_verified_at).slice(0,10)):''}${(v.is_legal_counsel||v.is_medical_provider)&&v.tax_exemption_basis==='corporation'?' <span style="color:#92400e;">(attorney/medical payments stay reportable)</span>':''}`
+        : `<b>1099:</b> potentially reportable (not verified exempt)`;
+      const btns = [];
+      if (!ex && corp && w9) btns.push(`<button class="secondary-btn" style="font-size:11.5px; padding:3px 10px;" onclick="venTaxExempt('${v.id}','corporation','${w9.id}')" title="The W-9 on file says ${apEsc(v.tax_classification)}. Confirming records you, the date and this W-9 as the proof.">Confirm corporate exemption (from the W-9)</button>`);
+      if (!ex) btns.push(`<button class="secondary-btn" style="font-size:11.5px; padding:3px 10px;" onclick="venTaxExempt('${v.id}','government',null)" title="For a government body (e.g. a MUD). You will be asked what record shows it.">Confirm government exemption…</button>`);
+      if (ex) btns.push(`<button class="secondary-btn" style="font-size:11.5px; padding:3px 10px;" onclick="venTaxExempt('${v.id}','revoke',null)">Revoke exemption</button>`);
+      return `<div style="border:1px solid #e2e8f0; border-radius:9px; padding:8px 12px; margin:10px 0; font-size:12.5px; display:flex; gap:10px; align-items:center; flex-wrap:wrap;"><span>${line}</span>${!ex && corp && w9 ? '<span style="color:#64748b;">The W-9 suggests a corporate exemption; it applies only once confirmed.</span>' : ''}<span style="margin-left:auto; display:flex; gap:6px;">${btns.join('')}</span></div>`;
+    }
+    window.venTaxExempt = async function(id, kind, docId){
+      let body;
+      if (kind === 'revoke') { const note = prompt('Why is the exemption being revoked?'); if (note === null) return; body = { action: 'revoke', note }; }
+      else if (kind === 'corporation') { if (!confirm('Confirm this vendor is a corporation exempt from 1099 reporting, based on the W-9 on file? Attorney and medical payments stay reportable.')) return; body = { action: 'confirm', basis: 'corporation', source: 'w9_document', document_id: docId }; }
+      else { const note = prompt('What record shows this is a government body (e.g. the district creation order)?'); if (!note) return; body = { action: 'confirm', basis: 'government', source: 'government_entity_record', note }; }
+      try {
+        const r = await venFetch()('/api/vendors/'+encodeURIComponent(id)+'/tax-exemption', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
+        const j = await r.json().catch(()=>({}));
+        if (!r.ok) throw new Error(j.detail || j.error || 'could not save');
+        venOpen(id);
+      } catch(e){ alert('Not saved: ' + e.message); }
+    };
     function venRenderDetail(j){
       const v = j.vendor, inv = j.invoices||[], pay = j.payments||[], sp = j.spend||{}, prop = j.proposals||[], corr = j.correspondence||[], hist = j.historical_invoices||[], byComm = j.spend_by_community||[];
       const el = document.getElementById('ven-detail'); if(!el) return;
@@ -46561,6 +46590,7 @@ ${questionsPage}
             <div style="font-size:12px; color:#0B1D34; margin-top:6px;">YTD paid <b>${venMoney(sp.ytd_cents)}</b> · lifetime ${venMoney(sp.lifetime_cents)}</div>
           </div>
         </div>
+        ${venTaxPanel(v, j.documents||[])}
         <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px 12px; margin:14px 0;">
           ${venField('contact_name','Contact person',v.contact_name)}
           ${venField('contact_email','Contact email',v.contact_email)}
@@ -46577,12 +46607,12 @@ ${questionsPage}
         </div>
         <div style="display:flex; gap:16px; align-items:center; margin-bottom:14px; flex-wrap:wrap;">
           <label style="font-size:12.5px;"><input type="checkbox" id="ven-f-is_1099_vendor" ${v.is_1099_vendor?'checked':''}> 1099 vendor</label>
-          <label style="font-size:12.5px;"><input type="checkbox" id="ven-f-w9_on_file" ${v.w9_on_file?'checked':''}> W-9 on file</label>
+          <label style="font-size:12.5px;" title="${v.w9_on_file?'':'Upload the W-9 to mark it on file; the flag cannot be set without the document.'}"><input type="checkbox" id="ven-f-w9_on_file" ${v.w9_on_file?'checked':'disabled'}> W-9 on file${v.w9_on_file?'':' <span style="color:#64748b;">(upload the W-9)</span>'}</label>
           <button class="action-btn" onclick="venSave('${v.id}')" style="background:#0B1D34;">Save vendor</button>
           <span id="ven-savemsg" style="font-size:12px;"></span>
         </div>
         ${byComm.length? `<div style="margin-bottom:14px;"><div style="font-weight:700; color:#0B1D34; font-size:13px; margin-bottom:6px;">Spend by association <span style="font-weight:400; color:#64748b; font-size:11.5px;">— 1099 is filed per association (each is its own EIN)</span></div>
-          <div style="display:flex; flex-wrap:wrap; gap:8px;">${byComm.map(c=>`<div style="border:1px solid #e2e8f0; border-radius:8px; padding:6px 11px; font-size:12px; background:#fbfcfe;"><div style="color:#0B1D34; font-weight:600;">${apEsc(c.community_name)}</div><div style="color:#64748b;">YTD ${venMoney(c.ytd_cents)} · life ${venMoney(c.lifetime_cents)}${c.ytd_cents>=60000?' <span style="color:#166534; font-weight:700;" title="Over the $600 1099 threshold for this association this year">1099</span>':''}</div></div>`).join('')}</div></div>` : ''}
+          <div style="display:flex; flex-wrap:wrap; gap:8px;">${byComm.map(c=>`<div style="border:1px solid #e2e8f0; border-radius:8px; padding:6px 11px; font-size:12px; background:#fbfcfe;"><div style="color:#0B1D34; font-weight:600;">${apEsc(c.community_name)}</div><div style="color:#64748b;">YTD ${venMoney(c.ytd_cents)} · life ${venMoney(c.lifetime_cents)}${(sp && sp.w9_threshold_cents && (c.reportable_ytd_cents||0)>=sp.w9_threshold_cents)?` <span style="color:#166534; font-weight:700;" title="Reportable payments from this association this year are at/over the ${apEsc(sp.w9_threshold_basis||'')} 1099 threshold (card payments excluded)">1099</span>`:''}</div></div>`).join('')}</div></div>` : ''}
         <div style="display:grid; grid-template-columns:1fr 1fr; gap:14px;">
           <div><div style="font-weight:700; color:#0B1D34; font-size:13px; margin-bottom:6px;">Invoices (${inv.length + hist.length})</div>
             ${(inv.length||hist.length)? '<div style="max-height:280px; overflow:auto;">'
@@ -46613,7 +46643,7 @@ ${questionsPage}
         venLoadList();
       } catch(e){ if(msg){ msg.style.color='#dc2626'; msg.textContent='Could not save: '+e.message; } }
     };
-    // One-click 1099 worklist: download the year's vendor spend + W-9 / over-$600
+    // One-click 1099 worklist: download the year's vendor spend + W-9 / over-threshold (year-aware)
     // status as CSV (auth'd fetch -> blob, since the endpoint needs the token).
     window.venExport1099 = async function(){
       const year = ((document.getElementById('ven-1099-year')||{}).value||'').trim() || new Date().getFullYear();
@@ -46911,7 +46941,7 @@ ${questionsPage}
           <label style="${lbl}">State<input id="ve-state" value="${val(v.remit_state)}" style="${inp}"></label>
           <label style="${lbl}">ZIP<input id="ve-zip" value="${val(v.remit_zip)}" style="${inp}"></label>
           <label style="font-size:12.5px;color:#0B1D34;display:flex;align-items:center;gap:6px;margin-top:6px;"><input type="checkbox" id="ve-1099" ${v.is_1099_vendor ? 'checked' : ''}> 1099 vendor</label>
-          <label style="font-size:12.5px;color:#0B1D34;display:flex;align-items:center;gap:6px;margin-top:6px;"><input type="checkbox" id="ve-w9" ${v.w9_on_file ? 'checked' : ''}> W-9 on file</label>
+          <label style="font-size:12.5px;color:#0B1D34;display:flex;align-items:center;gap:6px;margin-top:6px;" title="${v.w9_on_file ? '' : 'Upload the W-9 to mark it on file; the flag cannot be set without the document.'}"><input type="checkbox" id="ve-w9" ${v.w9_on_file ? 'checked' : 'disabled'}> W-9 on file${v.w9_on_file ? '' : ' <span style="color:#64748b;">(upload the W-9)</span>'}</label>
         </div>
         <div style="padding:0 20px 18px;display:flex;gap:8px;align-items:center;">
           <button onclick="apSaveVendor('${vendorId}','${invoiceId || ''}')" style="background:#0B1D34;color:#fff;border:none;padding:8px 16px;border-radius:7px;font-weight:600;cursor:pointer;">Save to source</button>

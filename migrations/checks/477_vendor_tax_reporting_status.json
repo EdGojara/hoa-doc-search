@@ -1,0 +1,108 @@
+{
+  "migration": "477_vendor_tax_reporting_status.sql",
+  "summary": "1099 W-9 compliance (Issue #14): vendors gain a stored tax_reporting_status (unknown|reportable|exempt_verified) with exemption basis, source, proof document, verified by/at and note, plus is_medical_provider. An exemption requires its provenance (CHECK). A trigger audits every change to these fields into new vendor_tax_status_events. Every existing vendor starts 'unknown'; no exemption is backfilled. ap_invoices gains a bill-level tax_reporting_category (services | attorney_fees | attorney_gross_proceeds | medical | rents | other_income; NULL = vendor default) with a CHECK and an audit trigger, so attorney fees (,000 NEC in 2026) and gross proceeds paid to an attorney (00 MISC) are distinct.",
+  "requires": [
+    "476_agent_runs_model_telemetry.sql"
+  ],
+  "preflight": [
+    {
+      "name": "vendors has no tax_reporting_status column yet",
+      "sql": "SELECT count(*)::int FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'vendors' AND column_name IN ('tax_reporting_status', 'tax_exemption_basis', 'is_medical_provider')",
+      "expect": 0
+    },
+    {
+      "name": "vendor_tax_status_events does not exist yet",
+      "sql": "SELECT count(*)::int FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'vendor_tax_status_events'",
+      "expect": 0
+    }
+  ],
+  "expected_changes": [
+    "Adds vendors.tax_reporting_status (NOT NULL DEFAULT 'unknown'), tax_exemption_basis, tax_exemption_source, tax_exemption_document_id (FK vendor_documents, RESTRICT), tax_exemption_verified_by, tax_exemption_verified_at, tax_exemption_note, is_medical_provider (NOT NULL DEFAULT false).",
+    "Adds CHECKs on status, basis and source values, and vendors_tax_exempt_provenance (exempt_verified requires basis + source + verified_by + verified_at).",
+    "Creates vendor_tax_status_events (append-only audit) with an index and service_role/authenticated grants.",
+    "Creates function vendor_tax_status_audit() and trigger trg_vendor_tax_status_audit (AFTER UPDATE ON vendors) that records before/after of the tax fields when they change.",
+    "Adds ap_invoices.tax_reporting_category (nullable) with CHECK ap_invoices_tax_reporting_category_check, and function ap_invoice_tax_category_audit() + trigger trg_ap_invoice_tax_category_audit recording category changes in vendor_tax_status_events.",
+    "Adds function ap_invoice_tax_category_lock() + BEFORE UPDATE trigger trg_ap_invoice_tax_category_lock: a bill's tax_reporting_category cannot change once any ap_payment_applications row exists for it, whatever its status.",
+    "No existing vendor value changes; existing vendors read as 'unknown' (potentially reportable)."
+  ],
+  "objects": {
+    "added": [
+      "column:ap_invoices.tax_reporting_category",
+      "column:vendor_tax_status_events.after",
+      "column:vendor_tax_status_events.before",
+      "column:vendor_tax_status_events.changed_at",
+      "column:vendor_tax_status_events.changed_by",
+      "column:vendor_tax_status_events.id",
+      "column:vendor_tax_status_events.vendor_id",
+      "column:vendors.is_medical_provider",
+      "column:vendors.tax_exemption_basis",
+      "column:vendors.tax_exemption_document_id",
+      "column:vendors.tax_exemption_note",
+      "column:vendors.tax_exemption_source",
+      "column:vendors.tax_exemption_verified_at",
+      "column:vendors.tax_exemption_verified_by",
+      "column:vendors.tax_reporting_status",
+      "constraint:ap_invoices.ap_invoices_tax_reporting_category_check",
+      "constraint:vendor_tax_status_events.vendor_tax_status_events_pkey",
+      "constraint:vendor_tax_status_events.vendor_tax_status_events_vendor_id_fkey",
+      "constraint:vendors.vendors_tax_exempt_provenance",
+      "constraint:vendors.vendors_tax_exemption_basis_check",
+      "constraint:vendors.vendors_tax_exemption_document_id_fkey",
+      "constraint:vendors.vendors_tax_exemption_source_check",
+      "constraint:vendors.vendors_tax_reporting_status_check",
+      "function:ap_invoice_tax_category_audit",
+      "function:ap_invoice_tax_category_lock",
+      "function:vendor_tax_status_audit",
+      "index:idx_vendor_tax_status_events_vendor",
+      "index:vendor_tax_status_events_pkey",
+      "table:vendor_tax_status_events",
+      "trigger:ap_invoices.trg_ap_invoice_tax_category_audit",
+      "trigger:ap_invoices.trg_ap_invoice_tax_category_lock",
+      "trigger:vendors.trg_vendor_tax_status_audit"
+    ],
+    "changed": [],
+    "removed": []
+  },
+  "row_changes": {
+    "vendors": 0,
+    "ap_invoices": 0
+  },
+  "protected": [
+    {
+      "table": "journal_entries",
+      "order_by": "id"
+    },
+    {
+      "table": "ap_payments",
+      "order_by": "id"
+    },
+    {
+      "table": "ap_invoices",
+      "order_by": "id"
+    }
+  ],
+  "verify": [
+    {
+      "name": "every existing vendor is 'unknown' and not a medical provider",
+      "sql": "SELECT count(*)::int FROM vendors WHERE tax_reporting_status <> 'unknown' OR is_medical_provider",
+      "expect": 0
+    },
+    {
+      "name": "audit trigger present",
+      "sql": "SELECT count(*)::int FROM pg_trigger WHERE tgname = 'trg_vendor_tax_status_audit'",
+      "expect": 1
+    },
+    {
+      "name": "no audit events created by the migration itself",
+      "sql": "SELECT count(*)::int FROM vendor_tax_status_events",
+      "expect": 0
+    },
+    {
+      "name": "every existing bill has no category set (vendor default)",
+      "sql": "SELECT count(*)::int FROM ap_invoices WHERE tax_reporting_category IS NOT NULL",
+      "expect": 0
+    }
+  ],
+  "api_checks": [],
+  "reload_schema": true
+}
