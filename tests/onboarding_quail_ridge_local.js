@@ -94,6 +94,18 @@ let refused = null; try { S.advance(s2.state, HUMAN, 'snapshot'); } catch (e) { 
 check('gate: a non-passing source-controls stage cannot advance without a human waiver', refused === 'CURRENT_STAGE_NOT_PASSING', String(refused));
 let agentRefused = null; try { S.advance(s2.state, agent('source_controls'), 'snapshot'); } catch (e) { agentRefused = e.code; }
 check('gate: the agent cannot advance its own stage', agentRefused === 'ADVANCE_REQUIRES_HUMAN', String(agentRefused));
+// A human waiver records a disposition; the control stays FAIL with its original amounts.
+{
+  const code = 'subledger.credit_balances_equal_gl_prepaid';
+  const waived = S.waiveControl(s2.state, HUMAN, code, 'former-owner credit report requested; 737.53 reviewed, not plugged');
+  const ws = S.waiversFor(waived, S.latestCompletion(waived, 'source_controls'));
+  const shown = require('../lib/onboarding/controls').applyWaivers(s2.controls, ws);
+  const c = shown.find((x) => x.code === code);
+  const sum = require('../lib/onboarding/controls').summarize(shown);
+  check('waiver: prepaid control is still FAIL (-737.53) with disposition WAIVED by ed; summary FAIL, eligible with waiver',
+    c.status === 'FAIL' && c.difference_cents === -73753 && c.disposition.disposition === 'WAIVED' && c.disposition.waived_by === 'ed' && sum.overall === 'FAIL' && sum.eligibility === 'eligible_with_waiver');
+  check('waiver: with the human waiver the stage may advance (human only)', S.advance(waived, HUMAN, 'snapshot').stage === 'snapshot');
+}
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

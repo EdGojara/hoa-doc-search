@@ -44,16 +44,19 @@ Stage runners exist for stages 0–2 only (`lib/onboarding/engine.js`). Snapshot
 Enforced twice: in application code (`stages.js`, `write_gate.js`) and in the database (481).
 
 - **Agent scope.** An agent is assigned **one** stage. It may perform only that stage's permitted actions, and only while the batch is in it. Completing a stage records the result; it never moves the batch.
-- **Human transitions.** Every transition is made by a **human**, one step forward, never skipping. A stage that is FAIL/BLOCKED cannot advance unless a human waives each non-passing control by code, with a reason. Waivers are recorded.
+- **Human transitions.** Every transition is made by a **human**, one step forward, never skipping. It relies on the stage's **latest** result: PASS, or every open control waived by a human, individually, with a reason, **for that result**.
+- **No replay.** Waivers, approvals and advances are bound to a result id. Re-running a stage records a new result and makes every earlier waiver, approval and advance stale.
+- **Waivers preserve the truth.** A waiver is a separate disposition (`WAIVED`, by, reason, when). The control keeps its FAIL/BLOCKED status, amounts and difference in control results, the preflight and the audit. Summaries count the underlying status and say at most "eligible to advance with waiver". The disposition is inside the hashed preflight, so changing a waiver or its reason changes what is approved. A report whose dispositions don't match the recorded waivers is refused.
 - **Execute gate.** Entering `execute` requires a human approval bound to the **exact preflight sha256**, with every control PASS or waived. An agent can never execute.
 - **Read-only before execute.** Every stage before `execute` gets a read-only DB client. `insert` / `update` / `upsert` / `delete`, every `rpc`, and every storage mutation throw before any request is sent. `writeClientFor()` returns a writable client only in `execute`, with the write lock open and the approval matching the preflight being executed.
 - **Static check.** A test scans `lib/onboarding/**`. No module imports a DB client or posting module, and none calls a DB mutator (only the gate names them).
-- **Database enforcement (481):**
-  - artifacts and stage events are append-only;
-  - advances, waivers and approvals must be `actor_kind = 'human'`;
-  - waivers need a reason and approvals need the hash;
-  - the batch guard trigger allows only one step forward, with a matching human advance event, and `execute` only with an approved hash;
-  - the write lock may open only in `execute` and re-locks on leaving it.
+- **Database enforcement (481):** the database proves the same substance as the app, not merely that an advance event exists.
+  - Events are append-only and totally ordered (`seq`).
+  - A completion records the status and its open controls.
+  - Waivers, approvals and advances must be human and must reference the **latest** completion of the batch's **current** stage. This is validated on insert: a waiver covers one open control, once, with a reason; an advance needs PASS or every open control waived for that completion.
+  - The batch guard trigger **re-proves** the gate at the moment the stage changes. `execute` needs a human approval bound to the current preflight result; the approved hash is write-once.
+  - The write lock opens only in `execute` and re-locks on leaving it.
+  - `conversion_control_results` stores a `WAIVED` disposition (who / why / when / waiver event) only on FAIL/BLOCKED and never changes the status.
 - **Discovery is permission to report, not to fix.** A control surfacing a problem is a result, never a trigger for a correction.
 
 ## Canonical model (`canonical.js`)
@@ -109,7 +112,7 @@ Unreadable data lines are recorded as defects, never dropped. Amounts parse stri
 
 ## Quail Ridge proof (real package, read-only, local)
 
-`tests/onboarding_quail_ridge_local.js` runs only where `Quail_Ridge_Claude_Migration_Package.zip` exists. The repo is public, so client data is never committed. Result: **36/36**.
+`tests/onboarding_quail_ridge_local.js` runs only where `Quail_Ridge_Claude_Migration_Package.zip` exists. The repo is public, so client data is never committed. Result: **38/38**.
 - **Stage 0:** 8 artifacts (4 original PDFs plus their extracted text); every hash equals the package manifest.
 - **Stage 1:** every line read (1,162 GL lines). Every extraction control passes: GL roll-forward and per-account tie, aging items and printed buckets, ledger day-end balances, Balance Sheet sections.
 - **Regression:** the package's own `gl_transactions.csv` **FAILS** against the original GL (accounts 1000, 1100, 1300, 2300, 4100).
@@ -142,7 +145,7 @@ Extends 452 (no parallel silo):
 - widened `conversion_runs.run_kind`;
 - on `conversion_control_results`: `level` and a declared tolerance (a reason is required).
 
-No rows change. The rehearsal `tests/sql/481_apply_one_e2e.mjs` passes 20/20 on Postgres 17 through the same apply tool Ed uses.
+No rows change. The rehearsal `tests/sql/481_apply_one_e2e.mjs` passes 42/42 on Postgres 17 through the same apply tool Ed uses.
 
 ## Not in this milestone
 

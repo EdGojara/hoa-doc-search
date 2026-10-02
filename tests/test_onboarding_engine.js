@@ -180,20 +180,73 @@ check('stages: no skipping; the current stage must be complete; a non-passing st
   st = S.waiveControl(st, HUMAN, 'gl.x', 'source report known to omit zero lines; reviewed');
   assert.strictEqual(S.advance(st, HUMAN, 'source_controls').stage, 'source_controls');
 });
-check('EXECUTE requires a human approval bound to the exact preflight hash, with every control passing or waived', () => {
+// Walk a fresh batch to the preflight stage with PASS results.
+function toPreflight() {
   let st = S.newBatchState({ batch_code: 'B', community_id: COMM, source_system: 'vantaca' });
   for (const to of ['normalize', 'source_controls', 'snapshot', 'activity_bridge', 'preflight']) { st = S.completeStage(st, HUMAN, { status: 'PASS' }); st = S.advance(st, HUMAN, to); }
-  const art = [{ filename: 'gl.txt', artifact_type: 'gl_trial_balance', sha256: 'b'.repeat(64), bytes: 10 }];
-  const failing = PF.buildPreflight({ batch: { batch_code: 'B', community_id: COMM, source_system: 'vantaca', stage: 'preflight' }, source_cutoff: { cutoff_date: '2026-03-31' }, artifacts: art, controls: [C.equals('gl.x', { label: 'x', left: 1, right: 2 })] });
-  assert.throws(() => S.approvePreflight(st, agent('preflight'), failing), (e) => e.code === 'APPROVAL_REQUIRES_HUMAN');
-  assert.throws(() => S.approvePreflight(st, HUMAN, failing), (e) => e.code === 'CONTROLS_NOT_PASSING');
-  const good = PF.buildPreflight({ batch: { batch_code: 'B', community_id: COMM, source_system: 'vantaca', stage: 'preflight' }, source_cutoff: { cutoff_date: '2026-03-31' }, artifacts: art, controls: [C.equals('gl.x', { label: 'x', left: 2, right: 2 })] });
-  st = S.completeStage(st, HUMAN, { status: 'PASS', preflight_sha256: good.sha256 });
+  return st;
+}
+const ART = [{ filename: 'gl.txt', artifact_type: 'gl_trial_balance', sha256: 'b'.repeat(64), bytes: 10 }];
+const PREPAID = C.equals('subledger.credit_balances_equal_gl_prepaid', { label: 'Homeowner credit balances = GL prepaid', left: 18460, right: 92213, leftLabel: 'credits', rightLabel: 'GL prepaid' });
+const OK = C.equals('gl.activity_debits_equal_credits', { label: 'GL debits = credits', left: 13928237, right: 13928237 });
+const report = (st, controls) => PF.buildPreflight({ batch: { batch_code: 'B', community_id: COMM, source_system: 'vantaca', stage: 'preflight' }, source_cutoff: { cutoff_date: '2026-07-31' }, artifacts: ART, controls,
+  waivers: S.waiversFor(st, S.latestCompletion(st, 'preflight')) });
+
+check('waivers are bound to the LATEST result of the stage: re-running the stage makes earlier waivers stale (no replay)', () => {
+  let st = S.newBatchState({ batch_code: 'B', community_id: COMM, source_system: 'vantaca' });
+  assert.throws(() => S.completeStage(st, HUMAN, { status: 'FAIL' }), (e) => e.code === 'STAGE_RESULT_OPEN_CONTROLS_REQUIRED');
+  assert.throws(() => S.completeStage(st, HUMAN, { status: 'PASS', open_controls: ['x'] }), (e) => e.code === 'STAGE_RESULT_INCONSISTENT');
+  assert.throws(() => S.waiveControl(st, HUMAN, 'gl.x', 'reviewed and documented'), (e) => e.code === 'WAIVER_NEEDS_COMPLETED_STAGE');
+  st = S.completeStage(st, agent('intake'), { status: 'FAIL', open_controls: ['gl.x', 'gl.y'] });
+  assert.throws(() => S.waiveControl(st, HUMAN, 'gl.other', 'reviewed and documented'), (e) => e.code === 'WAIVER_NOT_AN_OPEN_CONTROL');
+  st = S.waiveControl(st, HUMAN, 'gl.x', 'reviewed and documented');
+  assert.throws(() => S.waiveControl(st, HUMAN, 'gl.x', 'reviewed again, twice'), (e) => e.code === 'WAIVER_ALREADY_RECORDED');
+  assert.throws(() => S.advance(st, HUMAN, 'normalize'), (e) => e.code === 'CURRENT_STAGE_NOT_PASSING' && /not waived: gl\.y/.test(e.message), 'partially waived');
+  st = S.waiveControl(st, HUMAN, 'gl.y', 'reviewed and documented');
+  assert.strictEqual(S.stageGate(st).eligibility, 'eligible_with_waiver');
+  const rerun = S.completeStage(st, agent('intake'), { status: 'FAIL', open_controls: ['gl.x'] });   // same code, new result
+  assert.strictEqual(S.waiversFor(rerun, S.latestCompletion(rerun, 'intake')).length, 0, 'old waivers do not attach to the new result');
+  assert.throws(() => S.advance(rerun, HUMAN, 'normalize'), (e) => e.code === 'CURRENT_STAGE_NOT_PASSING');
+  const pass = S.completeStage(S.advance(st, HUMAN, 'normalize'), HUMAN, { status: 'PASS' });
+  assert.strictEqual(pass.stage, 'normalize');
+});
+check('a waived FAIL stays FAIL: original amounts kept, disposition WAIVED with who / why / when; summary "eligible with waiver", never PASS', () => {
+  let st = S.completeStage(toPreflight(), HUMAN, { status: 'FAIL', open_controls: [PREPAID.code] });
+  st = S.waiveControl(st, HUMAN, PREPAID.code, 'former-owner credit report pending; Ed reviewed the 737.53');
+  const r = report(st, [OK, PREPAID]);
+  const c = r.controls.find((x) => x.code === PREPAID.code);
+  assert.strictEqual(c.status, 'FAIL');
+  assert.deepStrictEqual([c.left_cents, c.right_cents, c.difference_cents], [18460, 92213, -73753]);
+  assert.strictEqual(c.disposition.disposition, 'WAIVED'); assert.strictEqual(c.disposition.waived_by, 'ed');
+  assert.ok(/former-owner credit report pending/.test(c.disposition.reason) && c.disposition.waived_at);
+  assert.strictEqual(r.status.overall, 'FAIL'); assert.deepStrictEqual(r.status.counts, { PASS: 1, FAIL: 1, BLOCKED: 0 });
+  assert.strictEqual(r.status.waived, 1); assert.strictEqual(r.status.unresolved, 0); assert.strictEqual(r.status.eligibility, 'eligible_with_waiver');
+  const md = PF.renderMarkdown(r);
+  assert.ok(/\| FAIL \| WAIVED by ed /.test(md) && /eligible to advance WITH WAIVER/.test(md) && /1 fail/.test(md));
+  assert.throws(() => C.applyWaivers([OK], [{ code: OK.code, by: 'ed', reason: 'should never happen', at: 'now' }]), /PASS control cannot be waived/);
+});
+check('EXECUTE: approval is human-only, needs every non-PASS control waived for the CURRENT preflight result, and binds to the exact report hash', () => {
+  let st = S.completeStage(toPreflight(), HUMAN, { status: 'FAIL', open_controls: [PREPAID.code] });
+  const unwaived = report(st, [OK, PREPAID]);
+  assert.strictEqual(unwaived.status.eligibility, 'not_eligible');
+  assert.throws(() => S.approvePreflight(st, agent('preflight'), unwaived), (e) => e.code === 'APPROVAL_REQUIRES_HUMAN');
+  assert.throws(() => S.approvePreflight(st, HUMAN, unwaived), (e) => e.code === 'CONTROLS_NOT_PASSING');
+  assert.throws(() => S.advance(st, HUMAN, 'execute'), (e) => e.code === 'CURRENT_STAGE_NOT_PASSING');
+  st = S.waiveControl(st, HUMAN, PREPAID.code, 'former-owner credit report pending; Ed reviewed the 737.53');
+  const good = report(st, [OK, PREPAID]);
+  // the hash covers the disposition: the same waiver with a different reason is a different report
+  const otherReason = PF.buildPreflight({ batch: good.batch, source_cutoff: good.source_cutoff, artifacts: ART, controls: [OK, PREPAID], waivers: [{ ...S.waiversFor(st, S.latestCompletion(st, 'preflight'))[0], reason: 'a different reason entirely' }] });
+  assert.notStrictEqual(otherReason.sha256, good.sha256);
+  assert.throws(() => S.approvePreflight(st, HUMAN, otherReason), (e) => e.code === 'CONTROLS_NOT_PASSING' && /does not match a recorded waiver/.test(e.message), 'fabricated disposition');
+  const tampered = { ...good, controls: good.controls.map((c) => (c.code === PREPAID.code ? { ...c, status: 'PASS', disposition: null } : c)) };
+  assert.throws(() => S.approvePreflight(st, HUMAN, tampered), (e) => e.code === 'PREFLIGHT_REPORT_ALTERED');
+  assert.throws(() => S.approvePreflight(st, HUMAN, { ...good, batch: { ...good.batch, batch_code: 'OTHER' } }), (e) => e.code === 'PREFLIGHT_REPORT_ALTERED' || e.code === 'PREFLIGHT_FOR_ANOTHER_BATCH');
   assert.throws(() => S.advance(st, HUMAN, 'execute'), (e) => e.code === 'EXECUTE_REQUIRES_APPROVAL');
-  const other = S.approvePreflight(st, HUMAN, { ...good, sha256: 'c'.repeat(64) });
-  assert.throws(() => S.advance(other, HUMAN, 'execute'), (e) => e.code === 'APPROVAL_DOES_NOT_MATCH_PREFLIGHT');
-  st = S.approvePreflight(st, HUMAN, good);
-  const ex = S.advance(st, HUMAN, 'execute');
+  const approved = S.approvePreflight(st, HUMAN, good);
+  // re-running preflight after approval: the approval no longer covers the result
+  const rerun = S.completeStage(approved, HUMAN, { status: 'PASS' });
+  assert.throws(() => S.advance(rerun, HUMAN, 'execute'), (e) => e.code === 'APPROVAL_DOES_NOT_MATCH_PREFLIGHT');
+  const ex = S.advance(approved, HUMAN, 'execute');
   assert.strictEqual(ex.stage, 'execute'); assert.strictEqual(ex.write_lock, false);
   assert.ok(ex.events.some((e) => e.type === 'preflight_approved' && e.preflight_sha256 === good.sha256));
 });
