@@ -178,7 +178,7 @@ async function release(id, btn){
   try{
     const r = await af('/api/ap/invoices/'+id+'/approve', { method:'POST', headers:{'Content-Type':'application/json'}, body:'{}' });
     const j = await r.json();
-    if(!r.ok) throw new Error(j.error||j.detail||'release failed');
+    if(!r.ok) throw new Error(j.detail||j.error||'release failed');
     rows = rows.filter(x=>x.id!==id);
     const el = $('row-'+id); if(el) el.remove();
     render({ count: rows.length, total_cents: rows.reduce((a,i)=>a+i.total_cents,0) });
@@ -189,10 +189,10 @@ async function releaseAll(){
   if(!rows.length) return;
   if(!confirm(`Release all ${rows.length} bills for payment (${money(rows.reduce((a,i)=>a+i.total_cents,0))})? Checks and ACH go out on the next run.`)) return;
   const ids = rows.map(i=>i.id);
-  let ok=0, fail=0;
-  for(const id of ids){ try{ const r=await af('/api/ap/invoices/'+id+'/approve',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'}); if(r.ok){ ok++; rows=rows.filter(x=>x.id!==id); const el=$('row-'+id); if(el) el.remove(); } else { fail++; } }catch(_){ fail++; } }
+  let ok=0, fail=0, w9=0;
+  for(const id of ids){ try{ const r=await af('/api/ap/invoices/'+id+'/approve',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'}); if(r.ok){ ok++; rows=rows.filter(x=>x.id!==id); const el=$('row-'+id); if(el) el.remove(); } else { fail++; if(r.status===409) w9++; } }catch(_){ fail++; } }
   render({ count: rows.length, total_cents: rows.reduce((a,i)=>a+i.total_cents,0) });
-  toast(`Released ${ok}${fail?`, ${fail} failed`:''}.`, !!fail);
+  toast(`Released ${ok}${fail?`, ${fail} not released${w9?` (${w9} need a W-9 on file first)`:''}`:''}.`, !!fail);
 }
 
 // ---- Detail review ----

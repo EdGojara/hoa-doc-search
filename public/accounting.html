@@ -2724,8 +2724,8 @@
     const invs = j.invoices||[];
     if (!invs.length) { $('chkPay').innerHTML = (excBanner||'') + cashBanner + '<div class="card muted" style="padding:20px;">No approved bills waiting to be paid. Enter and approve bills in Bills (AP), then come back to print checks.</div>'; return; }
     const rows = invs.map((i)=>`<tr>
-      <td><input type="checkbox" class="chk-inv" value="${i.id}" data-amt="${i.balance_cents}" checked onchange="chkUpdateBar()"></td>
-      <td>${esc(i.vendor_name)}</td><td>${esc(i.vendor_invoice_number||'—')}</td>
+      <td>${i.w9_blocked ? `<input type="checkbox" disabled title="${esc(i.w9_reason||'W-9 required')}">` : `<input type="checkbox" class="chk-inv" value="${i.id}" data-amt="${i.balance_cents}" checked onchange="chkUpdateBar()">`}</td>
+      <td>${esc(i.vendor_name)}${i.w9_blocked ? ` <span title="${esc(i.w9_reason||'')}. Upload the vendor's W-9 on the vendor record to pay it." style="font-size:11px; font-weight:700; color:#b91c1c; background:#fdecec; border-radius:6px; padding:1px 6px;">W-9 required</span>` : ''}</td><td>${esc(i.vendor_invoice_number||'—')}</td>
       <td>${esc(fmtDate(i.invoice_date))}</td><td>${esc(i.description||'')}</td>
       <td>${i.support_doc_url?`<a href="${i.support_doc_url}" target="_blank" rel="noopener" title="Open the invoice">📎 View</a>`:'<span class="muted">—</span>'}</td>
       <td class="num">${fmt(i.balance_cents)}</td></tr>`).join('');

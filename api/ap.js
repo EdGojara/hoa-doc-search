@@ -1017,6 +1017,8 @@ router.post('/invoices/:id/approve', express.json(), async (req, res) => {
         await supabase.from('ap_invoices').update({ status: 'disputed' }).eq('id', id);
         return res.json({ ok: true, stage: 'manager_rejected', by: userName });
       }
+      // No W-9, no approval: the manager key is refused too (Issue #14).
+      await require('../lib/ap/w9_gate').assertW9Cleared(supabase, [id]);
       await supabase.from('ap_invoice_approvals').insert({ invoice_id: id, action: 'approved', user_id: userId, user_name: userName, amount_at_time_cents: inv.total_cents, notes });
       return res.json({ ok: true, stage: 'manager_approved', by: userName, at: new Date().toISOString() });
     }
@@ -1056,6 +1058,7 @@ router.post('/invoices/:id/approve', express.json(), async (req, res) => {
       solo_release: solo, path: policy ? policy.path : null,
     });
   } catch (err) {
+    if (err.code === 'w9_required') return res.status(409).json({ error: err.detail, detail: err.detail, code: err.code, blocked: err.blocked || [] });
     if (err.code === 'invalid_input' || err.code === 'invalid_state' || err.code === 'not_found' || err.code === 'before_gl_cutover') {
       return res.status(400).json({ error: err.message, code: err.code });
     }
@@ -1154,6 +1157,7 @@ router.post('/invoices/:id/mark-paid', express.json(), async (req, res) => {
     });
     res.json({ ok: true, method, amount_cents: amt, ...result });
   } catch (err) {
+    if (err.code === 'w9_required') return res.status(409).json({ error: err.detail, detail: err.detail, code: err.code, blocked: err.blocked || [] });
     if (err.code === 'invalid_input' || err.code === 'invalid_state' || err.code === 'before_gl_cutover') return res.status(400).json({ error: err.message, code: err.code });
     console.error('[ap] mark-paid failed:', err); res.status(500).json({ error: safeErrorMessage(err) });
   }
@@ -1763,6 +1767,7 @@ router.post('/payments', express.json(), async (req, res) => {
     const result = await recordPayment(req.body || {});
     res.json(result);
   } catch (err) {
+    if (err.code === 'w9_required') return res.status(409).json({ error: err.detail, detail: err.detail, code: err.code, blocked: err.blocked || [] });
     if (err.code === 'invalid_input' || err.code === 'invalid_state' || err.code === 'before_gl_cutover') {
       return res.status(400).json({ error: err.message, code: err.code });
     }

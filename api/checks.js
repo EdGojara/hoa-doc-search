@@ -34,6 +34,7 @@ function handleErr(res, feature, err) {
   if (err.code === 'vendor_no_address') {
     return res.status(409).json({ error: err.message, code: err.code, vendors: err.vendors || [] });
   }
+  if (err.code === 'w9_required') return res.status(409).json({ error: err.detail, detail: err.detail, code: err.code, blocked: err.blocked || [] });
   if (err.code === 'invalid_input' || err.code === 'invalid_state') {
     return res.status(400).json({ error: err.message, code: err.code });
   }
