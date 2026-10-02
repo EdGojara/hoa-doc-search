@@ -16,8 +16,9 @@
 --
 -- 'exempt_verified' REQUIRES basis + source + verified_by + verified_at (CHECK).
 -- Every change to these fields (and to w9_on_file / tax_classification /
--- is_legal_counsel) is written to vendor_tax_status_events by a trigger, so an
--- exemption always has an audit trail.
+-- is_legal_counsel, and to kind / reimbursee_contact_id, so relabeling a payee
+-- as an expense reimbursement leaves a trail) is written to
+-- vendor_tax_status_events by a trigger, so an exemption always has an audit trail.
 --
 -- Record ownership: workpaper (Bedrock's vendor master and its tax review). The
 -- 1099 filings produced from it are association records, made per community.
@@ -74,12 +75,14 @@ BEGIN
     'tax_exemption_source', OLD.tax_exemption_source, 'tax_exemption_document_id', OLD.tax_exemption_document_id,
     'tax_exemption_verified_by', OLD.tax_exemption_verified_by, 'tax_exemption_verified_at', OLD.tax_exemption_verified_at,
     'tax_exemption_note', OLD.tax_exemption_note, 'is_medical_provider', OLD.is_medical_provider,
-    'is_legal_counsel', OLD.is_legal_counsel, 'w9_on_file', OLD.w9_on_file, 'tax_classification', OLD.tax_classification);
+    'is_legal_counsel', OLD.is_legal_counsel, 'w9_on_file', OLD.w9_on_file, 'tax_classification', OLD.tax_classification,
+    'kind', OLD.kind, 'reimbursee_contact_id', OLD.reimbursee_contact_id);
   a := jsonb_build_object('tax_reporting_status', NEW.tax_reporting_status, 'tax_exemption_basis', NEW.tax_exemption_basis,
     'tax_exemption_source', NEW.tax_exemption_source, 'tax_exemption_document_id', NEW.tax_exemption_document_id,
     'tax_exemption_verified_by', NEW.tax_exemption_verified_by, 'tax_exemption_verified_at', NEW.tax_exemption_verified_at,
     'tax_exemption_note', NEW.tax_exemption_note, 'is_medical_provider', NEW.is_medical_provider,
-    'is_legal_counsel', NEW.is_legal_counsel, 'w9_on_file', NEW.w9_on_file, 'tax_classification', NEW.tax_classification);
+    'is_legal_counsel', NEW.is_legal_counsel, 'w9_on_file', NEW.w9_on_file, 'tax_classification', NEW.tax_classification,
+    'kind', NEW.kind, 'reimbursee_contact_id', NEW.reimbursee_contact_id);
   IF a IS DISTINCT FROM b THEN
     INSERT INTO vendor_tax_status_events (vendor_id, changed_by, before, after)
       VALUES (NEW.id, COALESCE(NEW.tax_exemption_verified_by, current_user), b, a);

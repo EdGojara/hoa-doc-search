@@ -33,8 +33,28 @@ check('threshold is YEAR-aware: $600 through 2025, $2,000 for 2026', () => {
   assert.strictEqual(R.thresholdFor(2024).cents, 60000); assert.strictEqual(R.thresholdFor(2025).cents, 60000);
   assert.strictEqual(R.thresholdFor(2026).cents, 200000); assert.strictEqual(R.thresholdFor(2026).provisional, false);
 });
-check('a later (indexed) year is not guessed: latest configured value, flagged provisional', () => {
-  const t = R.thresholdFor(2027); assert.strictEqual(t.provisional, true); assert.ok(/2027 indexed amount is not configured/.test(t.basis));
+check('a later (indexed) year is not guessed: NO threshold (null), flagged provisional', () => {
+  const t = R.thresholdFor(2027); assert.strictEqual(t.provisional, true); assert.strictEqual(t.cents, null); assert.ok(/2027 1099 threshold is not configured/.test(t.basis));
+});
+check('unconfigured year: a disbursement that NEEDS the threshold is a CONFIGURATION exception, never a block on last year\'s number', () => {
+  const e = EV({ year: 2027, priorReportableCents: 0, paymentCents: 100 });
+  assert.strictEqual(e.decision, 'config_exception'); assert.ok(/not configured/.test(e.reason));
+  // ...even a tiny payment: the point is no guessed threshold controls a hard stop
+});
+check('unconfigured year: no threshold needed -> no exception (W-9 on file, exempt, card)', () => {
+  assert.strictEqual(EV({ year: 2027, vendor: W9 }).decision, 'allow');
+  assert.strictEqual(EV({ year: 2027, vendor: CORP_EXEMPT }).decision, 'allow');
+  assert.strictEqual(EV({ year: 2027, method: 'credit_card' }).decision, 'allow');
+});
+check('unconfigured year: recording and approval only warn', () => {
+  assert.strictEqual(EV({ year: 2027, initiation: 'record' }).decision, 'warn');
+  assert.strictEqual(EV({ year: 2027, initiation: 'approve' }).decision, 'warn');
+});
+check('W-9 line 3 SUGGESTS a corporate exemption (never applies it); other classes suggest nothing', () => {
+  const s = R.suggestExemptionFromW9('c_corporation'); assert.deepStrictEqual([s.basis, s.source], ['corporation', 'w9_document']); assert.ok(/attorney or medical/.test(s.note));
+  assert.ok(R.suggestExemptionFromW9('llc_s')); assert.strictEqual(R.suggestExemptionFromW9('individual_sole_proprietor'), null); assert.strictEqual(R.suggestExemptionFromW9('llc_p'), null);
+  // a suggestion is not an exemption until confirmed
+  assert.ok(R.vendorReportability({ ...UNKNOWN, tax_classification: 'c_corporation', w9_on_file: true }).reportable);
 });
 check('year boundary: the same $700 crosses in 2025 but not in 2026', () => {
   assert.strictEqual(EV({ year: 2025, priorReportableCents: 50000, paymentCents: 20000 }).decision, 'block');
@@ -164,9 +184,9 @@ check('list projection: a bill that could not be paid today is flagged; projecti
 check('PATH check run: the 1099 gate runs BEFORE any check number is reserved', () => {
   const s = src('lib/accounting/check_run.js');
   assert.ok(s.indexOf('assertCheckRunAllowed(supabase, { community_id, vendorAmounts, payment_date })') < s.indexOf("rpc('reserve_next_check_number'"));
-  assert.ok(/w9_required_before_payment: !!\(ev && ev\.decision === 'block'\)/.test(s), 'list flags the bill');
+  assert.ok(/return \{ w9_required_before_payment: stop, w9_reason: stop \? ev\.reason : null \}/.test(s), 'list flags the bill');
   assert.ok(/i\.w9_required_before_payment \? `<input type="checkbox" disabled/.test(src('public/accounting.html')), 'UI: not selectable, with the reason');
-  assert.ok(/err\.code === 'w9_required_for_payment'\) return res\.status\(409\)/.test(src('api/checks.js')) && /tax_check_failed'\) return res\.status\(503\)/.test(src('api/checks.js')));
+  assert.ok(/err\.code === 'w9_required_for_payment' \|\| err\.code === 'threshold_unconfigured'\) return res\.status\(409\)/.test(src('api/checks.js')) && /tax_check_failed'\) return res\.status\(503\)/.test(src('api/checks.js')));
 });
 check('PATH recordPayment (mark-paid, POST /payments, early prepay, autopay drafts): evaluates, attaches, NEVER throws for tax', () => {
   const s = src('lib/accounting/ap_engine.js');
@@ -192,6 +212,46 @@ check('no hard-coded $600 left in the 1099 / W-9 logic; thresholds come from thr
   assert.ok(/const thr = thresholdFor\(year\);/.test(v) && /const CENTS_1099_THRESHOLD = thr\.cents;/.test(v));
   const ui = src('public/index.html');
   assert.ok(!/\$600 per community/.test(ui) && !/c\.ytd_cents>=60000/.test(ui));
+});
+check('check run: an unconfigured year refuses with its OWN code (threshold_unconfigured), not "W-9 needed"', async () => {
+  const { assertCheckRunAllowed } = require('../lib/tax/payment_gate');
+  await assert.rejects(assertCheckRunAllowed(db({ ap_payments: [], vendors: [UNKNOWN] }), { community_id: 'c1', vendorAmounts: new Map([['v1', 100]]), payment_date: '2027-01-15' }),
+    (e) => e.code === 'threshold_unconfigured' && /1099 threshold not configured/.test(e.detail));
+  assert.ok(/'w9_required_for_payment' \|\| err\.code === 'threshold_unconfigured'\) return res\.status\(409\)/.test(src('api/checks.js')));
+  assert.ok(/ev\.decision === 'block' \|\| ev\.decision === 'config_exception'/.test(src('lib/accounting/check_run.js')), 'the list flags it too');
+});
+check('W-9 shortcut CLOSED: PATCH can switch w9_on_file ON only with a current W-9 document; re-sending ON is a no-op; OFF allowed', () => {
+  const v = src('api/vendors.js');
+  const patch = v.slice(v.indexOf("router.patch('/:vendorId'"), v.indexOf('// GET /api/vendors/', v.indexOf("router.patch('/:vendorId'")) > 0 ? v.indexOf('// GET /api/vendors/', v.indexOf("router.patch('/:vendorId'")) : v.indexOf("router.patch('/:vendorId'") + 4000);
+  assert.ok(/eq\('doc_type', 'w9'\)\.eq\('is_current', true\)/.test(patch) && /w9_document_required/.test(patch));
+  assert.ok(/if \(cur && cur\.w9_on_file === true\) \{ delete update\.w9_on_file; \}/.test(patch));
+  const allowed = patch.slice(patch.indexOf('const allowed'), patch.indexOf('];', patch.indexOf('const allowed')));
+  assert.ok(!/tax_reporting_status|tax_exemption_/.test(allowed), 'exemption fields are not editable via PATCH');
+  assert.ok(/'is_legal_counsel','is_medical_provider'/.test(allowed), 'attorney/medical flags (which only ADD reporting) are editable');
+  const ui = src('public/index.html');
+  assert.ok(/id="ven-f-w9_on_file" \$\{v\.w9_on_file\?'checked':'disabled'\}/.test(ui) && /id="ve-w9" \$\{v\.w9_on_file \? 'checked' : 'disabled'\}/.test(ui), 'UI checkboxes cannot switch it on');
+});
+check('exemption is CONFIRMED by a person (admin, session identity) with provenance; W-9 upload only suggests', () => {
+  const v = src('api/vendors.js');
+  const ep = v.slice(v.indexOf("router.post('/:vendorId/tax-exemption'"), v.indexOf('// GET /api/vendors/documents/:docId/file'));
+  assert.ok(/requireAdmin\(req, res\)/.test(ep) && /const who = admin\.email \|\| admin\.full_name/.test(ep), 'admin only; verified-by from the session');
+  assert.ok(/tax_exemption_verified_by: who/.test(ep) && !/b\.verified_by/.test(ep), 'never from the body');
+  assert.ok(/document_mismatch/.test(ep) && /not_corporate_on_w9/.test(ep) && /note_required/.test(ep), 'proof checks');
+  assert.ok(/tax_reporting_status: 'unknown'/.test(ep), 'revoke returns the vendor to potentially reportable');
+  assert.ok(/suggested_exemption = sug \? \{ \.\.\.sug, document_id: doc\.id \} : null/.test(v), 'upload returns a suggestion');
+  assert.ok(!/tax_reporting_status/.test(v.slice(v.indexOf('// Flip w9_on_file + capture tax fields'), v.indexOf('suggested_exemption'))), 'upload never sets the status');
+  assert.ok(/function venTaxPanel\(v, docs\)/.test(src('public/index.html')) && /Confirm corporate exemption \(from the W-9\)/.test(src('public/index.html')));
+});
+check('government/MUD exemption is stored + verified, not inferred: is_mud alone does not exempt', () => {
+  assert.ok(R.vendorReportability({ ...UNKNOWN, is_mud: true }).reportable);
+  assert.strictEqual(R.vendorReportability(GOV_EXEMPT).reportable, false);
+});
+check('reimbursement exclusion is evidence-backed and audited (relabeling leaves a trail)', () => {
+  assert.ok(/kind = 'reimbursement'[\s\S]{0,200}set only by the reimbursement flow/.test(src('lib/tax/info_reporting.js')));
+  const m = src('migrations/477_vendor_tax_reporting_status.sql');
+  assert.ok(/'kind', OLD\.kind, 'reimbursee_contact_id', OLD\.reimbursee_contact_id/.test(m) && /'kind', NEW\.kind/.test(m));
+  const v = src('api/vendors.js'); const allowed = v.slice(v.indexOf('const allowed = ['), v.indexOf('];', v.indexOf('const allowed = [')));
+  assert.ok(!/'kind'/.test(allowed), 'staff edits cannot relabel a vendor as a reimbursement payee');
 });
 check('no override exists', () => {
   for (const f of ['lib/tax/info_reporting.js', 'lib/tax/payment_gate.js']) assert.ok(!/override|bypass\s*[:=]|force\s*[:=]/i.test(src(f).replace(/\/\/.*$/gm, '')), f);

@@ -450,16 +450,34 @@ router.patch('/:vendorId', async (req, res) => {
                    'is_mud','convenience_fee_cents','payment_terms_days','payee_name','auto_pay_ach',
                    // Contact person + remittance — single source of truth for who/where. (Ed 2026-08-01.)
                    'contact_name','contact_email','contact_phone',
-                   'remit_address_line1','remit_address_line2','remit_city','remit_state','remit_zip'];
+                   'remit_address_line1','remit_address_line2','remit_city','remit_state','remit_zip',
+                   // Attorney / medical: these only ADD 1099 reporting (Issue #14).
+                   'is_legal_counsel','is_medical_provider'];
+  // Tax-exemption fields are NOT editable here: an exemption is confirmed only
+  // through POST /:vendorId/tax-exemption, with its provenance (Issue #14).
   const update = {};
   for (const k of allowed) if (k in (req.body || {})) update[k] = req.body[k];
+  // No W-9 flag without the W-9 (Issue #14): "W-9 on file" can be switched ON
+  // only when a current W-9 document is stored for this vendor (upload it on the
+  // vendor record, which sets the flag itself). Switching it OFF is allowed.
+  if (req.body && req.body.w9_on_file === true) {
+    // Already on file (a form re-sending its checkbox): nothing to prove, no change.
+    const { data: cur, error: curErr } = await supabase.from('vendors').select('w9_on_file').eq('id', vendorId).maybeSingle();
+    if (curErr) return res.status(500).json({ error: 'could not read the vendor' });
+    if (cur && cur.w9_on_file === true) { delete update.w9_on_file; }
+  }
+  if (req.body && req.body.w9_on_file === true && 'w9_on_file' in update) {
+    const { data: w9doc, error: w9err } = await supabase.from('vendor_documents').select('id').eq('vendor_id', vendorId).eq('doc_type', 'w9').eq('is_current', true).limit(1);
+    if (w9err) return res.status(500).json({ error: 'could not check for a W-9 document' });
+    if (!w9doc || !w9doc.length) return res.status(400).json({ error: 'w9_document_required', detail: "Upload the vendor's W-9 (Vendors → the vendor → W-9) to mark it on file. The flag cannot be set without the document." });
+  }
   // A MUD vendor carries the standard $1 convenience fee unless a specific
   // amount was set alongside the flag. Turning the flag off clears the fee.
   if ('is_mud' in (req.body || {})) {
     if (req.body.is_mud === true && !('convenience_fee_cents' in (req.body || {}))) update.convenience_fee_cents = 100;
     if (req.body.is_mud === false && !('convenience_fee_cents' in (req.body || {}))) update.convenience_fee_cents = 0;
   }
-  if (req.body && req.body.w9_on_file === true) update.w9_uploaded_at = new Date().toISOString();
+  if (update.w9_on_file === true) update.w9_uploaded_at = new Date().toISOString();
   if (Object.keys(update).length === 0) return res.status(400).json({ error: 'no updatable fields supplied' });
   try {
     const { data, error } = await supabase
@@ -1439,9 +1457,69 @@ router.post('/:vendorId/w9', upload.single('pdf'), async (req, res) => {
     const { data: updated, error: upErr } = await supabase.from('vendors').update(vUpdate).eq('id', vendorId).select().single();
     if (upErr) throw upErr;
 
-    res.json({ ok: true, document: doc, vendor: updated, parsed: ex.parsed, suggested_1099: ex.suggested_1099, degraded: ex.degraded, replaced_prior: hadPriorCurrent });
+    // Suggest (never set) a corporate exemption from the W-9's line 3; a person
+    // confirms it via POST /:vendorId/tax-exemption with this document (Issue #14).
+    const sug = ex.parsed ? require('../lib/tax/info_reporting').suggestExemptionFromW9(ex.parsed.tax_classification) : null;
+    const suggested_exemption = sug ? { ...sug, document_id: doc.id } : null;
+    res.json({ ok: true, document: doc, vendor: updated, parsed: ex.parsed, suggested_1099: ex.suggested_1099, suggested_exemption, degraded: ex.degraded, replaced_prior: hadPriorCurrent });
   } catch (err) {
     console.error('[vendors] W-9 upload failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/vendors/:vendorId/tax-exemption  (Issue #14) — a PERSON confirms
+// (or revokes) that a vendor is exempt from 1099 reporting. Admin only.
+//   { action: 'confirm', basis, source, document_id?, note }
+//   { action: 'revoke', note }
+// Rules: basis + source required; a 'w9_document' source needs that vendor's
+// stored W-9 and, for basis 'corporation', a corporate line-3 classification;
+// a government / tax-exempt basis needs a supporting note (the record relied on).
+// Verified-by comes from the SESSION, never the body. Migration 477 enforces the
+// provenance and audits every change (vendor_tax_status_events).
+router.post('/:vendorId/tax-exemption', express.json(), async (req, res) => {
+  const { requireAdmin } = require('./_require_admin');
+  const admin = await requireAdmin(req, res); if (!admin) return;
+  const { vendorId } = req.params;
+  const b = req.body || {};
+  const who = admin.email || admin.full_name || 'admin';
+  try {
+    const { data: v, error: ve } = await supabase.from('vendors').select('id, name, tax_classification').eq('id', vendorId).maybeSingle();
+    if (ve) throw ve;
+    if (!v) return res.status(404).json({ error: 'vendor_not_found' });
+    if (b.action === 'revoke') {
+      const { data, error } = await supabase.from('vendors').update({ tax_reporting_status: 'unknown', tax_exemption_basis: null, tax_exemption_source: null, tax_exemption_document_id: null, tax_exemption_verified_by: who, tax_exemption_verified_at: new Date().toISOString(), tax_exemption_note: String(b.note || 'Exemption revoked').slice(0, 500) }).eq('id', vendorId).select().single();
+      if (error) throw error;
+      return res.json({ ok: true, vendor: data });
+    }
+    if (b.action !== 'confirm') return res.status(400).json({ error: 'action_required', detail: 'action must be confirm or revoke' });
+    const BASES = ['corporation', 'government', 'tax_exempt_org', 'foreign_person', 'other'];
+    const SOURCES = ['w9_document', 'irs_document', 'government_entity_record', 'manual_review'];
+    if (!BASES.includes(b.basis)) return res.status(400).json({ error: 'basis_required', detail: `basis must be one of ${BASES.join(', ')}` });
+    if (!SOURCES.includes(b.source)) return res.status(400).json({ error: 'source_required', detail: `source must be one of ${SOURCES.join(', ')}` });
+    let docId = null;
+    if (b.source === 'w9_document') {
+      if (!b.document_id) return res.status(400).json({ error: 'document_required', detail: 'A W-9 source needs the stored W-9 document.' });
+      const { data: d, error: de } = await supabase.from('vendor_documents').select('id, vendor_id, doc_type').eq('id', b.document_id).maybeSingle();
+      if (de) throw de;
+      if (!d || d.vendor_id !== vendorId || d.doc_type !== 'w9') return res.status(400).json({ error: 'document_mismatch', detail: 'That document is not this vendor\'s W-9.' });
+      docId = d.id;
+      if (b.basis === 'corporation' && !require('../lib/tax/info_reporting').suggestExemptionFromW9(v.tax_classification)) {
+        return res.status(400).json({ error: 'not_corporate_on_w9', detail: `The W-9 classification on file is ${v.tax_classification || 'not captured'}; a corporate exemption needs a corporate line-3 classification.` });
+      }
+    }
+    if (['government', 'tax_exempt_org', 'other'].includes(b.basis) && !String(b.note || '').trim()) {
+      return res.status(400).json({ error: 'note_required', detail: 'Say what record shows this (e.g. the district\'s creation order or the IRS determination letter).' });
+    }
+    const { data, error } = await supabase.from('vendors').update({
+      tax_reporting_status: 'exempt_verified', tax_exemption_basis: b.basis, tax_exemption_source: b.source,
+      tax_exemption_document_id: docId, tax_exemption_verified_by: who, tax_exemption_verified_at: new Date().toISOString(),
+      tax_exemption_note: b.note ? String(b.note).slice(0, 500) : null,
+    }).eq('id', vendorId).select().single();
+    if (error) throw error;
+    res.json({ ok: true, vendor: data });
+  } catch (err) {
+    console.error('[vendors] tax exemption failed:', err.message);
     res.status(500).json({ error: err.message });
   }
 });

@@ -46549,6 +46549,34 @@ ${questionsPage}
     function venField(id, label, val){
       return `<label style="font-size:11.5px; color:#64748b; display:block;">${label}<br><input id="ven-f-${id}" type="text" value="${apEsc(val==null?'':val)}" style="width:100%; padding:6px 8px; border:1px solid #cbd5e1; border-radius:6px; font-size:13px; margin-top:2px; box-sizing:border-box;"></label>`;
     }
+    // 1099 status (Issue #14): an exemption is CONFIRMED by a person, with its
+    // provenance; the W-9's corporate line 3 only suggests it. Server: admin only.
+    function venTaxPanel(v, docs){
+      if (!('tax_reporting_status' in v)) return ''; // before migration 477
+      const w9 = (docs||[]).find(d => d.doc_type === 'w9' && d.is_current);
+      const corp = ['c_corporation','s_corporation','llc_c','llc_s'].includes(String(v.tax_classification||'').toLowerCase());
+      const ex = v.tax_reporting_status === 'exempt_verified';
+      const line = ex
+        ? `<b style="color:#166534;">Verified exempt from 1099</b>: ${apEsc(v.tax_exemption_basis||'')} · ${apEsc(v.tax_exemption_source||'')} · confirmed by ${apEsc(v.tax_exemption_verified_by||'')} ${v.tax_exemption_verified_at?apEsc(String(v.tax_exemption_verified_at).slice(0,10)):''}${(v.is_legal_counsel||v.is_medical_provider)&&v.tax_exemption_basis==='corporation'?' <span style="color:#92400e;">(attorney/medical payments stay reportable)</span>':''}`
+        : `<b>1099:</b> potentially reportable (not verified exempt)`;
+      const btns = [];
+      if (!ex && corp && w9) btns.push(`<button class="secondary-btn" style="font-size:11.5px; padding:3px 10px;" onclick="venTaxExempt('${v.id}','corporation','${w9.id}')" title="The W-9 on file says ${apEsc(v.tax_classification)}. Confirming records you, the date and this W-9 as the proof.">Confirm corporate exemption (from the W-9)</button>`);
+      if (!ex) btns.push(`<button class="secondary-btn" style="font-size:11.5px; padding:3px 10px;" onclick="venTaxExempt('${v.id}','government',null)" title="For a government body (e.g. a MUD). You will be asked what record shows it.">Confirm government exemption…</button>`);
+      if (ex) btns.push(`<button class="secondary-btn" style="font-size:11.5px; padding:3px 10px;" onclick="venTaxExempt('${v.id}','revoke',null)">Revoke exemption</button>`);
+      return `<div style="border:1px solid #e2e8f0; border-radius:9px; padding:8px 12px; margin:10px 0; font-size:12.5px; display:flex; gap:10px; align-items:center; flex-wrap:wrap;"><span>${line}</span>${!ex && corp && w9 ? '<span style="color:#64748b;">The W-9 suggests a corporate exemption; it applies only once confirmed.</span>' : ''}<span style="margin-left:auto; display:flex; gap:6px;">${btns.join('')}</span></div>`;
+    }
+    window.venTaxExempt = async function(id, kind, docId){
+      let body;
+      if (kind === 'revoke') { const note = prompt('Why is the exemption being revoked?'); if (note === null) return; body = { action: 'revoke', note }; }
+      else if (kind === 'corporation') { if (!confirm('Confirm this vendor is a corporation exempt from 1099 reporting, based on the W-9 on file? Attorney and medical payments stay reportable.')) return; body = { action: 'confirm', basis: 'corporation', source: 'w9_document', document_id: docId }; }
+      else { const note = prompt('What record shows this is a government body (e.g. the district creation order)?'); if (!note) return; body = { action: 'confirm', basis: 'government', source: 'government_entity_record', note }; }
+      try {
+        const r = await venFetch()('/api/vendors/'+encodeURIComponent(id)+'/tax-exemption', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
+        const j = await r.json().catch(()=>({}));
+        if (!r.ok) throw new Error(j.detail || j.error || 'could not save');
+        venOpen(id);
+      } catch(e){ alert('Not saved: ' + e.message); }
+    };
     function venRenderDetail(j){
       const v = j.vendor, inv = j.invoices||[], pay = j.payments||[], sp = j.spend||{}, prop = j.proposals||[], corr = j.correspondence||[], hist = j.historical_invoices||[], byComm = j.spend_by_community||[];
       const el = document.getElementById('ven-detail'); if(!el) return;
@@ -46562,6 +46590,7 @@ ${questionsPage}
             <div style="font-size:12px; color:#0B1D34; margin-top:6px;">YTD paid <b>${venMoney(sp.ytd_cents)}</b> · lifetime ${venMoney(sp.lifetime_cents)}</div>
           </div>
         </div>
+        ${venTaxPanel(v, j.documents||[])}
         <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px 12px; margin:14px 0;">
           ${venField('contact_name','Contact person',v.contact_name)}
           ${venField('contact_email','Contact email',v.contact_email)}
@@ -46578,7 +46607,7 @@ ${questionsPage}
         </div>
         <div style="display:flex; gap:16px; align-items:center; margin-bottom:14px; flex-wrap:wrap;">
           <label style="font-size:12.5px;"><input type="checkbox" id="ven-f-is_1099_vendor" ${v.is_1099_vendor?'checked':''}> 1099 vendor</label>
-          <label style="font-size:12.5px;"><input type="checkbox" id="ven-f-w9_on_file" ${v.w9_on_file?'checked':''}> W-9 on file</label>
+          <label style="font-size:12.5px;" title="${v.w9_on_file?'':'Upload the W-9 to mark it on file; the flag cannot be set without the document.'}"><input type="checkbox" id="ven-f-w9_on_file" ${v.w9_on_file?'checked':'disabled'}> W-9 on file${v.w9_on_file?'':' <span style="color:#64748b;">(upload the W-9)</span>'}</label>
           <button class="action-btn" onclick="venSave('${v.id}')" style="background:#0B1D34;">Save vendor</button>
           <span id="ven-savemsg" style="font-size:12px;"></span>
         </div>
@@ -46912,7 +46941,7 @@ ${questionsPage}
           <label style="${lbl}">State<input id="ve-state" value="${val(v.remit_state)}" style="${inp}"></label>
           <label style="${lbl}">ZIP<input id="ve-zip" value="${val(v.remit_zip)}" style="${inp}"></label>
           <label style="font-size:12.5px;color:#0B1D34;display:flex;align-items:center;gap:6px;margin-top:6px;"><input type="checkbox" id="ve-1099" ${v.is_1099_vendor ? 'checked' : ''}> 1099 vendor</label>
-          <label style="font-size:12.5px;color:#0B1D34;display:flex;align-items:center;gap:6px;margin-top:6px;"><input type="checkbox" id="ve-w9" ${v.w9_on_file ? 'checked' : ''}> W-9 on file</label>
+          <label style="font-size:12.5px;color:#0B1D34;display:flex;align-items:center;gap:6px;margin-top:6px;" title="${v.w9_on_file ? '' : 'Upload the W-9 to mark it on file; the flag cannot be set without the document.'}"><input type="checkbox" id="ve-w9" ${v.w9_on_file ? 'checked' : 'disabled'}> W-9 on file${v.w9_on_file ? '' : ' <span style="color:#64748b;">(upload the W-9)</span>'}</label>
         </div>
         <div style="padding:0 20px 18px;display:flex;gap:8px;align-items:center;">
           <button onclick="apSaveVendor('${vendorId}','${invoiceId || ''}')" style="background:#0B1D34;color:#fff;border:none;padding:8px 16px;border-radius:7px;font-weight:600;cursor:pointer;">Save to source</button>

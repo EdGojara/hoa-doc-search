@@ -36,7 +36,7 @@ async function buildWorld({ preColumn = false } = {}) {
   await db.exec(`
     CREATE ROLE anon; CREATE ROLE authenticated; CREATE ROLE service_role;
     CREATE TABLE vendors (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), name text NOT NULL, kind text DEFAULT 'vendor',
-      w9_on_file boolean DEFAULT false, tax_classification text, is_legal_counsel boolean DEFAULT false, is_mud boolean DEFAULT false,
+      w9_on_file boolean DEFAULT false, tax_classification text, is_legal_counsel boolean DEFAULT false, is_mud boolean DEFAULT false, reimbursee_contact_id uuid,
       email text, notes text);
     CREATE TABLE vendor_documents (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), vendor_id uuid REFERENCES vendors(id), doc_type text);
     CREATE TABLE journal_entries (id uuid PRIMARY KEY DEFAULT gen_random_uuid());
@@ -88,6 +88,9 @@ if (r.status === 'applied') {
   await db.query(`UPDATE vendors SET email = 'ap@lawnco.example' WHERE id = '${V1}'`);
   const ev2 = await q1(`SELECT count(*)::int n FROM vendor_tax_status_events WHERE vendor_id = '${V1}'`);
   check('audit: an unrelated edit (email) is NOT recorded', ev2.n === 1);
+  await db.query(`UPDATE vendors SET kind = 'reimbursement' WHERE name = 'DJ (individual)'`);
+  const ev3 = await q1(`SELECT count(*)::int n, bool_and((before->>'kind') = 'vendor' AND (after->>'kind') = 'reimbursement') ok FROM vendor_tax_status_events e JOIN vendors v ON v.id = e.vendor_id WHERE v.name = 'DJ (individual)'`);
+  check('audit: relabeling a payee as a reimbursement is recorded (no silent bypass)', ev3.n === 1 && ev3.ok, JSON.stringify(ev3));
   check('rule: the proof document cannot be deleted while it backs an exemption',
     /foreign key|violates/.test(await tryErr(`DELETE FROM vendor_documents WHERE id = '00000000-0000-0000-0000-0000000000d1'`) || ''));
 }
