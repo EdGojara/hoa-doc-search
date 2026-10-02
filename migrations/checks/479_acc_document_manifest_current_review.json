@@ -1,0 +1,60 @@
+{
+  "migration": "479_acc_document_manifest_current_review.sql",
+  "summary": "ACC document manifest + current review (Issue #14): acc_decisions gains document_manifest (every document with its original filename, kind, source email, received time), document_intake_errors (attachments that could not be fetched or stored), and current_review_text / current_ai_recommendation / current_letter_body / current_review_at / current_review_basis (the review re-run against the current document set; the original intake analysis is untouched). No rows written; nothing sets a decision, status or send.",
+  "requires": [
+    "478_w9_secure_form_provenance.sql"
+  ],
+  "preflight": [
+    {
+      "name": "acc_decisions has no document_manifest / current_review columns yet",
+      "sql": "SELECT count(*)::int FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'acc_decisions' AND column_name IN ('document_manifest','document_intake_errors','current_review_text','current_ai_recommendation','current_letter_body','current_review_at','current_review_basis')",
+      "expect": 0
+    }
+  ],
+  "expected_changes": [
+    "Adds acc_decisions.document_manifest jsonb NOT NULL DEFAULT [] and document_intake_errors jsonb NOT NULL DEFAULT [], each with an is-array CHECK.",
+    "Adds acc_decisions.current_review_text, current_ai_recommendation, current_letter_body (text), current_review_at (timestamptz), current_review_basis (jsonb), all nullable.",
+    "No row changes; existing cases start with an empty manifest and no current review."
+  ],
+  "objects": {
+    "added": [
+      "column:acc_decisions.current_ai_recommendation",
+      "column:acc_decisions.current_letter_body",
+      "column:acc_decisions.current_review_at",
+      "column:acc_decisions.current_review_basis",
+      "column:acc_decisions.current_review_text",
+      "column:acc_decisions.document_intake_errors",
+      "column:acc_decisions.document_manifest",
+      "constraint:acc_decisions.acc_decisions_document_intake_errors_is_array",
+      "constraint:acc_decisions.acc_decisions_document_manifest_is_array"
+    ],
+    "changed": [],
+    "removed": []
+  },
+  "row_changes": {
+    "acc_decisions": 0
+  },
+  "protected": [
+    {
+      "table": "acc_decisions",
+      "order_by": "id"
+    },
+    {
+      "table": "ap_payments",
+      "order_by": "id"
+    },
+    {
+      "table": "journal_entries",
+      "order_by": "id"
+    }
+  ],
+  "verify": [
+    {
+      "name": "no existing case got a manifest, an error or a current review",
+      "sql": "SELECT count(*)::int FROM acc_decisions WHERE document_manifest <> '[]'::jsonb OR document_intake_errors <> '[]'::jsonb OR current_review_text IS NOT NULL OR current_review_at IS NOT NULL",
+      "expect": 0
+    }
+  ],
+  "api_checks": [],
+  "reload_schema": true
+}

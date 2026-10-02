@@ -15310,7 +15310,7 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
       const statusCell = awaitingInfo
         ? '<span class="acc-pill acc-pill-pending">📎 Awaiting documents</span>'
         : isQueue
-        ? (a.ai_recommendation ? accDecisionBadge(a.ai_recommendation, '🤖') : '<span class="acc-pill acc-pill-pending">⏳ Drafted</span>')
+        ? ((a.current_ai_recommendation || a.ai_recommendation) ? accDecisionBadge(a.current_ai_recommendation || a.ai_recommendation, '🤖') + (a.current_ai_recommendation ? '<div style="font-size:10.5px; color:#5a7390; margin-top:2px;">updated on current documents</div>' : '') : '<span class="acc-pill acc-pill-pending">⏳ Drafted</span>')
         : accDecisionBadge(a.decision_type) || '<span class="acc-pill acc-pill-approved">✓ Done</span>';
       return `
         <div class="acc-row ${urgent ? 'urgent' : ''}" onclick="accOpenDetail('${a.id}')">
@@ -15383,9 +15383,11 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
     // consolidated case) showed the STALE AI draft — and the send could deliver
     // it. One precedence everywhere. (Ed 2026-08-03 — Lopez approval showed the
     // old "more info needed" draft.)
-    const letterBody = (a.letter_body || a.ai_letter_body) || '';
+    // Staff working draft first, then the CURRENT review's draft (re-run on the
+    // documents now on the case), then the original intake draft (Issue #14).
+    const letterBody = (a.letter_body || a.current_letter_body || a.ai_letter_body) || '';
     const recip = a.submitter_email || '';
-    const rec = a.ai_recommendation || a.decision_type || '';
+    const rec = a.current_ai_recommendation || a.ai_recommendation || a.decision_type || '';
 
     // Decision options for the selector.
     const decisionOptions = [
@@ -15397,7 +15399,9 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
     const selectedDecision = (rec === 'approved') ? 'approved_no_conditions' : (rec || 'approved_with_conditions');
     // Which decision the letter in the box was drafted FOR, so a send can't pair
     // an approval with a request-for-information letter (Issue #14).
-    const _draftRec = (a.letter_body && a.decision_type) ? a.decision_type : (a.ai_recommendation || a.decision_type || '');
+    const _draftRec = (a.letter_body && a.decision_type) ? a.decision_type
+      : (!a.letter_body && a.current_letter_body) ? (a.current_ai_recommendation || '')
+      : (a.ai_recommendation || a.decision_type || '');
     window.accDraftFor = _draftRec === 'approved' ? 'approved_no_conditions' : _draftRec;
 
     view.innerHTML = `
@@ -15422,7 +15426,7 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
           </div>
           <div style="text-align:right;">
             ${isQueue
-              ? (a.ai_recommendation ? '<div style="font-size:11px; color:#5a7390; margin-bottom:4px;">System recommends</div>' + accDecisionBadge(a.ai_recommendation, '🤖') : '')
+              ? (rec ? '<div style="font-size:11px; color:#5a7390; margin-bottom:4px;">System recommends' + (a.current_ai_recommendation ? ' (current documents)' : '') + '</div>' + accDecisionBadge(rec, '🤖') : '')
               : '<div style="font-size:11px; color:#5a7390; margin-bottom:4px;">Decision</div>' + accDecisionBadge(a.decision_type)}
           </div>
         </div>
@@ -15434,10 +15438,21 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
           <div style="font-size:14px; line-height:1.6; color:#1f2937; white-space:pre-wrap;">${accEsc(a.project_summary)}</div>
         </div>` : ''}
 
-      ${a.ai_review_text ? `
+      ${accDocumentsCard(a)}
+
+      ${a.current_review_text ? `
         <div class="acc-card acc-ai-card">
           <details ${isQueue ? 'open' : ''}>
-            <summary style="cursor:pointer; font-weight:700; color:#0B1D34;">🤖 System analysis (internal — not sent to the homeowner)</summary>
+            <summary style="cursor:pointer; font-weight:700; color:#0B1D34;">🤖 Current review — on the documents now on the case (internal — not sent to the homeowner)</summary>
+            <div style="font-size:11.5px; color:#5a7390; margin-top:6px;">Reviewed ${accEsc(String(a.current_review_at || '').slice(0, 16).replace('T', ' '))}${a.current_review_basis && Array.isArray(a.current_review_basis.documents) ? ' · ' + a.current_review_basis.documents.length + ' document(s): ' + a.current_review_basis.documents.map((d) => accEsc(d.filename)).join(', ') : ''}</div>
+            <div style="font-size:13px; line-height:1.6; color:#334155; white-space:pre-wrap; margin-top:10px;">${accEsc(a.current_review_text)}</div>
+          </details>
+        </div>` : ''}
+
+      ${a.ai_review_text ? `
+        <div class="acc-card acc-ai-card">
+          <details ${isQueue && !a.current_review_text ? 'open' : ''}>
+            <summary style="cursor:pointer; font-weight:700; color:#0B1D34;">🤖 ${a.current_review_text ? 'Original intake analysis (' + accEsc(String(a.created_at || '').slice(0, 10)) + ', kept as history)' : 'System analysis'} (internal — not sent to the homeowner)</summary>
             <div style="font-size:13px; line-height:1.6; color:#334155; white-space:pre-wrap; margin-top:10px;">${accEsc(a.ai_review_text)}</div>
           </details>
         </div>` : ''}
@@ -15484,6 +15499,46 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
       </div>
     `;
   }
+
+  // Documents on the case, by their ORIGINAL names (migration 479 manifest; the
+  // stored path's file name for older cases), plus any attachment that could not
+  // be fetched or stored. A "Re-review" re-runs the review on exactly these
+  // documents; the original analysis stays as history (Issue #14).
+  function accCaseDocuments(a) {
+    const byPath = new Map((Array.isArray(a.document_manifest) ? a.document_manifest : []).map((m) => [m.path, m]));
+    const out = [];
+    const add = (p, kind) => { if (!p) return; const m = byPath.get(p); out.push({ filename: (m && m.filename) || String(p).split('/').pop(), kind: (m && m.kind) || kind, received: m && m.received_at }); };
+    add(a.application_pdf_storage_path, 'application');
+    (a.supporting_docs_storage_paths || []).forEach((p) => add(p, 'supporting'));
+    (a.photo_storage_paths || []).forEach((p) => add(p, /\.pdf$/i.test(p) ? 'supporting' : 'photo'));
+    return out;
+  }
+  function accDocumentsCard(a) {
+    const docs = accCaseDocuments(a);
+    const errs = Array.isArray(a.document_intake_errors) ? a.document_intake_errors : [];
+    const open = a.status === 'pending_review' || a.status === 'awaiting_info';
+    const label = { application: 'application form', supporting: 'supporting document', photo: 'photo' };
+    return `
+      <div class="acc-card">
+        <h3>📎 Documents on this case (${docs.length})</h3>
+        ${errs.length ? `<div style="margin:6px 0 10px; padding:8px 12px; background:#fef2f2; border:1px solid #fecaca; border-radius:8px; font-size:12.5px; color:#991b1b;"><b>${errs.length} attachment${errs.length === 1 ? '' : 's'} could not be ${errs.some((e) => e.stage === 'fetch') ? 'fetched or ' : ''}stored:</b><br>${errs.map((e) => accEsc((e.filename || 'unnamed file') + ' — ' + (e.error || 'unknown error'))).join('<br>')}<br>Ask the homeowner to resend, or upload it by hand.</div>` : ''}
+        ${docs.length ? `<ul style="margin:4px 0 0 18px; font-size:13px; line-height:1.7;">${docs.map((d) => `<li>${accEsc(d.filename)} <span style="color:#5a7390; font-size:11.5px;">· ${label[d.kind] || d.kind}${d.received ? ' · received ' + accEsc(String(d.received).slice(0, 10)) : ''}</span></li>`).join('')}</ul>` : '<div style="font-size:13px; color:#5a7390;">No documents stored.</div>'}
+        ${open && docs.length ? `<div style="margin-top:10px; display:flex; gap:8px; align-items:center; flex-wrap:wrap;"><button class="secondary-btn" style="font-size:12px;" onclick="accReassess('${a.id}')">🔄 Re-review with current documents</button><span style="font-size:11px; color:#5a7390;">Annie re-reads every document above. The original analysis is kept; nothing is decided or sent.</span><span id="acc-reassess-status" style="font-size:12px;"></span></div>` : ''}
+      </div>`;
+  }
+  async function accReassess(id) {
+    const st = document.getElementById('acc-reassess-status');
+    if (st) { st.textContent = 'Re-reviewing… (about a minute)'; st.style.color = '#a16207'; }
+    try {
+      const headers = {};
+      try { const { data: { session } } = await window.supa.auth.getSession(); if (session?.access_token) headers.Authorization = 'Bearer ' + session.access_token; } catch (_) {}
+      const r = await fetch('/acc-review/decisions/' + id + '/reassess', { method: 'POST', headers });
+      const j = await r.json();
+      if (!r.ok || j.error) throw new Error(j.error || 'review failed');
+      await accOpenDetail(id);   // show the current review + its draft
+    } catch (e) { if (st) { st.textContent = '✗ ' + e.message; st.style.color = '#b91c1c'; } }
+  }
+  window.accReassess = accReassess;
 
   async function accSend(id, send) {
     const decision = document.getElementById('acc-decision-select').value;
