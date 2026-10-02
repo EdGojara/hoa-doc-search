@@ -179,6 +179,7 @@ const CHECKS = [
   'tests/test_recover_historical_letters.js',
   'tests/sql/476_apply_one_e2e.mjs',
   'tests/sql/477_apply_one_e2e.mjs',
+  'tests/sql/478_apply_one_e2e.mjs',
   'tests/test_ai_router.js',
   'tests/test_check_register_grouping.js',
   'scripts/check_model_ids.js',
@@ -209,6 +210,7 @@ const CHECKS = [
   'tests/test_replay_vendor_parity.js',
   'tests/test_1099_reporting_rule.js',
   'tests/test_exception_suggested_vendor.js',
+  'tests/test_w9_queue_secure_form.js',
 ];
 
 const args = process.argv.slice(2);

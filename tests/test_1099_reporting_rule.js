@@ -264,7 +264,7 @@ check('NULL categories -> vendor default; 477 rewrites no bill, payment or vendo
 check('W-9 shortcut CLOSED; exemption CONFIRMED by an admin with provenance; reimbursement relabel audited', () => {
   const v = src('api/vendors.js');
   const patch = v.slice(v.indexOf("router.patch('/:vendorId'"), v.indexOf("router.patch('/:vendorId'") + 5000);
-  assert.ok(/w9_document_required/.test(patch) && /if \(cur && cur\.w9_on_file === true\) \{ delete update\.w9_on_file; \}/.test(patch));
+  assert.ok(/w9_document_required/.test(patch) && /if \(cur && cur\.w9_on_file === true\) \{/.test(patch) && /if \(!newer\) delete update\.w9_on_file;/.test(patch));
   const allowed = patch.slice(patch.indexOf('const allowed'), patch.indexOf('];', patch.indexOf('const allowed')));
   assert.ok(!/tax_reporting_status|tax_exemption_|'kind'/.test(allowed));
   const ep = v.slice(v.indexOf("router.post('/:vendorId/tax-exemption'"), v.indexOf('// GET /api/vendors/documents/:docId/file'));

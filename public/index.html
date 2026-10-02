@@ -2086,6 +2086,11 @@
          (Ed 2026-07-15: "where is the manager review button") -->
     <div id="ap-manager-queue" style="display:none; margin-bottom:14px;"></div>
 
+    <!-- W-9 compliance queue (Issue #14): one row per vendor, expandable to the
+         associations it is reportable at. Read-only, derived from stored facts;
+         informational only, never holds a payment. -->
+    <div id="ap-w9-queue" style="display:none; margin-bottom:14px;"></div>
+
     <!-- Empty state when no community picked -->
     <div id="ap-empty-state" class="panel" style="text-align:center; padding:40px; color:#888;">
       <div style="font-size:36px; margin-bottom:10px;">💵</div>
@@ -46488,7 +46493,91 @@ ${questionsPage}
       apLoadCounts();
       apLoadManagerQueue();   // cross-community, filtered to the picked community
       apLoadManagerNames();   // who holds the manager key (for the disabled-button tooltip)
+      apLoadW9Queue();        // W-9 compliance queue (cross-community, vendor-level)
     };
+
+    // ---- W-9 compliance queue (Issue #14) --------------------------------------
+    // Vendor is the unit of work (one W-9 covers a payee at every association);
+    // each vendor expands to its associations. Nothing here changes a payment.
+    var apW9Data = null, apW9Open = false, apW9Expanded = {};
+    const AP_W9_COLORS = { review: '#1d4ed8', government: '#7c3aed', internal: '#0f766e', corporate: '#0369a1', candidate: '#b45309', request: '#92400e' };
+    const AP_W9_CAT = { services: 'services', attorney_fees: 'attorney fees', attorney_gross_proceeds: 'attorney gross proceeds', medical: 'medical', rents: 'rents', other_income: 'other income' };
+    window.apLoadW9Queue = async function () {
+      const el = document.getElementById('ap-w9-queue');
+      if (!el) return;
+      try {
+        const fetchFn = window._authFetch || fetch;
+        const r = await fetchFn('/api/ap/w9-queue');
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.error || 'failed');
+        apW9Data = j;
+        apRenderW9Queue();
+      } catch (e) {
+        // Loud, never silent, and never in the way of paying bills.
+        el.style.display = '';
+        el.innerHTML = `<div class="panel" style="border-left:4px solid #b91c1c; padding:10px 14px; font-size:12.5px; color:#991b1b;">W-9 compliance queue could not load (${apEsc(e.message)}). Payments are not affected.</div>`;
+      }
+    };
+    window.apW9Toggle = function () { apW9Open = !apW9Open; apRenderW9Queue(); };
+    window.apW9ToggleVendor = function (id) { apW9Expanded[id] = !apW9Expanded[id]; apRenderW9Queue(); };
+    function apRenderW9Queue() {
+      const el = document.getElementById('ap-w9-queue');
+      const j = apW9Data;
+      if (!el || !j) return;
+      const t = j.totals || {};
+      if (!t.vendors) { el.style.display = 'none'; el.innerHTML = ''; return; }
+      el.style.display = '';
+      const chips = Object.entries(j.counts || {}).filter(([, c]) => c.vendors).map(([k, c]) =>
+        `<span style="display:inline-block; margin:2px 6px 2px 0; padding:2px 8px; border-radius:10px; font-size:11.5px; font-weight:600; color:${AP_W9_COLORS[k] || '#374151'}; background:#f8fafc; border:1px solid #e2e8f0;">${apEsc(c.action)}: ${c.vendors}</span>`).join('');
+      const vendorRow = (v) => {
+        const open = !!apW9Expanded[v.vendor_id];
+        const w9 = v.w9 || {};
+        const state = w9.pending_review ? 'W-9 received, awaiting review' : w9.on_file ? `W-9 on file${w9.classification ? ' · ' + apEsc(w9.classification) : ''}` : 'No W-9 on file';
+        const flags = [v.flags.legal_counsel ? 'attorney' : '', v.flags.medical ? 'medical' : '', v.flags.mud ? 'MUD' : ''].filter(Boolean).join(' · ');
+        const cands = (v.candidates || []).map((c) => `<div style="font-size:11.5px; color:#92400e; margin-top:2px;">📎 Possible W-9: "${apEsc(c.filename || 'file')}" · ${apEsc(c.from || '')}${c.received_at ? ' · ' + apFmtDate(String(c.received_at).slice(0, 10)) : ''} · ${apEsc(c.confidence)} confidence (${apEsc(c.basis)}). Review it before requesting; nothing is attached automatically.</div>`).join('');
+        const assoc = (v.associations || []).map((a) => `
+          <tr style="border-top:1px solid #f1f5f9;">
+            <td style="padding:4px 8px;">${apEsc(a.association || '')}</td>
+            <td style="padding:4px 8px;">${a.reportable.length ? a.reportable.map((x) => `${AP_W9_CAT[x.category] || apEsc(x.category)} ${apFmtCents(x.cents)}${x.threshold_cents != null ? ` <span style="color:${x.over ? '#b91c1c' : '#64748b'};">/ ${apFmtCents(x.threshold_cents)}</span>` : ''}`).join('<br>') : '<span style="color:#64748b;">nothing paid yet</span>'}</td>
+            <td style="padding:4px 8px;">${Object.entries(a.payment_methods || {}).map(([m, n]) => `${apEsc(m)} ${n}`).join(', ') || '-'}${a.autopay ? ' · autopay' : ''}</td>
+            <td style="padding:4px 8px;">${a.open_flagged_bills ? `${a.open_flagged_bills} · ${apFmtCents(a.open_flagged_cents)}${a.crosses_on_payment ? ' <span style="color:#b45309;">(crosses on payment)</span>' : ''}` : '-'}</td>
+          </tr>`).join('');
+        return `
+          <div style="border:1px solid #e2e8f0; border-radius:6px; margin-top:6px; background:#fff;">
+            <div onclick="apW9ToggleVendor('${apEsc(v.vendor_id)}')" style="cursor:pointer; display:flex; justify-content:space-between; gap:10px; padding:7px 10px; align-items:center;">
+              <div style="min-width:0;">
+                <span style="color:#64748b;">${open ? '▾' : '▸'}</span>
+                <span style="font-weight:700; color:#0B1D34;">${apEsc(v.vendor)}</span>
+                <span style="font-size:12px; color:#5a7390;"> · ${v.association_count} association${v.association_count === 1 ? '' : 's'} · ${state}${flags ? ' · ' + flags : ''}</span>
+              </div>
+              <div style="white-space:nowrap; text-align:right;">
+                <span style="font-size:11.5px; font-weight:700; color:${AP_W9_COLORS[v.action_key] || '#374151'};">${apEsc(v.action)}</span>
+                <div style="font-size:11px; color:#5a7390;">${apFmtCents(v.reportable_cents)} paid ${j.year}${v.open_flagged_bills ? ` · ${v.open_flagged_bills} open bill${v.open_flagged_bills === 1 ? '' : 's'}` : ''}</div>
+              </div>
+            </div>
+            ${open ? `<div style="padding:0 10px 8px 26px;">
+              ${v.name_clue ? `<div style="font-size:11.5px; color:#64748b;">Name clue only: ${apEsc(v.name_clue)}</div>` : ''}
+              ${cands}
+              <table style="width:100%; border-collapse:collapse; font-size:12px; margin-top:6px;">
+                <thead><tr style="color:#64748b; text-align:left;"><th style="padding:4px 8px;">Association</th><th style="padding:4px 8px;">Reportable paid / threshold</th><th style="padding:4px 8px;">Payments ${j.year}</th><th style="padding:4px 8px;">Open flagged bills</th></tr></thead>
+                <tbody>${assoc}</tbody>
+              </table>
+            </div>` : ''}
+          </div>`;
+      };
+      const unassigned = (j.unassigned_candidates || []).length
+        ? `<div style="font-size:12px; color:#92400e; margin-top:6px;">📎 ${j.unassigned_candidates.length} W-9 submitted through the secure form on a request with no vendor record. Assign it to the vendor before it can count.</div>` : '';
+      el.innerHTML = `
+        <div class="panel" style="border-left:4px solid #b45309; padding:12px 14px;">
+          <div onclick="apW9Toggle()" style="cursor:pointer; display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap;">
+            <div style="font-weight:700; color:#92400e;">${apW9Open ? '▾' : '▸'} 🧾 W-9 compliance: ${t.vendors} vendor${t.vendors === 1 ? '' : 's'} · ${t.associations} association${t.associations === 1 ? '' : 's'}${t.flagged_bills ? ` · ${t.flagged_bills} open bill${t.flagged_bills === 1 ? '' : 's'} flagged` : ''}</div>
+            <div style="font-size:12px; color:#5a7390;">For 1099s. Never holds a payment.</div>
+          </div>
+          <div style="margin-top:6px;">${chips}</div>
+          ${unassigned}
+          ${apW9Open ? (j.vendors || []).map(vendorRow).join('') : ''}
+        </div>`;
+    }
 
     window.apSubswitch = function (tab) {
       apCurrentTab = tab;
@@ -47964,7 +48053,7 @@ ${questionsPage}
       if (typeof orig !== 'function') return false;
       window.switchTab = function (tab) {
         const r = orig.apply(this, arguments);
-        if (tab === 'ap') { try { apLoadCommunities(); } catch (_) {} }
+        if (tab === 'ap') { try { apLoadCommunities(); } catch (_) {} try { apLoadW9Queue(); } catch (_) {} }
         return r;
       };
       return true;

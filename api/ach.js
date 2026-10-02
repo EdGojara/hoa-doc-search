@@ -60,6 +60,19 @@ function validRouting(raw) {
   return sum % 10 === 0 && sum > 0;
 }
 
+// request_kind (migration 478): 'ach' (banking + optional W-9) or 'w9_only'.
+// Reads tolerate the column not existing yet (pre-478 every request is 'ach').
+const isMissingColumn = (err) => !!err && /column .* does not exist|could not find the .* column|schema cache/i.test(err.message || '');
+async function selectWithKind(build, cols) {
+  let r = await build(`${cols}, request_kind`);
+  if (r.error && isMissingColumn(r.error)) {
+    r = await build(cols);
+    const tag = (row) => (row ? { ...row, request_kind: 'ach' } : row);
+    if (!r.error) r = { ...r, data: Array.isArray(r.data) ? r.data.map(tag) : tag(r.data) };
+  }
+  return r;
+}
+
 // Mark a row expired if past its window (label only; the guard is the status check).
 async function expireIfNeeded(row) {
   if (row && row.status === 'sent' && row.expires_at && new Date(row.expires_at).getTime() < Date.now()) {
@@ -91,11 +104,23 @@ router.post('/requests', express.json({ limit: '16kb' }), async (req, res) => {
       if (!c) return res.status(400).json({ error: 'unknown_community' });
     }
 
+    // W-9-only mode (Issue #14): same one-time secure link, collects only the
+    // W-9. It must name the vendor record the W-9 will be filed to.
+    const request_kind = b.request_kind === 'w9_only' ? 'w9_only' : 'ach';
+    let vendor_id = b.vendor_id || null;
+    if (vendor_id) {
+      // The W-9 is filed to this vendor, so it must be ours and must exist.
+      const { data: v, error: vErr } = await supabase.from('vendors').select('id, management_company_id').eq('id', vendor_id).maybeSingle();
+      if (vErr) throw vErr;
+      if (!v || (v.management_company_id && v.management_company_id !== BEDROCK_MGMT_CO_ID)) return res.status(400).json({ error: 'unknown_vendor' });
+    }
+    if (request_kind === 'w9_only' && !vendor_id) return res.status(400).json({ error: 'vendor_required', detail: 'A W-9-only link must be created from the vendor record, so the W-9 is filed to that vendor.' });
+
     const raw = newToken();
-    const { data, error } = await supabase.from('vendor_ach_requests').insert({
+    const row = {
       management_company_id: BEDROCK_MGMT_CO_ID,
       community_id,
-      vendor_id: b.vendor_id || null,
+      vendor_id,
       vendor_name,
       contact_name: b.contact_name ? String(b.contact_name).trim() : null,
       contact_email: contact_email || null,
@@ -103,7 +128,14 @@ router.post('/requests', express.json({ limit: '16kb' }), async (req, res) => {
       status: 'sent',
       expires_at: new Date(Date.now() + ttlDays * 86400000).toISOString(),
       created_by: admin.email || 'staff',
-    }).select(SAFE_COLS).single();
+    };
+    let ins = await supabase.from('vendor_ach_requests').insert({ ...row, request_kind }).select(`${SAFE_COLS}, request_kind`).single();
+    if (ins.error && isMissingColumn(ins.error)) {
+      if (request_kind === 'w9_only') return res.status(409).json({ error: 'w9_only_unavailable', detail: 'W-9-only links need migration 478 to be applied first.' });
+      ins = await supabase.from('vendor_ach_requests').insert(row).select(SAFE_COLS).single();
+      if (ins.data) ins.data.request_kind = 'ach';
+    }
+    const { data, error } = ins;
     if (error) throw error;
 
     const link = achLink(raw, process.env.TRUSTED_URL || (req.protocol + '://' + req.get('host')));
@@ -119,10 +151,12 @@ router.post('/requests', express.json({ limit: '16kb' }), async (req, res) => {
 router.get('/requests', async (req, res) => {
   const admin = await requireAdmin(req, res); if (!admin) return;
   try {
-    let q = supabase.from('vendor_ach_requests').select(SAFE_COLS).order('created_at', { ascending: false }).limit(500);
-    if (req.query.community_id) q = q.eq('community_id', req.query.community_id);
-    if (req.query.status) q = q.eq('status', req.query.status);
-    const { data, error } = await q;
+    const { data, error } = await selectWithKind((cols) => {
+      let q = supabase.from('vendor_ach_requests').select(cols).order('created_at', { ascending: false }).limit(500);
+      if (req.query.community_id) q = q.eq('community_id', req.query.community_id);
+      if (req.query.status) q = q.eq('status', req.query.status);
+      return q;
+    }, SAFE_COLS);
     if (error) throw error;
     // Best-effort lazy-expire on read so stale "sent" rows show correctly.
     const rows = await Promise.all((data || []).map((r) => expireIfNeeded(r)));
@@ -162,8 +196,8 @@ router.post('/requests/:id/send-link', express.json({ limit: '4kb' }), async (re
     if (!isEmail(to_email)) return res.status(400).json({ error: 'Enter a valid vendor email.' });
     if (!token) return res.status(400).json({ error: 'missing_token' });
 
-    const { data: row, error } = await supabase.from('vendor_ach_requests')
-      .select('id, vendor_name, community_id, status, token_hash, contact_name').eq('id', req.params.id).maybeSingle();
+    const { data: row, error } = await selectWithKind((cols) => supabase.from('vendor_ach_requests')
+      .select(cols).eq('id', req.params.id).maybeSingle(), 'id, vendor_name, community_id, status, token_hash, contact_name');
     if (error) throw error;
     if (!row) return res.status(404).json({ error: 'not_found' });
     if (row.token_hash !== hashToken(token)) return res.status(400).json({ error: 'link_mismatch' }); // the raw link must match this request
@@ -176,9 +210,12 @@ router.post('/requests/:id/send-link', express.json({ limit: '4kb' }), async (re
     }
     const link = achLink(token, process.env.TRUSTED_URL || (req.protocol + '://' + req.get('host')));
     const greeting = row.contact_name ? `Hi ${row.contact_name.split(/\s+/)[0]},` : 'Hello,';
+    const w9Only = row.request_kind === 'w9_only';
     const bodyText = [
       greeting,
-      `To set up electronic (ACH) payments${community_name ? ' for ' + community_name : ''}, please use the secure link below to enter your banking details. It is a one-time, encrypted form, so there is no need to send any account information by email.`,
+      w9Only
+        ? `For our tax records${community_name ? ' for ' + community_name : ''}, please use the secure link below to upload your current IRS Form W-9. It is a one-time, encrypted form, so there is no need to send your W-9 or tax ID by email.`
+        : `To set up electronic (ACH) payments${community_name ? ' for ' + community_name : ''}, please use the secure link below to enter your banking details. It is a one-time, encrypted form, so there is no need to send any account information by email.`,
       link,
       'The link expires in a few days. If you have any questions, just reply to this email.',
       'Thank you,',
@@ -187,7 +224,7 @@ router.post('/requests/:id/send-link', express.json({ limit: '4kb' }), async (re
 
     await graphSend.sendAs({
       from: graphSend.EMMA_MAILBOX, to: to_email,
-      subject: `Secure ACH enrollment${community_name ? ' — ' + community_name : ''}`,
+      subject: `${w9Only ? 'Secure W-9 upload' : 'Secure ACH enrollment'}${community_name ? ' — ' + community_name : ''}`,
       html, attachments,
     });
     // Remember who we sent to (does not change the single-use token).
@@ -256,9 +293,10 @@ router.get('/communities', async (req, res) => {
 // staff-gate allowlist. Returns SAFE context only, never banking data.
 // ---------------------------------------------------------------------------
 async function loadByToken(token) {
-  const { data, error } = await supabase.from('vendor_ach_requests')
-    .select('id, vendor_name, community_id, status, expires_at')
-    .eq('token_hash', hashToken(token)).maybeSingle();
+  // vendor_id comes from the REQUEST (set by staff when the link was made),
+  // never from anything the form submits: a W-9 is filed only to that vendor.
+  const { data, error } = await selectWithKind((cols) => supabase.from('vendor_ach_requests')
+    .select(cols).eq('token_hash', hashToken(token)).maybeSingle(), 'id, vendor_id, vendor_name, community_id, status, expires_at');
   if (error) throw error;
   return data;
 }
@@ -277,6 +315,7 @@ router.get('/form/:token', async (req, res) => {
       vendor_name: row.vendor_name,
       community_name,
       requested_by: 'Bedrock Association Management',
+      request_kind: row.request_kind || 'ach',
       status: row.status,
       usable: row.status === 'sent',
     });
@@ -299,6 +338,7 @@ router.post('/form/:token', upload.fields([{ name: 'document', maxCount: 1 }, { 
       return res.status(409).json({ error: msg });
     }
 
+    const w9Only = row.request_kind === 'w9_only';
     const b = req.body || {}; // multer parses text fields as strings
     const account_holder_name = String(b.account_holder_name || '').trim();
     const bank_name = String(b.bank_name || '').trim();
@@ -310,16 +350,20 @@ router.post('/form/:token', upload.fields([{ name: 'document', maxCount: 1 }, { 
     const signer_title = String(b.signer_title || '').trim() || null;
     const agreed = b.authorization_agreed === true || b.authorization_agreed === 'true' || b.authorization_agreed === 'on' || b.authorization_agreed === '1';
 
-    if (!account_holder_name) return res.status(400).json({ error: 'Account holder name is required.' });
-    if (!bank_name) return res.status(400).json({ error: 'Bank name is required.' });
-    if (!['checking', 'savings'].includes(account_type)) return res.status(400).json({ error: 'Select an account type.' });
-    if (!validRouting(routing)) return res.status(400).json({ error: 'That routing number is not valid. Please check the 9 digits.' });
-    if (account.length < 4 || account.length > 17) return res.status(400).json({ error: 'Account number should be 4 to 17 digits.' });
-    if (account !== confirm) return res.status(400).json({ error: 'The account numbers do not match.' });
-    if (!signer_name) return res.status(400).json({ error: 'Please type your full name to sign.' });
-    if (!agreed) return res.status(400).json({ error: 'Please check the authorization box to sign.' });
-    const supportFile = req.files && req.files.document && req.files.document[0];
+    if (!w9Only) {
+      if (!account_holder_name) return res.status(400).json({ error: 'Account holder name is required.' });
+      if (!bank_name) return res.status(400).json({ error: 'Bank name is required.' });
+      if (!['checking', 'savings'].includes(account_type)) return res.status(400).json({ error: 'Select an account type.' });
+      if (!validRouting(routing)) return res.status(400).json({ error: 'That routing number is not valid. Please check the 9 digits.' });
+      if (account.length < 4 || account.length > 17) return res.status(400).json({ error: 'Account number should be 4 to 17 digits.' });
+      if (account !== confirm) return res.status(400).json({ error: 'The account numbers do not match.' });
+      if (!signer_name) return res.status(400).json({ error: 'Please type your full name to sign.' });
+      if (!agreed) return res.status(400).json({ error: 'Please check the authorization box to sign.' });
+    }
+    // A W-9-only link takes no banking data and no supporting file.
+    const supportFile = w9Only ? null : (req.files && req.files.document && req.files.document[0]);
     const w9File = req.files && req.files.w9 && req.files.w9[0];
+    if (w9Only && !w9File) return res.status(400).json({ error: 'Please attach your W-9 (PDF or photo).' });
     for (const f of [supportFile, w9File]) {
       if (f && !OK_UPLOAD_MIME.has(String(f.mimetype || '').toLowerCase())) {
         return res.status(400).json({ error: 'Uploads must be a PDF or an image (a voided check and a W-9 work well).' });
@@ -340,7 +384,7 @@ router.post('/form/:token', upload.fields([{ name: 'document', maxCount: 1 }, { 
     const base = `${BEDROCK_MGMT_CO_ID}/${row.community_id || 'unassigned'}/vendor_ach`;
     // 1) Generate + store the signed authorization PDF (the retained record).
     let authorization_pdf_path = null;
-    try {
+    if (!w9Only) try {
       const pdf = await renderAchAuthorizationPdf({
         vendor_name: row.vendor_name, community_name,
         account_holder_name, bank_name, account_type,
@@ -365,28 +409,23 @@ router.post('/form/:token', upload.fields([{ name: 'document', maxCount: 1 }, { 
       if (su.error) { console.warn('[ach] support upload failed:', su.error.message); supporting_doc_path = null; }
     }
 
-    // 2b) Store the optional W-9 and file it to the library as a 'w9' record.
-    let w9_doc_path = null, w9_doc_name = null, w9_doc_mime = null, w9_library_document_id = null;
+    // 2b) Store the W-9 file (deterministic path per request: a retry overwrites
+    //     the same object, never a second one). It is filed to the library and
+    //     to the vendor's canonical W-9 documents only AFTER this submission wins
+    //     (step 5), so a duplicate submit cannot file it twice.
+    let w9_doc_path = null, w9_doc_name = null, w9_doc_mime = null, w9_library_document_id = null, w9_hash = null, w9_ext = null;
     if (w9File) {
-      const ext = extFor(w9File.mimetype);
-      w9_doc_path = `${base}/${row.id}-w9.${ext}`;
-      w9_doc_name = String(w9File.originalname || `W-9.${ext}`).slice(0, 180);
+      w9_ext = extFor(w9File.mimetype);
+      w9_doc_path = `${base}/${row.id}-w9.${w9_ext}`;
+      w9_doc_name = String(w9File.originalname || `W-9.${w9_ext}`).slice(0, 180);
       w9_doc_mime = w9File.mimetype;
+      w9_hash = crypto.createHash('sha256').update(w9File.buffer).digest('hex');
       const wu = await supabase.storage.from(DOCS_BUCKET).upload(w9_doc_path, w9File.buffer, { contentType: w9File.mimetype, upsert: true });
-      if (wu.error) { console.warn('[ach] w9 upload failed:', wu.error.message); w9_doc_path = null; }
-      else {
-        try {
-          const wId = crypto.randomUUID();
-          const { data: wdoc, error: wErr } = await supabase.from('library_documents').insert({
-            id: wId, management_company_id: BEDROCK_MGMT_CO_ID, community_id: row.community_id || null,
-            category: 'w9', status: 'current',
-            title: `W-9 - ${row.vendor_name}`,
-            file_name_original: w9_doc_name, file_name_normalized: `w9-${row.id}.${ext}`,
-            file_path: w9_doc_path,
-          }).select('id').single();
-          if (wErr) console.warn('[ach] w9 library filing skipped:', wErr.message);
-          else w9_library_document_id = wdoc.id;
-        } catch (e) { console.warn('[ach] w9 library filing failed:', e.message); }
+      if (wu.error) {
+        console.error('[ach] w9 upload failed:', wu.error.message);
+        // A W-9-only link exists to collect the W-9: say so rather than "received".
+        if (w9Only) return res.status(500).json({ error: 'We could not save your W-9. Please try again in a moment.' });
+        w9_doc_path = null;
       }
     }
 
@@ -409,19 +448,60 @@ router.post('/form/:token', upload.fields([{ name: 'document', maxCount: 1 }, { 
       } catch (e) { console.warn('[ach] library filing failed:', e.message); }
     }
 
-    // 4) Persist submission + e-sign attribution. Re-check status to avoid a double-submit race.
-    const { error } = await supabase.from('vendor_ach_requests').update({
-      account_holder_name, bank_name, account_type,
-      routing_number: routing, account_number_full: account, account_number_last4: account.slice(-4),
-      signer_name, signer_title, authorization_agreed: true, signed_at: now, signer_user_agent: ua,
-      supporting_doc_path, supporting_doc_name, supporting_doc_mime,
-      w9_doc_path, w9_doc_name, w9_doc_mime, w9_library_document_id,
-      authorization_pdf_path, library_document_id,
-      submitted_at: now, submitter_ip: ip, status: 'submitted',
-    }).eq('id', row.id).eq('status', 'sent');
+    // 4) Persist submission + e-sign attribution. The status re-check makes this
+    //    the single winner of a double-submit race; a loser changes nothing.
+    const patch = w9Only
+      ? { w9_doc_path, w9_doc_name, w9_doc_mime, signer_user_agent: ua, submitted_at: now, submitter_ip: ip, status: 'submitted' }
+      : {
+        account_holder_name, bank_name, account_type,
+        routing_number: routing, account_number_full: account, account_number_last4: account.slice(-4),
+        signer_name, signer_title, authorization_agreed: true, signed_at: now, signer_user_agent: ua,
+        supporting_doc_path, supporting_doc_name, supporting_doc_mime,
+        w9_doc_path, w9_doc_name, w9_doc_mime,
+        authorization_pdf_path, library_document_id,
+        submitted_at: now, submitter_ip: ip, status: 'submitted',
+      };
+    const { data: won, error } = await supabase.from('vendor_ach_requests').update(patch).eq('id', row.id).eq('status', 'sent').select('id');
     if (error) throw error;
+    if (!won || !won.length) return res.status(409).json({ error: 'This form was already submitted.' });
 
-    console.log(`[ach] submission received: request=${row.id} vendor="${row.vendor_name}" signer="${signer_name}" upload=${!!supporting_doc_path}`);
+    // 5) The W-9 (Issue #14): file it to the library AND to the vendor's
+    //    canonical W-9 documents (vendor_documents) with this request as its
+    //    provenance. It becomes the vendor's current W-9 document; a person still
+    //    confirms the classification (and any exemption) before it counts as
+    //    "W-9 on file". Best-effort and loud: the submission already succeeded,
+    //    and an unfiled W-9 shows on the W-9 queue as an unlinked secure-form W-9.
+    if (w9_doc_path) {
+      try {
+        const { data: wdoc, error: wErr } = await supabase.from('library_documents').insert({
+          id: crypto.randomUUID(), management_company_id: BEDROCK_MGMT_CO_ID, community_id: row.community_id || null,
+          category: 'w9', status: 'current',
+          title: `W-9 - ${row.vendor_name}`,
+          file_name_original: w9_doc_name, file_name_normalized: `w9-${row.id}.${w9_ext}`,
+          file_path: w9_doc_path,
+        }).select('id').single();
+        if (wErr) console.error('[ach] w9 library filing failed:', wErr.message);
+        else {
+          w9_library_document_id = wdoc.id;
+          const { error: lErr } = await supabase.from('vendor_ach_requests').update({ w9_library_document_id }).eq('id', row.id);
+          if (lErr) console.error('[ach] w9 library link failed:', lErr.message);
+        }
+      } catch (e) { console.error('[ach] w9 library filing failed:', e.message); }
+      if (row.vendor_id) {
+        try {
+          const filed = await require('../lib/vendors/w9_documents').fileW9Document(supabase, {
+            vendorId: row.vendor_id, source: 'secure_form', achRequestId: row.id,
+            fileHash: w9_hash, fileName: w9_doc_name, fileUrl: w9_doc_path,
+            notes: 'Submitted by the vendor through the secure W-9 form. Classification not yet confirmed.',
+          });
+          console.log(`[ach] W-9 filed to vendor ${row.vendor_id}: request=${row.id} ${filed.duplicate ? 'duplicate=' + filed.duplicate : 'document=' + filed.document.id + (filed.replaced_prior ? ' (prior W-9 kept as history)' : '')}`);
+        } catch (e) { console.error(`[ach] W-9 NOT filed to vendor ${row.vendor_id} (request ${row.id}); it shows on the W-9 queue for staff:`, e.message); }
+      } else {
+        console.warn(`[ach] W-9 received on request ${row.id} with no vendor record; staff must assign it (W-9 queue).`);
+      }
+    }
+
+    console.log(`[ach] submission received: request=${row.id} kind=${w9Only ? 'w9_only' : 'ach'} vendor="${row.vendor_name}" w9=${!!w9_doc_path} upload=${!!supporting_doc_path}`);
     res.json({ ok: true });
   } catch (err) {
     console.error('[ach] submit failed:', err.message);
