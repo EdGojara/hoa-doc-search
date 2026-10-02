@@ -15595,7 +15595,15 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
         status.textContent = j.final ? '✓ Marked done.' : '✓ Recorded — stays in queue.';
       }
       status.style.color = '#15803d';
-      setTimeout(() => accBackToList(), 1400);
+      // What the final step filed (Issue #14): the complete ACC record (letter +
+      // application + documents + photos), sealed. Say so if any part failed.
+      const pk = j.filing && j.filing.packet;
+      if (j.final && pk) {
+        if (!pk.ok) { status.textContent += ' ⚠ The complete ACC record could not be filed (' + pk.error + '); the decision and letter are saved. Tell Ed.'; status.style.color = '#b45309'; }
+        else if (pk.omitted && pk.omitted.length) { status.textContent += ' ⚠ Complete record filed, but ' + pk.omitted.length + ' document(s) could not be included: ' + pk.omitted.map((o) => o.what).join(', ') + '.'; status.style.color = '#b45309'; }
+        else status.textContent += ' Complete ACC record filed.';
+      }
+      setTimeout(() => accBackToList(), (j.final && pk && (!pk.ok || (pk.omitted && pk.omitted.length))) ? 8000 : 1800);
     } catch (err) {
       status.textContent = '✗ ' + err.message;
       status.style.color = '#b91c1c';

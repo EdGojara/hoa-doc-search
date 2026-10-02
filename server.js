@@ -3018,6 +3018,10 @@ app.get('/acc-review/decisions/:id/letter', async (req, res) => {
 // /acc-review/decisions/:id/packet — merge letter + application + photos into a
 // single PDF for the file record. Photos are added as their own PDF pages.
 app.get('/acc-review/decisions/:id/packet', async (req, res) => {
+  // The complete ACC record: letter, application, every supporting document
+  // and every photo (lib/acc/packet.js). A DECIDED case serves the packet that
+  // was filed + sealed when it was finalized, never a rebuild that overwrites
+  // it. An open case builds a working copy on demand (Issue #14).
   try {
     const { id } = req.params;
     const { data: dec, error: qErr } = await supabase
@@ -3028,80 +3032,30 @@ app.get('/acc-review/decisions/:id/packet', async (req, res) => {
       .single();
     if (qErr || !dec) return res.status(404).json({ error: 'Decision not found' });
 
-    const { PDFDocument } = _pdflib_lazy();
-    const out = await PDFDocument.create();
-
-    async function fetchBytes(path) {
-      if (!path) return null;
-      const { data: blob, error } = await supabase.storage.from('documents').download(path);
-      if (error || !blob) return null;
-      return Buffer.from(await blob.arrayBuffer());
-    }
-
-    async function mergePdf(path) {
-      const bytes = await fetchBytes(path);
-      if (!bytes) return;
-      try {
-        const src = await PDFDocument.load(bytes, { ignoreEncryption: true });
-        const pages = await out.copyPages(src, src.getPageIndices());
-        pages.forEach((p) => out.addPage(p));
-      } catch (e) {
-        console.warn('[packet] merge pdf failed for', path, e.message);
+    const download = async (p) => { const { data, error } = await supabase.storage.from('documents').download(p); if (error || !data) return null; return Buffer.from(await data.arrayBuffer()); };
+    let bytes = null;
+    if (dec.status === 'decided' && dec.packet_pdf_storage_path) bytes = await download(dec.packet_pdf_storage_path);
+    if (!bytes) {
+      const pk = await require('./lib/acc/packet').buildAccPacket({ dec, download });
+      if (!pk.ok) return res.status(422).json({ error: 'No document on this case could be included in a packet.', omitted: pk.omitted });
+      bytes = pk.bytes;
+      if (pk.omitted.length) res.setHeader('X-Packet-Omitted', String(pk.omitted.length));
+      // Cache a working copy for an OPEN case only; a decided case's filed packet is never overwritten.
+      if (dec.status !== 'decided') {
+        const packetPath = `acc_decisions/${id}/packet.pdf`;
+        try {
+          const up = await supabase.storage.from('documents').upload(packetPath, bytes, { contentType: 'application/pdf', upsert: true });
+          if (!(up && up.error)) await supabase.from('acc_decisions').update({ packet_pdf_storage_path: packetPath }).eq('id', id);
+        } catch (_) {}
       }
     }
-
-    async function addImageAsPage(path) {
-      const bytes = await fetchBytes(path);
-      if (!bytes) return;
-      try {
-        const isPng = path.toLowerCase().endsWith('.png');
-        const img = isPng ? await out.embedPng(bytes) : await out.embedJpg(bytes);
-        // Letter-size page, fit image preserving aspect ratio
-        const pageW = 612, pageH = 792;
-        const margin = 36;
-        const maxW = pageW - margin * 2;
-        const maxH = pageH - margin * 2;
-        const scale = Math.min(maxW / img.width, maxH / img.height);
-        const w = img.width * scale, h = img.height * scale;
-        const page = out.addPage([pageW, pageH]);
-        page.drawImage(img, { x: (pageW - w) / 2, y: (pageH - h) / 2, width: w, height: h });
-      } catch (e) {
-        console.warn('[packet] embed image failed for', path, e.message);
-      }
-    }
-
-    // Order: letter first, then application, then photos/brochures.
-    // Items in photo_storage_paths can be either images (JPG/PNG/WebP) or
-    // brochure PDFs — merge the PDF pages directly when the path ends .pdf,
-    // otherwise rasterize the image onto a letter-size page.
-    await mergePdf(dec.letter_pdf_storage_path);
-    await mergePdf(dec.application_pdf_storage_path);
-    for (const p of (dec.photo_storage_paths || [])) {
-      if (/\.pdf$/i.test(p)) {
-        await mergePdf(p);
-      } else {
-        await addImageAsPage(p);
-      }
-    }
-
-    const bytes = await out.save();
     const stem = (dec.homeowner_address || dec.homeowner_name || dec.community_name || 'decision')
       .toString().replace(/[^A-Za-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'decision';
     const filename = `${stem}_ACC_packet_${(dec.created_at || new Date().toISOString()).slice(0, 10)}.pdf`;
-
-    // Cache the packet on storage for re-download
-    const packetPath = `acc_decisions/${id}/packet.pdf`;
-    try {
-      await supabase.storage.from('documents').upload(packetPath, Buffer.from(bytes), {
-        contentType: 'application/pdf', upsert: true,
-      });
-      await supabase.from('acc_decisions').update({ packet_pdf_storage_path: packetPath, updated_at: new Date().toISOString() }).eq('id', id);
-    } catch (_) {}
-
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     res.setHeader('Cache-Control', 'no-store');
-    res.send(Buffer.from(bytes));
+    res.send(bytes);
   } catch (err) {
     console.error('[acc-review/decisions/:id/packet] failed:', err.message);
     res.status(500).json({ error: err.message });
@@ -3179,11 +3133,20 @@ app.post('/acc-review/decisions/:id/finalize', async (req, res) => {
 
     // File the letter PDF under the decision.
     const letterStoragePath = `acc_decisions/${id}/letter.pdf`;
-    try {
-      await supabase.storage.from('documents').upload(letterStoragePath, pdfBuffer, {
-        contentType: 'application/pdf', upsert: true,
-      });
-    } catch (e) { console.warn('[acc-finalize] letter upload failed:', e.message); }
+    // upload() returns {error}; it does not throw. A letter that did not store
+    // must stop here: nothing is claimed or sent, so the case never points at a
+    // letter file that doesn't exist (Issue #14).
+    {
+      let upErr = null;
+      try {
+        const up = await supabase.storage.from('documents').upload(letterStoragePath, pdfBuffer, { contentType: 'application/pdf', upsert: true });
+        if (up && up.error) upErr = up.error.message || String(up.error);
+      } catch (e) { upErr = e.message; }
+      if (upErr) {
+        console.error('[acc-finalize] letter upload failed:', upErr);
+        return res.status(500).json({ error: `The decision letter could not be filed (${upErr}). Nothing was sent or marked done; try again.` });
+      }
+    }
 
     // Communicate back to the homeowner (opt-in via send=true). Sent AS Annie,
     // the ACC specialist mailbox, so it threads with her acknowledgment.
@@ -3272,16 +3235,52 @@ app.post('/acc-review/decisions/:id/finalize', async (req, res) => {
     // reads), so "when it was mailed, to whom, and the letter itself" is on the
     // 360. Only on a FINAL decision. Both best-effort — the decision is already
     // saved above, so a failure here never undoes it, but we log loudly.
+    // What the final step filed, reported back so a failure is never silent.
+    const filing = { letter_sealed: false, packet: null };
     if (isFinal) {
       try {
         const { sealFinalizedRecord } = require('./lib/record_archive');
-        await sealFinalizedRecord(supabase, {
+        const sealed = await sealFinalizedRecord(supabase, {
           record_type: 'acc_letter', record_id: id, community_id: dec.community_id || null,
           archive_path: `acc_decision/${dec.community_id || 'unknown'}/${id}-letter.pdf`,
           buffer: pdfBuffer, sent_at: new Date().toISOString(),
           metadata: { decision_type: decisionType, reference_number: dec.reference_number || null },
         });
-      } catch (e) { console.warn('[acc-finalize] letter seal failed:', e.message); }
+        filing.letter_sealed = !!sealed;
+        if (!sealed) console.error(`[acc-finalize] letter NOT sealed for decision ${id}`);
+      } catch (e) { console.error('[acc-finalize] letter seal failed:', e.message); }
+
+      // THE COMPLETE ACC RECORD (Issue #14): the final letter + application +
+      // every supporting document + every photo, as one PDF, filed on the case
+      // and sealed in the immutable archive. Built here, in the request that won
+      // the claim, so it is created exactly once per decision. The homeowner's
+      // email stays letter-only (Ed 2026-10-02); the packet is the record.
+      try {
+        const { buildAccPacket } = require('./lib/acc/packet');
+        const decNow = { ...dec, letter_pdf_storage_path: letterStoragePath };
+        const pk = await buildAccPacket({
+          dec: decNow, letterBuffer: pdfBuffer,
+          download: async (p) => { const { data, error } = await supabase.storage.from('documents').download(p); if (error || !data) return null; return Buffer.from(await data.arrayBuffer()); },
+        });
+        if (!pk.ok) throw new Error(pk.error);
+        const packetPath = `acc_decisions/${id}/packet.pdf`;
+        const up = await supabase.storage.from('documents').upload(packetPath, pk.bytes, { contentType: 'application/pdf', upsert: true });
+        if (up && up.error) throw new Error(`packet upload failed: ${up.error.message || up.error}`);
+        const { error: pErr } = await supabase.from('acc_decisions').update({ packet_pdf_storage_path: packetPath }).eq('id', id);
+        if (pErr) throw new Error(`packet link failed: ${pErr.message}`);
+        const { sealFinalizedRecord } = require('./lib/record_archive');
+        const sealedPk = await sealFinalizedRecord(supabase, {
+          record_type: 'acc_packet', record_id: id, community_id: dec.community_id || null,
+          archive_path: `acc_decision/${dec.community_id || 'unknown'}/${id}-packet.pdf`,
+          buffer: pk.bytes, sent_at: new Date().toISOString(),
+          metadata: { decision_type: decisionType, reference_number: dec.reference_number || null, included: pk.included.map((x) => x.what), omitted: pk.omitted.map((x) => x.what) },
+        });
+        filing.packet = { ok: true, path: packetPath, sealed: !!sealedPk, included: pk.included.length, omitted: pk.omitted };
+        if (pk.omitted.length) console.error(`[acc-finalize] packet for ${id} is missing ${pk.omitted.length} document(s):`, pk.omitted.map((x) => `${x.what} (${x.error})`).join('; '));
+      } catch (e) {
+        filing.packet = { ok: false, error: e.message };
+        console.error(`[acc-finalize] complete ACC packet NOT filed for decision ${id}: ${e.message}`);
+      }
 
       // Mailing history on the homeowner timeline. community_id is NOT NULL on
       // interactions, so only log when we can scope it.
@@ -3298,7 +3297,10 @@ app.post('/acc-review/decisions/:id/finalize', async (req, res) => {
             delivery_method: mailed ? 'email' : 'portal',
             subject: `ACC decision — ${String(decisionType).replace(/_/g, ' ')}${dec.reference_number ? ' (' + dec.reference_number + ')' : ''}`,
             content: bodyText.slice(0, 4000),
-            attachments: [{ type: 'acc_letter', storage_path: letterStoragePath, label: 'ACC decision letter' }],
+            attachments: [
+              { type: 'acc_letter', storage_path: letterStoragePath, label: 'ACC decision letter' },
+              ...(filing.packet && filing.packet.ok ? [{ type: 'acc_packet', storage_path: filing.packet.path, label: 'Complete ACC record (letter, application, documents, photos)' }] : []),
+            ],
             source: 'forward',
             status: 'sent',
             sent_at: new Date().toISOString(),
@@ -3440,6 +3442,7 @@ app.post('/acc-review/decisions/:id/finalize', async (req, res) => {
       new_status: isFinal ? 'decided' : 'pending_review',
       email: emailResult,
       fee_charge: feeCharge,
+      filing,
     });
   } catch (err) {
     console.error('[acc-review/decisions/:id/finalize] failed:', err.message);
