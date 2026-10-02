@@ -206,6 +206,7 @@ const CHECKS = [
   'tests/test_ap_replay_and_monitor.js',
   'tests/test_replay_vendor_parity.js',
   'tests/test_1099_reporting_rule.js',
+  'tests/test_exception_suggested_vendor.js',
 ];
 
 const args = process.argv.slice(2);
