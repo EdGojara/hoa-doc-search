@@ -43211,7 +43211,7 @@ ${questionsPage}
   function vendorsRenderSpend() {
     const container = document.getElementById('vendors-spend-container');
     const { mode, rows } = vendorsSpendRows();
-    if (!rows.length) { container.innerHTML = `<div style="color:#888; padding:20px;">No ${mode === '1099' ? 'reportable 1099' : 'vendor'} spend for this year${mode === '1099' ? ' (nothing at or above the ${window._vendorsSpendThreshold ? '$' + (window._vendorsSpendThreshold / 100).toLocaleString('en-US') : 'year\'s'} threshold, and no vendor flagged 1099)' : ''}.</div>`; return; }
+    if (!rows.length) { container.innerHTML = `<div style="color:#888; padding:20px;">No ${mode === '1099' ? 'reportable 1099' : 'vendor'} spend for this year${mode === '1099' ? ` (nothing at or above the ${window._vendorsSpendThreshold ? '$' + (window._vendorsSpendThreshold / 100).toLocaleString('en-US') : 'year\'s'} threshold, and no vendor flagged 1099)` : ''}.</div>`; return; }
     const totalCents = rows.reduce((s, r) => s + r.total_cents, 0);
     const needW9 = rows.filter(r => r.needs_w9).length;
     const body = rows.map(r => {
