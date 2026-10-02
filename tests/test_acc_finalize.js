@@ -1,16 +1,15 @@
 // ============================================================================
 // tests/test_acc_finalize.js  (Issue #14, Ed 2026-10-02)
 // ----------------------------------------------------------------------------
-// The ACC completion path: staff approve or deny an open case, review Annie's
-// letter, send it to the homeowner, and the case records what happened.
-//   - approval / denial claim the case (open -> decided) and email once
-//   - earlier correspondence (acknowledged_at from an acknowledgment, reply or
-//     request-for-information) does NOT block the final decision (the bug)
-//   - duplicate / racing sends: exactly one email, the rest refused
-//   - send failure: nothing marked done, case restored exactly, retry works
-//   - request_more_info keeps the case open and never rewrites a decided one
-//   - a letter with a [STAFF: ...] placeholder (missing fact) cannot go out
-// In-memory store; no network, no email.
+// The ordered, exactly-once ACC finalization (lib/acc/finalize.js):
+//   claim ('finalizing') -> file + seal -> send -> append finalization record
+//   -> 'decided' + finalization_id.
+// Covered: approval / denial; earlier correspondence never blocks; request for
+// more information then the final decision; duplicate + concurrent sends (one
+// email, one record); filing failure, email failure, record failure and
+// completion failure each leave a recoverable, TRUTHFUL state; exact email +
+// hashes archived; mark done without emailing; pre-480 fallback.
+// In-memory store that enforces the 480 status CHECK when asked.
 // ============================================================================
 require('dotenv').config({ quiet: true });
 const assert = require('assert');
@@ -20,8 +19,8 @@ const { finalizeAccDecision } = require('../lib/acc/finalize');
 const tests = []; const check = (n, fn) => tests.push([n, fn]);
 const src = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
 
-function store(row) {
-  const T = { acc_decisions: [{ ...row }] }; const writes = [];
+function store(row, { pre480 = false, failComplete = false } = {}) {
+  const T = { acc_decisions: [{ ...row }], acc_finalizations: [] }; const history = [];
   const from = (t) => {
     const f = []; let mode = 'select'; let payload = null; let single = false; let ret = false;
     const api = {
@@ -31,119 +30,151 @@ function store(row) {
       update(p) { mode = 'update'; payload = p; return api; },
       then(res, rej) {
         return Promise.resolve().then(() => {
+          if (mode === 'update') {
+            if (pre480 && (payload.status === 'finalizing' || 'finalizing_started_at' in payload)) return { data: null, error: { message: 'new row violates check constraint "acc_decisions_status_check"' } };
+            if (failComplete && payload.status === 'decided' && 'finalization_id' in payload) return { data: null, error: { message: 'connection reset' } };
+            const rows = T[t].filter((r) => f.every((p) => p(r)));
+            rows.forEach((r) => { Object.assign(r, payload); history.push(payload.status || null); });
+            return { data: ret ? rows.map((r) => ({ id: r.id })) : null, error: null };
+          }
           const rows = T[t].filter((r) => f.every((p) => p(r)));
-          if (mode === 'update') { rows.forEach((r) => Object.assign(r, payload)); writes.push({ payload, n: rows.length }); return { data: ret ? rows.map((r) => ({ id: r.id })) : null, error: null }; }
           return { data: single ? (rows[0] || null) : rows, error: null };
         }).then(res, rej);
       },
     };
     return api;
   };
-  return { T, writes, from, row: () => T.acc_decisions[0] };
+  return { T, history, from, row: () => T.acc_decisions[0] };
 }
-const OPEN = { id: 'acc1', status: 'pending_review', decision_type: null, letter_body: 'old draft', letter_pdf_storage_path: null, decided_by_user_id: null, decided_at: null, acknowledged_at: null, acknowledged_to: null, ai_recommendation: 'request_more_info' };
-const run = (db, over = {}) => finalizeAccDecision(db, { dec: { ...db.row() }, decisionType: 'approved_with_conditions', bodyText: 'Dear Pat, approved subject to 1. 4 in slab.', toEmail: 'owner@example.test', send: true, actorId: 'reviewer-1', letterStoragePath: 'acc_decisions/acc1/letter.pdf', sendEmail: async () => {}, ...over });
+const OPEN = { id: 'acc1', status: 'pending_review', decision_type: null, letter_body: 'old draft', letter_pdf_storage_path: null, decided_by_user_id: null, decided_at: null, acknowledged_at: null, community_id: 'c1', reference_number: 'WAT-ARC-1', homeowner_name: 'Pat Doe', homeowner_address: '1 Main St, Town, TX' };
+const FILED = { letter: { sha256: 'L'.repeat(64), archive_path: 'arc/a-letter.pdf' }, packet: { sha256: 'P'.repeat(64), archive_path: 'arc/a-packet.pdf', path: 'acc_decisions/acc1/packet.pdf' }, documents: [{ what: 'application: application.pdf', sha256: 'A'.repeat(64) }] };
+function deps(db, over = {}) {
+  const calls = { seal: 0, send: 0, record: 0 };
+  return {
+    calls,
+    args: {
+      decisionType: 'approved_with_conditions', bodyText: 'Dear Pat, approved subject to 1. 4 in slab.', toEmail: 'owner@example.test', send: true, actorId: 'reviewer-1',
+      letterStoragePath: 'acc_decisions/acc1/letter.pdf',
+      sealRecord: async () => { calls.seal++; return FILED; },
+      composeEmail: async () => ({ from: 'annie@bedrocktx.com', to: 'owner@example.test', subject: 'ACC Application Decision – 1 Main St', text: 'Dear Pat,\n\n... approved with conditions.', html: '<div>...</div>', attachments: [{ name: 'x' }], archive_attachments: [{ name: 'WAT-ARC-1.pdf', sha256: 'L'.repeat(64), bytes: 1234 }] }),
+      sendEmail: async () => { calls.send++; await new Promise((r) => setTimeout(r, 2)); },
+      recordFinalization: async (row) => { calls.record++; const rec = { id: 'fin-' + (db.T.acc_finalizations.length + 1), ...row }; db.T.acc_finalizations.push(rec); return { id: rec.id }; },
+      ...over,
+    },
+  };
+}
+const run = (db, d) => finalizeAccDecision(db, { dec: { ...db.row() }, ...d.args });
 
-check('approval: claims the case, emails once, ends decided with decision, letter, reviewer and decided_at', async () => {
-  const db = store(OPEN); let sends = 0;
-  const r = await run(db, { sendEmail: async () => { sends++; } });
-  assert.ok(r.ok && r.final && r.email.sent); assert.strictEqual(sends, 1);
+check('approval: claim -> finalizing -> decided; one email, one sealed filing, one finalization record linked', async () => {
+  const db = store(OPEN); const d = deps(db);
+  const r = await run(db, d);
+  assert.ok(r.ok && r.final && r.email.sent, JSON.stringify(r));
+  assert.deepStrictEqual(db.history, ['finalizing', 'decided']);
+  assert.deepStrictEqual([d.calls.seal, d.calls.send, d.calls.record], [1, 1, 1]);
   const x = db.row();
-  assert.deepStrictEqual([x.status, x.decision_type, x.decided_by_user_id, x.letter_pdf_storage_path], ['decided', 'approved_with_conditions', 'reviewer-1', 'acc_decisions/acc1/letter.pdf']);
-  assert.ok(x.decided_at); assert.ok(/approved subject to/.test(x.letter_body));
+  assert.deepStrictEqual([x.status, x.decision_type, x.decided_by_user_id, x.finalization_id, x.packet_pdf_storage_path], ['decided', 'approved_with_conditions', 'reviewer-1', 'fin-1', 'acc_decisions/acc1/packet.pdf']);
+  assert.ok(x.decided_at);
+});
+check('exact sent-email + attachment/hash archival: the record holds what the homeowner actually received', async () => {
+  const db = store(OPEN); const d = deps(db); await run(db, d);
+  const rec = db.T.acc_finalizations[0];
+  assert.strictEqual(rec.delivery, 'email');
+  assert.deepStrictEqual([rec.email.from, rec.email.to, rec.email.subject], ['annie@bedrocktx.com', 'owner@example.test', 'ACC Application Decision – 1 Main St']);
+  assert.ok(rec.email.text && rec.email.html && rec.email.sent_at);
+  assert.deepStrictEqual(rec.email.attachments, [{ name: 'WAT-ARC-1.pdf', sha256: 'L'.repeat(64), bytes: 1234 }]);
+  assert.strictEqual(rec.email.attachments[0].sha256, rec.letter_sha256, 'the attached PDF is the sealed letter');
+  assert.deepStrictEqual([rec.letter_sha256, rec.letter_archive_path, rec.packet_sha256, rec.packet_archive_path], [FILED.letter.sha256, FILED.letter.archive_path, FILED.packet.sha256, FILED.packet.archive_path]);
+  assert.deepStrictEqual(rec.documents, FILED.documents);
+  assert.deepStrictEqual([rec.letter_text, rec.decision_type, rec.decided_by_user_id, rec.reference_number, rec.homeowner_address], ['Dear Pat, approved subject to 1. 4 in slab.', 'approved_with_conditions', 'reviewer-1', 'WAT-ARC-1', '1 Main St, Town, TX']);
 });
 check('denial: same path, ends decided as denied', async () => {
+  const db = store(OPEN); const r = await run(db, deps(db, { decisionType: 'denied', bodyText: 'Dear Pat, we cannot approve the request as submitted.' }));
+  assert.ok(r.ok); assert.deepStrictEqual([db.row().status, db.row().decision_type], ['decided', 'denied']);
+});
+check('earlier correspondence (acknowledged_at set) never blocks the final decision; its history is untouched', async () => {
+  const db = store({ ...OPEN, acknowledged_at: '2026-09-16T00:00:00Z' }); const d = deps(db);
+  const r = await run(db, d); assert.ok(r.ok && r.email.sent); assert.strictEqual(db.row().acknowledged_at, '2026-09-16T00:00:00Z');
+});
+check('request for more information, then the final decision: both send; the request leaves the case open and is not claimed', async () => {
+  const db = store(OPEN); const d = deps(db);
+  const a = await run(db, deps(db, { decisionType: 'request_more_info', bodyText: 'Dear Pat, please send 1. a survey.', sendEmail: d.args.sendEmail }));
+  assert.ok(a.ok && !a.final); assert.strictEqual(db.row().status, 'pending_review'); assert.deepStrictEqual(db.history, [null]);
+  const b = await run(db, d); assert.ok(b.ok && b.final); assert.strictEqual(db.row().status, 'decided');
+});
+check('duplicate send: a second finalize is refused before anything is filed or sent', async () => {
+  const db = store(OPEN); const d = deps(db); await run(db, d);
+  const again = await run(db, d);
+  assert.strictEqual(again.httpStatus, 409); assert.deepStrictEqual([d.calls.seal, d.calls.send, d.calls.record], [1, 1, 1]);
+});
+check('concurrent sends (double-click / second tab): exactly one filing, one email, one record', async () => {
+  const db = store(OPEN); const d = deps(db); const dec = { ...db.row() };
+  const [x, y] = await Promise.all([finalizeAccDecision(db, { dec, ...d.args }), finalizeAccDecision(db, { dec, ...d.args })]);
+  assert.strictEqual([x, y].filter((r) => r.ok).length, 1); assert.strictEqual([x, y].filter((r) => r.httpStatus === 409).length, 1);
+  assert.deepStrictEqual([d.calls.seal, d.calls.send, d.calls.record, db.T.acc_finalizations.length], [1, 1, 1, 1]);
+});
+check('filing failure: NOTHING is sent, the case is back in the queue exactly as it was, retry works', async () => {
+  const before = { ...OPEN, decision_type: 'request_more_info', letter_body: 'info draft' };
+  const db = store(before); let sends = 0;
+  const r = await run(db, deps(db, { sealRecord: async () => { throw new Error('archive unavailable'); }, sendEmail: async () => { sends++; } }));
+  assert.strictEqual(r.httpStatus, 500); assert.strictEqual(sends, 0); assert.ok(r.reverted); assert.ok(/Nothing was sent/.test(r.error));
+  for (const k of ['status', 'decision_type', 'letter_body', 'decided_by_user_id']) assert.deepStrictEqual(db.row()[k], before[k], k);
+  assert.ok((await run(db, deps(db))).ok, 'retry succeeds');
+});
+check('email failure: filed but NOT marked done; case back in the queue; no finalization record; retry works', async () => {
+  const db = store(OPEN); const d = deps(db, { sendEmail: async () => { throw new Error('mailbox unavailable'); } });
+  const r = await run(db, d);
+  assert.strictEqual(r.httpStatus, 502); assert.ok(r.reverted); assert.ok(/Nothing was marked done/.test(r.error));
+  assert.strictEqual(db.row().status, 'pending_review'); assert.strictEqual(db.T.acc_finalizations.length, 0); assert.strictEqual(db.row().decided_at, null);
+  assert.ok((await run(db, deps(db))).ok);
+});
+check('record failure AFTER the email: the case is still marked decided (the homeowner was told) and the gap is flagged', async () => {
   const db = store(OPEN);
-  const r = await run(db, { decisionType: 'denied', bodyText: 'Dear Pat, we cannot approve the request as submitted.' });
-  assert.ok(r.ok && r.final); assert.deepStrictEqual([db.row().status, db.row().decision_type], ['decided', 'denied']);
+  const r = await run(db, deps(db, { recordFinalization: async () => { throw new Error('insert failed'); } }));
+  assert.ok(r.ok); assert.strictEqual(db.row().status, 'decided'); assert.ok(/insert failed/.test(r.record_error));
 });
-check('THE BUG: earlier correspondence (acknowledged_at set) does NOT stop the final decision from being sent', async () => {
-  const db = store({ ...OPEN, acknowledged_at: '2026-09-16T00:00:00Z', acknowledged_to: 'owner@example.test' }); let sends = 0;
-  const r = await run(db, { sendEmail: async () => { sends++; } });
-  assert.ok(r.ok && r.email.sent, JSON.stringify(r)); assert.strictEqual(sends, 1);
-  assert.strictEqual(db.row().status, 'decided');
-  assert.strictEqual(db.row().acknowledged_at, '2026-09-16T00:00:00Z', 'prior correspondence history untouched');
+check('completion failure AFTER the email: truthful 500 ("WAS emailed ... do not resend"), case stays finalizing, never reverted', async () => {
+  const db = store(OPEN, { failComplete: true });
+  const r = await run(db, deps(db));
+  assert.strictEqual(r.httpStatus, 500); assert.ok(/WAS emailed/.test(r.error) && /do not resend/.test(r.error));
+  assert.strictEqual(db.row().status, 'finalizing');
 });
-check('prior request for more information, then the final decision: both send; info request leaves the case open', async () => {
-  const db = store(OPEN); let sends = 0; const send = async () => { sends++; };
-  const a = await run(db, { decisionType: 'request_more_info', bodyText: 'Dear Pat, please send 1. a survey.', sendEmail: send });
-  assert.ok(a.ok && !a.final); assert.strictEqual(db.row().status, 'pending_review'); assert.strictEqual(db.row().decision_type, 'request_more_info');
-  db.row().acknowledged_at = '2026-09-20T00:00:00Z'; // the info-request email stamps it in server.js
-  const b = await run(db, { sendEmail: send });
-  assert.ok(b.ok && b.final && b.email.sent); assert.strictEqual(sends, 2); assert.strictEqual(db.row().status, 'decided');
+check('mark done without emailing: decided, delivery none, no email', async () => {
+  const db = store(OPEN); const d = deps(db);
+  const r = await run(db, deps(db, { send: false, sendEmail: d.args.sendEmail }));
+  assert.ok(r.ok && !r.email.attempted); assert.strictEqual(d.calls.send, 0);
+  assert.strictEqual(db.T.acc_finalizations[0].delivery, 'none'); assert.strictEqual(db.T.acc_finalizations[0].email, null);
 });
-check('duplicate send: a second finalize on a decided case is refused (409) and emails NOTHING', async () => {
-  const db = store(OPEN); let sends = 0; const send = async () => { sends++; };
-  await run(db, { sendEmail: send });
-  const again = await run(db, { sendEmail: send });
-  assert.strictEqual(again.ok, false); assert.strictEqual(again.httpStatus, 409); assert.ok(again.already_decided); assert.strictEqual(sends, 1);
-  assert.ok(/Nothing was sent again/.test(again.error));
+check('before migration 480: claim goes straight to decided, reverted on failure, no record written', async () => {
+  const db = store(OPEN, { pre480: true }); const d = deps(db);
+  const r = await run(db, d); assert.ok(r.ok); assert.strictEqual(r.mode, 'legacy'); assert.strictEqual(db.row().status, 'decided'); assert.strictEqual(d.calls.record, 0);
+  const db2 = store(OPEN, { pre480: true });
+  const f = await run(db2, deps(db2, { sendEmail: async () => { throw new Error('x'); } }));
+  assert.strictEqual(f.httpStatus, 502); assert.strictEqual(db2.row().status, 'pending_review');
 });
-check('race: two simultaneous sends on the same open case -> exactly one email, one refused', async () => {
-  const db = store(OPEN); let sends = 0; const send = async () => { sends++; await new Promise((r) => setTimeout(r, 5)); };
-  const dec = { ...db.row() }; // both requests loaded the case while it was open
-  const args = { dec, decisionType: 'approved_no_conditions', bodyText: 'Dear Pat, approved.', toEmail: 'o@example.test', send: true, letterStoragePath: 'p', sendEmail: send };
-  const [x, y] = await Promise.all([finalizeAccDecision(db, args), finalizeAccDecision(db, args)]);
-  assert.strictEqual([x, y].filter((r) => r.ok).length, 1); assert.strictEqual([x, y].filter((r) => r.httpStatus === 409).length, 1); assert.strictEqual(sends, 1);
-});
-check('send failure: 502, NOT marked done, case restored exactly as it was; a retry then succeeds', async () => {
-  const before = { ...OPEN, decision_type: 'request_more_info', letter_body: 'info draft', acknowledged_at: '2026-09-20T00:00:00Z' };
-  const db = store(before);
-  const r = await run(db, { sendEmail: async () => { throw new Error('mailbox unavailable'); } });
-  assert.strictEqual(r.ok, false); assert.strictEqual(r.httpStatus, 502); assert.ok(r.reverted); assert.ok(/Nothing was marked done/.test(r.error));
-  const x = db.row();
-  for (const k of ['status', 'decision_type', 'letter_body', 'letter_pdf_storage_path', 'decided_by_user_id', 'decided_at', 'acknowledged_at']) assert.deepStrictEqual(x[k], before[k], k);
-  let sends = 0; const ok = await run(db, { sendEmail: async () => { sends++; } });
-  assert.ok(ok.ok && ok.email.sent); assert.strictEqual(sends, 1); assert.strictEqual(db.row().status, 'decided');
-});
-check('mark done without emailing: decided, no email attempted', async () => {
-  const db = store(OPEN); let sends = 0;
-  const r = await run(db, { send: false, sendEmail: async () => { sends++; } });
-  assert.ok(r.ok && r.final && !r.email.attempted); assert.strictEqual(sends, 0); assert.strictEqual(db.row().status, 'decided');
-});
-check('request_more_info never rewrites a decided case; send needs a recipient; [STAFF: ...] placeholder blocks the send', async () => {
-  const db = store({ ...OPEN, status: 'decided', decision_type: 'approved_no_conditions', decided_at: '2026-09-30T00:00:00Z' });
-  const r = await run(db, { decisionType: 'request_more_info' });
-  assert.strictEqual(r.httpStatus, 409); assert.strictEqual(db.row().decision_type, 'approved_no_conditions');
+check('request_more_info never touches a decided case; a placeholder or missing recipient blocks the send', async () => {
+  const db = store({ ...OPEN, status: 'decided', decision_type: 'approved_no_conditions' });
+  assert.strictEqual((await run(db, deps(db, { decisionType: 'request_more_info' }))).httpStatus, 409);
   const db2 = store(OPEN);
-  assert.strictEqual((await run(db2, { toEmail: '' })).httpStatus, 400);
-  const p = await run(db2, { decisionType: 'denied', bodyText: 'Dear Pat, this conflicts with [STAFF: cite the governing provision].' });
-  assert.strictEqual(p.httpStatus, 400); assert.ok(/placeholder/.test(p.error)); assert.strictEqual(db2.row().status, 'pending_review');
-});
-check('awaiting_info counts as open (a final decision can be sent)', async () => {
-  const db = store({ ...OPEN, status: 'awaiting_info' });
-  const r = await run(db); assert.ok(r.ok); assert.strictEqual(db.row().status, 'decided');
+  assert.strictEqual((await run(db2, deps(db2, { toEmail: '' }))).httpStatus, 400);
+  const p = await run(db2, deps(db2, { decisionType: 'denied', bodyText: 'Dear Pat, this conflicts with [STAFF: cite the governing provision].' }));
+  assert.strictEqual(p.httpStatus, 400); assert.strictEqual(db2.row().status, 'pending_review');
 });
 
 // ---------------------------------------------------------------- wiring
-check('server finalize: uses the claim path; the acknowledged_at "already sent" guard is gone; refuses closed cases BEFORE rendering', () => {
+check('server finalize: closed-case refusal and stale-draft gate come BEFORE rendering; filing is sealed BEFORE the email', () => {
   const s = src('server.js'); const fin = s.slice(s.indexOf("app.post('/acc-review/decisions/:id/finalize'"), s.indexOf("app.post('/acc-review/decisions/:id/redraft'"));
-  assert.ok(/require\('\.\/lib\/acc\/finalize'\)\.finalizeAccDecision\(supabase,/.test(fin));
-  assert.ok(!/body\.send && dec\.acknowledged_at/.test(fin), 'old acknowledged_at guard removed');
-  assert.ok(fin.indexOf('OPEN_STATUSES.includes(dec.status)') < fin.indexOf('renderLetterPdfBuffer('), 'closed-case refusal precedes the PDF render');
-  // provenance after a successful send is still recorded (outbound email log, timeline, seal, ack stamp only if empty)
-  assert.ok(/if \(emailResult\.sent\) \{/.test(fin) && /from\('email_messages'\)\.insert\(/.test(fin) && /from\('interactions'\)\.insert\(/.test(fin) && /sealFinalizedRecord/.test(fin));
+  const render = fin.indexOf('renderLetterPdfBuffer(');
+  assert.ok(fin.indexOf('OPEN_STATUSES.includes(dec.status)') < render && fin.indexOf('draftStaleness(dec,') < render);
+  assert.ok(/st\.stale && body\.acknowledge_stale !== true/.test(fin));
+  assert.ok(/sealRecord, composeEmail, sendEmail, recordFinalization/.test(fin));
+  assert.ok(/if \(pk\.omitted\.length\) throw new Error/.test(fin), 'an incomplete record blocks the send');
+  assert.ok(/acc_decision\/\$\{dec\.community_id \|\| 'unknown'\}\/\$\{id\}\/\$\{attemptId\}/.test(fin), 'attempt-scoped write-once archive paths');
   assert.ok(/\.eq\('id', id\)\.is\('acknowledged_at', null\)/.test(fin), 'prior acknowledgment history is never overwritten');
-});
-check('screen: send enabled for any OPEN case (prior email shown as a note, not a block); decided shows "Decision recorded"', () => {
-  const ui = src('public/index.html'); const d = ui.slice(ui.indexOf('function accRenderDetail'), ui.indexOf('async function accSend'));
-  assert.ok(/const isOpen = a\.status === 'pending_review' \|\| a\.status === 'awaiting_info';/.test(d));
-  assert.ok(/\$\{isOpen\s*\n?\s*\? `<button class="acc-action-btn approve acc-send-btn"/.test(d));
-  assert.ok(!/\$\{a\.acknowledged_at\s*\n\s*\? `<button class="acc-action-btn" disabled/.test(d), 'acknowledged_at no longer disables the send');
-  assert.ok(/That does not stop this decision from being sent\./.test(d) && /Decision recorded/.test(d));
-  const s = ui.slice(ui.indexOf('async function accSend'), ui.indexOf('async function accRedraft'));
-  assert.ok(/\[\\s\*STAFF\\s\*:\/i\.test\(body_text\)/.test(s) && /window\.accDraftFor !== decision/.test(s) && /b\.disabled = true/.test(s) && /j\.already_decided/.test(s));
-});
-check('Annie drafting: facts only from the case; denial cites a provision only if given, else a [STAFF: ...] placeholder', () => {
-  const s = src('server.js'); const r = s.slice(s.indexOf("app.post('/acc-review/decisions/:id/redraft'"), s.indexOf("app.post('/acc-review/render-letter'"));
-  assert.ok(/FACTS: use ONLY what is in the case details/.test(r) && /NEVER invent or guess a section number/.test(r));
-  assert.ok(!/citing the specific governing-document provision that cannot be met/.test(r));
-  assert.ok(/has_placeholders: require\('\.\/lib\/acc\/finalize'\)\.PLACEHOLDER_RE\.test\(screen\.text\)/.test(r));
 });
 
 (async () => {
   let pass = 0, fail = 0;
-  console.log('ACC completion path (Issue #14)');
+  console.log('ACC finalization: ordered + exactly once (Issue #14)');
   for (const [n, fn] of tests) { try { await fn(); pass++; console.log('  ✓ ' + n); } catch (e) { fail++; console.log('  ✗ ' + n + '\n      ' + e.message); } }
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);

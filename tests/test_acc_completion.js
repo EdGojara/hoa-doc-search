@@ -52,22 +52,23 @@ check('letter filing failure stops BEFORE the claim / send: nothing sent, nothin
   assert.ok(/if \(up && up\.error\) upErr = up\.error\.message/.test(FIN));
   assert.ok(FIN.indexOf('The decision letter could not be filed') < FIN.indexOf('finalizeAccDecision(supabase'), 'filing check precedes the claim');
 });
-check('the complete record is built, filed on the case, sealed, and linked on the timeline, ONLY after the claim wins and only for a final decision', () => {
-  const claim = FIN.indexOf('finalizeAccDecision(supabase'); const bail = FIN.indexOf('if (!fin.ok) {'); const build = FIN.indexOf('buildAccPacket(');
-  assert.ok(claim > 0 && bail > claim && build > bail, 'packet built after a successful claim');
-  const finalBlock = FIN.slice(FIN.indexOf('if (isFinal) {', bail), FIN.indexOf('// Record the outbound communication on the timeline.'));
-  assert.ok(finalBlock.includes('buildAccPacket('), 'inside the final-decision block');
-  assert.ok(/record_type: 'acc_packet'/.test(finalBlock) && /packet_pdf_storage_path: packetPath/.test(finalBlock));
+check('the complete record is built + sealed inside sealRecord, which lib/acc/finalize.js runs only after the claim and BEFORE the email', () => {
+  const seal = FIN.slice(FIN.indexOf('const sealRecord = async () => {'), FIN.indexOf('const recordFinalization = async'));
+  assert.ok(seal.includes('buildAccPacket(') && /record_type: 'acc_packet'/.test(seal) && /record_type: 'acc_letter'/.test(seal));
+  assert.ok(/sealRecord, composeEmail, sendEmail, recordFinalization/.test(FIN));
+  const lib = fs.readFileSync(path.join(__dirname, '..', 'lib', 'acc', 'finalize.js'), 'utf8');
+  assert.ok(lib.indexOf('1) CLAIM') > 0 && lib.indexOf('1) CLAIM') < lib.indexOf('2) FILE') && lib.indexOf('2) FILE') < lib.indexOf('3) SEND'), 'claim -> file -> send');
   assert.ok(/type: 'acc_packet', storage_path: filing\.packet\.path/.test(FIN), 'Homeowner 360 timeline links the record');
-  assert.ok(/filing,\n/.test(FIN) && /filing\.packet = \{ ok: false, error: e\.message \}/.test(FIN), 'a filing failure is reported, not swallowed');
+  assert.ok(/packet_pdf_storage_path: filing\.packet \? filing\.packet\.path : null/.test(lib), 'the packet path is set as the case is marked decided');
 });
 check('homeowner email is letter-only (Ed 2026-10-02): the packet is NOT attached', () => {
-  const send = FIN.slice(FIN.indexOf('const sendDecisionEmail = async () => {'), FIN.indexOf('const fin = await require'));
-  assert.ok(/contentBytes: pdfBuffer\.toString\('base64'\)/.test(send) && !/packet/i.test(send));
+  const send = FIN.slice(FIN.indexOf('const composeEmail = async () => {'), FIN.indexOf('const sendEmail = async'));
+  assert.ok(/contentBytes: pdfBuffer\.toString\('base64'\)/.test(send) && !/packet|pk\.bytes/i.test(send));
 });
 check('a decided case\'s filed record is never rebuilt or overwritten by the Packet button; follow-up documents are included', () => {
   const s = src('server.js'); const g = s.slice(s.indexOf("app.get('/acc-review/decisions/:id/packet'"), s.indexOf("app.post('/acc-review/decisions/:id/finalize'"));
-  assert.ok(/if \(dec\.status === 'decided' && dec\.packet_pdf_storage_path\) bytes = await download\(dec\.packet_pdf_storage_path\);/.test(g));
+  assert.ok(/sealedArtifact\(supabase, dec, 'packet'\)/.test(g), 'a finalized case serves the SEALED packet');
+  assert.ok(/if \(!bytes && dec\.status === 'decided' && dec\.packet_pdf_storage_path\) bytes = await download\(dec\.packet_pdf_storage_path\);/.test(g));
   assert.ok(/if \(dec\.status !== 'decided'\) \{/.test(g));
   assert.ok(/require\('\.\/lib\/acc\/packet'\)\.buildAccPacket/.test(g));
   assert.ok(/for \(const p of dec\.supporting_docs_storage_paths \|\| \[\]\)/.test(src('lib/acc/packet.js')));
