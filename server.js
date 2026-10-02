@@ -3107,6 +3107,13 @@ app.post('/acc-review/decisions/:id/finalize', async (req, res) => {
     // 'decided' in that case.
     const isFinal = decisionType !== 'request_more_info';
 
+    // A decided / closed case is never re-finalized: refuse BEFORE rendering, so
+    // a repeat click cannot overwrite the stored letter of a decision already
+    // made (the atomic claim in lib/acc/finalize.js still decides any race).
+    if (!require('./lib/acc/finalize').OPEN_STATUSES.includes(dec.status)) {
+      return res.status(409).json({ error: `This application is no longer open (${dec.status}${dec.decided_at ? ', decided ' + String(dec.decided_at).slice(0, 10) : ''}). Nothing was sent again.`, already_decided: true });
+    }
+
     // The letter body the reviewer approved. If the request doesn't carry an
     // explicit body, fall back to the WORKING draft (letter_body) before the
     // original engine draft (ai_letter_body) — same precedence as the queue view
@@ -3148,22 +3155,15 @@ app.post('/acc-review/decisions/:id/finalize', async (req, res) => {
 
     // Communicate back to the homeowner (opt-in via send=true). Sent AS Annie,
     // the ACC specialist mailbox, so it threads with her acknowledgment.
-    let emailResult = { attempted: false, sent: false };
     const toEmail = (body.to_email || dec.submitter_email || '').trim();
-    // IDEMPOTENCY GUARD (Ed 2026-07-30): a decision letter is emailed to the
-    // homeowner AT MOST ONCE. acknowledged_at is stamped on the first successful
-    // send; if it's already set, NEVER re-send. A bounced/rejected recipient
-    // address (e.g. a malformed gmail) made staff re-click finalize, and with no
-    // guard the homeowner got the same letter again and again. A re-finalize of
-    // an already-sent decision is now a no-op on the email (reported, not an
-    // error) so the reviewer can still adjust/close the item.
-    if (body.send && dec.acknowledged_at) {
-      emailResult.already_sent = true;
-      emailResult.acknowledged_to = dec.acknowledged_to || null;
-      console.warn(`[acc-finalize] decision ${id} already emailed at ${dec.acknowledged_at} to ${dec.acknowledged_to} — NOT re-sending.`);
-    } else if (body.send && toEmail) {
-      emailResult.attempted = true;
-      try {
+    // AT MOST ONCE, without letting earlier correspondence block the decision
+    // (Issue #14, Ed 2026-10-02). The old guard treated acknowledged_at as
+    // "decision already emailed", but the receipt acknowledgment, replies and
+    // request-more-info emails also stamp it, so a FINAL decision after any of
+    // those was silently never sent. lib/acc/finalize.js now claims the case
+    // (open -> decided) atomically before sending: a double-click or retry finds
+    // it decided and is refused; a failed email puts the case back as it was.
+    const sendDecisionEmail = async () => {
         const graph = require('./lib/email/graph_send');
         if (!graph.isConfigured()) throw new Error('email_not_configured');
         const verb = decisionType.startsWith('approved') ? 'Approved'
@@ -3200,38 +3200,19 @@ app.post('/acc-review/decisions/:id/finalize', async (req, res) => {
             },
           ],
         });
-        emailResult.sent = true;
-      } catch (e) {
-        console.error('[acc-finalize] email send failed:', e.message);
-        emailResult.error = e.message;
-      }
-    }
-
-    // If the reviewer asked to send but the email failed, do NOT flip to
-    // decided — surface the failure so it can be retried. The letter PDF is
-    // already filed, so no work is lost.
-    if (body.send && emailResult.attempted && !emailResult.sent) {
-      return res.status(502).json({
-        error: 'The decision letter was generated but could not be emailed to the homeowner: ' + (emailResult.error || 'unknown') +
-               '. Nothing was marked done — you can retry, or download the letter and send it manually.',
-        email: emailResult,
-      });
-    }
-
-    // Persist the decision. request_more_info stays queued; everything else is done.
-    const patch = {
-      decision_type: decisionType,
-      letter_body: bodyText,
-      letter_pdf_storage_path: letterStoragePath,
-      decided_by_user_id: actor?.id || null,
-      updated_at: new Date().toISOString(),
     };
-    // Stamp the decision date so billing counts it in the month it was DECIDED,
-    // not the month the application arrived (mig 330; Ed 2026-07-24). Only on a
-    // final decision — request_more_info keeps it in the queue, not yet decided.
-    if (isFinal) { patch.status = 'decided'; patch.decided_at = new Date().toISOString(); }
-    const { error: upErr } = await supabase.from('acc_decisions').update(patch).eq('id', id);
-    if (upErr) { console.error('[acc-finalize] update failed:', upErr.message); throw upErr; }
+
+    // Claim -> send -> revert-on-failure / record. decided_at is stamped on a
+    // final decision so billing counts it in the month it was DECIDED (mig 330).
+    const fin = await require('./lib/acc/finalize').finalizeAccDecision(supabase, {
+      dec, decisionType, bodyText, toEmail, send: !!body.send, actorId: actor?.id || null,
+      letterStoragePath, sendEmail: sendDecisionEmail,
+    });
+    if (!fin.ok) {
+      if (fin.email && fin.email.error) console.error('[acc-finalize] email send failed:', fin.email.error);
+      return res.status(fin.httpStatus || 500).json({ error: fin.error, email: fin.email || null, already_decided: !!fin.already_decided, current: fin.current || null });
+    }
+    const emailResult = fin.email;
 
     // ONE-BRAIN sync-out (Ed 2026-07-25). If this decision came IN through the
     // portal, push the outcome back onto its community_applications row so the
@@ -3473,7 +3454,7 @@ app.post('/acc-review/decisions/:id/redraft', express.json({ limit: '64kb' }), a
       approved_with_conditions: 'STAFF DECISION: APPROVED WITH CONDITIONS. This letter GRANTS the approval. It is NOT a request for information and NOT a hold. CRITICAL: never write "we need," "before we can approve," "please provide," "please submit," "once we receive," "pending," or anything that asks the homeowner to send documents or wait — the decision is already made and it is YES. Structure: (1) A short opening that clearly APPROVES the project as submitted — e.g. "Your application for [project] is approved, subject to the conditions below." (2) One line introducing the conditions as the requirements the homeowner must follow: "This approval is granted subject to the following conditions:". (3) A numbered list of BINDING conditions the homeowner must comply with during and after the build — restate the key specifics they proposed (dimensions, materials, color, location) as requirements, and add the committee\'s further build limits (maximum height, minimum setback / distance from lot lines, roof/siding color must match the primary residence, full fencing, etc.). Each condition is an instruction the homeowner must MEET, phrased as a standard ("The shed must not exceed 8 feet in height"), NOT a document to send us. (4) Make clear the approval covers only what is described here and any deviation requires a new application; if they build outside these conditions it is a violation. ' + _surveyGuidance + ' Then the standard permit disclaimer. Do NOT list any item from the internal analysis as something we still need; convert it to a build condition or omit it.',
       approved_no_conditions: 'STAFF DECISION: APPROVED — NO CONDITIONS. Write a clean, warm, brief approval letter confirming the approval with only the standard permit disclaimer.',
       request_more_info: 'STAFF DECISION: REQUEST MORE INFORMATION. Write a warm, helpful letter requesting the specific missing items — encouraging and specific, never makes the homeowner feel rejected.',
-      denied: 'STAFF DECISION: DENIED. Write a professional, warm denial letter citing the specific governing-document provision that cannot be met, and leaving the door open for a revised application.',
+      denied: 'STAFF DECISION: DENIED. Write a professional, warm denial letter stating why the request cannot be approved, and leaving the door open for a revised application. Cite a governing-document provision ONLY if that provision (its name or section) appears in the internal review analysis or the staff instructions below; NEVER invent or guess a section number. If no provision is given, write [STAFF: cite the governing provision this denial rests on] where the citation belongs.',
     };
     const directive = DIRECTIVE[decisionType] || DIRECTIVE.approved_with_conditions;
 
@@ -3490,7 +3471,8 @@ app.post('/acc-review/decisions/:id/redraft', express.json({ limit: '64kb' }), a
           '- Conditions/reasons as a numbered list: "1. ...", "2. ..." — plain numbers, no markdown.\n' +
           `- End with EXACTLY: "Please retain a copy of this letter for your records. If you have any questions please contact our office at ${BRAND.service.phone} or ${BRAND.service.email}."\n` +
           '- NO markdown (#, **, *, _, ---). NO internal section labels. NO letterhead/return/recipient/signature blocks. NO "Re:", "Sincerely,", company name — all template-rendered.\n' +
-          '- Warm professional voice; paragraphs separated by blank lines.\n\n' +
+          '- Warm professional voice; paragraphs separated by blank lines.\n' +
+          '- FACTS: use ONLY what is in the case details, the staff instructions and the internal analysis. Never invent a provision or section number, a measurement, a date, a fee, a requirement or a prior communication. If the letter needs a fact that is not provided, write a bracketed placeholder like [STAFF: what is needed] instead of guessing; staff must fill it before the letter can be sent.\n\n' +
           'Output ONLY the letter body. Do not preface or explain.',
         messages: [{
           role: 'user',
@@ -3513,7 +3495,9 @@ app.post('/acc-review/decisions/:id/redraft', express.json({ limit: '64kb' }), a
     if (screen.blocks.length > 0) {
       return res.status(400).json({ error: 'The draft contained internal-only phrasing — try again or edit by hand.', blocked_phrases: screen.blocks });
     }
-    res.json({ ok: true, decision_type: decisionType, body_text: screen.text });
+    // A "[STAFF: ...]" placeholder marks a fact the case did not provide; the
+    // screen flags it and finalize refuses to send until it is filled.
+    res.json({ ok: true, decision_type: decisionType, body_text: screen.text, has_placeholders: require('./lib/acc/finalize').PLACEHOLDER_RE.test(screen.text) });
   } catch (err) {
     console.error('[acc-review/decisions/:id/redraft] failed:', err.message);
     res.status(500).json({ error: err.message });

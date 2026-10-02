@@ -15371,6 +15371,9 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
     view.style.display = '';
 
     const isQueue = a.status === 'pending_review';
+    // Open = still being worked (pending_review or awaiting_info): the decision
+    // can be sent. Earlier correspondence never closes it (Issue #14).
+    const isOpen = a.status === 'pending_review' || a.status === 'awaiting_info';
     const created = a.created_at ? new Date(a.created_at) : null;
     const ageHours = created ? (Date.now() - created.getTime()) / 3600000 : null;
     // Prefer the working/edited draft (letter_body) over the original AI draft
@@ -15392,6 +15395,10 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
       ['denied', 'Deny'],
     ];
     const selectedDecision = (rec === 'approved') ? 'approved_no_conditions' : (rec || 'approved_with_conditions');
+    // Which decision the letter in the box was drafted FOR, so a send can't pair
+    // an approval with a request-for-information letter (Issue #14).
+    const _draftRec = (a.letter_body && a.decision_type) ? a.decision_type : (a.ai_recommendation || a.decision_type || '');
+    window.accDraftFor = _draftRec === 'approved' ? 'approved_no_conditions' : _draftRec;
 
     view.innerHTML = `
       <div style="margin-bottom:14px;">
@@ -15464,11 +15471,12 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
             <button class="acc-action-btn modify" style="white-space:nowrap;" onclick="accRedraft('${a.id}', true)">✨ Draft with conditions</button>
           </div>
         </div>
+        ${isOpen && a.acknowledged_at ? `<div style="margin:0 0 10px; padding:8px 12px; background:#f5f8fc; border:1px solid #dce6f2; border-radius:8px; font-size:12px; color:#334155;">Annie already emailed ${accEsc(a.acknowledged_to || 'the homeowner')} on ${accEsc(String(a.acknowledged_at).slice(0, 10))} (an acknowledgment, reply or request for information). That does not stop this decision from being sent.</div>` : ''}
         <div class="acc-ai-actions">
-          ${a.acknowledged_at
-            ? `<button class="acc-action-btn" disabled title="Already emailed ${accEsc(a.acknowledged_to || 'the homeowner')} on ${accEsc(String(a.acknowledged_at).slice(0, 10))} — Annie will not send this again." style="opacity:0.55; cursor:not-allowed;">✓ Already sent to homeowner${a.acknowledged_to ? ' (' + accEsc(a.acknowledged_to) + ')' : ''}</button>`
-            : `<button class="acc-action-btn approve" onclick="accSend('${a.id}', true)">✉ Send to homeowner (as Annie)</button>`}
-          <button class="acc-action-btn modify" onclick="accSend('${a.id}', false)">💾 Mark done without emailing</button>
+          ${isOpen
+            ? `<button class="acc-action-btn approve acc-send-btn" onclick="accSend('${a.id}', true)">✉ Send to homeowner (as Annie)</button>
+               <button class="acc-action-btn modify acc-send-btn" onclick="accSend('${a.id}', false)">💾 Mark done without emailing</button>`
+            : `<button class="acc-action-btn" disabled style="opacity:0.55; cursor:not-allowed;" title="A decision is recorded on this application; it is not sent again.">✓ Decision recorded${a.decided_at ? ' ' + accEsc(String(a.decided_at).slice(0, 10)) : ''}${a.acknowledged_to ? ' · emailed ' + accEsc(a.acknowledged_to) : ''}</button>`}
           <button class="secondary-btn" onclick="accDownloadCurrent()" style="align-self:center;">⬇ Download letter PDF</button>
           <a class="secondary-btn" href="/acc-review/decisions/${a.id}/packet" target="_blank" rel="noopener" style="align-self:center; text-decoration:none;">⬇ Packet</a>
         </div>
@@ -15489,12 +15497,25 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
       return;
     }
     const isMoreInfo = decision === 'request_more_info';
-    const verb = send ? (isMoreInfo ? 'email the request for more information to' : 'send this decision to') + ' ' + to_email
-                      : 'mark this application done without emailing';
-    if (!confirm('Are you sure you want to ' + verb + '?' + (isMoreInfo ? '\n\n(Request-more-info keeps the application in the queue.)' : ''))) return;
+    // A fact the case did not provide is marked [STAFF: ...] in the draft; it
+    // must be filled before anything goes to the homeowner (server enforces too).
+    if (/\[\s*STAFF\s*:/i.test(body_text)) {
+      status.textContent = 'The letter still has a [STAFF: ...] placeholder where a fact is missing. Fill it in or remove it first.';
+      status.style.color = '#b91c1c';
+      return;
+    }
+    const label = (d) => String(d || '').replace(/_/g, ' ');
+    const mismatch = window.accDraftFor && window.accDraftFor !== decision
+      ? '\n\nNOTE: the letter below was drafted for "' + label(window.accDraftFor) + '", but the decision selected is "' + label(decision) + '". Use "Redraft for the decision above" unless you edited the letter to match.'
+      : '';
+    const verb = send ? (isMoreInfo ? 'email the request for more information to' : 'send this decision (' + label(decision) + ') to') + ' ' + to_email
+                      : 'mark this application done (' + label(decision) + ') without emailing';
+    if (!confirm('Are you sure you want to ' + verb + '?' + (isMoreInfo ? '\n\n(Request-more-info keeps the application in the queue.)' : '') + mismatch)) return;
 
     status.textContent = send ? 'Rendering letter + emailing…' : 'Saving…';
     status.style.color = '#a16207';
+    const btns = Array.from(document.querySelectorAll('.acc-send-btn'));
+    btns.forEach((b) => { b.disabled = true; b.style.opacity = '0.55'; });
     try {
       const headers = { 'Content-Type': 'application/json' };
       try {
@@ -15507,7 +15528,12 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
         body: JSON.stringify({ decision_type: decision, body_text, to_email, send }),
       });
       const j = await r.json();
-      if (j.error) throw new Error(j.error);
+      if (j.error) {
+        // Already decided (another click / tab / earlier send): nothing was sent
+        // again. Leave the buttons off and go back to the list.
+        if (j.already_decided) { status.textContent = '✓ ' + j.error; status.style.color = '#15803d'; setTimeout(() => accBackToList(), 2000); return; }
+        throw new Error(j.error);
+      }
       if (j.email && j.email.sent) {
         status.textContent = '✓ Sent to ' + to_email + (j.final ? ' — moved to Done.' : ' — stays in queue for follow-up.');
       } else {
@@ -15518,6 +15544,7 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
     } catch (err) {
       status.textContent = '✗ ' + err.message;
       status.style.color = '#b91c1c';
+      btns.forEach((b) => { b.disabled = false; b.style.opacity = ''; });
     }
   }
   // Redraft the letter for the chosen decision, optionally folding in staff
@@ -15540,8 +15567,10 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
       const j = await r.json();
       if (!r.ok || j.error) throw new Error(j.detail || j.error || 'draft failed');
       ta.value = j.body_text;
+      window.accDraftFor = j.decision_type || decision;   // the letter now matches this decision
       if (withConditions && condEl) condEl.value = '';
-      status.textContent = '✓ Letter redrafted — review and edit before sending.'; status.style.color = '#15803d';
+      if (j.has_placeholders) { status.textContent = '⚠ Letter redrafted, but it has a [STAFF: ...] placeholder where a fact was missing (e.g. the governing provision). Fill it in before sending.'; status.style.color = '#b45309'; }
+      else { status.textContent = '✓ Letter redrafted — review and edit before sending.'; status.style.color = '#15803d'; }
     } catch (e) { status.textContent = '✗ ' + e.message; status.style.color = '#b91c1c'; }
   }
   window.accRedraft = accRedraft;
