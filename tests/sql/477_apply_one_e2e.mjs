@@ -41,11 +41,12 @@ async function buildWorld({ preColumn = false } = {}) {
     CREATE TABLE vendor_documents (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), vendor_id uuid REFERENCES vendors(id), doc_type text);
     CREATE TABLE journal_entries (id uuid PRIMARY KEY DEFAULT gen_random_uuid());
     CREATE TABLE ap_payments (id uuid PRIMARY KEY DEFAULT gen_random_uuid());
-    CREATE TABLE ap_invoices (id uuid PRIMARY KEY DEFAULT gen_random_uuid());
+    CREATE TABLE ap_invoices (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), vendor_id uuid REFERENCES vendors(id), total_cents bigint);
     CREATE TABLE schema_migrations (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), filename text NOT NULL UNIQUE, sha256 text NOT NULL,
       applied_at timestamptz NOT NULL DEFAULT now(), applied_by text, duration_ms integer, error text);
     INSERT INTO vendors (id, name, w9_on_file, tax_classification) VALUES ('${V1}', 'Lawn Co', true, 'c_corporation');
     INSERT INTO vendors (name) VALUES ('DJ (individual)');
+    INSERT INTO ap_invoices (id, vendor_id, total_cents) VALUES ('00000000-0000-0000-0000-0000000000b1', '${V1}', 150000);
     INSERT INTO schema_migrations (filename, sha256) VALUES ('476_agent_runs_model_telemetry.sql', 'recorded');`);
   if (preColumn) await db.exec(`ALTER TABLE vendors ADD COLUMN tax_reporting_status text;`);
   const client = { query: async (sql, params) => {
@@ -91,6 +92,13 @@ if (r.status === 'applied') {
   await db.query(`UPDATE vendors SET kind = 'reimbursement' WHERE name = 'DJ (individual)'`);
   const ev3 = await q1(`SELECT count(*)::int n, bool_and((before->>'kind') = 'vendor' AND (after->>'kind') = 'reimbursement') ok FROM vendor_tax_status_events e JOIN vendors v ON v.id = e.vendor_id WHERE v.name = 'DJ (individual)'`);
   check('audit: relabeling a payee as a reimbursement is recorded (no silent bypass)', ev3.n === 1 && ev3.ok, JSON.stringify(ev3));
+  const inv0 = await q1(`SELECT tax_reporting_category c, total_cents FROM ap_invoices WHERE id = '00000000-0000-0000-0000-0000000000b1'`);
+  check('existing bills untouched: category NULL (= vendor default), amount unchanged', inv0.c === null && Number(inv0.total_cents) === 150000);
+  check('rule: an unknown bill category is rejected', /ap_invoices_tax_reporting_category_check/.test(await tryErr(`UPDATE ap_invoices SET tax_reporting_category = 'legal' WHERE id = '00000000-0000-0000-0000-0000000000b1'`) || ''));
+  const before4 = (await q1(`SELECT count(*)::int n FROM vendor_tax_status_events`)).n;
+  const okCat = await tryErr(`UPDATE ap_invoices SET tax_reporting_category = 'attorney_gross_proceeds' WHERE id = '00000000-0000-0000-0000-0000000000b1'`);
+  const ev4 = await q1(`SELECT count(*)::int n FROM vendor_tax_status_events WHERE after->>'tax_reporting_category' = 'attorney_gross_proceeds' AND after->>'invoice_id' = '00000000-0000-0000-0000-0000000000b1'`);
+  check('audit: changing a bill from fees to gross proceeds is recorded', okCat === null && ev4.n === 1 && (await q1(`SELECT count(*)::int n FROM vendor_tax_status_events`)).n === before4 + 1, okCat || JSON.stringify(ev4));
   check('rule: the proof document cannot be deleted while it backs an exemption',
     /foreign key|violates/.test(await tryErr(`DELETE FROM vendor_documents WHERE id = '00000000-0000-0000-0000-0000000000d1'`) || ''));
 }

@@ -20,6 +20,13 @@
 -- as an expense reimbursement leaves a trail) is written to
 -- vendor_tax_status_events by a trigger, so an exemption always has an audit trail.
 --
+-- ap_invoices.tax_reporting_category (bill level, NULL = the vendor default):
+--   services | attorney_fees | attorney_gross_proceeds | medical | rents | other_income
+-- Each has its own year-aware threshold (lib/tax/info_reporting): e.g. attorney
+-- fees for services follow the 2026 $2,000 NEC threshold while gross proceeds
+-- paid to an attorney (IRC 6045(f)) stay a $600 1099-MISC threshold. A change
+-- to a bill's category is audited in the same events table.
+--
 -- Record ownership: workpaper (Bedrock's vendor master and its tax review). The
 -- 1099 filings produced from it are association records, made per community.
 -- No existing row's values change: every vendor starts 'unknown' (= potentially
@@ -53,6 +60,13 @@ DO $$ BEGIN
       tax_reporting_status <> 'exempt_verified'
       OR (tax_exemption_basis IS NOT NULL AND tax_exemption_source IS NOT NULL
           AND tax_exemption_verified_by IS NOT NULL AND tax_exemption_verified_at IS NOT NULL));
+  END IF;
+END $$;
+
+ALTER TABLE ap_invoices ADD COLUMN IF NOT EXISTS tax_reporting_category TEXT;
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'ap_invoices_tax_reporting_category_check') THEN
+    ALTER TABLE ap_invoices ADD CONSTRAINT ap_invoices_tax_reporting_category_check CHECK (tax_reporting_category IS NULL OR tax_reporting_category IN ('services', 'attorney_fees', 'attorney_gross_proceeds', 'medical', 'rents', 'other_income'));
   END IF;
 END $$;
 
@@ -93,5 +107,21 @@ END $$;
 DROP TRIGGER IF EXISTS trg_vendor_tax_status_audit ON vendors;
 CREATE TRIGGER trg_vendor_tax_status_audit AFTER UPDATE ON vendors
   FOR EACH ROW EXECUTE FUNCTION vendor_tax_status_audit();
+
+-- A bill's reporting category decides which threshold applies: audit changes.
+CREATE OR REPLACE FUNCTION ap_invoice_tax_category_audit() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  IF NEW.tax_reporting_category IS DISTINCT FROM OLD.tax_reporting_category AND NEW.vendor_id IS NOT NULL THEN
+    INSERT INTO vendor_tax_status_events (vendor_id, changed_by, before, after)
+      VALUES (NEW.vendor_id, current_user,
+        jsonb_build_object('invoice_id', OLD.id, 'tax_reporting_category', OLD.tax_reporting_category),
+        jsonb_build_object('invoice_id', NEW.id, 'tax_reporting_category', NEW.tax_reporting_category));
+  END IF;
+  RETURN NEW;
+END $$;
+
+DROP TRIGGER IF EXISTS trg_ap_invoice_tax_category_audit ON ap_invoices;
+CREATE TRIGGER trg_ap_invoice_tax_category_audit AFTER UPDATE ON ap_invoices
+  FOR EACH ROW EXECUTE FUNCTION ap_invoice_tax_category_audit();
 
 COMMIT;

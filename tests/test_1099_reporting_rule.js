@@ -34,7 +34,7 @@ check('threshold is YEAR-aware: $600 through 2025, $2,000 for 2026', () => {
   assert.strictEqual(R.thresholdFor(2026).cents, 200000); assert.strictEqual(R.thresholdFor(2026).provisional, false);
 });
 check('a later (indexed) year is not guessed: NO threshold (null), flagged provisional', () => {
-  const t = R.thresholdFor(2027); assert.strictEqual(t.provisional, true); assert.strictEqual(t.cents, null); assert.ok(/2027 1099 threshold is not configured/.test(t.basis));
+  const t = R.thresholdFor(2027); assert.strictEqual(t.provisional, true); assert.strictEqual(t.cents, null); assert.ok(/2027 1099 threshold for .* is not configured/.test(t.basis));
 });
 check('unconfigured year: a disbursement that NEEDS the threshold is a CONFIGURATION exception, never a block on last year\'s number', () => {
   const e = EV({ year: 2027, priorReportableCents: 0, paymentCents: 100 });
@@ -51,7 +51,7 @@ check('unconfigured year: recording and approval only warn', () => {
   assert.strictEqual(EV({ year: 2027, initiation: 'approve' }).decision, 'warn');
 });
 check('W-9 line 3 SUGGESTS a corporate exemption (never applies it); other classes suggest nothing', () => {
-  const s = R.suggestExemptionFromW9('c_corporation'); assert.deepStrictEqual([s.basis, s.source], ['corporation', 'w9_document']); assert.ok(/attorney or medical/.test(s.note));
+  const s = R.suggestExemptionFromW9('c_corporation'); assert.deepStrictEqual([s.basis, s.source], ['corporation', 'w9_document']); assert.ok(/attorney fees, gross proceeds paid to an attorney, or medical/.test(s.note));
   assert.ok(R.suggestExemptionFromW9('llc_s')); assert.strictEqual(R.suggestExemptionFromW9('individual_sole_proprietor'), null); assert.strictEqual(R.suggestExemptionFromW9('llc_p'), null);
   // a suggestion is not an exemption until confirmed
   assert.ok(R.vendorReportability({ ...UNKNOWN, tax_classification: 'c_corporation', w9_on_file: true }).reportable);
@@ -144,9 +144,9 @@ const PAYS = [
 ];
 check('cumulative: per vendor + association + year; excludes card, voided and other years; includes pending', async () => {
   const { reportableTotals } = require('../lib/tax/reportable_payments');
-  const t = await reportableTotals(db({ ap_payments: PAYS }), { vendorIds: ['v1'], year: 2026 });
-  assert.strictEqual(t.get('v1|c1'), 130000, 'check 1000 + pending ach 300; card, voided and 2025 excluded');
-  assert.strictEqual(t.get('v1|c2'), 999900, 'each association is its own filer');
+  const t = await reportableTotals(db({ ap_payments: PAYS, vendors: [UNKNOWN] }), { vendorIds: ['v1'], year: 2026 });
+  assert.strictEqual(t.get('v1|c1|services'), 130000, 'check 1000 + pending ach 300; card, voided and 2025 excluded');
+  assert.strictEqual(t.get('v1|c2|services'), 999900, 'each association is its own filer');
 });
 check('vendor read works BEFORE migration 477 (falls back to existing columns; nothing is exempt)', async () => {
   const { loadVendorsForTax } = require('../lib/tax/reportable_payments');
@@ -156,14 +156,14 @@ check('vendor read works BEFORE migration 477 (falls back to existing columns; n
 check('check run: crossing vendor is refused with a plain reason; under-threshold vendor passes', async () => {
   const { assertCheckRunAllowed } = require('../lib/tax/payment_gate');
   const d = db({ ap_payments: PAYS, vendors: [UNKNOWN, W9] });
-  await assert.rejects(assertCheckRunAllowed(d, { community_id: 'c1', vendorAmounts: new Map([['v1', 70000]]), payment_date: '2026-10-02' }),
+  await assert.rejects(assertCheckRunAllowed(d, { community_id: 'c1', vendorBills: new Map([['v1', [{ invoice_id: 'i-x', cents: 70000 }]]]), payment_date: '2026-10-02' }),
     (e) => e.code === 'w9_required_for_payment' && /\$2,000\.00/.test(e.detail) && e.vendors[0].vendor_id === 'v1');
-  await assertCheckRunAllowed(d, { community_id: 'c1', vendorAmounts: new Map([['v1', 60000]]), payment_date: '2026-10-02' });
-  await assertCheckRunAllowed(d, { community_id: 'c1', vendorAmounts: new Map([['v2', 900000]]), payment_date: '2026-10-02' });
+  await assertCheckRunAllowed(d, { community_id: 'c1', vendorBills: new Map([['v1', [{ invoice_id: 'i-x', cents: 60000 }]]]), payment_date: '2026-10-02' });
+  await assertCheckRunAllowed(d, { community_id: 'c1', vendorBills: new Map([['v2', [{ invoice_id: 'i-y', cents: 900000 }]]]), payment_date: '2026-10-02' });
 });
 check('check run fails CLOSED: a read error refuses the run (no check cut on an unknown)', async () => {
   const { assertCheckRunAllowed } = require('../lib/tax/payment_gate');
-  await assert.rejects(assertCheckRunAllowed(db({}, { failOn: 'ap_payments' }), { community_id: 'c1', vendorAmounts: new Map([['v1', 100]]), payment_date: '2026-10-02' }), (e) => e.code === 'tax_check_failed');
+  await assert.rejects(assertCheckRunAllowed(db({}, { failOn: 'ap_payments' }), { community_id: 'c1', vendorBills: new Map([['v1', [{ invoice_id: 'i-x', cents: 100 }]]]), payment_date: '2026-10-02' }), (e) => e.code === 'tax_check_failed');
 });
 check('recording fails OPEN: a read error never stops recording real bank activity', async () => {
   const { evaluateRecordedPayment } = require('../lib/tax/payment_gate');
@@ -180,10 +180,94 @@ check('list projection: a bill that could not be paid today is flagged; projecti
   assert.strictEqual(empty.size, 0);
 });
 
+// ---------------------------------------------------------------- reporting categories (attorney fees vs gross proceeds)
+const ATTY = { ...UNKNOWN, id: 'va', name: 'Daughtry & Farine, P.C.', is_legal_counsel: true };
+const ATTY_CORP = { ...CORP_EXEMPT, id: 'vac', name: 'Big Law Corp', is_legal_counsel: true };
+check('exact threshold, services 2026: $1,999.99 allows; $2,000.00 blocks (>=)', () => {
+  assert.strictEqual(EV({ priorReportableCents: 0, paymentCents: 199999 }).decision, 'allow');
+  assert.strictEqual(EV({ priorReportableCents: 0, paymentCents: 200000 }).decision, 'block');
+  assert.strictEqual(EV({ priorReportableCents: 199999, paymentCents: 1 }).decision, 'block');
+});
+check('attorney FEES for services 2026 follow the $2,000 NEC threshold (1099-NEC box 1)', () => {
+  const a = EV({ vendor: ATTY, category: 'attorney_fees', paymentCents: 199999 }); assert.strictEqual(a.decision, 'allow'); assert.deepStrictEqual([a.form, a.box], ['1099-NEC', '1']);
+  assert.strictEqual(EV({ vendor: ATTY, category: 'attorney_fees', paymentCents: 200000 }).decision, 'block');
+});
+check('GROSS PROCEEDS paid to an attorney (6045(f)) keep the $600 MISC threshold in 2026: $599.99 allows; $600.00 blocks', () => {
+  const a = EV({ vendor: ATTY, category: 'attorney_gross_proceeds', paymentCents: 59999 }); assert.strictEqual(a.decision, 'allow'); assert.deepStrictEqual([a.form, a.box], ['1099-MISC', '10']);
+  const b = EV({ vendor: ATTY, category: 'attorney_gross_proceeds', paymentCents: 60000 }); assert.strictEqual(b.decision, 'block'); assert.ok(/gross proceeds paid to an attorney/.test(b.reason));
+  assert.strictEqual(R.thresholdFor(2026, 'attorney_gross_proceeds').cents, 60000);
+  assert.strictEqual(EV({ vendor: ATTY, category: 'attorney_fees', paymentCents: 60000 }).decision, 'allow', 'the same $600 as FEES is under the $2,000 threshold: not collapsed');
+});
+check('gross proceeds in an unconfigured year is a configuration exception (fail-safe kept)', () => {
+  assert.strictEqual(R.thresholdFor(2027, 'attorney_gross_proceeds').cents, null);
+  assert.strictEqual(EV({ year: 2027, vendor: ATTY, category: 'attorney_gross_proceeds', paymentCents: 100 }).decision, 'config_exception');
+});
+check('medical/health care 2026: $2,000 MISC (box 6), reportable even to a corporation', () => {
+  const med = { ...CORP_EXEMPT, is_medical_provider: true };
+  const e = EV({ vendor: { ...med, w9_on_file: false, tax_classification: null }, category: 'medical', paymentCents: 200000 });
+  assert.strictEqual(e.decision, 'block'); assert.deepStrictEqual([e.form, e.box], ['1099-MISC', '6']);
+  assert.strictEqual(R.thresholdFor(2026, 'medical').cents, 200000);
+});
+check('corporate exemption: covers services/rents/other income; NOT attorney fees, gross proceeds or medical', () => {
+  for (const c of ['services', 'rents', 'other_income']) assert.strictEqual(R.vendorReportability(ATTY_CORP, c).reportable, false, c);
+  for (const c of ['attorney_fees', 'attorney_gross_proceeds', 'medical']) assert.strictEqual(R.vendorReportability(ATTY_CORP, c).reportable, true, c);
+});
+check('government exemption covers every category (incl. gross proceeds / medical)', () => {
+  for (const c of Object.keys(R.CATEGORIES)) assert.strictEqual(R.vendorReportability(GOV_EXEMPT, c).reportable, false, c);
+});
+check('category: the bill\'s own category wins; else the vendor default (attorney -> fees, medical -> medical, else services)', () => {
+  assert.strictEqual(R.categoryFor('attorney_gross_proceeds', ATTY), 'attorney_gross_proceeds');
+  assert.strictEqual(R.categoryFor(null, ATTY), 'attorney_fees');
+  assert.strictEqual(R.categoryFor(null, { is_medical_provider: true }), 'medical');
+  assert.strictEqual(R.categoryFor(null, UNKNOWN), 'services');
+  assert.strictEqual(R.categoryFor('bogus', UNKNOWN), 'services');
+});
+check('card exclusion follows the PAYMENT\'s method, not the vendor: an attorney paid by card is not counted', () => {
+  const e = EV({ vendor: ATTY, category: 'attorney_gross_proceeds', paymentCents: 900000, method: 'credit_card' });
+  assert.strictEqual(e.decision, 'allow'); assert.strictEqual(e.counts, false);
+  const e2 = EV({ vendor: { ...ATTY, name: 'Visa Card Services' }, category: 'attorney_gross_proceeds', paymentCents: 60000, method: 'check' });
+  assert.strictEqual(e2.decision, 'block', 'a card-sounding vendor paid by check still counts');
+});
+check('one payment across two categories: each part against its own threshold; the worst decides', () => {
+  const r = R.evaluatePaymentParts({ vendor: ATTY, year: 2026, parts: [{ category: 'attorney_fees', cents: 150000 }, { category: 'attorney_gross_proceeds', cents: 60000 }], method: 'check', initiation: 'disburse' });
+  assert.strictEqual(r.decision, 'block'); assert.strictEqual(r.category, 'attorney_gross_proceeds');
+  assert.deepStrictEqual(r.parts.map((p) => p.decision), ['allow', 'block']);
+});
+check('cumulative is split by the bills each payment paid (fees vs gross proceeds)', async () => {
+  const { reportableTotals, totalsByCategory } = require('../lib/tax/reportable_payments');
+  const d = db({
+    ap_payments: [{ id: 'q1', vendor_id: 'va', community_id: 'c1', amount_cents: 80000, payment_method: 'check', status: 'completed', payment_date: '2026-02-01' }],
+    ap_payment_applications: [{ payment_id: 'q1', invoice_id: 'bf', applied_cents: 50000 }, { payment_id: 'q1', invoice_id: 'bg', applied_cents: 30000 }],
+    ap_invoices: [{ id: 'bf', tax_reporting_category: null }, { id: 'bg', tax_reporting_category: 'attorney_gross_proceeds' }],
+    vendors: [ATTY],
+  });
+  const t = await reportableTotals(d, { vendorIds: ['va'], year: 2026 });
+  assert.deepStrictEqual(totalsByCategory(t, 'va', 'c1'), { attorney_fees: 50000, attorney_gross_proceeds: 30000 });
+});
+check('check run: a gross-proceeds bill that reaches $600 is refused; the same amount as fees is not', async () => {
+  const { assertCheckRunAllowed } = require('../lib/tax/payment_gate');
+  const base = { ap_payments: [], ap_payment_applications: [], vendors: [ATTY] };
+  await assert.rejects(assertCheckRunAllowed(db({ ...base, ap_invoices: [{ id: 'g1', tax_reporting_category: 'attorney_gross_proceeds' }] }), { community_id: 'c1', vendorBills: new Map([['va', [{ invoice_id: 'g1', cents: 60000 }]]]), payment_date: '2026-10-02' }),
+    (e) => e.code === 'w9_required_for_payment' && /gross proceeds paid to an attorney/.test(e.detail));
+  await assertCheckRunAllowed(db({ ...base, ap_invoices: [{ id: 'f1', tax_reporting_category: null }] }), { community_id: 'c1', vendorBills: new Map([['va', [{ invoice_id: 'f1', cents: 60000 }]]]), payment_date: '2026-10-02' });
+});
+check('bill category is set only by an admin, never on a paid/voided bill, and is audited (477)', () => {
+  const ap = src('api/ap.js'); const ep = ap.slice(ap.indexOf("router.post('/invoices/:id/tax-category'"), ap.indexOf('// POST /invoices/:id/approve'));
+  assert.ok(ep.includes('requireAdmin(req, res)') && /invalid_category/.test(ep) && /category_locked/.test(ep) && ep.includes("['paid', 'partially_paid', 'voided']"));
+  const m = src('migrations/477_vendor_tax_reporting_status.sql');
+  assert.ok(/ADD COLUMN IF NOT EXISTS tax_reporting_category TEXT/.test(m) && /ap_invoices_tax_reporting_category_check/.test(m) && /trg_ap_invoice_tax_category_audit/.test(m));
+  assert.ok(/'attorney_gross_proceeds'/.test(m) && /'attorney_fees'/.test(m));
+});
+check('bill category read is tolerant before 477 (no column -> vendor default, no failure)', async () => {
+  const { invoiceCategories } = require('../lib/tax/reportable_payments');
+  const d = { from() { const q = { select() { return q; }, in() { return Promise.resolve({ data: null, error: { message: 'column ap_invoices.tax_reporting_category does not exist' } }); } }; return q; } };
+  const m = await invoiceCategories(d, ['x']); assert.strictEqual(m.size, 0);
+});
+
 // ---------------------------------------------------------------- where it acts (paths)
 check('PATH check run: the 1099 gate runs BEFORE any check number is reserved', () => {
   const s = src('lib/accounting/check_run.js');
-  assert.ok(s.indexOf('assertCheckRunAllowed(supabase, { community_id, vendorAmounts, payment_date })') < s.indexOf("rpc('reserve_next_check_number'"));
+  assert.ok(s.indexOf('assertCheckRunAllowed(supabase, { community_id, vendorBills, payment_date })') < s.indexOf("rpc('reserve_next_check_number'"));
   assert.ok(/return \{ w9_required_before_payment: stop, w9_reason: stop \? ev\.reason : null \}/.test(s), 'list flags the bill');
   assert.ok(/i\.w9_required_before_payment \? `<input type="checkbox" disabled/.test(src('public/accounting.html')), 'UI: not selectable, with the reason');
   assert.ok(/err\.code === 'w9_required_for_payment' \|\| err\.code === 'threshold_unconfigured'\) return res\.status\(409\)/.test(src('api/checks.js')) && /tax_check_failed'\) return res\.status\(503\)/.test(src('api/checks.js')));
@@ -215,7 +299,7 @@ check('no hard-coded $600 left in the 1099 / W-9 logic; thresholds come from thr
 });
 check('check run: an unconfigured year refuses with its OWN code (threshold_unconfigured), not "W-9 needed"', async () => {
   const { assertCheckRunAllowed } = require('../lib/tax/payment_gate');
-  await assert.rejects(assertCheckRunAllowed(db({ ap_payments: [], vendors: [UNKNOWN] }), { community_id: 'c1', vendorAmounts: new Map([['v1', 100]]), payment_date: '2027-01-15' }),
+  await assert.rejects(assertCheckRunAllowed(db({ ap_payments: [], vendors: [UNKNOWN] }), { community_id: 'c1', vendorBills: new Map([['v1', [{ invoice_id: 'i-x', cents: 100 }]]]), payment_date: '2027-01-15' }),
     (e) => e.code === 'threshold_unconfigured' && /1099 threshold not configured/.test(e.detail));
   assert.ok(/'w9_required_for_payment' \|\| err\.code === 'threshold_unconfigured'\) return res\.status\(409\)/.test(src('api/checks.js')));
   assert.ok(/ev\.decision === 'block' \|\| ev\.decision === 'config_exception'/.test(src('lib/accounting/check_run.js')), 'the list flags it too');

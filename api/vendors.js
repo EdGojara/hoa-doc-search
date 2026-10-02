@@ -292,17 +292,14 @@ router.get('/', async (req, res) => {
       }, { orderBy: 'payment_date' });
       const ytdByVendor = {};
       for (const p of pays) ytdByVendor[p.vendor_id] = (ytdByVendor[p.vendor_id] || 0) + Number(p.amount_cents || 0);
-      // 1099-REPORTABLE payments (Issue #14): completed/pending, not card
-      // (reported on 1099-K), per payer (community). The threshold is per payer,
-      // so the flag uses the vendor's LARGEST single-association total.
-      const { reportingChannel, thresholdFor, vendorReportability, w9Satisfied } = require('../lib/tax/info_reporting');
-      const repByVC = {};
-      for (const p of pays) {
-        if (!['pending', 'completed'].includes(p.status) || reportingChannel(p.payment_method) !== 'form_1099_nec_misc') continue;
-        const k = p.vendor_id + '|' + p.community_id; repByVC[k] = (repByVC[k] || 0) + Number(p.amount_cents || 0);
-      }
-      const repMaxByVendor = {};
-      for (const [k, c] of Object.entries(repByVC)) { const vid = k.split('|')[0]; repMaxByVendor[vid] = Math.max(repMaxByVendor[vid] || 0, c); }
+      // 1099-REPORTABLE payments (Issue #14): pending/completed, not card
+      // (1099-K), per payer (community) and per reporting category (attorney
+      // gross proceeds keep a $600 threshold in 2026). The same per-category
+      // evaluation as the check-run gate (lib/tax).
+      const { thresholdFor, vendorYearStatus } = require('../lib/tax/info_reporting');
+      const { reportableTotals, totalsByCategory } = require('../lib/tax/reportable_payments');
+      let repTotals = new Map();
+      try { repTotals = await reportableTotals(supabase, { vendorIds: ids, year }); } catch (e) { console.warn('[vendors] reportable totals skipped:', e.message); }
       const thr = thresholdFor(year);
 
       vendors = vendors.map((v) => {
@@ -316,8 +313,12 @@ router.get('/', async (req, res) => {
         // classification, and reportable payments from one association at/over
         // the YEAR's threshold ($600 through 2025, $2,000 in 2026). Issue #14.
         const tv = v._tax || v;
-        const reportable_ytd_cents = repMaxByVendor[v.id] || 0;
-        const needs_w9 = vendorReportability(tv).reportable && !w9Satisfied(tv) && reportable_ytd_cents >= thr.cents;
+        // Each association is its own filer: the vendor needs a W-9 if ANY
+        // association's category total is over that category's threshold.
+        const comms = [...new Set([...repTotals.keys()].filter((k) => k.startsWith(v.id + '|')).map((k) => k.split('|')[1]))];
+        const sts = comms.map((c) => vendorYearStatus({ vendor: tv, year, byCategory: totalsByCategory(repTotals, v.id, c) }));
+        const reportable_ytd_cents = sts.reduce((m, x) => Math.max(m, x.reportable_cents), 0);
+        const needs_w9 = sts.some((x) => x.needs_w9);
         const { _tax, ...rest } = v;
         return { ...rest, ytd_spend_cents: ytd, ytd_year: year, spend_scope, coi_state, needs_w9, reportable_ytd_cents, w9_threshold_cents: thr.cents, has_action: coi_state === 'expired' || coi_state === 'expiring' || needs_w9 };
       });
@@ -1549,7 +1550,7 @@ router.get('/documents/:docId/file', async (req, res) => {
 router.get('/spend', async (req, res) => {
   try {
     const year = parseInt(req.query.year, 10) || new Date().getFullYear();
-    const { thresholdFor, vendorReportability, w9Satisfied } = require('../lib/tax/info_reporting');
+    const { thresholdFor } = require('../lib/tax/info_reporting');
     const thr = thresholdFor(year);
     const CENTS_1099_THRESHOLD = thr.cents;
     let q = supabase.from('v_vendor_annual_spend').select('*').eq('paid_year', year);
@@ -1572,6 +1573,9 @@ router.get('/spend', async (req, res) => {
     // the rule's vendor fields (exemption + provenance).
     const { reportableTotals, loadVendorsForTax } = require('../lib/tax/reportable_payments');
     const [repTotals, taxV] = await Promise.all([reportableTotals(supabase, { vendorIds, year }), loadVendorsForTax(supabase, vendorIds)]);
+    const { totalsByCategory } = require('../lib/tax/reportable_payments');
+    const { vendorYearStatus } = require('../lib/tax/info_reporting');
+    const statusOf = (r) => vendorYearStatus({ vendor: taxV.get(r.vendor_id) || vById[r.vendor_id] || {}, year, byCategory: totalsByCategory(repTotals, r.vendor_id, r.community_id) });
     const cById = Object.fromEntries((comms || []).map(c => [c.id, c.name]));
     const w9ById = {}; for (const d of (w9docs || [])) if (!w9ById[d.vendor_id]) w9ById[d.vendor_id] = d.id; // latest per vendor
 
@@ -1594,9 +1598,7 @@ router.get('/spend', async (req, res) => {
         w9_doc_id: w9ById[r.vendor_id] || null,
         tax_id: v.tax_id || null,
         tax_classification: v.tax_classification || null,
-        reportable_cents: repTotals.get(r.vendor_id + '|' + r.community_id) || 0,
-        over_threshold: (repTotals.get(r.vendor_id + '|' + r.community_id) || 0) >= CENTS_1099_THRESHOLD,
-        needs_w9: vendorReportability(taxV.get(r.vendor_id) || v).reportable && !w9Satisfied(taxV.get(r.vendor_id) || v) && (repTotals.get(r.vendor_id + '|' + r.community_id) || 0) >= CENTS_1099_THRESHOLD,
+        ...(() => { const st = statusOf(r); return { reportable_cents: st.reportable_cents, over_threshold: st.over_threshold, needs_w9: st.needs_w9, threshold_provisional: st.provisional, reporting_categories: st.categories }; })(),
       };
     }).sort((a, b) => b.total_cents - a.total_cents);
 
@@ -1606,7 +1608,7 @@ router.get('/spend', async (req, res) => {
       const only1099 = String(req.query.only_1099 || '') === '1';
       const rowsOut = only1099 ? out.filter((r) => r.is_1099_vendor || r.over_threshold) : out;
       const cell = (s) => `"${String(s == null ? '' : s).replace(/"/g, '""')}"`;
-      const header = ['Vendor', 'TIN', 'Tax classification', 'Community', 'Year', 'Total paid', 'Reportable (excl. card)', 'Payments', '1099 vendor', 'W-9 on file', `Over ${(CENTS_1099_THRESHOLD / 100).toLocaleString('en-US')}`, 'Needs W-9'];
+      const header = ['Vendor', 'TIN', 'Tax classification', 'Community', 'Year', 'Total paid', 'Reportable (excl. card)', 'Payments', '1099 vendor', 'W-9 on file', 'Over its 1099 threshold (by category)', 'Needs W-9'];
       const lines = [header.map(cell).join(',')];
       for (const r of rowsOut) {
         lines.push([r.vendor_name, r.tax_id, r.tax_classification, r.community_name, r.year, (r.total_cents / 100).toFixed(2), (r.reportable_cents / 100).toFixed(2), r.payment_count, r.is_1099_vendor ? 'Yes' : 'No', r.w9_on_file ? 'Yes' : 'No', r.over_threshold ? 'Yes' : 'No', r.needs_w9 ? 'Yes' : 'No'].map(cell).join(','));

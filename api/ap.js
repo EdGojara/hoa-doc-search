@@ -990,6 +990,32 @@ async function approvalTaxNote(id) {
   } catch (_) { return null; }
 }
 
+// POST /invoices/:id/tax-category  { category | null, note }  (Issue #14)
+// The bill's 1099 reporting category decides which threshold applies (e.g.
+// attorney fees for services: $2,000 NEC in 2026; gross proceeds paid to an
+// attorney, IRC 6045(f): $600 MISC). NULL = the vendor default. Admin only;
+// not for paid/partially paid/voided bills (history stays as it was). Every
+// change is audited by migration 477's trigger.
+router.post('/invoices/:id/tax-category', express.json(), async (req, res) => {
+  const { requireAdmin } = require('./_require_admin');
+  const admin = await requireAdmin(req, res); if (!admin) return;
+  try {
+    const { CATEGORIES } = require('../lib/tax/info_reporting');
+    const cat = (req.body || {}).category == null || (req.body || {}).category === '' ? null : String(req.body.category);
+    if (cat !== null && !CATEGORIES[cat]) return res.status(400).json({ error: 'invalid_category', detail: `category must be one of ${Object.keys(CATEGORIES).join(', ')}, or empty for the vendor default` });
+    const { data: inv, error: ie } = await supabase.from('ap_invoices').select('id, status, amount_paid_cents').eq('id', req.params.id).maybeSingle();
+    if (ie) throw ie;
+    if (!inv) return res.status(404).json({ error: 'not_found' });
+    if (['paid', 'partially_paid', 'voided'].includes(inv.status) || (inv.amount_paid_cents || 0) > 0) {
+      return res.status(409).json({ error: 'category_locked', detail: 'This bill has a payment recorded (or is voided); its 1099 category is part of history and is not changed here.' });
+    }
+    const { data, error } = await supabase.from('ap_invoices').update({ tax_reporting_category: cat }).eq('id', inv.id).select('id, tax_reporting_category').single();
+    if (error) throw error;
+    console.log(`[ap] tax category for ${inv.id} -> ${cat || '(vendor default)'} by ${admin.email || admin.full_name || 'admin'}${req.body && req.body.note ? ': ' + String(req.body.note).slice(0, 200) : ''}`);
+    res.json({ ok: true, invoice: data });
+  } catch (err) { console.error('[ap] tax category failed:', err.message); res.status(500).json({ error: safeErrorMessage(err) }); }
+});
+
 // POST /invoices/:id/approve — TWO-KEY approval (Ed 2026-07-15).
 //   Key 1 (manager: staff/assistant) — attests the bill is legitimate. Records
 //     WHO and WHEN. Does NOT release money.
