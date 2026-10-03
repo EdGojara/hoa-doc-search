@@ -241,3 +241,47 @@ Every line carries the batch code, cutoff and source provenance. The snapshot sh
 | AR | PASS: 30 accounts = 19,767.91; each matches its aging; 97 charge lines |
 | Prepaid | **BLOCKED**: 2 accounts support 184.60; **737.53 unsupported** (one line, names nobody); GL 2400 kept at 922.13 |
 | AP | **BLOCKED**: no AP aging; 561.70 kept |
+
+## Milestone 4: Activity Bridge (read-only)
+
+Branch `feat/onboarding-m4`. Persisting a bridge needs **migration 484** (a proposal, not applied). The bridge compares the authoritative cutoff position with the financial activity actually recorded in Trusted, and changes neither.
+
+**Loader (`lib/onboarding/trusted_activity.js`).** It works only through the **read-only client**: any write throws before a request is sent.
+- **Reads:** journal entries and lines, AP invoices and payments, AR charges and payments, card/ACH payments, and homeowner ledger rows.
+- **Never reads:** ACC, violation or certification history.
+- **Every read** is community-scoped, ordered and paginated.
+
+**Bridge (`lib/onboarding/bridge.js`, pure and deterministic, no LLM).**
+- **Events:** each event is one journal entry plus every record linked to it. Unlinked legacy rows are grouped by import batch or module.
+- **Classifications:** `ALREADY_IN_SOURCE`, `LEGITIMATE_SUBSEQUENT`, `AMBIGUOUS` and `OUT_OF_SCOPE`, each with a method, confidence and evidence (source provenance included).
+
+Rules, applied in order:
+1. **Provenance.** Legacy imports, and system entries in the source period, are `ALREADY_IN_SOURCE`. Superseded entries are `OUT_OF_SCOPE`.
+2. **No money moved.** Test or pending payments, and a void with its equal reversal, are `OUT_OF_SCOPE`. A void with no matching reversal is `AMBIGUOUS` and gets a structural issue.
+3. **Durable identifier plus amount in the source.** Invoice number or check number: `ALREADY_IN_SOURCE`, **even if dated after the cutoff**. If the identifier matches but the amount differs: `AMBIGUOUS`.
+4. **Amount (plus counterparty) without an identifier.** Always `AMBIGUOUS`, **never a duplicate**. A source line with a different document number, or a different service month, is not a candidate.
+5. **No source evidence.** After the cutoff: `LEGITIMATE_SUBSEQUENT`. Inside the source period: `AMBIGUOUS`.
+
+**Structural checks.** These run on every event that would be preserved: a posted, balanced entry with lines; AR lines matched by AR records; AP invoice and payment totals equal to their entry. Problems are **reported, never repaired**.
+
+**Controls:**
+- `bridge.every_record_classified_exactly_once`;
+- `bridge.record_count_reconciles`;
+- `bridge.no_duplicate_on_amount_alone`;
+- `bridge.every_item_has_evidence`;
+- `bridge.preserved_events_structurally_complete`;
+- `bridge.ambiguous_items_reviewed` (BLOCKED while anything is ambiguous);
+- `bridge.built_on_current_snapshot`.
+
+The bridge sha256 is canonical. A **Trusted activity fingerprint** records exactly what was seen, and a later change marks the bridge not fresh.
+
+**Persistence (484).**
+- `onboarding_bridge_items` (append-only) is bound to the bridge completion.
+- `onboarding_bridge_records` is append-only with **UNIQUE(run, table, record)**, so the database refuses double classification. A CHECK forbids `ALREADY_IN_SOURCE` on an amount-only method.
+- `onboarding_record_bridge` works only in stage `activity_bridge`, only on the current snapshot result, and is atomic.
+- A re-run makes the earlier bridge stale.
+
+**Service, API and UI.**
+- The bridge stage runner uses the read-only Trusted reader.
+- Endpoints: `GET /api/onboarding/batches/:id/bridge` and `/bridge/freshness`.
+- The page shows counts, records and dollars by classification; a structural-issue banner; the ambiguous items with their evidence; what would be preserved, suppressed or out of scope; and a "Trusted activity changed since the bridge" banner.

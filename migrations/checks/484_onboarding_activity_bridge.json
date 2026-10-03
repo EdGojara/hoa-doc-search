@@ -1,0 +1,123 @@
+{
+  "migration": "484_onboarding_activity_bridge.sql",
+  "summary": "Onboarding Engine activity bridge persistence (Issue #15 Milestone 4): a read-only comparison of the cutoff position with actual Trusted financial activity. Creates append-only onboarding_bridge_items (one classified event per row: ALREADY_IN_SOURCE / LEGITIMATE_SUBSEQUENT / AMBIGUOUS / OUT_OF_SCOPE, method, confidence, evidence, structural issues, bridge sha256, Trusted activity fingerprint; CHECKs: never ALREADY_IN_SOURCE on an amount-only method, nor on a generic system entry merely dated in the source period) and onboarding_bridge_records (UNIQUE per run, table and record: a record cannot be classified twice). Adds onboarding_record_bridge (result + items + records in one transaction; stage activity_bridge only; must name the current snapshot result; identity checked) and onboarding_bridge_view. Replaces onboarding_record_completion (as 483, plus bridge results only with their items). Nothing posts or changes any Trusted record. Service_role only. No rows change.",
+  "requires": [
+    "483_onboarding_snapshot.sql"
+  ],
+  "preflight": [
+    {
+      "name": "bridge tables do not exist yet",
+      "sql": "SELECT count(*)::int FROM information_schema.tables WHERE table_schema = 'public' AND table_name IN ('onboarding_bridge_items','onboarding_bridge_records')",
+      "expect": 0
+    },
+    {
+      "name": "483 snapshot functions are in place",
+      "sql": "SELECT count(*)::int FROM pg_proc WHERE proname IN ('onboarding_record_snapshot','onboarding_snapshot_view')",
+      "expect": 2
+    }
+  ],
+  "expected_changes": [
+    "Creates onboarding_bridge_items and onboarding_bridge_records (append-only; CHECKs; UNIQUE(completion, item_no), UNIQUE(completion, event_key), UNIQUE(completion, record_table, record_id); FK records -> items; indexes; SELECT/INSERT grants).",
+    "Creates functions onboarding_record_bridge and onboarding_bridge_view (EXECUTE to service_role only).",
+    "Replaces onboarding_record_completion (activity-bridge results only via onboarding_record_bridge).",
+    "No row changes."
+  ],
+  "objects": {
+    "added": [
+      "column:onboarding_bridge_items.amount_cents",
+      "column:onboarding_bridge_items.batch_code",
+      "column:onboarding_bridge_items.batch_id",
+      "column:onboarding_bridge_items.bridge_sha256",
+      "column:onboarding_bridge_items.classification",
+      "column:onboarding_bridge_items.completion_event_id",
+      "column:onboarding_bridge_items.confidence",
+      "column:onboarding_bridge_items.created_at",
+      "column:onboarding_bridge_items.cutoff_date",
+      "column:onboarding_bridge_items.event_date",
+      "column:onboarding_bridge_items.event_key",
+      "column:onboarding_bridge_items.evidence",
+      "column:onboarding_bridge_items.id",
+      "column:onboarding_bridge_items.item_no",
+      "column:onboarding_bridge_items.kind",
+      "column:onboarding_bridge_items.method",
+      "column:onboarding_bridge_items.run_id",
+      "column:onboarding_bridge_items.structural_issues",
+      "column:onboarding_bridge_items.trusted_fingerprint",
+      "column:onboarding_bridge_records.completion_event_id",
+      "column:onboarding_bridge_records.id",
+      "column:onboarding_bridge_records.item_no",
+      "column:onboarding_bridge_records.record_id",
+      "column:onboarding_bridge_records.record_table",
+      "constraint:onboarding_bridge_items.onboarding_bridge_items_batch_id_fkey",
+      "constraint:onboarding_bridge_items.onboarding_bridge_items_bridge_sha256_check",
+      "constraint:onboarding_bridge_items.onboarding_bridge_items_classification_check",
+      "constraint:onboarding_bridge_items.onboarding_bridge_items_completion_event_id_event_key_key",
+      "constraint:onboarding_bridge_items.onboarding_bridge_items_completion_event_id_fkey",
+      "constraint:onboarding_bridge_items.onboarding_bridge_items_completion_event_id_item_no_key",
+      "constraint:onboarding_bridge_items.onboarding_bridge_items_confidence_check",
+      "constraint:onboarding_bridge_items.onboarding_bridge_items_item_no_check",
+      "constraint:onboarding_bridge_items.onboarding_bridge_items_pkey",
+      "constraint:onboarding_bridge_items.onboarding_bridge_items_run_id_fkey",
+      "constraint:onboarding_bridge_items.onboarding_bridge_items_structural_issues_check",
+      "constraint:onboarding_bridge_items.onboarding_bridge_items_trusted_fingerprint_check",
+      "constraint:onboarding_bridge_items.onboarding_bridge_never_duplicate_on_amount",
+      "constraint:onboarding_bridge_items.onboarding_bridge_never_duplicate_on_system_period",
+      "constraint:onboarding_bridge_records.onboarding_bridge_records_completion_event_id_fkey",
+      "constraint:onboarding_bridge_records.onboarding_bridge_records_completion_event_id_item_no_fkey",
+      "constraint:onboarding_bridge_records.onboarding_bridge_records_completion_event_id_record_table__key",
+      "constraint:onboarding_bridge_records.onboarding_bridge_records_pkey",
+      "function:onboarding_bridge_view",
+      "function:onboarding_record_bridge",
+      "index:idx_onboarding_bridge_items_completion",
+      "index:idx_onboarding_bridge_records_item",
+      "index:onboarding_bridge_items_completion_event_id_event_key_key",
+      "index:onboarding_bridge_items_completion_event_id_item_no_key",
+      "index:onboarding_bridge_items_pkey",
+      "index:onboarding_bridge_records_completion_event_id_record_table__key",
+      "index:onboarding_bridge_records_pkey",
+      "table:onboarding_bridge_items",
+      "table:onboarding_bridge_records",
+      "trigger:onboarding_bridge_items.trg_onboarding_bridge_items_append_only",
+      "trigger:onboarding_bridge_records.trg_onboarding_bridge_records_append_only"
+    ],
+    "changed": [
+      "function:onboarding_record_completion"
+    ],
+    "removed": []
+  },
+  "row_changes": {
+    "conversion_batches": 0,
+    "conversion_runs": 0,
+    "onboarding_stage_events": 0,
+    "onboarding_snapshot_lines": 0
+  },
+  "protected": [
+    {
+      "table": "conversion_batches",
+      "order_by": "id"
+    },
+    {
+      "table": "journal_entries",
+      "order_by": "id"
+    }
+  ],
+  "verify": [
+    {
+      "name": "no bridge items yet",
+      "sql": "SELECT count(*)::int FROM onboarding_bridge_items",
+      "expect": 0
+    },
+    {
+      "name": "bridge functions present",
+      "sql": "SELECT count(*)::int FROM pg_proc WHERE proname IN ('onboarding_record_bridge','onboarding_bridge_view')",
+      "expect": 2
+    },
+    {
+      "name": "bridge append-only triggers present",
+      "sql": "SELECT count(*)::int FROM pg_trigger WHERE tgname IN ('trg_onboarding_bridge_items_append_only','trg_onboarding_bridge_records_append_only')",
+      "expect": 2
+    }
+  ],
+  "api_checks": [],
+  "reload_schema": true
+}
