@@ -71,9 +71,16 @@
     <p><a href="/admin/onboarding">&larr; All batches</a></p>
     <div id="head" class="card"></div>
     <div id="operator"></div>
-    <div id="required"></div>
-    <h2>Source artifacts</h2>
+    <div id="decisions"><div id="waivers"></div><div id="advance"></div></div>
+    <h2>What Trusted found</h2>
+    <div id="snapshot" class="tablewrap"></div>
+    <div id="bridge" class="tablewrap"></div>
+    <details class="card"><summary>Controls for the current stage</summary><div id="controls" class="tablewrap"></div></details>
+    <h2>Source files</h2>
     <div id="artifacts" class="card tablewrap"></div>
+    <details class="card"><summary>Audit trail</summary><div id="events" class="tablewrap"></div></details>
+    <details class="card" id="advanced"><summary>Advanced: manual engine controls (admin / recovery only; the operator normally does this)</summary>
+    <div id="required"></div>
     <form id="upload" class="card" hidden>
       <div class="row">
         <div><label for="up_file">Source file (original report, or its extracted text)</label><input id="up_file" type="file" required></div>
@@ -86,14 +93,7 @@
       <button type="submit">Register artifact</button>
     </form>
     <div id="run"></div>
-    <h2>Controls for the current stage</h2>
-    <div id="controls" class="card tablewrap"></div>
-    <div id="snapshot" class="tablewrap"></div>
-    <div id="bridge" class="tablewrap"></div>
-    <div id="waivers"></div>
-    <div id="advance"></div>
-    <h2>Audit trail</h2>
-    <div id="events" class="card tablewrap"></div>
+    </details>
   </section>
 </div>
 
@@ -153,11 +153,11 @@ function renderDetail(v) {
       + '<td>' + (c.failures && c.failures.count ? '<details><summary>' + c.failures.count + ' item(s)</summary><pre class="mono" style="white-space:pre-wrap">' + esc(JSON.stringify(c.failures.items, null, 1)) + '</pre></details>' : '') + esc(c.reason || '') + '</td></tr>').join('') + '</tbody></table>';
   // waivers
   const w = can('waive');
-  $('waivers').innerHTML = w.length ? '<h2>Waive an open control (owner)</h2>' + w.map((x, i) => '<div class="card"><b class="mono">' + esc(x.code) + '</b><div class="muted">The control stays ' + esc((ctl.find((c) => c.code === x.code) || {}).status || 'FAIL') + ' in every report; the waiver is recorded next to it with your name and reason.</div><label for="wr' + i + '">Reason (required)</label><textarea id="wr' + i + '"></textarea><button data-i="' + i + '" class="wbtn">Waive this control</button></div>').join('') : '';
+  $('waivers').innerHTML = w.length ? '<h2>Your decision: waive an open control (owner)</h2>' + w.map((x, i) => '<div class="card"><b class="mono">' + esc(x.code) + '</b><div class="muted">The control stays ' + esc((ctl.find((c) => c.code === x.code) || {}).status || 'FAIL') + ' in every report; the waiver is recorded next to it with your name and reason.</div><label for="wr' + i + '">Reason (required)</label><textarea id="wr' + i + '"></textarea><button data-i="' + i + '" class="wbtn">Waive this control</button></div>').join('') : '';
   document.querySelectorAll('.wbtn').forEach((btn) => { btn.onclick = () => { const x = w[Number(btn.dataset.i)]; doWaive(b.id, x, $('wr' + btn.dataset.i).value); }; });
   // advance
   const adv = can('advance')[0];
-  $('advance').innerHTML = adv ? '<h2>Advance (owner)</h2><div class="card">Move this batch from <b>' + esc(label(b.stage)) + '</b> to <b>' + esc(label(adv.to)) + '</b>. The database re-checks the gate when you do.<br><button id="advBtn">Advance to ' + esc(label(adv.to)) + '</button></div>' : '';
+  $('advance').innerHTML = adv ? '<h2>Your decision: advance after a waiver (owner)</h2><div class="card">Move this batch from <b>' + esc(label(b.stage)) + '</b> to <b>' + esc(label(adv.to)) + '</b>. The database re-checks the gate when you do.<br><button id="advBtn">Advance to ' + esc(label(adv.to)) + '</button></div>' : '';
   if (adv) $('advBtn').onclick = () => doAdvance(b.id, adv);
   // events
   $('events').innerHTML = v.events.length ? '<table><thead><tr><th>#</th><th>When</th><th>Event</th><th>Stage</th><th>By</th><th>Detail</th></tr></thead><tbody>'
@@ -244,7 +244,7 @@ function renderOperator(v) {
   if (unknown.length) html += '<div><b>I do not recognize these files yet:</b> ' + unknown.map((a) => esc(a.file)).join(', ') + '</div>';
   if (missing.length || unknown.length) html += '<label for="op_files">Add the requested reports (as exported)</label><input id="op_files" type="file" multiple><br><button id="opUpload">Upload and continue</button>';
   if (others.length) html += '<div style="margin-top:8px"><b>Needs your decision:</b><ul>' + others.map((a) => '<li>' + esc(a.text || a.control) + (a.difference_cents ? ' (' + money(a.difference_cents) + ')' : '') + '</li>').join('') + '</ul><span class="muted">Details, evidence and the waive / advance controls are below.</span></div>';
-  html += '<div class="muted" style="margin-top:8px;font-size:12.5px">Elapsed ' + Math.round((m.elapsed_seconds || 0) / 60) + ' min · human touches ' + (m.human_touches ?? '') + ' · operator steps ' + (m.operator_steps ?? '') + ' · stages passed ' + (m.stages_passed ?? '') + (m.current_controls_passing ? ' · controls passing ' + esc(m.current_controls_passing) : '') + ' · AI calls ' + (m.ai_calls ?? 0) + '</div>';
+  html += '<div class="muted" style="margin-top:8px;font-size:12.5px">Elapsed ' + Math.round((m.elapsed_seconds || 0) / 60) + ' min · human interventions ' + (m.human_interventions ?? '') + (m.interventions ? ' (' + Object.entries(m.interventions).filter(([, n]) => n).map(([k, n]) => n + ' ' + ({ handoff: 'handoff', source_uploads: 'source upload', judgments: 'judgment', authorizations: 'authorization' }[k] || k) + (n > 1 ? 's' : '')).join(', ') + ')' : '') + ' · operator steps ' + (m.operator_steps ?? '') + ' · stages passed ' + (m.stages_passed ?? '') + (m.current_controls_passing ? ' · controls passing ' + esc(m.current_controls_passing) : '') + ' · AI calls ' + (m.ai_calls ?? 0) + '</div>';
   if (runnable) html += '<button class="secondary" id="opRun">Run the operator again</button>';
   $('operator').innerHTML = html + '</div>';
   if ($('opUpload')) $('opUpload').onclick = () => { const fs2 = $('op_files').files; if (!fs2.length) return say('Choose the files first.', 'bad'); const fd = new FormData(); for (const f of fs2) fd.append('files', f); act(() => api('/api/onboarding/batches/' + encodeURIComponent(v.batch.id) + '/files', { method: 'POST', body: fd }), 'Reports added; the operator continued.'); };

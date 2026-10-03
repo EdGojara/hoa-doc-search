@@ -66,7 +66,9 @@ check('after the upload: intake, normalize, source controls, snapshot all PASS a
 check('roles were inferred from the source chart (1300 / 2400) without a human typing them', v.latest_by_stage.source_controls.summary.roles.ar_account === '1300' && v.latest_by_stage.source_controls.summary.roles.prepaid_account === '2400');
 check('it stops at the activity bridge, the first stage that needs a human, and says why', run2.stopped_at === 'activity_bridge' && run2.reason === 'needs_human' && v.operator.asks.some((a) => a.type === 'ambiguity'), JSON.stringify(v.operator.asks));
 check('every automatic advance is recorded as the operator (system), every stage before the bridge PASS', v.events.filter((e) => e.type === 'stage_advanced').every((e) => e.actor_kind === 'system' && e.actor_id === 'onboarding-operator') && ['intake', 'normalize', 'source_controls', 'snapshot'].every((s) => v.latest_by_stage[s].status === 'PASS'));
-check('metrics: 1 human touch (starting the batch), 0 AI calls, operator steps counted', v.operator.metrics.human_touches === 1 && v.operator.metrics.ai_calls === 0 && v.operator.metrics.operator_steps >= 8, JSON.stringify(v.operator.metrics));
+const m = v.operator.metrics;
+check('metrics: 2 human interventions = the handoff + the ONE requested-source upload; no manual run/advance anywhere; 0 AI calls', m.human_interventions === 2 && m.interventions.handoff === 1 && m.interventions.source_uploads === 1 && m.interventions.judgments === 0 && m.interventions.authorizations === 0 && m.manual_engine_actions === 0 && m.ai_calls === 0 && m.operator_steps >= 8, JSON.stringify(m));
+check('the upload alone resumed the chain: no human stage_completed / stage_advanced event exists', !v.events.some((e) => e.actor_kind === 'human' && (e.type === 'stage_completed' || e.type === 'stage_advanced')));
 check('nothing posted: no accounting rows', (await world.db.query(`SELECT count(*)::int AS n FROM journal_entries`)).rows[0].n === 0);
 
 // 3. The database keeps the human gates.
@@ -85,6 +87,13 @@ await world.rpc('onboarding_auto_advance', { p_batch: B2, p_completion: br, p_ac
 const pf = await world.rpc('onboarding_record_completion', { p_batch: B2, p_stage: 'preflight', p_status: 'PASS', p_open: [], p_controls: ctl, p_summary: {}, p_actor_kind: 'system', p_actor_id: 'op' });
 check('DB: the operator can reach preflight on PASS results but can NEVER advance into execute', /never into execute/.test((await code(() => world.rpc('onboarding_auto_advance', { p_batch: B2, p_completion: pf, p_actor_id: 'op' }))) || ''));
 check('a human advance still works through the normal owner path (into execute it still needs an approved preflight)', /execute needs an approved preflight|EXECUTE is not available/.test((await code(() => world.rpc('onboarding_advance', { p_batch: B2, p_completion: pf, p_to: 'execute', p_actor_kind: 'human', p_actor_id: 'ed' }))) || ''));
+
+// 3b. Ed's judgment and authorization at the bridge count as interventions; the audit trail keeps everything.
+const openAtBridge = v.latest_by_stage.activity_bridge.open_controls;
+for (const c of openAtBridge) await svc.waive(ED, B, { completion_id: bridgeCompletion, code: c, reason: 'test: reviewed' });
+await svc.advance(ED, B, { completion_id: bridgeCompletion, to: 'preflight' });
+const m2 = (await svc.getBatch(B, ED)).operator.metrics;
+check('metrics: each waiver is a judgment, the owner advance of a waived result is an authorization; still no manual engine ceremony', m2.interventions.judgments === openAtBridge.length && m2.interventions.authorizations === 1 && m2.human_interventions === 2 + openAtBridge.length + 1 && m2.manual_engine_actions === 0, JSON.stringify(m2));
 
 // 4. An unknown report format is reported, not guessed.
 const B3 = await svc.createBatch(ED, { community_id: COMM, batch_code: 'CONV-EX-UNKNOWN', as_of_date: '2026-03-31', source_system: 'vantaca' });

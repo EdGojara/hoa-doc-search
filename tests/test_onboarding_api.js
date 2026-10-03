@@ -34,7 +34,7 @@ function fakeService() {
   return { calls, schemaStatus: rec('schemaStatus', { ready: true, needs: [] }), listBatches: rec('listBatches', []), getBatch: rec('getBatch', (id, actor) => ({ id, actor })),
     getSnapshot: rec('getSnapshot', (id, cid) => (id === 'none' ? null : { completion_id: cid || 'latest', lines: [] })),
     createBatch: rec('createBatch', 'b-new'), registerArtifact: rec('registerArtifact', 'a-1'), runStage: rec('runStage', { status: 'PASS' }),
-    waive: rec('waive', 'w-1'), advance: rec('advance', (actor, id, body) => { if (body.to === 'snapshot') throw new ServiceError(409, 'REFUSED_BY_DATABASE', 'stage advance refused: stage source_controls is FAIL; not waived: x'); return 'e-1'; }),
+    operate: rec('operate', (id) => ({ batch: id, stopped_at: 'activity_bridge', reason: 'needs_human', steps: [] })), waive: rec('waive', 'w-1'), advance: rec('advance', (actor, id, body) => { if (body.to === 'snapshot') throw new ServiceError(409, 'REFUSED_BY_DATABASE', 'stage advance refused: stage source_controls is FAIL; not waived: x'); return 'e-1'; }),
     approve: rec('approve', () => { throw new Error('Supabase exploded with secret details'); }) };
 }
 async function withServer(fn) {
@@ -117,6 +117,30 @@ check('service guard: its only database calls are the onboarding_* rpc allowlist
   assert.ok(/if \(!RPC\.includes\(name\)\) throw/.test(s));
   assert.ok(!/\.from\(\s*['"](?!documents)/.test(s.replace(/storage\.from\(bucket\)/g, '').replace(/Buffer\.from\(/g, '')), 'no table access');
   assert.ok(/upsert: false/.test(s), 'artifact bytes are never overwritten');
+});
+
+check('uploading a requested source resumes the operator in the SAME request: no separate run / advance call is needed', async () => withServer(async ({ req, service }) => {
+  const fd = new FormData(); fd.append('files', new Blob([Buffer.from('%PDF-1.4 x')]), 'PrepaidHomeowners.pdf');
+  const r = await req('POST', '/batches/b1/files', { user: 'admin', form: fd });
+  assert.strictEqual(r.status, 200); assert.strictEqual(r.json.operator.stopped_at, 'activity_bridge');
+  const names = service.calls.map((c) => c.name);
+  assert.deepStrictEqual(names, ['registerArtifact', 'operate']);
+  assert.strictEqual(service.calls[0].args[2].artifact_type, 'original_pdf'); assert.strictEqual(service.calls[1].args[0], 'b1');
+  assert.ok(!names.includes('runStage') && !names.includes('advance'));
+}));
+check('starting onboarding hands off to the operator in the same request (create, store originals, operate)', async () => withServer(async ({ req, service }) => {
+  const fd = new FormData(); fd.append('community_id', 'c2'); fd.append('as_of_date', '2026-07-31'); fd.append('source_system', 'vantaca'); fd.append('files', new Blob([Buffer.from('%PDF-1.4 x')]), 'GLTrialBalance.pdf');
+  const r = await req('POST', '/onboard', { user: 'admin', form: fd });
+  assert.strictEqual(r.status, 200); assert.deepStrictEqual(service.calls.map((c) => c.name), ['createBatch', 'registerArtifact', 'operate']);
+  assert.strictEqual(service.calls[0].args[1].batch_code, 'CONV-A-20260731');
+}));
+
+check('UI: the operator panel is the primary path; manual run / upload / required-sources controls live only under the Advanced (admin / recovery) section', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'onboarding.html'), 'utf8');
+  const adv = html.indexOf('<details class="card" id="advanced">'); const advEnd = html.indexOf('</details>', html.indexOf('<div id="run">'));
+  assert.ok(adv > 0 && advEnd > adv, 'advanced section exists');
+  assert.ok(html.indexOf('<div id="operator">') < adv, 'operator panel comes first');
+  for (const id of ['<div id="required">', '<form id="upload"', '<div id="run">']) { const i = html.indexOf(id); assert.ok(i > adv && i < advEnd, id + ' sits inside Advanced'); }
 });
 
 (async () => {
