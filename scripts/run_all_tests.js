@@ -188,6 +188,7 @@ const CHECKS = [
   'tests/sql/484_apply_one_e2e.mjs',
   'tests/sql/485_apply_one_e2e.mjs',
   'tests/sql/486_apply_one_e2e.mjs',
+  'tests/sql/487_community_canonical_e2e.mjs',
   'tests/sql/onboarding_operator_e2e.mjs',
   'tests/sql/onboarding_service_e2e.mjs',
   'tests/test_ai_router.js',
