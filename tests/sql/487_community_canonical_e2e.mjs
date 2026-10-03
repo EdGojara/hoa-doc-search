@@ -91,11 +91,13 @@ if (r.status === 'applied') {
   check('atomic: a failure late in the proposal rolls back everything (no party, ownership, document or change row remains)', /unknown document/.test(rollback || '') && untouched, rollback);
   const viaService = await apply('k-bad', bad); let still = true; for (const t of TABLES) still = still && (await count(t)) === before[t];
   check('through the service a database refusal comes back machine-readable (REFUSED_BY_DATABASE) and nothing is written', viaService.ok === false && viaService.failures[0].code === 'REFUSED_BY_DATABASE' && /unknown document/.test(viaService.failures[0].message) && still, JSON.stringify(viaService));
-  check('the service refuses a structurally bad proposal BEFORE any database call (machine-readable codes)', W.validateChange({ documents: [doc('d9', 'd')], parties: [{ ref: 'z', kind: 'person', display_name: 'Z', identities: [] }], ownerships: [{ property_id: P[5], party_ref: 'z', role: 'owner', effective_from: null, effective_from_basis: 'unknown', observed_as_of: '2026-10-01', evidence: [] }] }).failures.map((x) => x.code).sort().join() === 'ITEM_WITHOUT_EVIDENCE,PARTY_WITHOUT_SOURCE_IDENTITY');
+  check('the service refuses a structurally bad proposal BEFORE any database call (machine-readable codes)', W.validateChange({ documents: [doc('d9', 'd')], parties: [{ ref: 'z', kind: 'unknown', kind_basis: 'unknown', display_name: 'Z', identities: [] }], ownerships: [{ property_id: P[5], party_ref: 'z', role: 'owner', effective_from: null, effective_from_basis: 'unknown', observed_as_of: '2026-10-01', evidence: [] }] }).failures.map((x) => x.code).sort().join() === 'ITEM_WITHOUT_EVIDENCE,PARTY_WITHOUT_SOURCE_IDENTITY');
 
   // 4. identities are never merged; identities and documents are immutable
   const merge = { documents: [doc('d1', 'a')], parties: [person('both', 'Alex Morgan', [hid('H1'), hid('H2')])], ownerships: [own(P[0], 'both')] };
-  check('a proposal naming identities of two existing parties is refused (no merge by any means)', /never merged/.test(await err(() => rpc('cd_apply', { p_community: COMM, p_idempotency_key: 'k-merge', p_proposal_sha256: W.proposalSha256(merge), p_change: merge, p_actor_kind: 'agent', p_actor_id: 'op' })) || ''));
+  check('a party carrying two identities is refused: further identities come only through an evidence-backed identity link (service + database)', W.validateChange(merge).failures.some((x) => x.code === 'IDENTITY_LINK_REQUIRED') && /exactly one source identity/.test(await err(() => rpc('cd_apply', { p_community: COMM, p_idempotency_key: 'k-merge', p_proposal_sha256: W.proposalSha256(merge), p_change: merge, p_actor_kind: 'agent', p_actor_id: 'op' })) || ''));
+  const joinTwo = { documents: [doc('d1', 'a')], identity_links: [{ existing: hid('H1'), add: hid('H2'), evidence: ev('d1', 2, 'claims H1 and H2 are one person') }] };
+  check('an identity link joining two EXISTING parties is refused (never merged by any means)', /never merged/.test(JSON.stringify(await apply('k-join-two', joinTwo))));
   check('the service flags the same identity on two parties of one proposal', W.validateChange({ documents: [doc('d1', 'a')], parties: [person('x', 'X', [hid('H7')]), person('y', 'Y', [hid('H7')])] }).failures.some((f) => f.code === 'IDENTITY_ON_TWO_PARTIES'));
   check('source identities are immutable (no edit, no delete)', /append-only/.test(await err(() => db.query(`UPDATE cd_party_source_identities SET identity_key = 'H99' WHERE identity_key = 'H1'`)) || '') && /append-only/.test(await err(() => db.query(`DELETE FROM cd_party_source_identities WHERE identity_key = 'H1'`)) || ''));
   check('an ownership row can only be ended once by a change; nothing else changes', /only be ended once/.test(await err(() => db.query(`UPDATE cd_ownerships SET role = 'co_owner' WHERE id = $1`, [own0])) || ''));
@@ -110,7 +112,7 @@ if (r.status === 'applied') {
   check('prior / current owners: the old ownership ends on the settlement (basis + evidence), the new one starts on it; history kept', rt.ok && hist.length === 2 && hist[0].effective_to_basis === 'transfer_settlement' && hist[1].effective_from_basis === 'transfer_settlement' && hist[1].effective_to === null, JSON.stringify(hist));
   const endWhy = await rpc('cd_why', { p_subject_table: 'cd_ownership_end', p_subject_id: own0 });
   check('the end of an ownership has its own provenance (the transfer report line)', endWhy.length === 1 && endWhy[0].document.kind === 'ownership_transfer_report' && endWhy[0].locator.line === 6);
-  check('an already-ended ownership cannot be ended again', /not an open ownership/.test(JSON.stringify(await apply('k-transfer-2', { ...transfer, parties: [], ownerships: [] }))));
+  check('an already-ended ownership cannot be ended again', /not a current ownership/.test(JSON.stringify(await apply('k-transfer-2', { ...transfer, parties: [], ownerships: [] }))));
 
   const second = { documents: [doc('d1', 'a')], parties: [person('intruder', 'Alex Morgan', [hid('H77')])], ownerships: [own(P[1], 'intruder')] };
   check('no silent second owner: a current owner of another owner record on the same property is refused (a transfer must end the old one)', /already has a current owner/.test(JSON.stringify(await apply('k-second-owner', second))));
@@ -168,6 +170,83 @@ if (r.status === 'applied') {
     const G2 = buildCommunityGraph(R.combine(reads2), { observed_as_of: '2026-10-02' });
     const p2 = W.proposalFromGraph(G2, { documents: R.combine(reads2).files.map((fl) => ({ file_sha256: fl.sha256, provider: 'vantaca', kind: 'all_addresses_export', filename: fl.filename, observed_as_of: '2026-10-02' })), propertyIdOfAccount: (a) => pidOf[a] || null });
     check('operator path: an open identity question blocks the proposal (ready = false) and is returned in plain words', p2.ready === false && p2.questions.some((q) => q.type === 'second_name_on_owner_record'));
+  }
+
+  // 10. HARDENING (review of 1cd87f1a)
+  const pid = async (key, slot = 'owner') => (await db.query(`SELECT party_id FROM cd_party_source_identities WHERE identity_key = $1 AND slot = $2`, [key, slot])).rows[0].party_id;
+  const linkDoc = doc('ln', '1', 'identity_confirmation', { observed_as_of: '2026-10-02' });
+  // 10.1 identity linking (explicit, evidence-backed, cross-provider)
+  const tenantId = { provider: 'lease', identity_kind: 'tenant_id', identity_key: 'T-77', slot: 'tenant' };
+  const noEv = { documents: [linkDoc], identity_links: [{ existing: hid('H3'), add: tenantId, evidence: [] }] };
+  check('identity link without evidence is refused (service IDENTITY_LINK_WITHOUT_EVIDENCE; database needs evidence)', W.validateChange(noEv).failures.some((x) => x.code === 'IDENTITY_LINK_WITHOUT_EVIDENCE')
+    && /needs evidence/.test(await err(() => rpc('cd_apply', { p_community: COMM, p_idempotency_key: 'k-link-noev', p_proposal_sha256: W.proposalSha256(noEv), p_change: noEv, p_actor_kind: 'agent', p_actor_id: 'op' })) || ''));
+  const link = { documents: [linkDoc], identity_links: [{ existing: hid('H3'), add: tenantId, evidence: [{ document_ref: 'ln', locator: { page: 1 }, basis: 'tenant record T-77 names the owner record H3 (signed confirmation)' }] }] };
+  const rlk = await apply('k-link', link);
+  const linked = (await db.query(`SELECT id, party_id, linked_by_evidence FROM cd_party_source_identities WHERE identity_key = 'T-77'`)).rows[0];
+  check('cross-provider identity link with evidence attaches the tenant id to the existing owner party (flagged linked_by_evidence)', rlk.ok && linked && linked.party_id === await pid('H3') && linked.linked_by_evidence === true);
+  check('the link has its own provenance (observation "linked")', (await rpc('cd_why', { p_subject_table: 'cd_party_source_identities', p_subject_id: linked.id }))[0].observation === 'linked');
+  const viaLinked = await apply('k-via-link', { documents: [linkDoc], parties: [{ ref: 'pt', kind: 'person', kind_basis: 'source_field', display_name: 'P. Rivera', identities: [tenantId] }] });
+  check('a later proposal naming the linked tenant id resolves to the SAME party (no new party)', viaLinked.ok && viaLinked.result.parties.pt === await pid('H3') && viaLinked.result.parties_created.length === 0);
+  const other = await apply('k-other-tenant', { documents: [linkDoc], parties: [{ ref: 'pr', kind: 'person', kind_basis: 'source_field', display_name: 'Pat Rivera', identities: [{ provider: 'lease', identity_kind: 'tenant_id', identity_key: 'T-88', slot: 'tenant' }] }] });
+  check('an unlinked tenant id with the SAME name is a separate party (name never links)', other.ok && other.result.parties.pr !== await pid('H3'));
+  // 10.2 repeat observations preserve provenance
+  const own2 = (await db.query(`SELECT id FROM cd_ownerships WHERE property_id = $1 AND effective_to IS NULL`, [P[2]])).rows[0].id;
+  const reobs = await apply('k-reobs', { documents: [doc('d3', '3', 'all_addresses_export', { observed_as_of: '2026-11-01' })], parties: [person('pat', 'Pat Rivera', [hid('H3')])], ownerships: [{ ...own(P[2], 'pat'), observed_as_of: '2026-11-01', evidence: ev('d3', 9, 'still the owner on the November roster') }],
+    contact_methods: [{ party_ref: 'pat', method_type: 'phone', value: '555.010.0001', attribution: 'owner_record', is_primary: true, observed_as_of: '2026-11-01', evidence: ev('d3', 9, 'same phone on the November export') }] });
+  const w2 = await rpc('cd_why', { p_subject_table: 'cd_ownerships', p_subject_id: own2 });
+  check('re-observing an open ownership APPENDS its evidence (created + reobserved, two documents) instead of losing it', reobs.ok && reobs.result.reobserved === 2 && w2.length === 2 && w2[1].observation === 'reobserved' && w2[1].document.observed_as_of === '2026-11-01', JSON.stringify(w2).slice(0, 300));
+  const phoneId = (await db.query(`SELECT id FROM cd_contact_methods WHERE value_normalized = '5550100001' AND effective_to IS NULL`)).rows[0].id;
+  check('a repeated contact method appends evidence too (no ON CONFLICT discard)', (await rpc('cd_why', { p_subject_table: 'cd_contact_methods', p_subject_id: phoneId })).length === 2);
+  // 10.3 single current primary owner at the database level (concurrency-safe index), co-owners allowed
+  const anyChange = (await db.query(`SELECT id FROM cd_changes WHERE community_id = $1 LIMIT 1`, [COMM])).rows[0].id;
+  const H1P = await pid('H1'); const H5S = await pid('H5', 'spouse');
+  check('database: a second current primary owner inserted around the function hits the unique index (concurrency-safe)', /cd_one_current_owner_per_property/.test(await err(() => db.query(`INSERT INTO cd_ownerships (community_id, property_id, party_id, role, effective_from_basis, observed_as_of, change_id) VALUES ($1, $2, $3, 'owner', 'unknown', '2026-10-01', $4)`, [COMM, P[2], H1P, anyChange])) || ''));
+  check('database: a duplicate open co_owner row for the same party is refused; a different co-owner is fine', /cd_one_open_ownership_per_party_role/.test(await err(() => db.query(`INSERT INTO cd_ownerships (community_id, property_id, party_id, role, effective_from_basis, observed_as_of, change_id) VALUES ($1, $2, $3, 'co_owner', 'unknown', '2026-10-01', $4)`, [COMM, P[4], H5S, anyChange])) || ''));
+  // 10.4 community consistency at the database level
+  const COMM2 = '00000000-0000-0000-0000-0000000000c2'; const P2 = '00000000-0000-4000-8000-0000000000b1';
+  await db.exec(`INSERT INTO communities (id, name) VALUES ('${COMM2}', 'Other Creek'); INSERT INTO properties (id, community_id) VALUES ('${P2}', '${COMM2}');`);
+  const c2 = await W.applyChange({ rpc, community_id: COMM2, idempotency_key: 'c2-init', change: { documents: [doc('x', '9')] }, actor: { kind: 'agent', id: 'op' } });
+  const c2change = c2.result.change_id;
+  check('database: a canonical row cannot reference a party of another community (composite foreign key)', /foreign key|violates/i.test(await err(() => db.query(`INSERT INTO cd_ownerships (community_id, property_id, party_id, role, effective_from_basis, observed_as_of, change_id) VALUES ($1, $2, $3, 'owner', 'unknown', '2026-10-01', $4)`, [COMM2, P2, H1P, c2change])) || ''));
+  check('database: a canonical row cannot reference a property of another community (trigger)', /is not in community/.test(await err(() => db.query(`INSERT INTO cd_ownerships (community_id, property_id, party_id, role, effective_from_basis, observed_as_of, change_id) VALUES ($1, $2, $3, 'owner', 'unknown', '2026-10-01', $4)`, [COMM, P2, H1P, anyChange])) || ''));
+  check('database: evidence cannot point at another community\'s document', /foreign key|violates/i.test(await err(() => db.query(`INSERT INTO cd_evidence (community_id, subject_table, subject_id, observation, document_id, basis, change_id) VALUES ($1, 'cd_ownerships', $2, 'created', (SELECT id FROM cd_source_documents WHERE community_id = $3 LIMIT 1), 'x', $4)`, [COMM, own2, COMM2, anyChange])) || ''));
+  // 10.5 occupancy_ends (end once, with basis + evidence)
+  const t0occ = (await db.query(`SELECT o.id FROM cd_occupancies o JOIN cd_party_source_identities s ON s.party_id = o.party_id WHERE s.slot = 'tenant:0' AND s.identity_key = $1`, [sha('e')])).rows[0].id;
+  const moveOut = { documents: [doc('mo', '4', 'move_out_statement', { observed_as_of: '2026-12-01' })], occupancy_ends: [{ occupancy_id: t0occ, effective_to: '2026-11-30', effective_to_basis: 'move_out_statement', evidence: [{ document_ref: 'mo', locator: {}, basis: 'tenant move-out notice' }] }] };
+  const rmo = await apply('k-move-out', moveOut);
+  check('occupancy_ends: a tenancy ends once with basis + evidence; the co-tenants stay open', rmo.ok && (await db.query(`SELECT effective_to::text AS t, effective_to_basis AS b FROM cd_occupancies WHERE id = $1`, [t0occ])).rows[0].b === 'move_out_statement' && (await db.query(`SELECT count(*)::int AS n FROM cd_occupancies WHERE property_id = $1 AND effective_to IS NULL`, [P[1]])).rows[0].n === 2);
+  check('occupancy_ends: ending it again is refused', /not a current occupancy/.test(JSON.stringify(await apply('k-move-out-2', moveOut))));
+  check('occupancy_ends: the end has its own provenance', (await rpc('cd_why', { p_subject_table: 'cd_occupancy_end', p_subject_id: t0occ }))[0].observation === 'ended');
+  check('an occupancy created already-ended needs its end basis (service)', W.validateChange({ documents: [doc('d1', 'a')], parties: [person('sam', 'Sam Lee', [hid('H5')])], occupancies: [{ property_id: P[4], party_ref: 'sam', occupancy_kind: 'owner_occupant', basis: 'owner_statement', effective_to: '2026-01-01', observed_as_of: '2026-10-01', evidence: ev('d1', 6) }] }).failures.some((x) => x.code === 'END_DATE_BASIS_MISMATCH'));
+  // 10.6 address / contact-method lifecycle: current vs historical
+  const oldAddr = (await db.query(`SELECT id FROM cd_addresses WHERE party_id = $1 AND effective_to IS NULL AND is_primary`, [await pid('H3')])).rows[0].id;
+  const newPrimary = { documents: [doc('d4', '5', 'homeowner_contact_information', { observed_as_of: '2026-12-15' })], parties: [person('pat', 'Pat Rivera', [hid('H3')])],
+    addresses: [{ party_ref: 'pat', purpose: 'mailing', line1: '9 New Road', city: 'Newtown', state: null, postal_code: '73301', is_primary: true, is_property_address: false, observed_as_of: '2026-12-15', evidence: ev('d4', 3, 'new primary mailing marked by the source') }] };
+  check('a second current primary mailing address is refused unless the old one is ended in the same change', /cd_one_current_primary_address/.test(JSON.stringify(await apply('k-addr-1', newPrimary))));
+  const rAddr = await apply('k-addr-2', { ...newPrimary, address_ends: [{ address_id: oldAddr, effective_to: '2026-12-15', effective_to_basis: 'superseded_by_source', evidence: ev('d4', 3, 'the source now marks a different primary mailing address') }] });
+  const addrHist = (await db.query(`SELECT line1, is_primary, effective_to IS NULL AS current, effective_to_basis FROM cd_addresses WHERE party_id = $1 ORDER BY recorded_at`, [await pid('H3')])).rows;
+  check('address lifecycle: the old address is historical (ended, with basis + its own provenance), the new one is the current primary', rAddr.ok && addrHist.length === 2 && !addrHist[0].current && addrHist[0].effective_to_basis === 'superseded_by_source' && addrHist[1].current && addrHist[1].is_primary
+    && (await rpc('cd_why', { p_subject_table: 'cd_address_end', p_subject_id: oldAddr }))[0].observation === 'ended', JSON.stringify(addrHist));
+  const rAddr3 = await apply('k-addr-3', { documents: [doc('d5', '6', 'homeowner_contact_information', { observed_as_of: '2027-01-15' })], parties: [person('pat', 'Pat Rivera', [hid('H3')])], addresses: [{ ...newPrimary.addresses[0], observed_as_of: '2027-01-15', evidence: ev('d5', 3, 'same address again') }] });
+  const curAddr = (await db.query(`SELECT id FROM cd_addresses WHERE party_id = $1 AND effective_to IS NULL`, [await pid('H3')])).rows;
+  check('re-observing the current address appends evidence (no duplicate row)', rAddr3.ok && rAddr3.result.reobserved === 1 && curAddr.length === 1 && (await rpc('cd_why', { p_subject_table: 'cd_addresses', p_subject_id: curAddr[0].id })).length === 2);
+  const rPh = await apply('k-phone-swap', { documents: [doc('d6', '7', 'homeowner_contact_information', { observed_as_of: '2027-02-01' })], parties: [person('pat', 'Pat Rivera', [hid('H3')])],
+    contact_method_ends: [{ contact_method_id: phoneId, effective_to: '2027-02-01', effective_to_basis: 'superseded_by_source', evidence: ev('d6', 2, 'a different primary phone on the export') }],
+    contact_methods: [{ party_ref: 'pat', method_type: 'phone', value: '(555) 020-0002', attribution: 'owner_record', is_primary: true, observed_as_of: '2027-02-01', evidence: ev('d6', 2, 'new primary phone') }] });
+  check('contact-method lifecycle: the old phone is historical, the new one is the single current primary', rPh.ok && (await db.query(`SELECT count(*)::int AS n FROM cd_contact_methods WHERE party_id = $1 AND method_type = 'phone' AND is_primary AND effective_to IS NULL`, [await pid('H3')])).rows[0].n === 1
+    && (await db.query(`SELECT effective_to_basis FROM cd_contact_methods WHERE id = $1`, [phoneId])).rows[0].effective_to_basis === 'superseded_by_source');
+  // 10.7 a name pattern never establishes an organization
+  check('database: kind organization needs a source field; "name_pattern_flag" is not a kind basis', /cd_party_kind_needs_source/.test(await err(() => db.query(`INSERT INTO cd_parties (community_id, kind, kind_basis, display_name, change_id) VALUES ($1, 'organization', 'unknown', 'Riverside Family Trust', $2)`, [COMM, anyChange])) || '')
+    && /check|violat/i.test(await err(() => db.query(`INSERT INTO cd_parties (community_id, kind, kind_basis, display_name, change_id) VALUES ($1, 'organization', 'name_pattern_flag', 'Riverside Family Trust', $2)`, [COMM, anyChange])) || ''));
+  {
+    const XLSX = require('xlsx'); const R = require(`${REPO}/lib/onboarding/community/vantaca_roster.js`); const { buildCommunityGraph } = require(`${REPO}/lib/onboarding/community/resolve.js`);
+    const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet([
+      { Account: '7001', 'Homeowner ID': 'ORG1', HomeownerName: 'Riverside Family Trust', FirstName: '', LastName: '', SpouseFirstName: '', SpouseLastName: '', BusinessName: '', MailStreetNo: '1', MailAddress1: 'A St', MailCity: 'X', MailState: '', MailZip: '1' },
+      { Account: '7002', 'Homeowner ID': 'ORG2', HomeownerName: 'Oak Holdings LLC', FirstName: '', LastName: '', SpouseFirstName: '', SpouseLastName: '', BusinessName: 'Oak Holdings LLC', MailStreetNo: '2', MailAddress1: 'B St', MailCity: 'X', MailState: '', MailZip: '2' }]), 'Sheet1');
+    const g = buildCommunityGraph(R.combine([R.readWorkbook(XLSX, XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' }), 'r.xlsx')]), { observed_as_of: '2026-10-01' });
+    const pr = W.proposalFromGraph(g, { documents: [], propertyIdOfAccount: () => null });
+    const trust = pr.change.parties.find((x) => x.display_name === 'Riverside Family Trust'); const oak = pr.change.parties.find((x) => x.display_name === 'Oak Holdings LLC');
+    check('graph -> proposal: a trust by name pattern stays kind unknown with a hint; a source business field makes an organization', trust.kind === 'unknown' && trust.kind_basis === 'unknown' && trust.hints.includes('organization_name_pattern') && oak.kind === 'organization' && oak.kind_basis === 'source_field', JSON.stringify([trust, oak]));
   }
 
   // 8. single write path
