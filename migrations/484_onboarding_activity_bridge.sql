@@ -11,7 +11,8 @@
 --                            / AMBIGUOUS / OUT_OF_SCOPE), method, confidence,
 --                            evidence, structural issues, bridge sha256 and the
 --                            fingerprint of the Trusted activity it saw.
---                            CHECK: never ALREADY_IN_SOURCE on an amount-only method.
+--                            CHECKs: never ALREADY_IN_SOURCE on an amount-only method, nor
+--                            on a generic system entry merely dated in the source period.
 -- onboarding_bridge_records  append-only; every Trusted record the event covers.
 --                            UNIQUE(completion, table, record): the database
 --                            itself refuses a record classified twice in one run.
@@ -50,7 +51,8 @@ CREATE TABLE IF NOT EXISTS onboarding_bridge_items (
   created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   UNIQUE (completion_event_id, item_no),
   UNIQUE (completion_event_id, event_key),
-  CONSTRAINT onboarding_bridge_never_duplicate_on_amount CHECK (classification <> 'ALREADY_IN_SOURCE' OR method NOT LIKE 'amount%')
+  CONSTRAINT onboarding_bridge_never_duplicate_on_amount CHECK (classification <> 'ALREADY_IN_SOURCE' OR method NOT LIKE 'amount%'),
+  CONSTRAINT onboarding_bridge_never_duplicate_on_system_period CHECK (classification <> 'ALREADY_IN_SOURCE' OR method NOT LIKE 'system_entry%')
 );
 CREATE INDEX IF NOT EXISTS idx_onboarding_bridge_items_completion ON onboarding_bridge_items (completion_event_id, classification);
 

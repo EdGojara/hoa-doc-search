@@ -68,13 +68,23 @@ const run = (t = trusted()) => buildBridge(parsed, t, ctx);
 const ev = (b, k) => b.items.find((it) => it.event_key === k);
 const tests = []; const check = (n, fn) => tests.push([n, fn]);
 
-check('provenance: legacy import JE and grouped legacy rows -> ALREADY_IN_SOURCE; system entry in source period -> ALREADY (medium); superseded -> OUT_OF_SCOPE', () => {
+check('provenance: legacy import JE and grouped legacy rows -> ALREADY_IN_SOURCE; superseded -> OUT_OF_SCOPE', () => {
   const b = run();
   assert.deepStrictEqual([ev(b, 'je:je1').classification, ev(b, 'je:je1').method], ['ALREADY_IN_SOURCE', 'provenance_legacy_import']);
-  assert.deepStrictEqual([ev(b, 'je:je2').classification, ev(b, 'je:je2').confidence], ['ALREADY_IN_SOURCE', 'medium']);
   assert.deepStrictEqual([ev(b, 'je:je3').classification, ev(b, 'je:je3').method], ['OUT_OF_SCOPE', 'superseded_by_prior_conversion']);
   const mig = ev(b, 'loose:ar_charges:vantaca_migration'); assert.strictEqual(mig.classification, 'ALREADY_IN_SOURCE'); assert.strictEqual(mig.records.length, 3);
   const ht = ev(b, 'loose:homeowner_transactions:batch:batchA'); assert.strictEqual(ht.classification, 'ALREADY_IN_SOURCE'); assert.strictEqual(ht.records.length, 4);
+});
+check('REGRESSION (Ed, M4 review): a generic in-period system entry can never be ALREADY_IN_SOURCE from date + module alone; it is AMBIGUOUS with its reference and description', () => {
+  const b = run();
+  const sys = ev(b, 'je:je2');
+  assert.deepStrictEqual([sys.classification, sys.method, sys.confidence], ['AMBIGUOUS', 'system_entry_in_source_period_unproven', 'low']);
+  assert.strictEqual(sys.evidence.reference, 'JE2');
+  // even many of them, any amount, any month inside the period: never ALREADY
+  const t = trusted(); for (let m = 1; m <= 3; m++) t.journal_entries.push(je('sys' + m, '2026-0' + m + '-15', 'system', 15000 * m));
+  const b2 = run(t);
+  assert.ok(b2.items.filter((it) => it.kind === 'system').every((it) => it.classification === 'AMBIGUOUS'));
+  assert.ok(!b2.items.some((it) => it.classification === 'ALREADY_IN_SOURCE' && /system/.test(it.method)));
 });
 check('no money moved: test/pending payment and a void pair -> OUT_OF_SCOPE; a void with no matching reversal -> AMBIGUOUS + structural issue', () => {
   const b = run();

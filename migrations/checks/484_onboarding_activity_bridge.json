@@ -1,6 +1,6 @@
 {
   "migration": "484_onboarding_activity_bridge.sql",
-  "summary": "Onboarding Engine activity bridge persistence (Issue #15 Milestone 4): a read-only comparison of the cutoff position with actual Trusted financial activity. Creates append-only onboarding_bridge_items (one classified event per row: ALREADY_IN_SOURCE / LEGITIMATE_SUBSEQUENT / AMBIGUOUS / OUT_OF_SCOPE, method, confidence, evidence, structural issues, bridge sha256, Trusted activity fingerprint; CHECK never ALREADY_IN_SOURCE on an amount-only method) and onboarding_bridge_records (UNIQUE per run, table and record: a record cannot be classified twice). Adds onboarding_record_bridge (result + items + records in one transaction; stage activity_bridge only; must name the current snapshot result; identity checked) and onboarding_bridge_view. Replaces onboarding_record_completion (as 483, plus bridge results only with their items). Nothing posts or changes any Trusted record. Service_role only. No rows change.",
+  "summary": "Onboarding Engine activity bridge persistence (Issue #15 Milestone 4): a read-only comparison of the cutoff position with actual Trusted financial activity. Creates append-only onboarding_bridge_items (one classified event per row: ALREADY_IN_SOURCE / LEGITIMATE_SUBSEQUENT / AMBIGUOUS / OUT_OF_SCOPE, method, confidence, evidence, structural issues, bridge sha256, Trusted activity fingerprint; CHECKs: never ALREADY_IN_SOURCE on an amount-only method, nor on a generic system entry merely dated in the source period) and onboarding_bridge_records (UNIQUE per run, table and record: a record cannot be classified twice). Adds onboarding_record_bridge (result + items + records in one transaction; stage activity_bridge only; must name the current snapshot result; identity checked) and onboarding_bridge_view. Replaces onboarding_record_completion (as 483, plus bridge results only with their items). Nothing posts or changes any Trusted record. Service_role only. No rows change.",
   "requires": [
     "483_onboarding_snapshot.sql"
   ],
@@ -61,6 +61,7 @@
       "constraint:onboarding_bridge_items.onboarding_bridge_items_structural_issues_check",
       "constraint:onboarding_bridge_items.onboarding_bridge_items_trusted_fingerprint_check",
       "constraint:onboarding_bridge_items.onboarding_bridge_never_duplicate_on_amount",
+      "constraint:onboarding_bridge_items.onboarding_bridge_never_duplicate_on_system_period",
       "constraint:onboarding_bridge_records.onboarding_bridge_records_completion_event_id_fkey",
       "constraint:onboarding_bridge_records.onboarding_bridge_records_completion_event_id_item_no_fkey",
       "constraint:onboarding_bridge_records.onboarding_bridge_records_completion_event_id_record_table__key",
