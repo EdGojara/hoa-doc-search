@@ -32,6 +32,7 @@ function fakeService() {
   const calls = [];
   const rec = (name, ret) => async (...args) => { calls.push({ name, args }); if (typeof ret === 'function') return ret(...args); return ret; };
   return { calls, schemaStatus: rec('schemaStatus', { ready: true, needs: [] }), listBatches: rec('listBatches', []), getBatch: rec('getBatch', (id, actor) => ({ id, actor })),
+    getSnapshot: rec('getSnapshot', (id, cid) => (id === 'none' ? null : { completion_id: cid || 'latest', lines: [] })),
     createBatch: rec('createBatch', 'b-new'), registerArtifact: rec('registerArtifact', 'a-1'), runStage: rec('runStage', { status: 'PASS' }),
     waive: rec('waive', 'w-1'), advance: rec('advance', (actor, id, body) => { if (body.to === 'snapshot') throw new ServiceError(409, 'REFUSED_BY_DATABASE', 'stage advance refused: stage source_controls is FAIL; not waived: x'); return 'e-1'; }),
     approve: rec('approve', () => { throw new Error('Supabase exploded with secret details'); }) };
@@ -78,12 +79,18 @@ check('create validates fields; run passes only roles + authoritative; upload pa
   assert.strictEqual((await req('POST', '/batches', { user: 'admin', body: { community_id: 'c1' } })).status, 400);
   assert.strictEqual((await req('POST', '/batches', { user: 'admin', body: { community_id: 'c1', batch_code: 'B', as_of_date: '2026-07-31', source_system: 'vantaca' } })).json.id, 'b-new');
   await req('POST', '/batches/b1/run', { user: 'admin', body: { roles: { ar_account: '1300' }, authoritative: {}, stage: 'execute', actor_kind: 'human' } });
-  assert.deepStrictEqual(service.calls.find((c) => c.name === 'runStage').args[2], { roles: { ar_account: '1300' }, authoritative: {} });
+  assert.deepStrictEqual(service.calls.find((c) => c.name === 'runStage').args[2], { roles: { ar_account: '1300' }, authoritative: {}, ap_account: undefined, fund_by_account: undefined });
   const fd = new FormData(); fd.append('file', new Blob([Buffer.from('report text')]), 'gl.txt'); fd.append('artifact_type', 'gl_trial_balance');
   assert.strictEqual((await req('POST', '/batches/b1/artifacts', { user: 'admin', form: fd })).json.id, 'a-1');
   const up = service.calls.find((c) => c.name === 'registerArtifact').args;
   assert.strictEqual(up[2].buffer.toString(), 'report text'); assert.strictEqual(up[2].filename, 'gl.txt'); assert.strictEqual(up[2].artifact_type, 'gl_trial_balance');
   assert.deepStrictEqual((await req('GET', '/communities', { user: 'admin' })).json.map((c) => c.name), ['Alpha', 'Zeta']);
+}));
+check('snapshot read: admin only; latest or a given result; 404 when none', async () => withServer(async ({ req }) => {
+  assert.strictEqual((await req('GET', '/batches/b1/snapshot')).status, 403);
+  assert.strictEqual((await req('GET', '/batches/b1/snapshot', { user: 'admin' })).json.completion_id, 'latest');
+  assert.strictEqual((await req('GET', '/batches/b1/snapshot?completion_id=c9', { user: 'admin' })).json.completion_id, 'c9');
+  assert.strictEqual((await req('GET', '/batches/none/snapshot', { user: 'admin' })).status, 404);
 }));
 check('page: talks only to /api/onboarding (and auth config); never sends an actor, kind or role; owner gate is server-side', () => {
   const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'onboarding.html'), 'utf8');
@@ -105,10 +112,10 @@ check('repo guard: nothing writes the onboarding tables directly (only the 482 S
 });
 check('service guard: its only database calls are the onboarding_* rpc allowlist and the write-once artifact store', () => {
   const s = fs.readFileSync(path.join(__dirname, '..', 'lib', 'onboarding', 'service.js'), 'utf8').replace(/\/\/.*$/gm, '');
-  assert.ok(RPC.length === 8 && RPC.every((n) => /^onboarding_/.test(n)));
+  assert.ok(RPC.length === 10 && RPC.every((n) => /^onboarding_/.test(n)));
   assert.strictEqual((s.match(/\.rpc\(/g) || []).length, 1, 'exactly one rpc call site');
   assert.ok(/if \(!RPC\.includes\(name\)\) throw/.test(s));
-  assert.ok(!/\.from\(\s*['"](?!documents)/.test(s.replace(/storage\.from\(bucket\)/g, '')), 'no table access');
+  assert.ok(!/\.from\(\s*['"](?!documents)/.test(s.replace(/storage\.from\(bucket\)/g, '').replace(/Buffer\.from\(/g, '')), 'no table access');
   assert.ok(/upsert: false/.test(s), 'artifact bytes are never overwritten');
 });
 

@@ -17,7 +17,7 @@ const { onboardingWorld, COMM } = await import('../tests/sql/onboarding_world.mj
 const { buildRouter } = require('../api/onboarding.js');
 const { createOnboardingService } = require('../lib/onboarding/service.js');
 
-const world = await onboardingWorld(PGlite, { through: 482 });
+const world = await onboardingWorld(PGlite, { through: 483 });
 const mem = new Map();
 const storage = { async putOnce(p, b) { if (!mem.has(p)) mem.set(p, Buffer.from(b)); }, async get(p) { return Buffer.from(mem.get(p)); } };
 const service = createOnboardingService({ rpc: world.rpc, storage });
@@ -33,6 +33,14 @@ for (const t of ['gl_trial_balance', 'balance_sheet', 'ar_aging', 'homeowner_tra
 let r = await service.runStage(OWNER, B); await service.advance(OWNER, B, { completion_id: r.completion_id, to: 'normalize' });
 r = await service.runStage(OWNER, B); await service.advance(OWNER, B, { completion_id: r.completion_id, to: 'source_controls' });
 await service.runStage(OWNER, B, { roles: { ar_account: '1300', prepaid_account: '2400' }, authoritative: { ar: { label: 'AR = 510.00', cents: 51000, derive: { kind: 'gl_ending', account: '1300' } }, cash: { label: 'Cash = 1,400.00 (deliberately wrong)', cents: 140000, derive: { kind: 'gl_ending', account: '1000' } } } });
+
+// Second batch walked to the snapshot stage (synthetic data; the waiver here is test-fixture only).
+const B2 = await service.createBatch(OWNER, { community_id: COMM, batch_code: 'CONV-EX-SNAPSHOT', as_of_date: '2026-03-31', source_system: 'vantaca' });
+for (const t of ['gl_trial_balance', 'balance_sheet', 'ar_aging', 'homeowner_transactions']) await service.registerArtifact(OWNER, B2, { buffer: fs.readFileSync(path.join(FX, `${t}.txt`)), filename: `${t}.txt`, artifact_type: t });
+r = await service.runStage(OWNER, B2); await service.advance(OWNER, B2, { completion_id: r.completion_id, to: 'normalize' });
+r = await service.runStage(OWNER, B2); await service.advance(OWNER, B2, { completion_id: r.completion_id, to: 'source_controls' });
+r = await service.runStage(OWNER, B2, { roles: { ar_account: '1300', prepaid_account: '2400' } }); await service.advance(OWNER, B2, { completion_id: r.completion_id, to: 'snapshot' });
+await service.runStage(OWNER, B2, { ap_account: '2400' });
 
 const app = express();
 app.get('/api/auth/config', (req, res) => res.json({ enabled: false }));

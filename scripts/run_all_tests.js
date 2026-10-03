@@ -184,6 +184,7 @@ const CHECKS = [
   'tests/sql/480_apply_one_e2e.mjs',
   'tests/sql/481_apply_one_e2e.mjs',
   'tests/sql/482_apply_one_e2e.mjs',
+  'tests/sql/483_apply_one_e2e.mjs',
   'tests/sql/onboarding_service_e2e.mjs',
   'tests/test_ai_router.js',
   'tests/test_check_register_grouping.js',
@@ -225,6 +226,7 @@ const CHECKS = [
   'tests/test_onboarding_engine.js',
   'tests/onboarding_quail_ridge_local.js',
   'tests/test_onboarding_api.js',
+  'tests/test_onboarding_snapshot.js',
 ];
 
 const args = process.argv.slice(2);
