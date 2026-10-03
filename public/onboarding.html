@@ -86,6 +86,7 @@
     <h2>Controls for the current stage</h2>
     <div id="controls" class="card tablewrap"></div>
     <div id="snapshot" class="tablewrap"></div>
+    <div id="bridge" class="tablewrap"></div>
     <div id="waivers"></div>
     <div id="advance"></div>
     <h2>Audit trail</h2>
@@ -134,6 +135,7 @@ function renderDetail(v) {
   // run
   const run = can('run_stage')[0];
   $('run').innerHTML = run ? '<div class="card"><b>Run the ' + esc(label(run.stage)) + ' stage</b> <span class="muted">Records a new result for this stage. Earlier waivers do not carry over to a new result.</span>'
+    + (run.stage === 'activity_bridge' ? '<div class="muted">Reads the Trusted financial activity of this community (read-only) and classifies every record against the snapshot. Changes nothing.</div>' : '')
     + (run.stage === 'snapshot' ? '<div class="row"><div><label for="r_ap">AP account (optional)</label><input id="r_ap" placeholder="2000"></div></div><div class="muted">Uses the AR and prepaid accounts the source controls were validated with. Builds a proposed opening position only; nothing is posted.</div>' : '')
     + (run.stage === 'source_controls' ? '<div class="row"><div><label for="r_ar">AR account</label><input id="r_ar" placeholder="1300"></div><div><label for="r_pp">Prepaid owner account</label><input id="r_pp" placeholder="2400"></div></div><label for="r_auth">Authoritative controls (JSON, optional)</label><textarea id="r_auth" class="mono" placeholder=\'{"ar":{"label":"AR = 19,767.91","cents":1976791,"derive":{"kind":"gl_ending","account":"1300"}}}\'></textarea>' : '')
     + '<br><button id="runBtn">Run ' + esc(label(run.stage)) + '</button></div>' : '';
@@ -187,11 +189,50 @@ async function loadSnapshot(batchId) {
     + '<details class="card"><summary>AP open items (' + by('ap_detail').length + ')</summary>' + lineTable(by('ap_detail'), [{ h: 'Vendor', f: (l) => esc((l.detail || {}).source_vendor_key || '') }, { h: 'Amount', num: true, f: (l) => money(-l.amount_cents) }, { h: 'Source', f: provCell }]) + '</details>';
 }
 
+// ---- Activity bridge (stage 4): source cutoff position vs actual Trusted activity. Read-only.
+const CLASS_TEXT = { ALREADY_IN_SOURCE: 'Already in source: suppress, never post again', LEGITIMATE_SUBSEQUENT: 'Legitimate subsequent: preserve later', AMBIGUOUS: 'Ambiguous: needs your decision', OUT_OF_SCOPE: 'Out of scope: no financial effect to carry' };
+const CLASS_PILL = { ALREADY_IN_SOURCE: 'PASS', LEGITIMATE_SUBSEQUENT: 'WAIVED', AMBIGUOUS: 'BLOCKED', OUT_OF_SCOPE: '' };
+function evidenceText(it) {
+  const e = it.evidence || {}; const parts = [];
+  if (e.identifier) parts.push('identifier ' + e.identifier);
+  if (e.source_matches) parts.push('source: ' + e.source_matches.map((m) => m.date + ' ' + money(m.amount_cents) + ' acct ' + m.account_code).join('; '));
+  if (e.source_candidates) parts.push('same amount in source (no shared identifier): ' + e.source_candidates.map((m) => m.date + ' ' + money(m.amount_cents) + ' acct ' + m.account_code).join('; '));
+  if (e.partner_reference || e.partner_journal_entry) parts.push('void partner ' + (e.partner_reference || e.partner_journal_entry));
+  if (e.source_module) parts.push('from ' + e.source_module + (e.records ? ' (' + e.records + ' records)' : ''));
+  if (e.statuses) parts.push(e.statuses.join(', '));
+  if (e.note) parts.push(e.note);
+  return parts.join(' · ');
+}
+async function loadBridge(batchId) {
+  let b;
+  try { b = await api('/api/onboarding/batches/' + encodeURIComponent(batchId) + '/bridge'); }
+  catch (e) { $('bridge').innerHTML = e.status === 404 ? '' : '<div class="banner warn">' + esc(e.message) + '</div>'; return; }
+  let fresh = null; try { fresh = await api('/api/onboarding/batches/' + encodeURIComponent(batchId) + '/bridge/freshness'); } catch (_) {}
+  const items = b.items || []; const totals = b.totals || {};
+  const classes = ['AMBIGUOUS', 'LEGITIMATE_SUBSEQUENT', 'ALREADY_IN_SOURCE', 'OUT_OF_SCOPE'];
+  const group = (k) => items.filter((it) => it.classification === k);
+  const issues = items.filter((it) => (it.structural_issues || []).length);
+  const table = (rows) => lineTable(rows, [{ h: 'Date', f: (it) => esc(it.event_date || '') }, { h: 'What', f: (it) => esc(label(it.kind)) }, { h: 'Amount', num: true, f: (it) => money(it.amount_cents) },
+    { h: 'Why', f: (it) => '<span class="mono">' + esc(it.method) + '</span> <span class="muted">(' + esc(it.confidence) + ')</span><div class="muted" style="font-size:12px">' + esc(evidenceText(it)) + '</div>' },
+    { h: 'Records', f: (it) => '<span class="muted">' + (it.records || []).length + '</span>' }, { h: 'Issues', f: (it) => esc((it.structural_issues || []).join('; ')) }]);
+  $('bridge').innerHTML = '<h2>Activity bridge (Trusted activity vs the cutoff position; nothing changed)</h2>'
+    + (fresh && fresh.fresh === false ? '<div class="banner bad"><b>Trusted activity has changed since this bridge was run.</b> Re-run the bridge before relying on it.</div>' : '')
+    + '<div class="card"><div class="muted">Result <span class="pill ' + esc(b.status) + '">' + esc(b.status) + '</span>' + (b.stale ? ' <span class="pill BLOCKED">stale: a newer bridge exists</span>' : '') + ' · bridge sha256 <span class="mono">' + esc(String(b.bridge_sha256 || '').slice(0, 16)) + '…</span> · recorded by ' + esc(b.recorded_by) + '</div>'
+    + lineTable(classes.map((k) => ({ k, t: totals[k] || { events: 0, records: 0, amount_cents: 0 } })), [{ h: 'Classification', f: (r) => (CLASS_PILL[r.k] ? '<span class="pill ' + CLASS_PILL[r.k] + '">' + esc(r.k) + '</span>' : esc(r.k)) + '<div class="muted" style="font-size:12px">' + esc(CLASS_TEXT[r.k]) + '</div>' },
+      { h: 'Events', num: true, f: (r) => String(r.t.events) }, { h: 'Records', num: true, f: (r) => String(r.t.records) }, { h: 'Dollars', num: true, f: (r) => money(r.t.amount_cents) }]) + '</div>'
+    + (issues.length ? '<div class="banner bad"><b>Structurally incomplete Trusted activity (reported, not repaired):</b><br>' + issues.map((it) => esc(it.event_date + ' ' + label(it.kind) + ' ' + money(it.amount_cents) + ': ' + it.structural_issues.join('; '))).join('<br>') + '</div>' : '')
+    + '<details class="card" open><summary>Ambiguous: needs your decision (' + group('AMBIGUOUS').length + ')</summary>' + table(group('AMBIGUOUS')) + '</details>'
+    + '<details class="card"><summary>Would be preserved later (' + group('LEGITIMATE_SUBSEQUENT').length + ')</summary>' + table(group('LEGITIMATE_SUBSEQUENT')) + '</details>'
+    + '<details class="card"><summary>Already in the source, would be suppressed (' + group('ALREADY_IN_SOURCE').length + ')</summary>' + table(group('ALREADY_IN_SOURCE')) + '</details>'
+    + '<details class="card"><summary>Out of scope (' + group('OUT_OF_SCOPE').length + ')</summary>' + table(group('OUT_OF_SCOPE')) + '</details>';
+}
+
 async function loadDetail(id) {
   $('listView').hidden = true; $('detailView').hidden = false;
   const v = await api('/api/onboarding/batches/' + encodeURIComponent(id));
   renderDetail(v);
   if (v.latest_by_stage && v.latest_by_stage.snapshot) await loadSnapshot(id); else $('snapshot').innerHTML = '';
+  if (v.latest_by_stage && v.latest_by_stage.activity_bridge) await loadBridge(id); else $('bridge').innerHTML = '';
 }
 const json = (body) => ({ method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
 const batchId = () => new URLSearchParams(location.search).get('batch');

@@ -1,6 +1,6 @@
 // tests/sql/onboarding_world.mjs — shared PGlite world for the onboarding engine
 // tests: the stub tables 452 references, then the REAL 452 / 481 (and optionally
-// 482 / 483) migration files, exactly as committed. Returns { db, client, rpc }.
+// 482 / 483 / 484) migration files, exactly as committed. Returns { db, client, rpc }.
 //   rpc(name, args) calls a SQL function with named arguments, like supabase.rpc.
 import fs from 'fs';
 import path from 'path';
@@ -9,7 +9,7 @@ const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '.
 const lf = (p) => fs.readFileSync(p, 'utf8').replace(/\r\n/g, '\n');
 export const COMM = '00000000-0000-0000-0000-0000000000c1';
 
-export async function onboardingWorld(PGlite, { through = 483 } = {}) {
+export async function onboardingWorld(PGlite, { through = 484 } = {}) {
   const db = new PGlite();
   await db.exec(`
     CREATE ROLE anon; CREATE ROLE authenticated; CREATE ROLE service_role;
@@ -29,6 +29,7 @@ export async function onboardingWorld(PGlite, { through = 483 } = {}) {
   if (through >= 481) { await db.exec(lf(`${REPO}/migrations/481_onboarding_engine.sql`)); await db.exec(`INSERT INTO schema_migrations (filename, sha256) VALUES ('481_onboarding_engine.sql', 'recorded')`); }
   if (through >= 482) { await db.exec(lf(`${REPO}/migrations/482_onboarding_service.sql`)); await db.exec(`INSERT INTO schema_migrations (filename, sha256) VALUES ('482_onboarding_service.sql', 'recorded')`); }
   if (through >= 483) { await db.exec(lf(`${REPO}/migrations/483_onboarding_snapshot.sql`)); await db.exec(`INSERT INTO schema_migrations (filename, sha256) VALUES ('483_onboarding_snapshot.sql', 'recorded')`); }
+  if (through >= 484) { await db.exec(lf(`${REPO}/migrations/484_onboarding_activity_bridge.sql`)); await db.exec(`INSERT INTO schema_migrations (filename, sha256) VALUES ('484_onboarding_activity_bridge.sql', 'recorded')`); }
   const client = { query: async (sql, params) => {
     if (params) { const r = await db.query(sql, params.map((v) => (v && typeof v === 'object' ? JSON.stringify(v) : v))); return { rows: r.rows, rowCount: r.affectedRows ?? r.rows.length }; }
     const rs = await db.exec(sql); const last = rs[rs.length - 1] || { rows: [] }; return { rows: last.rows, rowCount: last.affectedRows ?? 0 };

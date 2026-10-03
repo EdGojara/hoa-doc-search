@@ -10,9 +10,11 @@
 //   GET  /batches/:id                  batch, artifacts, events, current controls,
 //                                      waivers, permitted actions, required human action
 //   GET  /batches/:id/snapshot[?completion_id=]  proposed opening position (latest or a given result)
+//   GET  /batches/:id/bridge[?completion_id=]    activity bridge classification (latest or a given result)
+//   GET  /batches/:id/bridge/freshness  has Trusted activity changed since the bridge? (read-only)
 //   POST /batches                      create (admin)
 //   POST /batches/:id/artifacts        upload one source file (admin; intake only)
-//   POST /batches/:id/run              run the CURRENT stage, 0-3 only (admin)
+//   POST /batches/:id/run              run the CURRENT stage, 0-4 only (admin)
 //   POST /batches/:id/waivers          waive one open control (OWNER)
 //   POST /batches/:id/advance          advance one stage (OWNER)
 //   POST /batches/:id/approve          approve an exact preflight report (OWNER)
@@ -53,6 +55,15 @@ function buildRouter({ service, auth, listCommunities }) {
   router.get('/batches/:id/snapshot', async (req, res) => {
     try { if (!(await admin(req, res))) return; const v = await service.getSnapshot(req.params.id, req.query.completion_id || null); if (!v) return res.status(404).json({ error: 'no_snapshot' }); res.json(v); }
     catch (e) { fail(res, e, 'snapshot'); }
+  });
+
+  router.get('/batches/:id/bridge', async (req, res) => {
+    try { if (!(await admin(req, res))) return; const v = await service.getBridge(req.params.id, req.query.completion_id || null); if (!v) return res.status(404).json({ error: 'no_bridge' }); res.json(v); }
+    catch (e) { fail(res, e, 'bridge'); }
+  });
+  router.get('/batches/:id/bridge/freshness', async (req, res) => {
+    try { if (!(await admin(req, res))) return; const v = await service.bridgeFreshness(req.params.id); if (!v) return res.status(404).json({ error: 'no_bridge' }); res.json(v); }
+    catch (e) { fail(res, e, 'bridge freshness'); }
   });
 
   router.post('/batches', express.json({ limit: '64kb' }), async (req, res) => {

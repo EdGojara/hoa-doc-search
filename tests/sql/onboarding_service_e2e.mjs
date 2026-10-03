@@ -27,10 +27,22 @@ const OWNER = { kind: 'human', id: 'ed', role: 'owner' };
 const ADMIN = { kind: 'human', id: 'staffer', role: 'admin' };
 function memoryStorage() { const m = new Map(); return { m, async putOnce(p, b) { if (!m.has(p)) m.set(p, Buffer.from(b)); }, async get(p) { if (!m.has(p)) throw new Error('missing'); return Buffer.from(m.get(p)); } }; }
 
-const world = await onboardingWorld(PGlite, { through: 483 });
+const world = await onboardingWorld(PGlite, { through: 484 });
 const storage = memoryStorage();
 let rpcCalls = [];
-const svc = createOnboardingService({ rpc: async (n, a) => { rpcCalls.push(n); return world.rpc(n, a); }, storage });
+// Synthetic Trusted financial activity for the bridge (no client data). Mutable so a test can change it.
+const je = (id, d, mod, amt, extra = {}) => ({ id, posting_date: d, source_module: mod, status: 'posted', total_debits_cents: amt, total_credits_cents: amt, description: '', ...extra });
+const trustedRows = {
+  journal_entries: [je('t-legacy', '2026-02-01', 'vantaca_import', 61000), je('t-inv-src', '2026-04-05', 'ap_invoice', 15000, { description: 'AP invoice EX-0001 — Example Landscaping LLC' }),
+    je('t-inv-new', '2026-08-25', 'ap_invoice', 55000, { description: 'AP invoice 2608EX — Manager' }), je('t-ach', '2026-03-05', 'payment_intake', 15000, { description: 'AP payment ach' })],
+  journal_entry_lines: [{ id: 'l1', journal_entry_id: 't-inv-new', account_id: 'x5810', debit_cents: 55000, credit_cents: 0 }, { id: 'l2', journal_entry_id: 't-inv-new', account_id: 'x2000', debit_cents: 0, credit_cents: 55000 }],
+  ap_invoices: [{ id: 'i-src', vendor_invoice_number: 'EX-0001', invoice_date: '2026-04-05', total_cents: 15000, posting_journal_entry_id: 't-inv-src' }, { id: 'i-new', vendor_invoice_number: '2608EX', invoice_date: '2026-08-25', total_cents: 55000, posting_journal_entry_id: 't-inv-new' }],
+  ap_payments: [], ar_charges: [], ar_payments: [], payments: [{ id: 't-pay', amount_cents: 100, status: 'pending', livemode: null, journal_entry_id: null, created_at: '2026-03-20T00:00:00Z' }], homeowner_transactions: [],
+};
+const trustedRecordCount = () => Object.entries(trustedRows).filter(([k]) => k !== 'journal_entry_lines').reduce((n, [, v]) => n + v.length, 0);
+const readerCalls = [];
+const trustedReader = async (communityId) => { readerCalls.push(communityId); return { trusted: JSON.parse(JSON.stringify(trustedRows)), accountNumber: (id) => ({ x5810: '5810', x2000: '2000' }[id] || null), accountOfProperty: () => null }; };
+const svc = createOnboardingService({ rpc: async (n, a) => { rpcCalls.push(n); return world.rpc(n, a); }, storage, trustedReader });
 
 check('schema status: ready when 481/482 are applied', (await svc.schemaStatus()).ready === true);
 {
@@ -106,7 +118,22 @@ check('the unsupported AP remainder is its own line naming nobody', sv.lines.som
 await svc.waive(OWNER, B, { completion_id: sn2.completion_id, code: 'snapshot.ap_detail_supports_gl', reason: 'AP aging to follow; reviewed for the test' });
 await svc.advance(OWNER, B, { completion_id: sn2.completion_id, to: 'activity_bridge' });
 v = await svc.getBatch(B, OWNER);
-check('activity bridge: no runner in this milestone; the view says so and running is refused', v.derived.runner_available === false && /no runner yet/.test(v.derived.required_action.text) && (await code(() => svc.runStage(ADMIN, B))) === 'NO_RUNNER_FOR_STAGE');
+// ---- Stage 4: activity bridge (reads Trusted through the read-only path; changes nothing)
+check('activity bridge: the stage has a runner; an agent assigned elsewhere cannot run it', v.derived.runner_available === true && /AGENT_OUTSIDE_ASSIGNED_STAGE/.test((await code(() => svc.runStage({ kind: 'agent', id: 'claude', assigned_stage: 'snapshot' }, B))) || ''));
+const br1 = await svc.runStage({ kind: 'agent', id: 'claude', assigned_stage: 'activity_bridge' }, B);
+let bv = await svc.getBridge(B);
+const cls = (k) => bv.items.filter((i) => i.classification === k).map((i) => i.event_key);
+check('bridge recorded: legacy import ALREADY; invoice EX-0001 dated after cutoff ALREADY by number+amount; test payment OUT; Aug invoice SUBSEQUENT; amount-only AMBIGUOUS',
+  cls('ALREADY_IN_SOURCE').includes('je:t-legacy') && cls('ALREADY_IN_SOURCE').includes('je:t-inv-src') && cls('OUT_OF_SCOPE').includes('loose:payments:t-pay') && cls('LEGITIMATE_SUBSEQUENT').includes('je:t-inv-new') && cls('AMBIGUOUS').includes('je:t-ach'));
+check('bridge: every Trusted record classified exactly once; totals reconcile; status BLOCKED on the ambiguous item', bv.status === 'BLOCKED' && bv.items.reduce((n, i) => n + i.records.length, 0) === trustedRecordCount() && Object.values(bv.totals).reduce((n, t) => n + Number(t.records), 0) === trustedRecordCount());
+check('bridge freshness: fresh right after the run', (await svc.bridgeFreshness(B)).fresh === true);
+trustedRows.ap_invoices[0] = { ...trustedRows.ap_invoices[0], total_cents: trustedRows.ap_invoices[0].total_cents + 1, updated_at: '2026-10-03T12:00:00Z' };
+check('bridge freshness: a later change to Trusted activity makes the bridge stale (fresh = false)', (await svc.bridgeFreshness(B)).fresh === false);
+const br2 = await svc.runStage(ADMIN, B);
+const oldB = await svc.getBridge(B, br1.completion_id); bv = await svc.getBridge(B);
+check('bridge re-run: new completion; earlier bridge readable and flagged stale; a waiver against it is refused', bv.completion_id === br2.completion_id && oldB.stale === true
+  && /REFUSED_BY_DATABASE/.test((await code(() => svc.waive(OWNER, B, { completion_id: br1.completion_id, code: 'bridge.ambiguous_items_reviewed', reason: 'reviewed the ambiguous items' }))) || ''));
+check('the Trusted reader was only ever given the community id (it reads, never writes)', readerCalls.length >= 3 && readerCalls.every((c) => c === COMM));
 check('no accounting table was touched by any of it', (await world.db.query(`SELECT count(*)::int AS n FROM journal_entries`)).rows[0].n === 0);
 
 // Tampered artifact bytes refuse the stage (new batch so we are back in intake/normalize).
@@ -119,7 +146,7 @@ const tv = await svc.getBatch(B2, OWNER);
 check('tampered artifact: intake FAILS on the re-hash check (the stored bytes no longer match the record)', t0.status === 'FAIL' && tv.current.controls.find((c) => c.code === 'intake.artifacts_match_recorded_hashes').status === 'FAIL');
 
 // Only allowlisted guarded functions were ever called; the service holds no table writes.
-check('service used only the allowlisted onboarding_* functions', rpcCalls.every((n) => /^onboarding_(batches|batch_view|create_batch|register_artifact|record_completion|waive|approve|advance|record_snapshot|snapshot_view)$/.test(n)));
+check('service used only the allowlisted onboarding_* functions', rpcCalls.every((n) => /^onboarding_(batches|batch_view|create_batch|register_artifact|record_completion|waive|approve|advance|record_snapshot|snapshot_view|record_bridge|bridge_view)$/.test(n)));
 const forged = await code(() => svc.waive({ kind: 'human', id: 'ed', role: 'admin' }, B, { completion_id: r2b.completion_id, code: 'x', reason: 'pretending to be the owner' }));
 check('identity: an actor without the owner role cannot waive even with the owner id', forged === 'OWNER_ONLY');
 console.log(`\n${pass} passed, ${fail} failed`);
