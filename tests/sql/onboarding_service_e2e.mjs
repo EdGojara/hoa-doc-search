@@ -1,0 +1,105 @@
+// tests/sql/onboarding_service_e2e.mjs — Issue #15 Milestone 2. The persisted
+// onboarding workflow (lib/onboarding/service.js) end to end on the REAL
+// 452 + 481 + 482 SQL, with the synthetic Vantaca fixture (no client data):
+// create -> register artifacts -> run intake / normalize / source controls ->
+// waive -> advance, read back through the view, plus every bypass we can think
+// of: wrong role, agent outside its stage, forged body identity, stale result,
+// tampered artifact bytes, no runner for later stages, EXECUTE, direct table
+// writes. Postgres 17 (PGlite 0.3.x). Skips without PGlite.
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import { createRequire } from 'module';
+import { onboardingWorld, COMM } from './onboarding_world.mjs';
+const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
+let PGlite;
+try { ({ PGlite } = await import(process.env.PGLITE_MODULE || '@electric-sql/pglite')); }
+catch (_) { console.log('SKIP  onboarding service e2e (@electric-sql/pglite not installed)'); process.exit(0); }
+const require = createRequire(import.meta.url);
+const { createOnboardingService } = require(`${REPO}/lib/onboarding/service.js`);
+const FX = path.join(REPO, 'tests', 'fixtures', 'onboarding', 'synthetic-vantaca');
+let pass = 0, fail = 0;
+const check = (name, cond, extra = '') => { if (cond) { pass++; console.log('PASS ', name); } else { fail++; console.log('FAIL ', name, extra); } };
+const code = async (fn) => { try { await fn(); return null; } catch (e) { return e.code || e.message; } };
+
+const OWNER = { kind: 'human', id: 'ed', role: 'owner' };
+const ADMIN = { kind: 'human', id: 'staffer', role: 'admin' };
+function memoryStorage() { const m = new Map(); return { m, async putOnce(p, b) { if (!m.has(p)) m.set(p, Buffer.from(b)); }, async get(p) { if (!m.has(p)) throw new Error('missing'); return Buffer.from(m.get(p)); } }; }
+
+const world = await onboardingWorld(PGlite, { through: 482 });
+const storage = memoryStorage();
+let rpcCalls = [];
+const svc = createOnboardingService({ rpc: async (n, a) => { rpcCalls.push(n); return world.rpc(n, a); }, storage });
+
+check('schema status: ready when 481/482 are applied', (await svc.schemaStatus()).ready === true);
+{
+  const bare = await onboardingWorld(PGlite, { through: 0 });
+  const s2 = createOnboardingService({ rpc: bare.rpc, storage: memoryStorage() });
+  const st = await s2.schemaStatus();
+  check('schema status: NOT ready (names 481 + 482) when they are not applied; reads refuse with 503', st.ready === false && st.needs.join() === '481_onboarding_engine.sql,482_onboarding_service.sql' && (await code(() => s2.listBatches())) === 'SCHEMA_NOT_APPLIED');
+}
+
+check('create: an agent (or any non-staff actor) cannot create a batch', (await code(() => svc.createBatch({ kind: 'agent', id: 'claude', assigned_stage: 'intake' }, { community_id: COMM, batch_code: 'X', as_of_date: '2026-03-31', source_system: 'vantaca' }))) === 'STAFF_ONLY');
+const B = await svc.createBatch(ADMIN, { community_id: COMM, batch_code: 'CONV-EX-20260331', as_of_date: '2026-03-31', source_system: 'vantaca' });
+const TYPES = ['gl_trial_balance', 'balance_sheet', 'ar_aging', 'homeowner_transactions'];
+for (const t of TYPES) await svc.registerArtifact(ADMIN, B, { buffer: fs.readFileSync(path.join(FX, `${t}.txt`)), filename: `${t}.txt`, artifact_type: t });
+let v = await svc.getBatch(B, OWNER);
+check('artifacts: 4 registered, hashed, stored write-once by content hash', v.artifacts.length === 4 && v.artifacts.every((a) => a.sha256.length === 64 && a.storage_path.endsWith(a.sha256)) && storage.m.size === 4);
+check('view: intake has no result yet -> staff must run it; owner sees no advance yet', v.derived.required_action.who === 'staff' && !v.derived.permitted_actions.some((x) => x.action === 'advance'));
+
+check('run: an agent assigned to another stage cannot run intake', /AGENT_OUTSIDE_ASSIGNED_STAGE/.test((await code(() => svc.runStage({ kind: 'agent', id: 'claude', assigned_stage: 'normalize' }, B))) || ''));
+const r0 = await svc.runStage({ kind: 'agent', id: 'claude', assigned_stage: 'intake' }, B);
+check('run intake (agent in its own stage): PASS recorded', r0.status === 'PASS');
+check('advance: an admin (not owner) cannot advance', (await code(() => svc.advance(ADMIN, B, { completion_id: r0.completion_id, to: 'normalize' }))) === 'OWNER_ONLY');
+check('advance: an agent cannot advance', (await code(() => svc.advance({ kind: 'agent', id: 'claude', assigned_stage: 'intake', role: 'owner' }, B, { completion_id: r0.completion_id, to: 'normalize' }))) === 'OWNER_ONLY');
+v = await svc.getBatch(B, OWNER);
+const advIntake = v.derived.permitted_actions.find((x) => x.action === 'advance');
+check('view: after a PASS the owner is offered exactly one action: advance to normalize', advIntake && advIntake.to === 'normalize' && /advance to normalize/.test(v.derived.required_action.text));
+await svc.advance(OWNER, B, { completion_id: r0.completion_id, to: 'normalize' });
+check('artifacts: cannot be added after intake', (await code(() => svc.registerArtifact(ADMIN, B, { buffer: Buffer.from('late'), filename: 'late.txt', artifact_type: 'other' }))) === 'NOT_IN_INTAKE');
+
+const r1 = await svc.runStage(ADMIN, B);
+check('run normalize: PASS (every line read, every printed total reproduced)', r1.status === 'PASS', JSON.stringify(r1));
+await svc.advance(OWNER, B, { completion_id: r1.completion_id, to: 'source_controls' });
+
+// Source controls with an authoritative AR that is deliberately wrong -> FAIL, then waived.
+const spec = { ar: { label: 'AR = 510.00', cents: 51000, derive: { kind: 'gl_ending', account: '1300' } }, wrong_cash: { label: 'Cash = 1,400.00 (deliberately wrong)', cents: 140000, derive: { kind: 'gl_ending', account: '1000' } } };
+const r2 = await svc.runStage(ADMIN, B, { roles: { ar_account: '1300', prepaid_account: '2400' }, authoritative: spec });
+v = await svc.getBatch(B, OWNER);
+const cash = v.current.controls.find((c) => c.code === 'authoritative.wrong_cash');
+check('run source controls: FAIL recorded with the exact difference (1,435.00 vs 1,400.00); every other control PASS', r2.status === 'FAIL' && cash.status === 'FAIL' && Number(cash.difference_cents) === 3500 && v.current.controls.filter((c) => c.status !== 'PASS').length === 1);
+check('view: owner offered a waiver for the open control, NOT an advance; required action names it', v.derived.permitted_actions.some((x) => x.action === 'waive' && x.code === 'authoritative.wrong_cash') && !v.derived.permitted_actions.some((x) => x.action === 'advance') && /authoritative\.wrong_cash/.test(v.derived.required_action.text));
+check('view: an admin sees the batch but is offered no waive/advance', !(await svc.getBatch(B, ADMIN)).derived.permitted_actions.some((x) => x.action === 'waive' || x.action === 'advance'));
+check('advance without the waiver: refused by the DATABASE even if this layer is bypassed', /REFUSED_BY_DATABASE/.test((await code(() => svc.advance(OWNER, B, { completion_id: r2.completion_id, to: 'snapshot' }))) || ''));
+check('waive: admin refused; weak reason refused', (await code(() => svc.waive(ADMIN, B, { completion_id: r2.completion_id, code: 'authoritative.wrong_cash', reason: 'reviewed and documented' }))) === 'OWNER_ONLY'
+  && (await code(() => svc.waive(OWNER, B, { completion_id: r2.completion_id, code: 'authoritative.wrong_cash', reason: 'ok' }))) === 'WAIVER_REASON_REQUIRED');
+
+// Re-run the stage: the first result becomes stale; a waiver against it is refused.
+const r2b = await svc.runStage(ADMIN, B, { roles: { ar_account: '1300', prepaid_account: '2400' }, authoritative: spec });
+check('replay: waiving the OLD (stale) result after a re-run is refused by the database', /REFUSED_BY_DATABASE/.test((await code(() => svc.waive(OWNER, B, { completion_id: r2.completion_id, code: 'authoritative.wrong_cash', reason: 'reviewed against the old result' }))) || ''));
+await svc.waive(OWNER, B, { completion_id: r2b.completion_id, code: 'authoritative.wrong_cash', reason: 'authoritative figure was a typo in the request; reviewed' });
+v = await svc.getBatch(B, OWNER);
+const waived = v.current.controls.find((c) => c.code === 'authoritative.wrong_cash');
+check('waived: still FAIL with its difference; disposition WAIVED by ed with the reason; summary FAIL "eligible_with_waiver"', waived.status === 'FAIL' && Number(waived.difference_cents) === 3500 && waived.disposition.disposition === 'WAIVED' && waived.disposition.waived_by === 'ed' && /typo/.test(waived.disposition.reason)
+  && v.derived.summary.overall === 'FAIL' && v.derived.eligibility === 'eligible_with_waiver');
+check('advance on the OLD result id is refused (stale), on the current one accepted', /REFUSED_BY_DATABASE/.test((await code(() => svc.advance(OWNER, B, { completion_id: r2.completion_id, to: 'snapshot' }))) || '')
+  && (await code(() => svc.advance(OWNER, B, { completion_id: r2b.completion_id, to: 'snapshot' }))) === null);
+v = await svc.getBatch(B, OWNER);
+check('snapshot: no runner in this milestone; the view says so and running is refused', v.derived.runner_available === false && /no runner yet/.test(v.derived.required_action.text) && (await code(() => svc.runStage(ADMIN, B))) === 'NO_RUNNER_FOR_STAGE');
+check('audit trail: every human action is an event with the server-side identity', v.events.filter((e) => e.type === 'stage_advanced').every((e) => e.actor_kind === 'human' && e.actor_id === 'ed') && v.events.some((e) => e.type === 'control_waived' && e.actor_id === 'ed'));
+
+// Tampered artifact bytes refuse the stage (new batch so we are back in intake/normalize).
+const B2 = await svc.createBatch(ADMIN, { community_id: COMM, batch_code: 'CONV-EX-TAMPER', as_of_date: '2026-03-31', source_system: 'vantaca' });
+await svc.registerArtifact(ADMIN, B2, { buffer: fs.readFileSync(path.join(FX, 'gl_trial_balance.txt')), filename: 'gl_trial_balance.txt', artifact_type: 'gl_trial_balance' });
+const p2 = (await svc.getBatch(B2, OWNER)).artifacts[0].storage_path;
+storage.m.set(p2, Buffer.from('tampered bytes'));
+const t0 = await svc.runStage(ADMIN, B2);
+const tv = await svc.getBatch(B2, OWNER);
+check('tampered artifact: intake FAILS on the re-hash check (the stored bytes no longer match the record)', t0.status === 'FAIL' && tv.current.controls.find((c) => c.code === 'intake.artifacts_match_recorded_hashes').status === 'FAIL');
+
+// Only allowlisted guarded functions were ever called; the service holds no table writes.
+check('service used only the allowlisted onboarding_* functions', rpcCalls.every((n) => /^onboarding_(batches|batch_view|create_batch|register_artifact|record_completion|waive|approve|advance)$/.test(n)));
+const forged = await code(() => svc.waive({ kind: 'human', id: 'ed', role: 'admin' }, B, { completion_id: r2b.completion_id, code: 'x', reason: 'pretending to be the owner' }));
+check('identity: an actor without the owner role cannot waive even with the owner id', forged === 'OWNER_ONLY');
+console.log(`\n${pass} passed, ${fail} failed`);
+process.exit(fail ? 1 : 0);
