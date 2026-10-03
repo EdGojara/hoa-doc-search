@@ -127,10 +127,12 @@ CREATE TABLE IF NOT EXISTS cd_ownerships (
   effective_to_basis   TEXT CHECK (effective_to_basis IN ('transfer_settlement', 'deed_recorded', 'owner_statement')),
   observed_as_of       DATE NOT NULL,
   change_id            UUID NOT NULL,
-  ended_by_change_id   UUID REFERENCES cd_changes(id) ON DELETE RESTRICT,
+  ended_by_change_id   UUID,
   recorded_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   FOREIGN KEY (party_id, community_id) REFERENCES cd_parties(id, community_id) ON DELETE RESTRICT,
   FOREIGN KEY (change_id, community_id) REFERENCES cd_changes(id, community_id) ON DELETE RESTRICT,
+  -- end provenance is community-scoped too: a row can only be ended by a change of its own community
+  FOREIGN KEY (ended_by_change_id, community_id) REFERENCES cd_changes(id, community_id) ON DELETE RESTRICT,
   CONSTRAINT cd_ownership_unknown_start_is_real CHECK ((effective_from IS NULL) = (effective_from_basis = 'unknown')),
   CONSTRAINT cd_ownership_end_has_basis CHECK ((effective_to IS NULL) = (effective_to_basis IS NULL)),
   CONSTRAINT cd_ownership_dates_ordered CHECK (effective_from IS NULL OR effective_to IS NULL OR effective_from <= effective_to)
@@ -171,11 +173,13 @@ CREATE TABLE IF NOT EXISTS cd_occupancies (
   effective_to_basis   TEXT CHECK (effective_to_basis IN ('lease_end', 'move_out_statement', 'owner_statement', 'tenant_source')),
   observed_as_of       DATE NOT NULL,
   change_id            UUID NOT NULL,
-  ended_by_change_id   UUID REFERENCES cd_changes(id) ON DELETE RESTRICT,
+  ended_by_change_id   UUID,
   recorded_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   FOREIGN KEY (party_id, community_id) REFERENCES cd_parties(id, community_id) ON DELETE RESTRICT,
   FOREIGN KEY (lease_id, community_id) REFERENCES cd_leases(id, community_id) ON DELETE RESTRICT,
   FOREIGN KEY (change_id, community_id) REFERENCES cd_changes(id, community_id) ON DELETE RESTRICT,
+  -- end provenance is community-scoped too: a row can only be ended by a change of its own community
+  FOREIGN KEY (ended_by_change_id, community_id) REFERENCES cd_changes(id, community_id) ON DELETE RESTRICT,
   CONSTRAINT cd_occupancy_lease_basis CHECK ((basis = 'lease') = (lease_id IS NOT NULL)),
   CONSTRAINT cd_occupancy_tenant_needs_evidence_basis CHECK (occupancy_kind <> 'tenant' OR basis IN ('lease', 'tenant_source')),
   CONSTRAINT cd_occupancy_end_has_basis CHECK ((effective_to IS NULL) = (effective_to_basis IS NULL)),
@@ -201,10 +205,12 @@ CREATE TABLE IF NOT EXISTS cd_addresses (
   effective_to      DATE,                                                    -- when it stopped being operative (null = current)
   effective_to_basis TEXT CHECK (effective_to_basis IN ('superseded_by_source', 'owner_statement', 'returned_mail', 'source_removed')),
   change_id         UUID NOT NULL,
-  ended_by_change_id UUID REFERENCES cd_changes(id) ON DELETE RESTRICT,
+  ended_by_change_id UUID,
   recorded_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   FOREIGN KEY (party_id, community_id) REFERENCES cd_parties(id, community_id) ON DELETE RESTRICT,
   FOREIGN KEY (change_id, community_id) REFERENCES cd_changes(id, community_id) ON DELETE RESTRICT,
+  -- end provenance is community-scoped too: a row can only be ended by a change of its own community
+  FOREIGN KEY (ended_by_change_id, community_id) REFERENCES cd_changes(id, community_id) ON DELETE RESTRICT,
   CONSTRAINT cd_address_end_has_basis CHECK ((effective_to IS NULL) = (effective_to_basis IS NULL))
 );
 CREATE UNIQUE INDEX IF NOT EXISTS cd_one_current_address_per_text ON cd_addresses (party_id, purpose, address_key) WHERE effective_to IS NULL;
@@ -222,10 +228,12 @@ CREATE TABLE IF NOT EXISTS cd_contact_methods (
   effective_to      DATE,
   effective_to_basis TEXT CHECK (effective_to_basis IN ('superseded_by_source', 'owner_statement', 'bounced', 'source_removed')),
   change_id         UUID NOT NULL,
-  ended_by_change_id UUID REFERENCES cd_changes(id) ON DELETE RESTRICT,
+  ended_by_change_id UUID,
   recorded_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   FOREIGN KEY (party_id, community_id) REFERENCES cd_parties(id, community_id) ON DELETE RESTRICT,
   FOREIGN KEY (change_id, community_id) REFERENCES cd_changes(id, community_id) ON DELETE RESTRICT,
+  -- end provenance is community-scoped too: a row can only be ended by a change of its own community
+  FOREIGN KEY (ended_by_change_id, community_id) REFERENCES cd_changes(id, community_id) ON DELETE RESTRICT,
   CONSTRAINT cd_contact_method_end_has_basis CHECK ((effective_to IS NULL) = (effective_to_basis IS NULL))
 );
 -- the SAME value on two parties is allowed (links nobody); per party one current row per value, one current primary per type

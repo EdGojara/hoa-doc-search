@@ -210,6 +210,20 @@ if (r.status === 'applied') {
   check('database: a canonical row cannot reference a party of another community (composite foreign key)', /foreign key|violates/i.test(await err(() => db.query(`INSERT INTO cd_ownerships (community_id, property_id, party_id, role, effective_from_basis, observed_as_of, change_id) VALUES ($1, $2, $3, 'owner', 'unknown', '2026-10-01', $4)`, [COMM2, P2, H1P, c2change])) || ''));
   check('database: a canonical row cannot reference a property of another community (trigger)', /is not in community/.test(await err(() => db.query(`INSERT INTO cd_ownerships (community_id, property_id, party_id, role, effective_from_basis, observed_as_of, change_id) VALUES ($1, $2, $3, 'owner', 'unknown', '2026-10-01', $4)`, [COMM, P2, H1P, anyChange])) || ''));
   check('database: evidence cannot point at another community\'s document', /foreign key|violates/i.test(await err(() => db.query(`INSERT INTO cd_evidence (community_id, subject_table, subject_id, observation, document_id, basis, change_id) VALUES ($1, 'cd_ownerships', $2, 'created', (SELECT id FROM cd_source_documents WHERE community_id = $3 LIMIT 1), 'x', $4)`, [COMM, own2, COMM2, anyChange])) || ''));
+  // 10.4b end provenance is community-scoped: a lifecycle row cannot be ended by another community's change, even directly
+  const openOcc = (await db.query(`SELECT id FROM cd_occupancies WHERE community_id = $1 AND effective_to IS NULL LIMIT 1`, [COMM])).rows[0].id;
+  const openAddr = (await db.query(`SELECT id FROM cd_addresses WHERE community_id = $1 AND effective_to IS NULL LIMIT 1`, [COMM])).rows[0].id;
+  const lifecycle = [['cd_ownerships', own2, 'transfer_settlement'], ['cd_occupancies', openOcc, 'move_out_statement'], ['cd_addresses', openAddr, 'superseded_by_source'], ['cd_contact_methods', phoneId, 'superseded_by_source']];
+  for (const [t, id, basis] of lifecycle) {
+    const e = await err(() => db.query(`UPDATE ${t} SET effective_to = '2026-11-15', effective_to_basis = $1, ended_by_change_id = $2 WHERE id = $3`, [basis, c2change, id]));
+    check(`database: ${t} cannot be ended by a change of another community (composite end-provenance foreign key, direct UPDATE)`, /foreign key/i.test(e || ''), e);
+    await db.exec('BEGIN');
+    let same = null;
+    try { same = await db.query(`UPDATE ${t} SET effective_to = '2026-11-15', effective_to_basis = $1, ended_by_change_id = $2 WHERE id = $3 AND effective_to IS NULL RETURNING id`, [basis, anyChange, id]); } catch (x) { same = { error: x.message }; }
+    await db.exec('ROLLBACK');
+    check(`end-only trigger still permits the same-community end of ${t} under the composite FK`, same && same.rows && same.rows.length === 1, JSON.stringify(same && same.error));
+  }
+  check('the probes left every lifecycle row open (rolled back)', (await db.query(`SELECT count(*)::int AS n FROM (SELECT effective_to FROM cd_ownerships WHERE id = $1 UNION ALL SELECT effective_to FROM cd_occupancies WHERE id = $2 UNION ALL SELECT effective_to FROM cd_addresses WHERE id = $3 UNION ALL SELECT effective_to FROM cd_contact_methods WHERE id = $4) x WHERE effective_to IS NULL`, [own2, openOcc, openAddr, phoneId])).rows[0].n === 4);
   // 10.5 occupancy_ends (end once, with basis + evidence)
   const t0occ = (await db.query(`SELECT o.id FROM cd_occupancies o JOIN cd_party_source_identities s ON s.party_id = o.party_id WHERE s.slot = 'tenant:0' AND s.identity_key = $1`, [sha('e')])).rows[0].id;
   const moveOut = { documents: [doc('mo', '4', 'move_out_statement', { observed_as_of: '2026-12-01' })], occupancy_ends: [{ occupancy_id: t0occ, effective_to: '2026-11-30', effective_to_basis: 'move_out_statement', evidence: [{ document_ref: 'mo', locator: {}, basis: 'tenant move-out notice' }] }] };
