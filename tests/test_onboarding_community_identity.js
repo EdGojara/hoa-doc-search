@@ -280,6 +280,49 @@ check('compare with Trusted: finds a false merge, a stale owner, a placeholder o
   assert.ok(r.findings.some((f) => f.type === 'lot_address_differs' && f.account === '9012'));
 });
 
+// Two resolver defects found on the QR dry run (synthetic shapes): a care-of Mailing Name Override in HomeownerName,
+// and a second "Property"-typed row that is really an out-of-town mailing address.
+const careOf = (() => {
+  const roster = [
+    owner('9101', 'H101', 'Pat Care Re: Lee Stone', { FirstName: 'Lee Ray', LastName: 'Stone', MailingNameOverride: 'Pat Care Re: Lee Stone' }, mail('71', 'Far Oaks Drive', 'Farcity', '78745')),
+    owner('9102', 'H102', 'Ana Vale & Ben Roe', { FirstName: 'Ana', LastName: 'Vale', SpouseFirstName: 'Ben', SpouseLastName: 'Roe' }, mail('102', 'Example Lane')),
+    owner('9102', 'H102', 'Ben Vale', { FirstName: 'Ana', LastName: 'Vale', SpouseFirstName: 'Ben', SpouseLastName: 'Roe', MailingNameOverride: 'Ben Vale' }, mail('102', 'Example Lane')),
+  ];
+  const address = [
+    prop('9101', '606', 'Example Lane', { 'Primary Mailing': 'No' }),
+    prop('9101', '71', 'Far Oaks Drive', { City: 'Farcity', Zip: '78745', Label: '', 'Primary Mailing': 'Yes' }),
+    prop('9102', '102', 'Example Lane'),
+  ];
+  const src = R.combine([R.readWorkbook(XLSX, book({ Sheet1: roster }), 'All Addresses Export.xlsx'), R.readWorkbook(XLSX, book({ Address: address, Email: [], Phone: [] }), 'Homeowner Contact Information.xlsx')]);
+  return buildCommunityGraph(src, { observed_as_of: '2026-10-01', financial_property_address: { 9101: '606 Example Lane', 9102: '102 Example Lane' } });
+})();
+check('defect (a): an out-of-town primary mailing address typed "Property" is NOT "mail goes to the property"; only the resolved lot is', () => {
+  assert.strictEqual(careOf.properties.find((p) => p.account === '9101').address_text.split(',')[0], '606 Example Lane', 'the labelled lot is the property');
+  const m = careOf.mailing_addresses.find((x) => x.owner_record === 'H101' && x.primary);
+  assert.ok(m && /Far Oaks/.test(m.address_text), 'the care-of address is the primary mailing address');
+  assert.strictEqual(m.mail_goes_to_property, false, 'mail to the care-of address does not go to the property');
+  const lotMail = careOf.mailing_addresses.find((x) => x.owner_record === 'H102' && x.primary);
+  assert.strictEqual(lotMail.mail_goes_to_property, true, 'a primary mailing address equal to the lot still goes to the property');
+});
+check('defect (a): an unresolved lot never claims mail goes to the property', () => {
+  const src = R.combine([R.readWorkbook(XLSX, book({ Sheet1: [owner('9201', 'H201', 'Kit Moss', {}, mail('5', 'A Street'))] }), 'All Addresses Export.xlsx'),
+    R.readWorkbook(XLSX, book({ Address: [prop('9201', '5', 'A Street', { Label: '' }), prop('9201', '6', 'B Street', { Label: '', 'Primary Mailing': 'No' })], Email: [], Phone: [] }), 'Homeowner Contact Information.xlsx')]);
+  const g = buildCommunityGraph(src, { observed_as_of: '2026-10-01' });
+  assert.strictEqual(g.properties[0].address, null);
+  assert.ok(g.mailing_addresses.filter((x) => x.primary).every((x) => x.mail_goes_to_property === false));
+});
+check('defect (b): a Mailing Name Override in HomeownerName is not the owner\'s name; the owner\'s own name fields are', () => {
+  const p = careOf.parties.find((x) => x.key === 'party:hid:H101');
+  assert.strictEqual(p.name, 'Lee Ray Stone');
+  assert.strictEqual(p.first, 'Lee Ray'); assert.strictEqual(p.last, 'Stone');
+  assert.ok(!careOf.parties.some((x) => /Re:/.test(x.name)), 'no party is named by a care-of mail name');
+});
+check('defect (b): when one row carries the override, the owner name comes from the row that does not; ordinary names are unchanged', () => {
+  assert.strictEqual(careOf.parties.find((x) => x.key === 'party:hid:H102').name, 'Ana Vale & Ben Roe');
+  assert.strictEqual(careOf.parties.find((x) => x.key === 'party:hid:H102#spouse').name, 'Ben Roe');
+  assert.strictEqual(G.parties.find((x) => x.key === 'party:hid:H5').name, 'Sam & Jo Lee');
+});
+
 (async () => {
   let pass = 0, fail = 0;
   console.log('Onboarding: community-data identity truth set (Issue #15)');
