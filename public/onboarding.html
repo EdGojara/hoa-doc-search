@@ -28,6 +28,11 @@
   .stage.cur{border-color:var(--gold);color:var(--navy);font-weight:800;} .stage.done{color:var(--live);}
   .action{border-left:4px solid var(--gold);background:var(--surface);border-radius:8px;padding:12px 14px;margin:12px 0;font-size:14.5px;}
   .action b{color:var(--navy);}
+  .dropzone{border:2px dashed var(--gold);border-radius:12px;background:var(--surface-2);padding:22px 16px;text-align:center;cursor:pointer;margin:10px 0;}
+  .dropzone b{font-size:16px;color:var(--navy);} .dropzone:focus{outline:2px solid var(--gold);outline-offset:2px;}
+  .dropzone.over, tr.droptarget.over{background:var(--warn-bg);border-color:var(--navy);}
+  tr.droptarget{cursor:pointer;} tr.droptarget td{transition:background .1s;}
+  .linkbtn{background:none;border:0;color:var(--muted);text-decoration:underline;cursor:pointer;padding:0 4px;font-size:12px;}
   label{display:block;font-size:12.5px;font-weight:700;color:var(--muted);margin:8px 0 3px;}
   input,select,textarea{font:inherit;font-size:14px;padding:7px 9px;border:1px solid var(--line);border-radius:8px;background:var(--surface);color:var(--ink);width:100%;max-width:420px;}
   textarea{max-width:100%;min-height:70px;}
@@ -61,8 +66,10 @@
         <div><label for="nb_src">Legacy system</label><select id="nb_src"><option value="vantaca">Vantaca</option></select></div>
         <div><label for="nb_date">Cutoff date</label><input id="nb_date" type="date" required></div>
       </div>
+      <div id="nb_dropall" class="dropzone" role="button" tabindex="0" aria-label="Drop all Vantaca reports here, or press Enter to choose files"><b>Drop all Vantaca reports here</b><div class="muted" style="font-size:13px;margin-top:4px">Drag the PDFs in all at once, or onto a report below. Trusted reads each PDF to tell which report it is and what date it covers. Click to choose files instead.</div></div>
+      <input id="nb_files" type="file" multiple accept=".pdf,application/pdf" hidden>
+      <div id="nb_notices"></div>
       <div id="nb_package" class="tablewrap"></div>
-      <label for="nb_files">Legacy reports</label><input id="nb_files" type="file" multiple required>
       <details><summary>Batch code (optional; generated if blank)</summary><input id="nb_code" placeholder="CONV-XX-20260731"></details>
       <button type="submit">Start onboarding</button>
     </form>
@@ -99,6 +106,7 @@
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="/js/onboarding-intake.js"></script>
 <script>
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -291,58 +299,91 @@ $('upload').onsubmit = async (ev) => {
 };
 // ---- Source package: what to pull from the legacy system, and what is in hand.
 const PKG_STATUS = {
-  supplied: ['PASS', 'Supplied'], needed: ['BLOCKED', 'Needed'], needed_if_balance: ['WAIVED', 'Include it'], not_needed: ['PASS', 'Not needed'], wrong_date: ['FAIL', 'Wrong date'],
+  supplied: ['PASS', 'Supplied'], needed: ['BLOCKED', 'Needed'], not_needed: ['PASS', 'Not needed'], wrong_date: ['FAIL', 'Wrong date'],
 };
-function renderPackage(pkg, title) {
+function renderPackage(pkg, title, opts) {
+  opts = opts || {};
   if (!pkg || !pkg.reports) return '';
   const row = (r) => {
     const st = r.status === 'supplied' && r.dated_at_cutoff === false ? 'wrong_date' : r.status;
     const [cls, txt] = PKG_STATUS[st] || ['WAIVED', st];
     let detail = '';
-    if (r.status === 'supplied') detail = esc(r.file || '') + (r.dated_at_cutoff === false ? ' <span class="muted">(dated ' + esc(r.as_of ? r.as_of.slice(5, 7).replace(/^0/, '') + '/' + r.as_of.slice(8, 10).replace(/^0/, '') + '/' + r.as_of.slice(0, 4) : '?') + '; upload the one dated at the cutoff)</span>' : '');
-    else if (r.status === 'needed_if_balance') detail = '<div class="muted" style="font-size:12px">needed when the GL carries a balance; include it now</div>';
+    if (r.status === 'supplied' && opts.drop) detail = '<div style="font-size:12.5px">' + esc(r.file || '') + ' <button type="button" class="linkbtn" data-remove="' + esc(r.file_key) + '" aria-label="Remove ' + esc(r.file) + '">remove</button></div><div class="muted" style="font-size:12px">Read as ' + esc(r.name) + ', ' + esc(OnboardingIntake.periodText(r)) + (r.dated_at_cutoff === false ? '; not the cutoff, drop the one dated at the cutoff' : '') + '</div>';
+    else if (r.status === 'needed' && opts.drop) detail = '<div class="muted" style="font-size:12px">drop the PDF here</div>';
+    else if (r.status === 'supplied') detail = esc(r.file || '') + (r.dated_at_cutoff === false ? ' <span class="muted">(dated ' + esc(r.as_of ? r.as_of.slice(5, 7).replace(/^0/, '') + '/' + r.as_of.slice(8, 10).replace(/^0/, '') + '/' + r.as_of.slice(0, 4) : '?') + '; upload the one dated at the cutoff)</span>' : '');
     else if (r.status === 'not_needed') detail = '<span class="muted">' + esc(r.note || '') + '</span>';
-    return '<tr data-report="' + esc(r.type) + '" data-status="' + esc(st) + '"><td><b>' + esc(r.report) + '</b>' + (r.period_note ? ' *' : '') + '<div class="muted" style="font-size:12px">' + esc(r.why) + ' · usually saved as ' + esc(r.saved_as) + '</div></td><td><span class="pill ' + cls + '">' + esc(txt) + '</span> ' + detail + '</td></tr>';
+    return '<tr data-report="' + esc(r.type) + '" data-status="' + esc(st) + '"' + (opts.drop ? ' class="droptarget" tabindex="0" aria-label="Drop the ' + esc(r.name) + ' PDF here, or press Enter to choose it"' : '') + '><td><b>' + esc(r.report) + '</b>' + (r.period_note ? ' *' : '') + '<div class="muted" style="font-size:12px">' + esc(r.why) + ' · usually saved as ' + esc(r.saved_as) + '</div></td><td><span class="pill ' + cls + '">' + esc(txt) + '</span> ' + detail + '</td></tr>';
   };
   let html = '<div style="margin:10px 0 4px;font-weight:800;color:var(--navy)">' + esc(title) + '</div><table><thead><tr><th>Report (run it for this date)</th><th>Status</th></tr></thead><tbody>' + pkg.reports.map(row).join('') + '</tbody></table>';
   const pn = pkg.reports.find((r) => r.period_note); if (pn) html += '<div class="muted" style="font-size:12px;margin-top:4px">* ' + esc(pn.period_note.charAt(0).toUpperCase() + pn.period_note.slice(1)) + '.</div>';
-  if (pkg.unrecognized && pkg.unrecognized.length) html += '<div class="banner warn" style="margin-top:6px"><b>Not recognized:</b> ' + pkg.unrecognized.map((u) => esc(u.filename ? u.filename + (u.note ? ' (' + u.note + ')' : '') : u)).join('; ') + '</div>';
-  if (pkg.not_requested && pkg.not_requested.length) html += '<div class="muted" style="font-size:12.5px;margin-top:6px">' + pkg.not_requested.map((n) => '<b>Not requested:</b> ' + esc(n.name) + '. ' + esc(n.why)).join('<br>') + '</div>';
+  if (pkg.unrecognized && pkg.unrecognized.length) html += '<div class="banner warn" style="margin-top:6px" id="pkg_unrecognized"><b>Not recognized:</b> ' + pkg.unrecognized.map((u) => esc(u.filename ? u.filename + (u.note ? ' (' + u.note + ')' : '') : u) + (opts.drop && u.file_key ? ' <button type="button" class="linkbtn" data-remove="' + esc(u.file_key) + '">remove</button>' : '')).join('; ') + '</div>';
+  if (pkg.scope) html += '<div class="action" id="pkg_scope" style="font-size:13.5px"><b>' + esc(pkg.scope.text) + '</b><div class="muted" style="font-size:12.5px;margin-top:4px">' + esc(pkg.scope.detail) + '</div></div>';
   return html;
 }
 let startPackage = null;
+let held = [];            // files in hand, each with what Trusted read from its contents
+let pickTarget = null;    // which report row opened the native picker (a hint only, never identity)
+const startTitle = () => 'Reports to download from ' + ($('nb_src').selectedOptions[0] || {}).textContent;
+const nameOf = (t) => { const r = startPackage && startPackage.reports.find((x) => x.type === t); return r ? r.name : t; };
+function renderStart() {
+  if (!startPackage) return;
+  const pkg = Object.assign({}, startPackage, OnboardingIntake.applyToPackage(startPackage.reports, held));
+  $('nb_package').innerHTML = renderPackage(pkg, startTitle(), { drop: true });
+}
+async function recognizeInto(files, droppedOn) {
+  const fresh = OnboardingIntake.newFiles(held, files);
+  if (!fresh.length) return;
+  if (!startPackage) { say('Pick the cutoff date first, so Trusted can check each report against it.', 'bad'); return; }
+  const fd = new FormData(); fd.append('source_system', $('nb_src').value); fd.append('as_of_date', $('nb_date').value); for (const f of fresh) fd.append('files', f);
+  $('nb_notices').innerHTML = '<div class="muted">Reading ' + fresh.length + ' file' + (fresh.length > 1 ? 's' : '') + '…</div>';
+  try {
+    const r = await api('/api/onboarding/recognize', { method: 'POST', body: fd });
+    const m = OnboardingIntake.merge(held, fresh, r.files, droppedOn || null);
+    held = m.held;
+    $('nb_notices').innerHTML = m.notices.length ? '<div class="banner warn">' + m.notices.map((n) => esc(OnboardingIntake.noticeText(n, nameOf))).join('<br>') + '</div>' : '';
+    renderStart();
+  } catch (e) { $('nb_notices').innerHTML = '<div class="banner bad">' + esc(e.message) + '</div>'; }
+}
 async function loadStartPackage() {
   const sys = $('nb_src').value; const cutoff = $('nb_date').value;
   if (!cutoff) { $('nb_package').innerHTML = '<div class="muted" style="margin:8px 0">Pick the cutoff date and Trusted will list exactly which reports to download, dated for it.</div>'; startPackage = null; return; }
   try {
     startPackage = await api('/api/onboarding/source-package?system=' + encodeURIComponent(sys) + '&cutoff=' + encodeURIComponent(cutoff));
-    startPackage.reports.forEach((r) => { r.status = r.need === 'always' ? 'needed' : 'needed_if_balance'; });
-    $('nb_package').innerHTML = renderPackage(startPackage, 'What to download from ' + ($('nb_src').selectedOptions[0] || {}).textContent);
-    if ($('nb_files').files.length) await recognizeStartFiles();
+    // a new cutoff changes every date check: read the held files again against it
+    const files = held.map((h) => h.file); held = [];
+    renderStart();
+    if (files.length) await recognizeInto(files, null);
   } catch (e) { $('nb_package').innerHTML = '<div class="banner bad">' + esc(e.message) + '</div>'; }
 }
-async function recognizeStartFiles() {
-  const files = $('nb_files').files; if (!files.length || !startPackage) return;
-  const fd = new FormData(); fd.append('source_system', $('nb_src').value); fd.append('as_of_date', $('nb_date').value); for (const f of files) fd.append('files', f);
-  $('nb_package').insertAdjacentHTML('afterbegin', '<div class="muted" id="nb_reading">Reading the files…</div>');
-  try {
-    const r = await api('/api/onboarding/recognize', { method: 'POST', body: fd });
-    const pkg = JSON.parse(JSON.stringify(startPackage));
-    for (const rep of pkg.reports) {
-      const hit = r.files.filter((x) => x.type === rep.type).slice(-1)[0];
-      if (hit) Object.assign(rep, { status: 'supplied', file: hit.filename, as_of: hit.as_of, dated_at_cutoff: hit.dated_at_cutoff });
-    }
-    pkg.unrecognized = r.files.filter((x) => !x.type).map((x) => ({ filename: x.filename, note: x.note }));
-    $('nb_package').innerHTML = renderPackage(pkg, 'What to download from ' + ($('nb_src').selectedOptions[0] || {}).textContent);
-  } catch (e) { const el = $('nb_reading'); if (el) el.outerHTML = '<div class="banner bad">' + esc(e.message) + '</div>'; }
-}
-$('nb_src').onchange = loadStartPackage; $('nb_date').onchange = loadStartPackage; $('nb_files').onchange = recognizeStartFiles;
+const dragFiles = (ev) => [...((ev.dataTransfer && ev.dataTransfer.files) || [])];
+const hasFiles = (ev) => ev.dataTransfer && [...(ev.dataTransfer.types || [])].includes('Files');
+// a file dropped anywhere else on the page must not navigate away from it
+window.addEventListener('dragover', (ev) => { if (hasFiles(ev)) ev.preventDefault(); });
+window.addEventListener('drop', (ev) => { if (hasFiles(ev)) ev.preventDefault(); });
+const zone = $('nb_dropall');
+zone.addEventListener('dragover', (ev) => { ev.preventDefault(); zone.classList.add('over'); });
+zone.addEventListener('dragleave', () => zone.classList.remove('over'));
+zone.addEventListener('drop', (ev) => { ev.preventDefault(); zone.classList.remove('over'); recognizeInto(dragFiles(ev), null); });
+zone.addEventListener('click', () => { pickTarget = null; $('nb_files').click(); });
+zone.addEventListener('keydown', (ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); pickTarget = null; $('nb_files').click(); } });
+const rowOf = (ev) => ev.target.closest && ev.target.closest('tr.droptarget');
+$('nb_package').addEventListener('dragover', (ev) => { const tr = rowOf(ev); if (!tr) return; ev.preventDefault(); tr.classList.add('over'); });
+$('nb_package').addEventListener('dragleave', (ev) => { const tr = rowOf(ev); if (tr) tr.classList.remove('over'); });
+$('nb_package').addEventListener('drop', (ev) => { const tr = rowOf(ev); if (!tr) return; ev.preventDefault(); tr.classList.remove('over'); recognizeInto(dragFiles(ev), tr.dataset.report); });
+$('nb_package').addEventListener('click', (ev) => {
+  const rm = ev.target.closest && ev.target.closest('[data-remove]');
+  if (rm) { held = held.filter((h) => h.key !== rm.dataset.remove); $('nb_notices').innerHTML = ''; renderStart(); return; }
+  const tr = rowOf(ev); if (tr) { pickTarget = tr.dataset.report; $('nb_files').click(); }
+});
+$('nb_package').addEventListener('keydown', (ev) => { const tr = rowOf(ev); if (tr && (ev.key === 'Enter' || ev.key === ' ') && ev.target === tr) { ev.preventDefault(); pickTarget = tr.dataset.report; $('nb_files').click(); } });
+$('nb_files').onchange = () => { const files = [...$('nb_files').files]; $('nb_files').value = ''; recognizeInto(files, pickTarget); pickTarget = null; };
+$('nb_src').onchange = loadStartPackage; $('nb_date').onchange = loadStartPackage;
 $('newBatch').onsubmit = async (ev) => {
   ev.preventDefault();
-  const files = $('nb_files').files; if (!files.length) return say('Add the legacy reports first.', 'bad');
+  if (!held.length) return say('Drop the legacy reports first.', 'bad');
   const fd = new FormData(); fd.append('community_id', $('nb_comm').value); fd.append('as_of_date', $('nb_date').value); fd.append('source_system', $('nb_src').value);
   if ($('nb_code').value.trim()) fd.append('batch_code', $('nb_code').value.trim());
-  for (const f of files) fd.append('files', f);
+  for (const h of held) fd.append('files', h.file);
   say('Working: reading the reports and running the checks…', 'warn');
   try { const r = await api('/api/onboarding/onboard', { method: 'POST', body: fd }); location.href = '/admin/onboarding?batch=' + encodeURIComponent(r.id); }
   catch (e) { say(e.message, 'bad'); }

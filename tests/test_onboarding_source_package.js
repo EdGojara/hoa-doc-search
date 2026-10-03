@@ -25,8 +25,8 @@ check('package for a cutoff: the six Vantaca reports by their printed names, dat
     'Pre Paid Homeowners as of 7/31/2026 (include previous owners)',
     'AP Aging as of 7/31/2026',
   ]);
-  assert.deepStrictEqual(p.reports.filter((r) => r.need === 'always').map((r) => r.type), ['gl_trial_balance', 'balance_sheet']);
   assert.ok(p.reports.every((r) => r.saved_as && r.why), 'every line says where to find it and why');
+  assert.ok(p.reports.every((r) => r.need === undefined && r.role === undefined), 'the user is never shown an include-or-not decision; need / role stay internal');
 });
 check('package is generic: another cutoff gives other dates; no cutoff still names every report', () => {
   const p = V.sourcePackage('2025-12-31');
@@ -34,10 +34,28 @@ check('package is generic: another cutoff gives other dates; no cutoff still nam
   assert.strictEqual(p.reports[1].report, 'Balance Sheet as of 12/31/2025');
   assert.ok(V.sourcePackage(null).reports.every((r) => /cutoff/.test(r.report)));
 });
-check('roster: requested explicitly or not at all; the Owner Changes Summary is never treated as a roster', () => {
+check('scope: the package is the FINANCIAL conversion only; owner / property / contact onboarding is separate and never inferred', () => {
   const p = V.sourcePackage('2026-07-31');
-  assert.ok(!p.reports.some((r) => /roster|owner changes/i.test(r.report)));
-  assert.ok(p.not_requested.some((n) => /roster/i.test(n.name) && /Owner Changes Summary is not a full roster/.test(n.why)));
+  assert.ok(!p.reports.some((r) => /roster|owner changes|contact/i.test(r.report)));
+  assert.strictEqual(p.scope.kind, 'financial');
+  assert.strictEqual(p.scope.text, "Financial conversion: these reports establish the association's accounting position through 7/31/2026. Owner, property and contact onboarding is handled separately and is not inferred from these reports.");
+  assert.match(p.scope.detail, /never read as owner, co-owner, tenant, mailing-address, email or phone records/);
+  assert.match(p.scope.detail, /Owner Changes Summary is not a roster/);
+  assert.ok(!/not needed through preflight/i.test(JSON.stringify(p)), 'no copy implying party data is unnecessary');
+});
+check('no party data is inferred: canonical rows from every reader carry account keys, amounts and dates, never the names / addresses printed on the report (those stay only in the raw provenance line or a verbatim memo)', () => {
+  const strip = (row) => { const { provenance, ...rest } = row; return rest; };
+  const PARTY = /name|owner_|address|mail|email|phone|tenant|occupant|co_owner|relationship/i;
+  for (const t of ['gl_trial_balance', 'balance_sheet', 'ar_aging', 'homeowner_transactions', 'prepaid_homeowners']) {
+    const text = fs.readFileSync(path.join(FX, `${t}.txt`), 'utf8');
+    const rows = V.parse(t, text, { filename: t, sha256: 'x' }).rows.map(strip);
+    assert.ok(rows.length, t + ' parsed');
+    const keys = new Set(rows.flatMap((r) => Object.keys(r)));
+    for (const k of keys) assert.ok(!PARTY.test(k) || k === 'account_name', `${t}: canonical field ${k} looks like party data`);
+    // a transaction memo is kept verbatim as printed (the bridge matches on it); it is never parsed into party fields
+    const flat = JSON.stringify(rows.map(({ description, ...r }) => r));
+    for (const who of ['Example Owner', 'Example Lane']) assert.ok(!flat.includes(who), `${t}: printed party text "${who}" leaked into canonical rows`);
+  }
 });
 check('recognition: every synthetic fixture is identified by its header with the date it prints', () => {
   const read = (t) => fs.readFileSync(path.join(FX, `${t}.txt`), 'utf8');

@@ -56,6 +56,7 @@ await service.advance(OWNER, B2, { completion_id: r.completion_id, to: 'activity
 await service.runStage(OWNER, B2);
 
 const app = express();
+app.use('/js', express.static(path.join(REPO, 'public', 'js')));
 app.get('/api/auth/config', (req, res) => res.json({ enabled: false }));
 app.use('/api/onboarding', buildRouter({ service, auth, listCommunities: async () => [{ id: COMM, name: 'Example Creek' }] }));
 app.get('/admin/onboarding', (req, res) => { if (req.query.as) res.setHeader('Set-Cookie', `as=${req.query.as}; Path=/`); res.sendFile(path.join(REPO, 'public', 'onboarding.html')); });

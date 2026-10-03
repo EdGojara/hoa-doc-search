@@ -162,10 +162,12 @@ check('POST /recognize reads the chosen files with the system + cutoff and recor
 check('UI: the start screen shows the source package (dated by the cutoff) and re-renders supplied / missing when files are chosen', () => {
   const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'onboarding.html'), 'utf8');
   const form = html.slice(html.indexOf('<form id="newBatch"'), html.indexOf('</form>', html.indexOf('<form id="newBatch"')));
-  assert.ok(form.indexOf('<div id="nb_package"') > 0 && form.indexOf('<div id="nb_package"') < form.indexOf('id="nb_files"'), 'checklist sits above the file picker');
+  assert.ok(form.indexOf('id="nb_dropall"') > 0 && form.indexOf('id="nb_dropall"') < form.indexOf('<div id="nb_package"'), 'drop-all zone, then the checklist, inside the start form');
   assert.ok(/\/api\/onboarding\/source-package\?system=/.test(html) && /\/api\/onboarding\/recognize/.test(html));
-  assert.ok(/\$\('nb_date'\)\.onchange = loadStartPackage/.test(html) && /\$\('nb_files'\)\.onchange = recognizeStartFiles/.test(html));
+  assert.ok(/\$\('nb_date'\)\.onchange = loadStartPackage/.test(html) && /\$\('nb_files'\)\.onchange = \(\) => \{[^\n]*recognizeInto\(files, pickTarget\)/.test(html));
   assert.ok(/op\.package/.test(html), 'the batch operator panel shows the same checklist');
+  assert.ok(!/needed_if_balance|Include it|Not requested/.test(html), 'no include-or-not decision and no "not requested" roster copy');
+  assert.ok(/pkg\.scope/.test(html) && /'Reports to download from '/.test(html), 'the financial-scope statement is rendered with the checklist');
 });
 
 (async () => {
