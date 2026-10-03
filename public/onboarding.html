@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Onboarding Engine — Bedrock</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Public+Sans:wght@400;600;700;800&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+  :root{ --navy:#0B1D34; --ink:#16233a; --muted:#5a6b83; --line:#dce3ec; --paper:#eef1f5; --surface:#fff; --surface-2:#f6f8fb; --gold:#B8892B; --live:#166b46; --live-bg:#e7f4ec; --warn:#8a5a12; --warn-bg:#fbf0dd; --bad:#a3271f; --bad-bg:#fbe7e5;
+    --sans:"Public Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; --serif:"Fraunces",Georgia,serif; }
+  @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){ --navy:#dbe7fb;--ink:#e7ecf4;--muted:#9fb0c9;--line:#26374f;--paper:#0a1626;--surface:#0f2137;--surface-2:#132a44;--gold:#e0b352;--live:#7fd6a6;--live-bg:#123526;--warn:#e6bd77;--warn-bg:#33260f;--bad:#f2a199;--bad-bg:#3a1714; }}
+  :root[data-theme="dark"]{ --navy:#dbe7fb;--ink:#e7ecf4;--muted:#9fb0c9;--line:#26374f;--paper:#0a1626;--surface:#0f2137;--surface-2:#132a44;--gold:#e0b352;--live:#7fd6a6;--live-bg:#123526;--warn:#e6bd77;--warn-bg:#33260f;--bad:#f2a199;--bad-bg:#3a1714; }
+  *{box-sizing:border-box} body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--sans);line-height:1.5;}
+  .wrap{max-width:1100px;margin:0 auto;padding:26px 16px 90px;}
+  .crumbs{font-size:13px;color:var(--muted);} .crumbs a{color:var(--muted);text-decoration:none;} .crumbs a:hover{color:var(--navy);text-decoration:underline;} .crumbs .sep{margin:0 7px;color:var(--line);} .crumbs .here{color:var(--navy);font-weight:700;}
+  h1{font-family:var(--serif);font-weight:600;font-size:28px;color:var(--navy);margin:6px 0 4px;}
+  h2{font-size:12.5px;font-weight:800;letter-spacing:.09em;text-transform:uppercase;color:var(--muted);margin:26px 0 10px;border-bottom:1px solid var(--line);padding-bottom:6px;}
+  .sub{font-size:14px;color:var(--muted);margin:0 0 10px;max-width:80ch;}
+  .card{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:14px 16px;margin:10px 0;}
+  .banner{border-radius:10px;padding:12px 14px;margin:12px 0;font-size:14px;}
+  .banner.warn{background:var(--warn-bg);color:var(--warn);} .banner.bad{background:var(--bad-bg);color:var(--bad);} .banner.ok{background:var(--live-bg);color:var(--live);}
+  table{width:100%;border-collapse:collapse;font-size:13.5px;} th,td{text-align:left;padding:7px 8px;border-bottom:1px solid var(--line);vertical-align:top;}
+  th{font-size:11.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:800;} td.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap;}
+  .tablewrap{overflow-x:auto;}
+  .pill{display:inline-block;font-size:11px;font-weight:800;letter-spacing:.05em;border-radius:20px;padding:2px 9px;text-transform:uppercase;white-space:nowrap;}
+  .PASS{background:var(--live-bg);color:var(--live);} .FAIL{background:var(--bad-bg);color:var(--bad);} .BLOCKED{background:var(--warn-bg);color:var(--warn);} .WAIVED{background:var(--surface-2);color:var(--navy);border:1px solid var(--gold);}
+  .stages{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0;} .stage{font-size:12px;border:1px solid var(--line);border-radius:20px;padding:3px 10px;color:var(--muted);background:var(--surface);}
+  .stage.cur{border-color:var(--gold);color:var(--navy);font-weight:800;} .stage.done{color:var(--live);}
+  .action{border-left:4px solid var(--gold);background:var(--surface);border-radius:8px;padding:12px 14px;margin:12px 0;font-size:14.5px;}
+  .action b{color:var(--navy);}
+  label{display:block;font-size:12.5px;font-weight:700;color:var(--muted);margin:8px 0 3px;}
+  input,select,textarea{font:inherit;font-size:14px;padding:7px 9px;border:1px solid var(--line);border-radius:8px;background:var(--surface);color:var(--ink);width:100%;max-width:420px;}
+  textarea{max-width:100%;min-height:70px;}
+  button{font:inherit;font-weight:700;font-size:14px;border:0;border-radius:8px;padding:8px 14px;cursor:pointer;background:var(--navy);color:var(--surface);margin-top:8px;}
+  button.secondary{background:var(--surface-2);color:var(--navy);border:1px solid var(--line);} button:disabled{opacity:.5;cursor:default;}
+  .row{display:flex;gap:14px;flex-wrap:wrap;align-items:flex-end;} .row > div{flex:1 1 200px;}
+  .muted{color:var(--muted);} .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12.5px;}
+  .gate{max-width:520px;margin:14vh auto 0;text-align:center;padding:0 20px;} .gate p{color:var(--muted);}
+  details summary{cursor:pointer;color:var(--muted);font-size:12.5px;}
+  a{color:var(--navy);}
+</style>
+</head>
+<body>
+<div id="gate" class="gate" hidden><h1>Admins only</h1><p>Sign in with an admin account to use the Onboarding Engine.</p></div>
+
+<div id="app" class="wrap" hidden>
+  <nav class="crumbs"><a href="/">Home</a><span class="sep">&rsaquo;</span><a href="/admin/systems">Systems Admin</a><span class="sep">&rsaquo;</span><span class="here">Onboarding Engine</span></nav>
+  <h1>Onboarding Engine</h1>
+  <p class="sub">Bring a community in from a legacy system one gated stage at a time. The legacy books at the cutoff are the authority. A failed control stays failed; only the owner can waive it, with a reason, and only the owner can move a batch to the next stage. Nothing here writes to the community's books.</p>
+  <div id="schema"></div>
+  <div id="msg"></div>
+
+  <section id="listView">
+    <h2>Batches</h2>
+    <div class="card tablewrap"><table><thead><tr><th>Batch</th><th>Community</th><th>Cutoff</th><th>Source</th><th>Stage</th><th>Current result</th></tr></thead><tbody id="batches"><tr><td colspan="6" class="muted">Loading…</td></tr></tbody></table></div>
+    <h2>New batch</h2>
+    <form id="newBatch" class="card">
+      <div class="row">
+        <div><label for="nb_comm">Community</label><select id="nb_comm" required></select></div>
+        <div><label for="nb_code">Batch code</label><input id="nb_code" placeholder="CONV-XX-20260731" required></div>
+        <div><label for="nb_date">Cutoff date</label><input id="nb_date" type="date" required></div>
+        <div><label for="nb_src">Legacy system</label><select id="nb_src"><option value="vantaca">Vantaca</option></select></div>
+      </div>
+      <button type="submit">Create batch</button>
+    </form>
+  </section>
+
+  <section id="detailView" hidden>
+    <p><a href="/admin/onboarding">&larr; All batches</a></p>
+    <div id="head" class="card"></div>
+    <div id="required"></div>
+    <h2>Source artifacts</h2>
+    <div id="artifacts" class="card tablewrap"></div>
+    <form id="upload" class="card" hidden>
+      <div class="row">
+        <div><label for="up_file">Source file (original report, or its extracted text)</label><input id="up_file" type="file" required></div>
+        <div><label for="up_type">Report type</label><select id="up_type">
+          <option value="gl_trial_balance">GL trial balance (text)</option><option value="balance_sheet">Balance sheet (text)</option>
+          <option value="ar_aging">AR aging (text)</option><option value="homeowner_transactions">Homeowner transaction history (text)</option>
+          <option value="gl_transactions_csv">Normalized GL transactions (CSV)</option><option value="original_pdf">Original report (PDF)</option><option value="other">Other</option></select></div>
+        <div><label for="up_from">Derived from (for extracted text)</label><select id="up_from"><option value="">(original file)</option></select></div>
+      </div>
+      <button type="submit">Register artifact</button>
+    </form>
+    <div id="run"></div>
+    <h2>Controls for the current stage</h2>
+    <div id="controls" class="card tablewrap"></div>
+    <div id="waivers"></div>
+    <div id="advance"></div>
+    <h2>Audit trail</h2>
+    <div id="events" class="card tablewrap"></div>
+  </section>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const money = (c) => { if (c == null || c === '') return ''; const n = Number(c); const a = Math.abs(n); const s = '$' + (Math.floor(a / 100)).toLocaleString('en-US') + '.' + String(a % 100).padStart(2, '0'); return n < 0 ? '(' + s + ')' : s; };
+const STAGES = ['intake', 'normalize', 'source_controls', 'snapshot', 'activity_bridge', 'preflight', 'execute', 'post_proof', 'complete'];
+const label = (s) => String(s || '').replace(/_/g, ' ');
+let af = (u, o) => fetch(u, o);
+let communities = [];
+
+async function api(u, o) {
+  const r = await af(u, o); const j = await r.json().catch(() => ({}));
+  if (!r.ok) { const e = new Error(j.error || ('HTTP ' + r.status)); e.status = r.status; throw e; }
+  return j;
+}
+function say(text, kind) { $('msg').innerHTML = text ? '<div class="banner ' + (kind || 'warn') + '">' + esc(text) + '</div>' : ''; if (text) window.scrollTo({ top: 0, behavior: 'smooth' }); }
+const commName = (id) => (communities.find((c) => c.id === id) || {}).name || id;
+
+async function loadList() {
+  const rows = await api('/api/onboarding/batches');
+  $('batches').innerHTML = rows.length ? rows.map((b) => '<tr><td><a href="/admin/onboarding?batch=' + encodeURIComponent(b.id) + '">' + esc(b.batch_code) + '</a></td><td>' + esc(commName(b.community_id)) + '</td><td>' + esc(b.as_of_date) + '</td><td>' + esc(b.source_system) + '</td><td>' + esc(label(b.stage)) + '</td><td>' + (b.current_status ? '<span class="pill ' + esc(b.current_status) + '">' + esc(b.current_status) + '</span>' : '<span class="muted">not run</span>') + '</td></tr>').join('') : '<tr><td colspan="6" class="muted">No onboarding batches yet.</td></tr>';
+}
+
+function renderDetail(v) {
+  const b = v.batch, d = v.derived, cur = v.current;
+  const can = (a) => d.permitted_actions.filter((x) => x.action === a);
+  $('head').innerHTML = '<div class="row" style="align-items:center"><div><div style="font-size:20px;font-weight:800;color:var(--navy)">' + esc(b.batch_code) + '</div><div class="muted">' + esc(commName(b.community_id)) + ' · cutoff ' + esc(b.as_of_date) + ' · from ' + esc(b.source_system) + '</div></div>'
+    + '<div style="flex:0 0 auto">' + (b.write_locked ? '<span class="pill PASS">Write lock: locked</span>' : '<span class="pill FAIL">Write lock: OPEN</span>') + '</div></div>'
+    + '<div class="stages">' + STAGES.map((s) => { const done = v.latest_by_stage[s]; return '<span class="stage' + (s === b.stage ? ' cur' : '') + (done && s !== b.stage ? ' done' : '') + '">' + esc(label(s)) + (done ? ' · ' + esc(done.status) : '') + '</span>'; }).join('') + '</div>';
+  const ra = d.required_action;
+  $('required').innerHTML = '<div class="action"><b>Next human action</b> <span class="muted">(' + esc(ra.who) + ')</span><br>' + esc(ra.text)
+    + (d.eligibility === 'eligible_with_waiver' ? '<br><span class="pill WAIVED">eligible to advance with waiver</span> <span class="muted">The waived controls are still FAIL/BLOCKED below.</span>' : '') + '</div>';
+  // artifacts
+  $('artifacts').innerHTML = v.artifacts.length ? '<table><thead><tr><th>File</th><th>Type</th><th>sha256</th><th class="num">Bytes</th><th>Derived from</th><th>Supplied by</th></tr></thead><tbody>'
+    + v.artifacts.map((a) => '<tr><td>' + esc(a.filename) + '</td><td>' + esc(label(a.artifact_type)) + '</td><td class="mono" title="' + esc(a.sha256) + '">' + esc(a.sha256.slice(0, 16)) + '…</td><td class="num">' + Number(a.bytes).toLocaleString() + '</td><td class="mono">' + esc(a.derived_from_sha256 ? a.derived_from_sha256.slice(0, 12) + '…' : '') + '</td><td>' + esc(a.supplied_by) + '</td></tr>').join('') + '</tbody></table>'
+    : '<span class="muted">No source artifacts registered yet.</span>';
+  $('upload').hidden = !can('register_artifact').length;
+  $('up_from').innerHTML = '<option value="">(original file)</option>' + v.artifacts.map((a) => '<option value="' + esc(a.sha256) + '">' + esc(a.filename) + '</option>').join('');
+  // run
+  const run = can('run_stage')[0];
+  $('run').innerHTML = run ? '<div class="card"><b>Run the ' + esc(label(run.stage)) + ' stage</b> <span class="muted">Records a new result for this stage. Earlier waivers do not carry over to a new result.</span>'
+    + (run.stage === 'source_controls' ? '<div class="row"><div><label for="r_ar">AR account</label><input id="r_ar" placeholder="1300"></div><div><label for="r_pp">Prepaid owner account</label><input id="r_pp" placeholder="2400"></div></div><label for="r_auth">Authoritative controls (JSON, optional)</label><textarea id="r_auth" class="mono" placeholder=\'{"ar":{"label":"AR = 19,767.91","cents":1976791,"derive":{"kind":"gl_ending","account":"1300"}}}\'></textarea>' : '')
+    + '<br><button id="runBtn">Run ' + esc(label(run.stage)) + '</button></div>' : '';
+  if (run) $('runBtn').onclick = () => doRun(b.id, run.stage);
+  // controls
+  const ctl = (cur && cur.controls) || [];
+  $('controls').innerHTML = !cur ? '<span class="muted">No result recorded for this stage yet.</span>'
+    : '<div class="muted" style="margin-bottom:6px">Result <span class="pill ' + esc(cur.status) + '">' + esc(cur.status) + '</span> · ' + (d.summary ? d.summary.counts.PASS + ' pass, ' + d.summary.counts.FAIL + ' fail, ' + d.summary.counts.BLOCKED + ' blocked; ' + d.summary.waived + ' waived' : '') + '</div>'
+    + '<table><thead><tr><th>Status</th><th>Disposition</th><th>Control</th><th class="num">Left</th><th class="num">Right</th><th class="num">Difference</th><th>Detail</th></tr></thead><tbody>'
+    + ctl.map((c) => '<tr><td><span class="pill ' + esc(c.status) + '">' + esc(c.status) + '</span></td><td>' + (c.disposition ? '<span class="pill WAIVED">Waived</span><div class="muted" style="font-size:12px">by ' + esc(c.disposition.waived_by) + ', ' + esc(String(c.disposition.waived_at || '').slice(0, 16).replace('T', ' ')) + '<br>' + esc(c.disposition.reason) + '</div>' : '') + '</td>'
+      + '<td>' + esc(c.label || c.code) + '<div class="mono muted">' + esc(c.code) + '</div></td><td class="num">' + money(c.left_cents) + '</td><td class="num">' + money(c.right_cents) + '</td><td class="num">' + (c.difference_cents ? money(c.difference_cents) : '') + '</td>'
+      + '<td>' + (c.failures && c.failures.count ? '<details><summary>' + c.failures.count + ' item(s)</summary><pre class="mono" style="white-space:pre-wrap">' + esc(JSON.stringify(c.failures.items, null, 1)) + '</pre></details>' : '') + esc(c.reason || '') + '</td></tr>').join('') + '</tbody></table>';
+  // waivers
+  const w = can('waive');
+  $('waivers').innerHTML = w.length ? '<h2>Waive an open control (owner)</h2>' + w.map((x, i) => '<div class="card"><b class="mono">' + esc(x.code) + '</b><div class="muted">The control stays ' + esc((ctl.find((c) => c.code === x.code) || {}).status || 'FAIL') + ' in every report; the waiver is recorded next to it with your name and reason.</div><label for="wr' + i + '">Reason (required)</label><textarea id="wr' + i + '"></textarea><button data-i="' + i + '" class="wbtn">Waive this control</button></div>').join('') : '';
+  document.querySelectorAll('.wbtn').forEach((btn) => { btn.onclick = () => { const x = w[Number(btn.dataset.i)]; doWaive(b.id, x, $('wr' + btn.dataset.i).value); }; });
+  // advance
+  const adv = can('advance')[0];
+  $('advance').innerHTML = adv ? '<h2>Advance (owner)</h2><div class="card">Move this batch from <b>' + esc(label(b.stage)) + '</b> to <b>' + esc(label(adv.to)) + '</b>. The database re-checks the gate when you do.<br><button id="advBtn">Advance to ' + esc(label(adv.to)) + '</button></div>' : '';
+  if (adv) $('advBtn').onclick = () => doAdvance(b.id, adv);
+  // events
+  $('events').innerHTML = v.events.length ? '<table><thead><tr><th>#</th><th>When</th><th>Event</th><th>Stage</th><th>By</th><th>Detail</th></tr></thead><tbody>'
+    + v.events.slice().reverse().map((e) => '<tr><td class="num">' + esc(e.seq) + '</td><td>' + esc(String(e.at).slice(0, 16).replace('T', ' ')) + '</td><td>' + esc(label(e.type)) + '</td><td>' + esc(label(e.stage)) + (e.to_stage ? ' &rarr; ' + esc(label(e.to_stage)) : '') + '</td><td>' + esc(e.actor_id) + ' <span class="muted">(' + esc(e.actor_kind) + ')</span></td><td>'
+      + (e.type === 'stage_completed' ? '<span class="pill ' + esc(e.status) + '">' + esc(e.status) + '</span> ' + esc((e.open_controls || []).join(', ')) : '') + (e.control_code ? '<span class="mono">' + esc(e.control_code) + '</span>: ' + esc(e.reason) : '') + '</td></tr>').join('') + '</tbody></table>' : '<span class="muted">No events yet.</span>';
+}
+
+async function loadDetail(id) {
+  $('listView').hidden = true; $('detailView').hidden = false;
+  renderDetail(await api('/api/onboarding/batches/' + encodeURIComponent(id)));
+}
+const json = (body) => ({ method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+const batchId = () => new URLSearchParams(location.search).get('batch');
+async function act(fn, okText) { try { await fn(); say(okText, 'ok'); await loadDetail(batchId()); } catch (e) { say(e.message, 'bad'); } }
+function doRun(id, stage) {
+  let body = {};
+  if (stage === 'source_controls') {
+    let authoritative = {};
+    const t = ($('r_auth').value || '').trim();
+    if (t) { try { authoritative = JSON.parse(t); } catch (_) { return say('Authoritative controls must be valid JSON.', 'bad'); } }
+    body = { roles: { ar_account: $('r_ar').value.trim() || undefined, prepaid_account: $('r_pp').value.trim() || undefined }, authoritative };
+  }
+  act(() => api('/api/onboarding/batches/' + encodeURIComponent(id) + '/run', json(body)), 'Stage result recorded.');
+}
+function doWaive(id, x, reason) {
+  if (!reason || reason.trim().length < 10) return say('A waiver needs a reason of at least 10 characters.', 'bad');
+  act(() => api('/api/onboarding/batches/' + encodeURIComponent(id) + '/waivers', json({ completion_id: x.completion_id, code: x.code, reason })), 'Waiver recorded. The control is still shown as failed, with your waiver next to it.');
+}
+function doAdvance(id, adv) {
+  if (!confirm('Advance this batch to ' + label(adv.to) + '? This is recorded under your name.')) return;
+  act(() => api('/api/onboarding/batches/' + encodeURIComponent(id) + '/advance', json({ completion_id: adv.completion_id, to: adv.to })), 'Batch advanced.');
+}
+$('upload').onsubmit = async (ev) => {
+  ev.preventDefault();
+  const f = $('up_file').files[0]; if (!f) return;
+  const fd = new FormData(); fd.append('file', f); fd.append('artifact_type', $('up_type').value); if ($('up_from').value) fd.append('derived_from_sha256', $('up_from').value);
+  act(() => api('/api/onboarding/batches/' + encodeURIComponent(batchId()) + '/artifacts', { method: 'POST', body: fd }), 'Artifact registered (hashed and stored write-once).');
+};
+$('newBatch').onsubmit = async (ev) => {
+  ev.preventDefault();
+  try {
+    const r = await api('/api/onboarding/batches', json({ community_id: $('nb_comm').value, batch_code: $('nb_code').value.trim(), as_of_date: $('nb_date').value, source_system: $('nb_src').value }));
+    location.href = '/admin/onboarding?batch=' + encodeURIComponent(r.id);
+  } catch (e) { say(e.message, 'bad'); }
+};
+
+(async function boot() {
+  try {
+    const cfg = await (await fetch('/api/auth/config')).json();
+    if (cfg && cfg.enabled && window.supabase && cfg.supabase_url && cfg.supabase_anon_key) {
+      const supa = window.supabase.createClient(cfg.supabase_url, cfg.supabase_anon_key);
+      af = async (u, o) => { o = o || {}; const h = Object.assign({}, o.headers || {}); try { const s = (await supa.auth.getSession()).data.session; if (s && s.access_token) h.Authorization = 'Bearer ' + s.access_token; } catch (_) {} return fetch(u, Object.assign({}, o, { headers: h })); };
+    }
+    const st = await api('/api/onboarding/status');
+    $('app').hidden = false;
+    if (!st.ready) { $('schema').innerHTML = '<div class="banner warn"><b>Not available yet.</b> The onboarding database changes have not been applied (' + esc(st.needs.join(', ')) + '). Nothing can be recorded until they are.</div>'; $('newBatch').hidden = true; $('batches').innerHTML = ''; return; }
+    communities = await api('/api/onboarding/communities');
+    $('nb_comm').innerHTML = communities.map((c) => '<option value="' + esc(c.id) + '">' + esc(c.name) + '</option>').join('');
+    if (batchId()) await loadDetail(batchId()); else await loadList();
+  } catch (e) {
+    if (e.status === 401 || e.status === 403) { $('gate').hidden = false; return; }
+    $('app').hidden = false; say(e.message, 'bad');
+  }
+})();
+</script>
+</body>
+</html>

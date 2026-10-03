@@ -159,3 +159,37 @@ For Quail Ridge specifically, three things are still blocked on sources:
 - the former-owner credit report (for the 737.53);
 - the 7/31 AP aging;
 - the roster/contact exports.
+
+## Milestone 2: persisted, controlled workflow
+
+Branch `feat/onboarding-m2`. Needs migrations **481 and 482 applied** before anything can be recorded. Until then the page and API answer "not available yet" and record nothing.
+
+| Layer | Where | What |
+|---|---|---|
+| Guarded SQL path | `migrations/482_onboarding_service.sql` (proposal, not applied) | The only way the app reads or writes onboarding data. Details below. |
+| Service | `lib/onboarding/service.js` | Calls only the 482 functions through an rpc allowlist. Details below. |
+| API | `api/onboarding.js` at `/api/onboarding` | Reads, stage runs, batch creation and artifact upload need an **admin**. Waive, advance and approve need the **owner**, checked before the service is called. The actor comes from authentication; identity in a request body is ignored. Database refusals return 409 with the database's reason. |
+| UI | `public/onboarding.html` at `/admin/onboarding`, with a tile on Systems Admin | Batch list and new batch; stage pipeline; the explicit next human action; artifacts and upload; run the current stage; controls with status and a separate waiver disposition; owner-only waive and advance; audit trail. |
+| Local harness | `scripts/onboarding_ui_harness.mjs` | The real page, router and service on an in-memory Postgres with the synthetic fixture. Touches no real database. |
+
+The 482 functions:
+- `onboarding_create_batch`;
+- `onboarding_register_artifact`: intake only;
+- `onboarding_record_completion`: the stage result, its run and every control result in one transaction. The status and open controls must equal the controls;
+- `onboarding_waive`: human; records the WAIVED disposition and leaves the status untouched;
+- `onboarding_approve`: human; current preflight result only;
+- `onboarding_advance`: human; re-proved by 481. EXECUTE is unreachable;
+- `onboarding_batch_view` and `onboarding_batches`.
+
+482 also makes onboarding control results immutable, apart from the one-time disposition, and undeletable.
+
+The service:
+- stores artifact bytes write-once by content hash and re-hashes them on every read;
+- runs stages 0–2 with the same pure engine functions the in-memory runners use;
+- derives the permitted actions and the required human action for the viewer.
+
+Tests:
+- `tests/sql/482_apply_one_e2e.mjs` (32);
+- `tests/sql/onboarding_service_e2e.mjs` (25, real 452/481/482 SQL);
+- `tests/test_onboarding_api.js` (8);
+- plus the Milestone 1 suites.

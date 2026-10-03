@@ -273,7 +273,9 @@ check('static: no onboarding module writes to the database, holds a client, or c
   for (const f of files) {
     const s = fs.readFileSync(f, 'utf8').replace(/\/\/.*$/gm, '');
     assert.ok(!/@supabase\/supabase-js|createClient\(|require\(['"][^'"]*(supabase|db\/|journal|ar_engine|ap_engine)[^'"]*['"]\)/.test(s), `${path.basename(f)} imports a DB client or posting module`);
-    if (path.basename(f) === 'write_gate.js') continue;
+    // write_gate names the mutators; service.js is the single persisted path (its only DB call is the
+    // onboarding_* rpc allowlist, asserted in tests/test_onboarding_api.js).
+    if (['write_gate.js', 'service.js'].includes(path.basename(f))) continue;
     // .update( on a hash (crypto) is not a DB write; a DB update takes a row object
     assert.ok(!/\.(insert|upsert|delete|rpc)\s*\(|\.update\s*\(\s*\{/.test(s), `${path.basename(f)} calls a database mutator`);
   }

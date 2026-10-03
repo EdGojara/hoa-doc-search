@@ -1,0 +1,78 @@
+{
+  "migration": "482_onboarding_service.sql",
+  "summary": "Onboarding Engine guarded service path (Issue #15 Milestone 2). Adds the SQL functions the app uses for every onboarding read and write: onboarding_create_batch, onboarding_register_artifact (intake only), onboarding_record_completion (stage result + run + control results in one transaction; status/open controls must equal the controls), onboarding_waive (human; sets the WAIVED disposition, status untouched), onboarding_approve (human; current preflight result), onboarding_advance (human; EXECUTE not reachable yet), onboarding_batch_view and onboarding_batches. Control results of onboarding runs become immutable except the one-time WAIVED disposition; conversion_runs.run_kind also allows intake/execute. Functions executable by service_role only. No rows change.",
+  "requires": [
+    "481_onboarding_engine.sql"
+  ],
+  "preflight": [
+    {
+      "name": "onboarding service functions do not exist yet",
+      "sql": "SELECT count(*)::int FROM pg_proc WHERE proname IN ('onboarding_create_batch','onboarding_register_artifact','onboarding_record_completion','onboarding_waive','onboarding_approve','onboarding_advance','onboarding_batch_view','onboarding_batches')",
+      "expect": 0
+    },
+    {
+      "name": "481 is in place (stage events table exists)",
+      "sql": "SELECT count(*)::int FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'onboarding_stage_events'",
+      "expect": 1
+    }
+  ],
+  "expected_changes": [
+    "Creates functions onboarding_assert_actor, onboarding_create_batch, onboarding_register_artifact, onboarding_record_completion, onboarding_waive, onboarding_approve, onboarding_advance, onboarding_batch_view, onboarding_batches (EXECUTE to service_role only).",
+    "Creates function conversion_control_results_onboarding_guard + trigger trg_conversion_control_results_onboarding_guard (onboarding-run results immutable except a one-time WAIVED disposition from the matching human waiver; no delete; legacy dry_run results untouched).",
+    "Replaces conversion_runs_run_kind_check to also allow intake and execute.",
+    "No row changes."
+  ],
+  "objects": {
+    "added": [
+      "function:conversion_control_results_onboarding_guard",
+      "function:onboarding_advance",
+      "function:onboarding_approve",
+      "function:onboarding_assert_actor",
+      "function:onboarding_batch_view",
+      "function:onboarding_batches",
+      "function:onboarding_create_batch",
+      "function:onboarding_record_completion",
+      "function:onboarding_register_artifact",
+      "function:onboarding_waive",
+      "trigger:conversion_control_results.trg_conversion_control_results_onboarding_guard"
+    ],
+    "changed": [
+      "constraint:conversion_runs.conversion_runs_run_kind_check"
+    ],
+    "removed": []
+  },
+  "row_changes": {
+    "conversion_batches": 0,
+    "conversion_runs": 0,
+    "conversion_control_results": 0
+  },
+  "protected": [
+    {
+      "table": "conversion_batches",
+      "order_by": "id"
+    },
+    {
+      "table": "journal_entries",
+      "order_by": "id"
+    }
+  ],
+  "verify": [
+    {
+      "name": "no engine batches yet",
+      "sql": "SELECT count(*)::int FROM conversion_batches WHERE onboarding_stage IS NOT NULL",
+      "expect": 0
+    },
+    {
+      "name": "service functions present",
+      "sql": "SELECT count(*)::int FROM pg_proc WHERE proname IN ('onboarding_create_batch','onboarding_register_artifact','onboarding_record_completion','onboarding_waive','onboarding_approve','onboarding_advance','onboarding_batch_view','onboarding_batches')",
+      "expect": 8
+    },
+    {
+      "name": "results guard trigger present",
+      "sql": "SELECT count(*)::int FROM pg_trigger WHERE tgname = 'trg_conversion_control_results_onboarding_guard'",
+      "expect": 1
+    }
+  ],
+  "api_checks": [],
+  "reload_schema": true
+}

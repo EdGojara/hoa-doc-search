@@ -1171,6 +1171,11 @@ app.get('/admin/voices', (req, res) => {
 app.get('/admin/characters', (req, res) => {
   res.sendFile(require('path').join(__dirname, 'public', 'characters-admin.html'));
 });
+// Onboarding Engine (Issue #15). Admin page; every /api/onboarding write is
+// admin- or owner-gated server-side and goes through the guarded SQL functions.
+app.get('/admin/onboarding', (req, res) => {
+  res.sendFile(require('path').join(__dirname, 'public', 'onboarding.html'));
+});
 // Video Links — record a mini video, upload it, send one private revocable link.
 app.get('/admin/video-share', (req, res) => {
   res.sendFile(require('path').join(__dirname, 'public', 'video-share.html'));
@@ -1827,6 +1832,8 @@ app.use('/api/voices', voicesRouter);
 // Canonical character registry (migration 467). Owner-only; additive (Phase A).
 const { router: charactersRouter } = require('./api/characters');
 app.use('/api/characters', charactersRouter);
+// Trusted Onboarding Engine (Issue #15, Milestone 2): persisted, staged, gated.
+app.use('/api/onboarding', require('./api/onboarding').router);
 
 const { router: w9Router } = require('./api/w9');
 app.use('/api/w9', w9Router);
