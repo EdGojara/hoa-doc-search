@@ -323,6 +323,65 @@ check('defect (b): when one row carries the override, the owner name comes from 
   assert.strictEqual(G.parties.find((x) => x.key === 'party:hid:H5').name, 'Sam & Jo Lee');
 });
 
+// The three cutover-archive resolutions (Vantaca authoritative through 7/31; the archive's owner of record and lot address).
+const ARCH = { as_of: '2026-07-31', provenance: { provider: 'vantaca', file: 'archive accounts summary.csv', file_sha256: 'c'.repeat(64) } };
+const cut = (() => {
+  const roster = [
+    owner('9301', 'H301', 'Ada Moss & Ren Gale', { FirstName: 'Ada', LastName: 'Moss', SpouseFirstName: 'Ren', SpouseLastName: 'Gale' }, mail('31', 'Away Road', 'Farcity', '77489')),
+    owner('9302', 'H302', 'Bo Lin', {}, mail('302', 'Example Lane')),
+    owner('9303', 'H303', 'Cy Park', {}, mail('303', 'Example Lane')),
+    owner('9304', 'H304', 'Di Moss', {}, mail('304', 'Example Lane')),
+  ];
+  const address = [prop('9301', '301', 'Example Lane', { 'Primary Mailing': 'No' }), mailRow('9301', '31', 'Away Road', 'Farcity', '77489'), prop('9302', '302', 'Example Lane'), prop('9303', '303', 'Example Lane'), prop('9304', '304', 'Example Lane')];
+  const src = R.combine([R.readWorkbook(XLSX, book({ Sheet1: roster }), 'All Addresses Export.xlsx'), R.readWorkbook(XLSX, book({ Address: address, Email: [], Phone: [] }), 'Homeowner Contact Information.xlsx')]);
+  const tr = (prop_, buyer, date, prev, line) => ({ property_text: prop_, current_owner: buyer, settlement_date: date, processed_date: date, previous_owner: prev, provenance: { provider: 'vantaca', file: 'Ownership Transfer Report.pdf', file_sha256: 'b'.repeat(64), line } });
+  const TRc = { period: { start: '2026-01-01', end: '2026-07-31' }, defects: [], transfers: [
+    tr('301 Example Lane', 'Ada Moss', '2026-04-02', 'Old One', 1),        // buyer + a co-owner added later; archive owner = the record
+    tr('302 Example Lane', 'Bo Lin Smith', '2026-03-01', 'Old Two', 2),    // buyer has a word the record lacks
+    tr('303 Example Lane', 'Cy', '2026-03-05', 'Old Three', 3),            // archive owner differs from the record
+    tr('304 Example Lane', 'Di', '2026-08-15', 'Old Four', 4),             // settled after the cutover
+  ] };
+  const archive = { ...ARCH, owner_name_by_account: { 9301: 'Ada Moss & Ren Gale', 9302: 'Bo Lin', 9303: 'Someone Prior', 9304: 'Di Moss' }, row_by_account: { 9301: 2, 9302: 3, 9303: 4, 9304: 5 } };
+  return { src, TRc, archive };
+})();
+check('archive resolution 1: the archive owner of record = this record and carries every word of the buyer -> same record; ONLY the owner slot starts on the settlement', () => {
+  const g = buildCommunityGraph(cut.src, { observed_as_of: '2026-10-01', transfer_report: cut.TRc, cutover_archive: cut.archive });
+  const t = g.transfers.find((x) => x.property_key === 'property:9301');
+  assert.strictEqual(t.link, 'archive_owner_record_carries_buyer');
+  const own = g.ownerships.find((x) => x.property_key === 'property:9301' && x.role === 'owner');
+  assert.deepStrictEqual([own.effective_from, own.start_evidence], ['2026-04-02', 'transfer_confirmed_by_cutover_archive']);
+  assert.ok(own.provenance.some((p) => p.file_sha256 === 'c'.repeat(64)) && own.provenance.some((p) => p.file_sha256 === 'b'.repeat(64)), 'both the transfer line and the archive are evidence');
+  assert.strictEqual(g.ownerships.find((x) => x.property_key === 'property:9301' && x.role === 'co_owner').effective_from, null, 'the co-owner added to the record is not dated by the buyer\'s transfer');
+  assert.ok(!g.ownerships.find((x) => x.property_key === 'property:9301' && x.role === 'co_owner').provenance.some((p) => p.file_sha256 === 'c'.repeat(64) || p.file_sha256 === 'b'.repeat(64)), 'the co-owner row does not carry the transfer / archive evidence');
+  assert.ok(!g.questions.some((q) => q.type === 'transfer_owner_differs_from_roster' && q.account === '9301'));
+  assert.ok(g.controls.every((c) => c.status === 'PASS'), JSON.stringify(g.controls.filter((c) => c.status !== 'PASS')));
+});
+check('archive resolution 1 is bounded: an extra buyer word, an archive owner that differs, a settlement after the cutover, or no archive -> still a question', () => {
+  const g = buildCommunityGraph(cut.src, { observed_as_of: '2026-10-01', transfer_report: cut.TRc, cutover_archive: cut.archive });
+  for (const a of ['9302', '9303', '9304']) {
+    assert.ok(g.questions.some((q) => q.type === 'transfer_owner_differs_from_roster' && q.account === a), a);
+    assert.strictEqual(g.ownerships.find((x) => x.property_key === `property:${a}` && x.role === 'owner').effective_from, null, a);
+  }
+  const none = buildCommunityGraph(cut.src, { observed_as_of: '2026-10-01', transfer_report: cut.TRc });
+  assert.ok(none.questions.some((q) => q.type === 'transfer_owner_differs_from_roster' && q.account === '9301'), 'without the archive the question stays');
+  const noProv = buildCommunityGraph(cut.src, { observed_as_of: '2026-10-01', transfer_report: cut.TRc, cutover_archive: { ...cut.archive, provenance: null } });
+  assert.ok(noProv.questions.some((q) => q.account === '9301'), 'an archive without provenance resolves nothing');
+});
+check('archive resolution 2: a second name that is the record\'s Mailing Name Override is a mail name (note), not a question; a real second name still asks', () => {
+  assert.ok(!careOf.questions.some((q) => q.type === 'second_name_on_owner_record' && q.homeowner_id === 'H102'));
+  assert.ok(careOf.notes.some((n) => n.type === 'mailing_name_override' && n.homeowner_id === 'H102'));
+  assert.strictEqual(careOf.parties.filter((p) => p.key.startsWith('party:hid:H102')).length, 2, 'owner + spouse only; no party for the mail name');
+  assert.ok(G.questions.some((q) => q.type === 'second_name_on_owner_record' && q.homeowner_id === 'H15'), 'two different names with no override is still a question');
+});
+check('archive resolution 3: two "Property" rows, exactly one is the archive lot -> that lot (note); no archive match or no archive -> still a question', () => {
+  const mk = (fin) => buildCommunityGraph(R.combine([R.readWorkbook(XLSX, book({ Sheet1: [owner('9100', 'H100', 'Quinn Ash')] }), 'r.xlsx'), R.readWorkbook(XLSX, book({ Address: [prop('9100', '1', 'One St', { Label: '', 'Primary Mailing': 'No' }), prop('9100', '2', 'Two Drive', { Label: '', 'Primary Mailing': 'Yes' })] }), 'c.xlsx')]), { observed_as_of: '2026-10-01', financial_property_address: fin });
+  const g = mk({ 9100: '2 Two Dr' });
+  assert.strictEqual(g.properties[0].address_text.split(',')[0], '2 Two Drive');
+  assert.ok(!g.questions.some((q) => q.type === 'property_address_conflict') && g.notes.some((n) => n.type === 'property_address_resolved_by_archive'));
+  assert.ok(mk({ 9100: '9 Nine St' }).questions.some((q) => q.type === 'property_address_conflict'), 'archive lot matches neither row');
+  assert.ok(mk({}).questions.some((q) => q.type === 'property_address_conflict'), 'no archive');
+});
+
 (async () => {
   let pass = 0, fail = 0;
   console.log('Onboarding: community-data identity truth set (Issue #15)');
