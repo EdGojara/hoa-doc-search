@@ -77,6 +77,19 @@ check('page: one prominent drop-all zone + every report row a drop / click targe
   assert.ok(/for \(const h of held\) fd\.append\('files', h\.file\)/.test(html), 'Start submits the held set (one file per report)');
 });
 
+check('plain-language screen: report name + exact date stay prominent; no accounting-engine explanations, no batch code, a short financial-scope line, and the action reads "Continue onboarding"', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'onboarding.html'), 'utf8');
+  const form = html.slice(html.indexOf('<form id="newBatch"'), html.indexOf('</form>', html.indexOf('<form id="newBatch"')));
+  assert.ok(!/esc\(r\.why\)/.test(html), 'the checklist does not render the engine "why" text');
+  assert.ok(!/authoritative ending balance|ties back to the GL|activity behind each balance|printed totals/.test(html), 'no accounting-engine phrasing on the page');
+  assert.ok(!/nb_code|Batch code/.test(html), 'batch code is generated, never asked for');
+  assert.ok(/<button type="submit">Continue onboarding<\/button>/.test(form) && !/Start onboarding/.test(html));
+  assert.ok(/These reports bring over the financials' \+ \(pkg\.cutoff \? ' through '/.test(html) && /We\\'ll handle owners, properties and contact information separately\./.test(html), 'one short reassuring scope line');
+  assert.ok(!/pkg\.scope\.detail|co-owner, tenant/.test(html), 'internal no-inference rules are not taught on the screen (they stay in code and tests)');
+  assert.ok(/<td><b>' \+ esc\(r\.report\) \+ '<\/b>'/.test(html) && /usually saved as ' \+ esc\(r\.saved_as\)/.test(html), 'report name + date range bold; file name a subtle hint');
+  assert.ok(form.indexOf('id="nb_dropall"') < form.indexOf('id="nb_package"') && form.indexOf('id="nb_package"') < form.indexOf('Continue onboarding'), 'drop-all stays the dominant first action');
+});
+
 (async () => {
   let pass = 0, fail = 0;
   console.log('Onboarding: Start-screen drag and drop (Issue #15)');

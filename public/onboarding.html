@@ -58,9 +58,9 @@
   <section id="listView">
     <h2>Batches</h2>
     <div class="card tablewrap"><table><thead><tr><th>Batch</th><th>Community</th><th>Cutoff</th><th>Source</th><th>Stage</th><th>Current result</th></tr></thead><tbody id="batches"><tr><td colspan="6" class="muted">Loading…</td></tr></tbody></table></div>
-    <h2>Start onboarding</h2>
+    <h2>Onboard a community</h2>
     <form id="newBatch" class="card">
-      <p class="muted" style="margin-top:0">Pick the community, the legacy system and the cutoff, then drop the reports exactly as the legacy system exports them (PDFs are fine). Trusted recognizes each report, checks it against its own printed totals, asks by name for anything missing, and keeps going on its own until something needs your judgment.</p>
+      <p class="muted" style="margin-top:0">Pick the community, the system you are moving from and the cutoff date. Then drop in the reports exactly as that system saves them. Trusted checks each one and tells you if anything is missing.</p>
       <div class="row">
         <div><label for="nb_comm">Community</label><select id="nb_comm" required></select></div>
         <div><label for="nb_src">Legacy system</label><select id="nb_src"><option value="vantaca">Vantaca</option></select></div>
@@ -70,8 +70,7 @@
       <input id="nb_files" type="file" multiple accept=".pdf,application/pdf" hidden>
       <div id="nb_notices"></div>
       <div id="nb_package" class="tablewrap"></div>
-      <details><summary>Batch code (optional; generated if blank)</summary><input id="nb_code" placeholder="CONV-XX-20260731"></details>
-      <button type="submit">Start onboarding</button>
+      <button type="submit">Continue onboarding</button>
     </form>
   </section>
 
@@ -308,16 +307,16 @@ function renderPackage(pkg, title, opts) {
     const st = r.status === 'supplied' && r.dated_at_cutoff === false ? 'wrong_date' : r.status;
     const [cls, txt] = PKG_STATUS[st] || ['WAIVED', st];
     let detail = '';
-    if (r.status === 'supplied' && opts.drop) detail = '<div style="font-size:12.5px">' + esc(r.file || '') + ' <button type="button" class="linkbtn" data-remove="' + esc(r.file_key) + '" aria-label="Remove ' + esc(r.file) + '">remove</button></div><div class="muted" style="font-size:12px">Read as ' + esc(r.name) + ', ' + esc(OnboardingIntake.periodText(r)) + (r.dated_at_cutoff === false ? '; not the cutoff, drop the one dated at the cutoff' : '') + '</div>';
+    if (r.status === 'supplied' && opts.drop) detail = '<div style="font-size:12.5px">' + esc(r.file || '') + ' <button type="button" class="linkbtn" data-remove="' + esc(r.file_key) + '" aria-label="Remove ' + esc(r.file) + '">remove</button></div><div class="muted" style="font-size:12px">Recognized: ' + esc(r.name) + ', ' + esc(OnboardingIntake.periodText(r)) + (r.dated_at_cutoff === false ? '. Wrong date: please run ' + esc(r.report) : '') + '</div>';
     else if (r.status === 'needed' && opts.drop) detail = '<div class="muted" style="font-size:12px">drop the PDF here</div>';
-    else if (r.status === 'supplied') detail = esc(r.file || '') + (r.dated_at_cutoff === false ? ' <span class="muted">(dated ' + esc(r.as_of ? r.as_of.slice(5, 7).replace(/^0/, '') + '/' + r.as_of.slice(8, 10).replace(/^0/, '') + '/' + r.as_of.slice(0, 4) : '?') + '; upload the one dated at the cutoff)</span>' : '');
+    else if (r.status === 'supplied') detail = esc(r.file || '') + (r.dated_at_cutoff === false ? ' <span class="muted">(dated ' + esc(r.as_of ? r.as_of.slice(5, 7).replace(/^0/, '') + '/' + r.as_of.slice(8, 10).replace(/^0/, '') + '/' + r.as_of.slice(0, 4) : '?') + '; please run ' + esc(r.report) + ')</span>' : '');
     else if (r.status === 'not_needed') detail = '<span class="muted">' + esc(r.note || '') + '</span>';
-    return '<tr data-report="' + esc(r.type) + '" data-status="' + esc(st) + '"' + (opts.drop ? ' class="droptarget" tabindex="0" aria-label="Drop the ' + esc(r.name) + ' PDF here, or press Enter to choose it"' : '') + '><td><b>' + esc(r.report) + '</b>' + (r.period_note ? ' *' : '') + '<div class="muted" style="font-size:12px">' + esc(r.why) + ' · usually saved as ' + esc(r.saved_as) + '</div></td><td><span class="pill ' + cls + '">' + esc(txt) + '</span> ' + detail + '</td></tr>';
+    return '<tr data-report="' + esc(r.type) + '" data-status="' + esc(st) + '"' + (opts.drop ? ' class="droptarget" tabindex="0" aria-label="Drop the ' + esc(r.name) + ' PDF here, or press Enter to choose it"' : '') + '><td><b>' + esc(r.report) + '</b>' + (r.period_note ? ' *' : '') + '<div class="muted" style="font-size:12px">usually saved as ' + esc(r.saved_as) + '</div></td><td><span class="pill ' + cls + '">' + esc(txt) + '</span> ' + detail + '</td></tr>';
   };
   let html = '<div style="margin:10px 0 4px;font-weight:800;color:var(--navy)">' + esc(title) + '</div><table><thead><tr><th>Report (run it for this date)</th><th>Status</th></tr></thead><tbody>' + pkg.reports.map(row).join('') + '</tbody></table>';
   const pn = pkg.reports.find((r) => r.period_note); if (pn) html += '<div class="muted" style="font-size:12px;margin-top:4px">* ' + esc(pn.period_note.charAt(0).toUpperCase() + pn.period_note.slice(1)) + '.</div>';
   if (pkg.unrecognized && pkg.unrecognized.length) html += '<div class="banner warn" style="margin-top:6px" id="pkg_unrecognized"><b>Not recognized:</b> ' + pkg.unrecognized.map((u) => esc(u.filename ? u.filename + (u.note ? ' (' + u.note + ')' : '') : u) + (opts.drop && u.file_key ? ' <button type="button" class="linkbtn" data-remove="' + esc(u.file_key) + '">remove</button>' : '')).join('; ') + '</div>';
-  if (pkg.scope) html += '<div class="action" id="pkg_scope" style="font-size:13.5px"><b>' + esc(pkg.scope.text) + '</b><div class="muted" style="font-size:12.5px;margin-top:4px">' + esc(pkg.scope.detail) + '</div></div>';
+  if (pkg.scope) html += '<div class="muted" id="pkg_scope" style="font-size:13px;margin-top:8px">These reports bring over the financials' + (pkg.cutoff ? ' through ' + esc(Number(pkg.cutoff.slice(5, 7)) + '/' + Number(pkg.cutoff.slice(8, 10)) + '/' + pkg.cutoff.slice(0, 4)) : '') + '. We\'ll handle owners, properties and contact information separately.</div>';
   return html;
 }
 let startPackage = null;
@@ -382,7 +381,6 @@ $('newBatch').onsubmit = async (ev) => {
   ev.preventDefault();
   if (!held.length) return say('Drop the legacy reports first.', 'bad');
   const fd = new FormData(); fd.append('community_id', $('nb_comm').value); fd.append('as_of_date', $('nb_date').value); fd.append('source_system', $('nb_src').value);
-  if ($('nb_code').value.trim()) fd.append('batch_code', $('nb_code').value.trim());
   for (const h of held) fd.append('files', h.file);
   say('Working: reading the reports and running the checks…', 'warn');
   try { const r = await api('/api/onboarding/onboard', { method: 'POST', body: fd }); location.href = '/admin/onboarding?batch=' + encodeURIComponent(r.id); }
