@@ -92,6 +92,19 @@ function buildRouter({ service, auth, listCommunities }) {
     for (const f of files || []) out.push(await service.registerArtifact(actor, batchId, { buffer: f.buffer, filename: f.originalname, artifact_type: /\.pdf$/i.test(f.originalname) ? 'original_pdf' : 'original' }));
     return out;
   }
+  // What to obtain from the legacy system for this cutoff, and which chosen files
+  // are which report. Neither stores or records anything.
+  router.get('/source-package', async (req, res) => {
+    try { if (!(await admin(req, res))) return; res.json(await service.sourcePackage(req.query.system || 'vantaca', req.query.cutoff || null)); }
+    catch (e) { fail(res, e, 'source package'); }
+  });
+  router.post('/recognize', uploadMany.array('files', 40), async (req, res) => {
+    try {
+      if (!(await admin(req, res))) return;
+      if (!req.files || !req.files.length) return res.status(400).json({ error: 'files_required' });
+      res.json({ files: await service.recognize((req.body && req.body.source_system) || 'vantaca', (req.body && req.body.as_of_date) || null, req.files) });
+    } catch (e) { fail(res, e, 'recognize'); }
+  });
   router.post('/onboard', uploadMany.array('files', 40), async (req, res) => {
     try {
       const a = await admin(req, res); if (!a) return;

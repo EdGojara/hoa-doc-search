@@ -51,11 +51,16 @@ const ED = { kind: 'human', id: 'ed', role: 'owner' };
 
 // 1. Ed starts: community, system, cutoff, and the four core reports as PDFs.
 const B = await svc.createBatch(ED, { community_id: COMM, batch_code: 'CONV-EX-OPERATOR', as_of_date: '2026-03-31', source_system: 'vantaca' });
+const pkgOf = async (id) => Object.fromEntries((await svc.getBatch(id, ED)).operator.package.reports.map((r) => [r.type, r]));
+let pk = await pkgOf(B);
+check('fresh batch, nothing uploaded: the checklist names every Vantaca report dated for the cutoff; GL + Balance Sheet needed, the rest "include it"', pk.gl_trial_balance.status === 'needed' && pk.gl_trial_balance.report === 'GL Trial Balance for 1/1/2026 - 3/31/2026' && pk.balance_sheet.status === 'needed' && ['ar_aging', 'homeowner_transactions', 'prepaid_homeowners', 'ap_aging'].every((t) => pk[t].status === 'needed_if_balance'), JSON.stringify(pk));
 for (const t of ['gl_trial_balance', 'balance_sheet', 'ar_aging', 'homeowner_transactions']) await svc.registerArtifact(ED, B, { buffer: await toPdf(fs.readFileSync(path.join(FX, `${t}.txt`), 'utf8')), filename: `Vantaca ${t}.pdf`, artifact_type: 'original_pdf' });
 const run1 = await svc.operate(B);
 let v = await svc.getBatch(B, ED);
 check('originals extracted and recognized by header (4 report types), each linked to its original', run1.steps.some((s) => s.action === 'recognized' && s.files.length === 4) && ['gl_trial_balance', 'balance_sheet', 'ar_aging', 'homeowner_transactions'].every((t) => v.artifacts.some((a) => a.artifact_type === t && a.derived_from_sha256)));
-check('operator stops at intake and asks for the missing report BY NAME (the GL carries prepaid 2400)', run1.stopped_at === 'intake' && run1.reason === 'needs_human' && v.operator.asks.some((a) => a.type === 'missing_source' && /Pre Paid Homeowners report as of 2026-03-31/.test(a.report)), JSON.stringify(v.operator.asks));
+check('operator stops at intake and asks for the missing report BY NAME (the GL carries prepaid 2400)', run1.stopped_at === 'intake' && run1.reason === 'needs_human' && v.operator.asks.some((a) => a.type === 'missing_source' && a.report === 'Pre Paid Homeowners as of 3/31/2026 (include previous owners)'), JSON.stringify(v.operator.asks));
+pk = await pkgOf(B);
+check('after the first upload the checklist updates: 4 supplied (by their original file names, dated at the cutoff), the prepaid report NEEDED, AP Aging not needed (no AP balance)', ['gl_trial_balance', 'balance_sheet', 'ar_aging', 'homeowner_transactions'].every((t) => pk[t].status === 'supplied' && pk[t].file === `Vantaca ${t}.pdf` && pk[t].dated_at_cutoff === true) && pk.prepaid_homeowners.status === 'needed' && pk.ap_aging.status === 'not_needed', JSON.stringify(pk));
 check('the missing report is a BLOCKED control (not an accounting FAIL)', v.current.status === 'BLOCKED' && v.current.controls.find((c) => c.code === 'intake.required_sources_present').status === 'BLOCKED');
 // 2. Ed drops the requested report; the operator continues on its own.
 await svc.registerArtifact(ED, B, { buffer: await toPdf(fs.readFileSync(path.join(FX, 'prepaid_homeowners.txt'), 'utf8')), filename: 'Vantaca prepaid.pdf', artifact_type: 'original_pdf' });
@@ -63,6 +68,8 @@ const run2 = await svc.operate(B);
 v = await svc.getBatch(B, ED);
 const adv = run2.steps.filter((s) => s.action === 'advanced').map((s) => s.to);
 check('after the upload: intake, normalize, source controls, snapshot all PASS and advance automatically', JSON.stringify(adv) === JSON.stringify(['normalize', 'source_controls', 'snapshot', 'activity_bridge']), JSON.stringify(run2.steps));
+pk = await pkgOf(B);
+check('after the requested upload the prepaid report shows supplied; nothing is still needed', pk.prepaid_homeowners.status === 'supplied' && !Object.values(pk).some((r) => r.status === 'needed'), JSON.stringify(pk));
 check('roles were inferred from the source chart (1300 / 2400) without a human typing them', v.latest_by_stage.source_controls.summary.roles.ar_account === '1300' && v.latest_by_stage.source_controls.summary.roles.prepaid_account === '2400');
 check('it stops at the activity bridge, the first stage that needs a human, and says why', run2.stopped_at === 'activity_bridge' && run2.reason === 'needs_human' && v.operator.asks.some((a) => a.type === 'ambiguity'), JSON.stringify(v.operator.asks));
 check('every automatic advance is recorded as the operator (system), every stage before the bridge PASS', v.events.filter((e) => e.type === 'stage_advanced').every((e) => e.actor_kind === 'system' && e.actor_id === 'onboarding-operator') && ['intake', 'normalize', 'source_controls', 'snapshot'].every((s) => v.latest_by_stage[s].status === 'PASS'));
@@ -101,5 +108,27 @@ await svc.registerArtifact(ED, B3, { buffer: await toPdf('Some Other Report\n\nn
 const r3 = await svc.operate(B3);
 const v3 = await svc.getBatch(B3, ED);
 check('an unrecognized original is flagged as an unknown format (and the core reports are requested by name)', r3.stopped_at === 'intake' && v3.operator.asks.some((a) => a.type === 'unrecognized_format' && a.file === 'mystery.layout.txt') && v3.operator.asks.some((a) => a.type === 'missing_source' && /GL Trial Balance/.test(a.report)), JSON.stringify(v3.operator.asks));
+// 5. Before Start: recognize the chosen files (nothing stored), and say which is which.
+const storedBefore = storage.m.size;
+const rec = await svc.recognize('vantaca', '2026-03-31', [
+  { originalname: 'GLTrialBalance.pdf', buffer: await toPdf(fs.readFileSync(path.join(FX, 'gl_trial_balance.txt'), 'utf8')) },
+  { originalname: 'AR Aging.pdf', buffer: await toPdf(fs.readFileSync(path.join(FX, 'ar_aging.txt'), 'utf8').replace('AR Aging - 3/31/2026', 'AR Aging - 2/28/2026')) },
+  { originalname: 'BalanceSheet.xls', buffer: Buffer.from('xls bytes') },
+]);
+check('recognize (before Start): types and printed dates read from the PDFs; a misdated report flagged with the right date; an .xls asked for as PDF; nothing stored', rec[0].type === 'gl_trial_balance' && rec[0].dated_at_cutoff === true && rec[1].type === 'ar_aging' && rec[1].dated_at_cutoff === false && /Please run AR Aging as of 3\/31\/2026/.test(rec[1].note) && rec[2].type === null && /PDF version/.test(rec[2].note) && storage.m.size === storedBefore, JSON.stringify(rec));
+
+// A batch whose AR Aging is dated a month early: requested again by name and date; the corrected upload resumes on its own.
+const B4 = await svc.createBatch(ED, { community_id: COMM, batch_code: 'CONV-EX-MISDATED', as_of_date: '2026-03-31', source_system: 'vantaca' });
+for (const t of ['gl_trial_balance', 'balance_sheet', 'ar_aging', 'homeowner_transactions', 'prepaid_homeowners']) {
+  let text = fs.readFileSync(path.join(FX, `${t}.txt`), 'utf8'); if (t === 'ar_aging') text = text.replace('AR Aging - 3/31/2026', 'AR Aging - 2/28/2026');
+  await svc.registerArtifact(ED, B4, { buffer: await toPdf(text), filename: `${t}.pdf`, artifact_type: 'original_pdf' });
+}
+const r4 = await svc.operate(B4);
+let v4 = await svc.getBatch(B4, ED);
+check('misdated report: intake stops and asks for "AR Aging as of 3/31/2026" by name (cutoff-aware), the checklist marks it wrong-dated', r4.stopped_at === 'intake' && v4.operator.asks.some((a) => a.type === 'missing_source' && a.report === 'AR Aging as of 3/31/2026' && /dated 2026-02-28/.test(a.why)) && v4.operator.package.reports.find((r) => r.type === 'ar_aging').dated_at_cutoff === false, JSON.stringify(v4.operator.asks));
+await svc.registerArtifact(ED, B4, { buffer: await toPdf(fs.readFileSync(path.join(FX, 'ar_aging.txt'), 'utf8')), filename: 'AR Aging (1).pdf', artifact_type: 'original_pdf' });
+const r5 = await svc.operate(B4);
+v4 = await svc.getBatch(B4, ED);
+check('the corrected upload resumes the operator past intake with no manual run / advance; the checklist shows the new file at the cutoff', r5.steps.some((st) => st.action === 'advanced' && st.to === 'normalize') && v4.operator.package.reports.find((r) => r.type === 'ar_aging').file === 'AR Aging (1).pdf' && v4.operator.package.reports.find((r) => r.type === 'ar_aging').dated_at_cutoff === true && v4.operator.metrics.manual_engine_actions === 0, JSON.stringify(r5.steps));
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

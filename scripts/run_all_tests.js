@@ -233,6 +233,7 @@ const CHECKS = [
   'tests/test_onboarding_bridge.js',
   'tests/test_onboarding_prepaid_report.js',
   'tests/test_onboarding_ap_aging.js',
+  'tests/test_onboarding_source_package.js',
 ];
 
 const args = process.argv.slice(2);

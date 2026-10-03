@@ -46,7 +46,7 @@
 <div id="app" class="wrap" hidden>
   <nav class="crumbs"><a href="/">Home</a><span class="sep">&rsaquo;</span><a href="/admin/systems">Systems Admin</a><span class="sep">&rsaquo;</span><span class="here">Onboarding Engine</span></nav>
   <h1>Onboarding Engine</h1>
-  <p class="sub">Bring a community in from a legacy system one gated stage at a time. The legacy books at the cutoff are the authority. A failed control stays failed; only the owner can waive it, with a reason, and only the owner can move a batch to the next stage. Nothing here writes to the community's books.</p>
+  <p class="sub">Bring a community in from a legacy system. Trusted runs the routine stages on its own and stops only when it needs a missing report, your judgment on an exception, or your authorization. The legacy books at the cutoff are the authority. A failed control stays failed; only the owner can waive it, with a reason. Nothing here writes to the community's books.</p>
   <div id="schema"></div>
   <div id="msg"></div>
 
@@ -61,6 +61,7 @@
         <div><label for="nb_src">Legacy system</label><select id="nb_src"><option value="vantaca">Vantaca</option></select></div>
         <div><label for="nb_date">Cutoff date</label><input id="nb_date" type="date" required></div>
       </div>
+      <div id="nb_package" class="tablewrap"></div>
       <label for="nb_files">Legacy reports</label><input id="nb_files" type="file" multiple required>
       <details><summary>Batch code (optional; generated if blank)</summary><input id="nb_code" placeholder="CONV-XX-20260731"></details>
       <button type="submit">Start onboarding</button>
@@ -245,6 +246,7 @@ function renderOperator(v) {
   if (missing.length || unknown.length) html += '<label for="op_files">Add the requested reports (as exported)</label><input id="op_files" type="file" multiple><br><button id="opUpload">Upload and continue</button>';
   if (others.length) html += '<div style="margin-top:8px"><b>Needs your decision:</b><ul>' + others.map((a) => '<li>' + esc(a.text || a.control) + (a.difference_cents ? ' (' + money(a.difference_cents) + ')' : '') + '</li>').join('') + '</ul><span class="muted">Details, evidence and the waive / advance controls are below.</span></div>';
   html += '<div class="muted" style="margin-top:8px;font-size:12.5px">Elapsed ' + Math.round((m.elapsed_seconds || 0) / 60) + ' min · human interventions ' + (m.human_interventions ?? '') + (m.interventions ? ' (' + Object.entries(m.interventions).filter(([, n]) => n).map(([k, n]) => n + ' ' + ({ handoff: 'handoff', source_uploads: 'source upload', judgments: 'judgment', authorizations: 'authorization' }[k] || k) + (n > 1 ? 's' : '')).join(', ') + ')' : '') + ' · operator steps ' + (m.operator_steps ?? '') + ' · stages passed ' + (m.stages_passed ?? '') + (m.current_controls_passing ? ' · controls passing ' + esc(m.current_controls_passing) : '') + ' · AI calls ' + (m.ai_calls ?? 0) + '</div>';
+  if (op.package) html += '<details' + (v.batch.stage === 'intake' ? ' open' : '') + ' style="margin-top:8px"><summary>Source reports (' + op.package.reports.filter((r) => r.status === 'supplied').length + ' supplied, ' + op.package.reports.filter((r) => r.status === 'needed').length + ' needed)</summary>' + renderPackage(op.package, '') + '</details>';
   if (runnable) html += '<button class="secondary" id="opRun">Run the operator again</button>';
   $('operator').innerHTML = html + '</div>';
   if ($('opUpload')) $('opUpload').onclick = () => { const fs2 = $('op_files').files; if (!fs2.length) return say('Choose the files first.', 'bad'); const fd = new FormData(); for (const f of fs2) fd.append('files', f); act(() => api('/api/onboarding/batches/' + encodeURIComponent(v.batch.id) + '/files', { method: 'POST', body: fd }), 'Reports added; the operator continued.'); };
@@ -287,6 +289,54 @@ $('upload').onsubmit = async (ev) => {
   const fd = new FormData(); fd.append('file', f); fd.append('artifact_type', $('up_type').value); if ($('up_from').value) fd.append('derived_from_sha256', $('up_from').value);
   act(() => api('/api/onboarding/batches/' + encodeURIComponent(batchId()) + '/artifacts', { method: 'POST', body: fd }), 'Artifact registered (hashed and stored write-once).');
 };
+// ---- Source package: what to pull from the legacy system, and what is in hand.
+const PKG_STATUS = {
+  supplied: ['PASS', 'Supplied'], needed: ['BLOCKED', 'Needed'], needed_if_balance: ['WAIVED', 'Include it'], not_needed: ['PASS', 'Not needed'], wrong_date: ['FAIL', 'Wrong date'],
+};
+function renderPackage(pkg, title) {
+  if (!pkg || !pkg.reports) return '';
+  const row = (r) => {
+    const st = r.status === 'supplied' && r.dated_at_cutoff === false ? 'wrong_date' : r.status;
+    const [cls, txt] = PKG_STATUS[st] || ['WAIVED', st];
+    let detail = '';
+    if (r.status === 'supplied') detail = esc(r.file || '') + (r.dated_at_cutoff === false ? ' <span class="muted">(dated ' + esc(r.as_of ? r.as_of.slice(5, 7).replace(/^0/, '') + '/' + r.as_of.slice(8, 10).replace(/^0/, '') + '/' + r.as_of.slice(0, 4) : '?') + '; upload the one dated at the cutoff)</span>' : '');
+    else if (r.status === 'needed_if_balance') detail = '<div class="muted" style="font-size:12px">needed when the GL carries a balance; include it now</div>';
+    else if (r.status === 'not_needed') detail = '<span class="muted">' + esc(r.note || '') + '</span>';
+    return '<tr data-report="' + esc(r.type) + '" data-status="' + esc(st) + '"><td><b>' + esc(r.report) + '</b>' + (r.period_note ? ' *' : '') + '<div class="muted" style="font-size:12px">' + esc(r.why) + ' · usually saved as ' + esc(r.saved_as) + '</div></td><td><span class="pill ' + cls + '">' + esc(txt) + '</span> ' + detail + '</td></tr>';
+  };
+  let html = '<div style="margin:10px 0 4px;font-weight:800;color:var(--navy)">' + esc(title) + '</div><table><thead><tr><th>Report (run it for this date)</th><th>Status</th></tr></thead><tbody>' + pkg.reports.map(row).join('') + '</tbody></table>';
+  const pn = pkg.reports.find((r) => r.period_note); if (pn) html += '<div class="muted" style="font-size:12px;margin-top:4px">* ' + esc(pn.period_note.charAt(0).toUpperCase() + pn.period_note.slice(1)) + '.</div>';
+  if (pkg.unrecognized && pkg.unrecognized.length) html += '<div class="banner warn" style="margin-top:6px"><b>Not recognized:</b> ' + pkg.unrecognized.map((u) => esc(u.filename ? u.filename + (u.note ? ' (' + u.note + ')' : '') : u)).join('; ') + '</div>';
+  if (pkg.not_requested && pkg.not_requested.length) html += '<div class="muted" style="font-size:12.5px;margin-top:6px">' + pkg.not_requested.map((n) => '<b>Not requested:</b> ' + esc(n.name) + '. ' + esc(n.why)).join('<br>') + '</div>';
+  return html;
+}
+let startPackage = null;
+async function loadStartPackage() {
+  const sys = $('nb_src').value; const cutoff = $('nb_date').value;
+  if (!cutoff) { $('nb_package').innerHTML = '<div class="muted" style="margin:8px 0">Pick the cutoff date and Trusted will list exactly which reports to download, dated for it.</div>'; startPackage = null; return; }
+  try {
+    startPackage = await api('/api/onboarding/source-package?system=' + encodeURIComponent(sys) + '&cutoff=' + encodeURIComponent(cutoff));
+    startPackage.reports.forEach((r) => { r.status = r.need === 'always' ? 'needed' : 'needed_if_balance'; });
+    $('nb_package').innerHTML = renderPackage(startPackage, 'What to download from ' + ($('nb_src').selectedOptions[0] || {}).textContent);
+    if ($('nb_files').files.length) await recognizeStartFiles();
+  } catch (e) { $('nb_package').innerHTML = '<div class="banner bad">' + esc(e.message) + '</div>'; }
+}
+async function recognizeStartFiles() {
+  const files = $('nb_files').files; if (!files.length || !startPackage) return;
+  const fd = new FormData(); fd.append('source_system', $('nb_src').value); fd.append('as_of_date', $('nb_date').value); for (const f of files) fd.append('files', f);
+  $('nb_package').insertAdjacentHTML('afterbegin', '<div class="muted" id="nb_reading">Reading the files…</div>');
+  try {
+    const r = await api('/api/onboarding/recognize', { method: 'POST', body: fd });
+    const pkg = JSON.parse(JSON.stringify(startPackage));
+    for (const rep of pkg.reports) {
+      const hit = r.files.filter((x) => x.type === rep.type).slice(-1)[0];
+      if (hit) Object.assign(rep, { status: 'supplied', file: hit.filename, as_of: hit.as_of, dated_at_cutoff: hit.dated_at_cutoff });
+    }
+    pkg.unrecognized = r.files.filter((x) => !x.type).map((x) => ({ filename: x.filename, note: x.note }));
+    $('nb_package').innerHTML = renderPackage(pkg, 'What to download from ' + ($('nb_src').selectedOptions[0] || {}).textContent);
+  } catch (e) { const el = $('nb_reading'); if (el) el.outerHTML = '<div class="banner bad">' + esc(e.message) + '</div>'; }
+}
+$('nb_src').onchange = loadStartPackage; $('nb_date').onchange = loadStartPackage; $('nb_files').onchange = recognizeStartFiles;
 $('newBatch').onsubmit = async (ev) => {
   ev.preventDefault();
   const files = $('nb_files').files; if (!files.length) return say('Add the legacy reports first.', 'bad');
@@ -310,7 +360,7 @@ $('newBatch').onsubmit = async (ev) => {
     if (!st.ready) { $('schema').innerHTML = '<div class="banner warn"><b>Not available yet.</b> The onboarding database changes have not been applied (' + esc(st.needs.join(', ')) + '). Nothing can be recorded until they are.</div>'; $('newBatch').hidden = true; $('batches').innerHTML = ''; return; }
     communities = await api('/api/onboarding/communities');
     $('nb_comm').innerHTML = communities.map((c) => '<option value="' + esc(c.id) + '">' + esc(c.name) + '</option>').join('');
-    if (batchId()) await loadDetail(batchId()); else await loadList();
+    if (batchId()) await loadDetail(batchId()); else { await loadList(); await loadStartPackage(); }
   } catch (e) {
     if (e.status === 401 || e.status === 403) { $('gate').hidden = false; return; }
     $('app').hidden = false; say(e.message, 'bad');

@@ -34,6 +34,8 @@ function fakeService() {
   return { calls, schemaStatus: rec('schemaStatus', { ready: true, needs: [] }), listBatches: rec('listBatches', []), getBatch: rec('getBatch', (id, actor) => ({ id, actor })),
     getSnapshot: rec('getSnapshot', (id, cid) => (id === 'none' ? null : { completion_id: cid || 'latest', lines: [] })),
     createBatch: rec('createBatch', 'b-new'), registerArtifact: rec('registerArtifact', 'a-1'), runStage: rec('runStage', { status: 'PASS' }),
+    sourcePackage: rec('sourcePackage', (sys, cutoff) => require('../lib/onboarding/adapters').get(sys).sourcePackage(cutoff)),
+    recognize: rec('recognize', (sys, cutoff, files) => files.map((x) => ({ filename: x.originalname, type: /GL/.test(x.originalname) ? 'gl_trial_balance' : null }))),
     operate: rec('operate', (id) => ({ batch: id, stopped_at: 'activity_bridge', reason: 'needs_human', steps: [] })), waive: rec('waive', 'w-1'), advance: rec('advance', (actor, id, body) => { if (body.to === 'snapshot') throw new ServiceError(409, 'REFUSED_BY_DATABASE', 'stage advance refused: stage source_controls is FAIL; not waived: x'); return 'e-1'; }),
     approve: rec('approve', () => { throw new Error('Supabase exploded with secret details'); }) };
 }
@@ -141,6 +143,29 @@ check('UI: the operator panel is the primary path; manual run / upload / require
   assert.ok(adv > 0 && advEnd > adv, 'advanced section exists');
   assert.ok(html.indexOf('<div id="operator">') < adv, 'operator panel comes first');
   for (const id of ['<div id="required">', '<form id="upload"', '<div id="run">']) { const i = html.indexOf(id); assert.ok(i > adv && i < advEnd, id + ' sits inside Advanced'); }
+});
+
+check('a fresh Vantaca onboarding screen can tell the user what to supply: GET /source-package (admin) returns the dated report list; nothing else is called', async () => withServer(async ({ req, service }) => {
+  assert.strictEqual((await req('GET', '/source-package?system=vantaca&cutoff=2026-07-31')).status, 403);
+  const r = await req('GET', '/source-package?system=vantaca&cutoff=2026-07-31', { user: 'admin' });
+  assert.strictEqual(r.status, 200); assert.strictEqual(r.json.reports.length, 6); assert.strictEqual(r.json.reports[0].report, 'GL Trial Balance for 1/1/2026 - 7/31/2026');
+  assert.deepStrictEqual(service.calls.map((c) => c.name), ['sourcePackage']);
+}));
+check('POST /recognize reads the chosen files with the system + cutoff and records nothing (no batch, no artifact, no operator)', async () => withServer(async ({ req, service }) => {
+  const fd = new FormData(); fd.append('source_system', 'vantaca'); fd.append('as_of_date', '2026-07-31'); fd.append('files', new Blob([Buffer.from('%PDF-1.4 x')]), 'GLTrialBalance.pdf');
+  const r = await req('POST', '/recognize', { user: 'admin', form: fd });
+  assert.strictEqual(r.status, 200); assert.strictEqual(r.json.files[0].type, 'gl_trial_balance');
+  assert.deepStrictEqual(service.calls.map((c) => c.name), ['recognize']);
+  assert.strictEqual(service.calls[0].args[0], 'vantaca'); assert.strictEqual(service.calls[0].args[1], '2026-07-31');
+  assert.strictEqual((await req('POST', '/recognize', { user: 'admin', form: new FormData() })).status, 400);
+}));
+check('UI: the start screen shows the source package (dated by the cutoff) and re-renders supplied / missing when files are chosen', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'onboarding.html'), 'utf8');
+  const form = html.slice(html.indexOf('<form id="newBatch"'), html.indexOf('</form>', html.indexOf('<form id="newBatch"')));
+  assert.ok(form.indexOf('<div id="nb_package"') > 0 && form.indexOf('<div id="nb_package"') < form.indexOf('id="nb_files"'), 'checklist sits above the file picker');
+  assert.ok(/\/api\/onboarding\/source-package\?system=/.test(html) && /\/api\/onboarding\/recognize/.test(html));
+  assert.ok(/\$\('nb_date'\)\.onchange = loadStartPackage/.test(html) && /\$\('nb_files'\)\.onchange = recognizeStartFiles/.test(html));
+  assert.ok(/op\.package/.test(html), 'the batch operator panel shows the same checklist');
 });
 
 (async () => {
