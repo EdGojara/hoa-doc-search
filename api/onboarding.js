@@ -16,6 +16,7 @@
 //   GET  /batches/:id/snapshot[?completion_id=]  proposed opening position (latest or a given result)
 //   GET  /batches/:id/bridge[?completion_id=]    activity bridge classification (latest or a given result)
 //   GET  /batches/:id/bridge/freshness  has Trusted activity changed since the bridge? (read-only)
+//   GET  /batches/:id/preflight        the current conversion preflight report (+ markdown, staleness; read-only)
 //   POST /batches                      create (admin)
 //   POST /batches/:id/artifacts        upload one source file (admin; intake only)
 //   POST /batches/:id/run              run the CURRENT stage, 0-4 only (admin)
@@ -68,6 +69,10 @@ function buildRouter({ service, auth, listCommunities }) {
   router.get('/batches/:id/bridge/freshness', async (req, res) => {
     try { if (!(await admin(req, res))) return; const v = await service.bridgeFreshness(req.params.id); if (!v) return res.status(404).json({ error: 'no_bridge' }); res.json(v); }
     catch (e) { fail(res, e, 'bridge freshness'); }
+  });
+  router.get('/batches/:id/preflight', async (req, res) => {
+    try { if (!(await admin(req, res))) return; const v = await service.getPreflight(req.params.id); if (!v) return res.status(404).json({ error: 'no_preflight' }); res.json(v); }
+    catch (e) { fail(res, e, 'preflight'); }
   });
 
   router.post('/batches', express.json({ limit: '64kb' }), async (req, res) => {
