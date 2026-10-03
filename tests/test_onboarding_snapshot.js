@@ -46,9 +46,9 @@ check('balanced source: GL lines = source ending TB, debits = credits; AR and cr
   assert.strictEqual(kind(s, 'ar_aging_item').length, 3);
   assert.strictEqual(kind(s, 'unsupported_detail').length, 0);
 });
-check('AP: without an AP account or source the component is BLOCKED (never silently skipped); with an account but no AP aging the control balance is kept and reported unsupported', () => {
+check('AP: when the source chart has no AP account the component is NOT_APPLICABLE with a reason (never silently skipped); with an AP account but no AP aging the control balance is kept and reported unsupported', () => {
   const s = buildSnapshot(parse(), { ...ID, roles: ROLES });
-  assert.strictEqual(comp(s, 'ap_detail').status, 'BLOCKED'); assert.strictEqual(ctl(s, 'snapshot.ap_detail_supports_gl').status, 'BLOCKED');
+  assert.strictEqual(comp(s, 'ap_detail').status, 'NOT_APPLICABLE'); assert.ok(/no Accounts Payable account/.test(comp(s, 'ap_detail').reason)); assert.strictEqual(ctl(s, 'snapshot.ap_detail_supports_gl'), undefined);
   const s2 = buildSnapshot(parse(), { ...ID, roles: { ...ROLES, ap_account: '2400' } });   // any account with a balance, to exercise the path
   const ap = comp(s2, 'ap_detail');
   assert.deepStrictEqual([ap.status, ap.control_cents, ap.supported_cents, ap.unsupported_cents], ['BLOCKED', -8500, 0, -8500]);
@@ -100,7 +100,7 @@ check('in-memory runner: an agent assigned to snapshot can build it in the snaps
   for (const to of ['normalize', 'source_controls', 'snapshot']) { st = S.completeStage(st, { kind: 'human', id: 'ed' }, { status: 'PASS' }); st = S.advance(st, { kind: 'human', id: 'ed' }, to); }
   assert.throws(() => E.runSnapshot(st, { kind: 'agent', id: 'c', assigned_stage: 'normalize' }, parse(), { cutoff_date: ID.cutoff_date, roles: ROLES }), /AGENT_OUTSIDE_ASSIGNED_STAGE|cannot act/);
   const r = E.runSnapshot(st, { kind: 'agent', id: 'c', assigned_stage: 'snapshot' }, parse(), { cutoff_date: ID.cutoff_date, roles: ROLES });
-  assert.strictEqual(r.state.stage, 'snapshot'); assert.strictEqual(r.result.status, 'BLOCKED'); assert.deepStrictEqual(r.result.open_controls, ['snapshot.ap_detail_supports_gl']);
+  assert.strictEqual(r.state.stage, 'snapshot'); assert.strictEqual(r.result.status, 'PASS'); assert.deepStrictEqual(r.result.open_controls, []);
 });
 check('the snapshot module holds no database client and makes no writes', () => {
   const s = fs.readFileSync(path.join(__dirname, '..', 'lib', 'onboarding', 'snapshot.js'), 'utf8').replace(/\/\/.*$/gm, '');

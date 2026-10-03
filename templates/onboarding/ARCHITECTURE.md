@@ -285,3 +285,36 @@ The bridge sha256 is canonical. A **Trusted activity fingerprint** records exact
 - The bridge stage runner uses the read-only Trusted reader.
 - Endpoints: `GET /api/onboarding/batches/:id/bridge` and `/bridge/freshness`.
 - The page shows counts, records and dollars by classification; a structural-issue banner; the ambiguous items with their evidence; what would be preserved, suppressed or out of scope; and a "Trusted activity changed since the bridge" banner.
+
+## Operator: AI-operated onboarding (Ed, Issue #15)
+
+**Trusted operates the gated engine. Ed doesn't.** Ed picks the community, legacy system and cutoff, drops the reports exactly as the legacy system exports them, and starts onboarding. The operator then does the rest, and stops only for:
+- a missing source, which it **requests by its legacy report name**;
+- an unrecognized format;
+- an ambiguity, exception or waiver that needs a human;
+- a stage that isn't built yet.
+
+Final authorization (preflight approval and EXECUTE) stays human.
+
+**How it works:**
+- **Upload as exported.** `lib/onboarding/pdf_layout.js` rebuilds column layout from the original PDF with pdfjs-dist (a production dependency, no `pdftotext`, deterministic). Every parse is still re-added against the report's printed totals. Proven on all six Quail Ridge originals: 25/25 extraction controls.
+- **Recognition and roles.** `adapter.detect` identifies each report by its header. `adapter.inferRoles` finds AR, prepaid and AP from the source chart's account names.
+- **Requirements.** `adapter.requiredSources` asks for the supporting reports only when the GL balance they support is non-zero. Examples: "Pre Paid Homeowners report as of 2026-07-31 (including previous owners)" and "AP Aging (Open Payables) as of 2026-07-31".
+  - New intake control `intake.required_sources_present`: BLOCKED, with each missing report named.
+  - New intake control `intake.originals_recognized`.
+- **Operator** (`service.operate`):
+  - extracts and recognizes originals;
+  - runs each stage as `onboarding-operator` (`actor_kind = system`);
+  - advances **only on a plain PASS**, through `onboarding_auto_advance`;
+  - re-runs intake when files arrive;
+  - stops with `operator.asks` and `operator.metrics`. The metrics are elapsed time, human touches, operator steps, stages passed, controls passing and `ai_calls: 0`.
+- **Database (migration 485, proposal).** A system advance is allowed only on a **plain PASS** result, never on a waived FAIL/BLOCKED, and only into normalize, source_controls, snapshot, activity_bridge or preflight, **never execute**. Waivers, approvals and EXECUTE stay human / owner only.
+- **API:** `POST /api/onboarding/onboard` (community, system, cutoff, files), `POST /batches/:id/files`, `POST /batches/:id/operate`.
+- **UI.** A "Start onboarding" form. On each batch, an operator panel shows what it needs: named reports with "Upload and continue", plus decisions and metrics.
+
+**Quail Ridge proof** (local, in-memory Postgres, live Trusted read through the read-only client):
+- **Input:** 6 original PDFs; 4.7 s from upload to stop.
+- **Automatic:** intake → normalize → source controls → snapshot, all PASS and auto-advanced. Roles inferred as 1300 / 2400 / 2000.
+- **Snapshot:** AR 19,767.91, prepaid 922.13 and AP 561.70, every component supported.
+- **Stopped at the activity bridge** for the 16 ambiguous items and the 9/11 structural exception.
+- **Metrics:** 1 human touch, 0 AI calls.

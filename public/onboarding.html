@@ -53,21 +53,24 @@
   <section id="listView">
     <h2>Batches</h2>
     <div class="card tablewrap"><table><thead><tr><th>Batch</th><th>Community</th><th>Cutoff</th><th>Source</th><th>Stage</th><th>Current result</th></tr></thead><tbody id="batches"><tr><td colspan="6" class="muted">Loading…</td></tr></tbody></table></div>
-    <h2>New batch</h2>
+    <h2>Start onboarding</h2>
     <form id="newBatch" class="card">
+      <p class="muted" style="margin-top:0">Pick the community, the legacy system and the cutoff, then drop the reports exactly as the legacy system exports them (PDFs are fine). Trusted recognizes each report, checks it against its own printed totals, asks by name for anything missing, and keeps going on its own until something needs your judgment.</p>
       <div class="row">
         <div><label for="nb_comm">Community</label><select id="nb_comm" required></select></div>
-        <div><label for="nb_code">Batch code</label><input id="nb_code" placeholder="CONV-XX-20260731" required></div>
-        <div><label for="nb_date">Cutoff date</label><input id="nb_date" type="date" required></div>
         <div><label for="nb_src">Legacy system</label><select id="nb_src"><option value="vantaca">Vantaca</option></select></div>
+        <div><label for="nb_date">Cutoff date</label><input id="nb_date" type="date" required></div>
       </div>
-      <button type="submit">Create batch</button>
+      <label for="nb_files">Legacy reports</label><input id="nb_files" type="file" multiple required>
+      <details><summary>Batch code (optional; generated if blank)</summary><input id="nb_code" placeholder="CONV-XX-20260731"></details>
+      <button type="submit">Start onboarding</button>
     </form>
   </section>
 
   <section id="detailView" hidden>
     <p><a href="/admin/onboarding">&larr; All batches</a></p>
     <div id="head" class="card"></div>
+    <div id="operator"></div>
     <div id="required"></div>
     <h2>Source artifacts</h2>
     <div id="artifacts" class="card tablewrap"></div>
@@ -227,10 +230,32 @@ async function loadBridge(batchId) {
     + '<details class="card"><summary>Out of scope (' + group('OUT_OF_SCOPE').length + ')</summary>' + table(group('OUT_OF_SCOPE')) + '</details>';
 }
 
+// ---- Operator panel: what Trusted did, what it needs from a human, and the metrics.
+function renderOperator(v) {
+  const op = v.operator || { asks: [], metrics: {} }; const m = op.metrics || {}; const asks = op.asks || [];
+  const missing = asks.filter((a) => a.type === 'missing_source');
+  const unknown = asks.filter((a) => a.type === 'unrecognized_format');
+  const others = asks.filter((a) => a.type !== 'missing_source' && a.type !== 'unrecognized_format');
+  const runnable = v.derived && v.derived.runner_available;
+  let html = '<div class="card" style="border-left:4px solid var(--gold)"><div style="font-weight:800;color:var(--navy)">Onboarding operator</div>';
+  if (!asks.length && runnable) html += '<div class="muted">Nothing needed from you right now.</div>';
+  if (!asks.length && !runnable) html += '<div class="muted">Stopped at <b>' + esc(label(v.batch.stage)) + '</b>: this stage is not built yet (later milestone).</div>';
+  if (missing.length) html += '<div style="margin-top:6px"><b>I need these reports from the legacy system:</b><ul>' + missing.map((a) => '<li>' + esc(a.report || (a.needs || []).join(', ') || a.text) + (a.why ? ' <span class="muted">(' + esc(a.why) + ')</span>' : '') + '</li>').join('') + '</ul></div>';
+  if (unknown.length) html += '<div><b>I do not recognize these files yet:</b> ' + unknown.map((a) => esc(a.file)).join(', ') + '</div>';
+  if (missing.length || unknown.length) html += '<label for="op_files">Add the requested reports (as exported)</label><input id="op_files" type="file" multiple><br><button id="opUpload">Upload and continue</button>';
+  if (others.length) html += '<div style="margin-top:8px"><b>Needs your decision:</b><ul>' + others.map((a) => '<li>' + esc(a.text || a.control) + (a.difference_cents ? ' (' + money(a.difference_cents) + ')' : '') + '</li>').join('') + '</ul><span class="muted">Details, evidence and the waive / advance controls are below.</span></div>';
+  html += '<div class="muted" style="margin-top:8px;font-size:12.5px">Elapsed ' + Math.round((m.elapsed_seconds || 0) / 60) + ' min · human touches ' + (m.human_touches ?? '') + ' · operator steps ' + (m.operator_steps ?? '') + ' · stages passed ' + (m.stages_passed ?? '') + (m.current_controls_passing ? ' · controls passing ' + esc(m.current_controls_passing) : '') + ' · AI calls ' + (m.ai_calls ?? 0) + '</div>';
+  if (runnable) html += '<button class="secondary" id="opRun">Run the operator again</button>';
+  $('operator').innerHTML = html + '</div>';
+  if ($('opUpload')) $('opUpload').onclick = () => { const fs2 = $('op_files').files; if (!fs2.length) return say('Choose the files first.', 'bad'); const fd = new FormData(); for (const f of fs2) fd.append('files', f); act(() => api('/api/onboarding/batches/' + encodeURIComponent(v.batch.id) + '/files', { method: 'POST', body: fd }), 'Reports added; the operator continued.'); };
+  if ($('opRun')) $('opRun').onclick = () => act(() => api('/api/onboarding/batches/' + encodeURIComponent(v.batch.id) + '/operate', { method: 'POST' }), 'Operator ran.');
+}
+
 async function loadDetail(id) {
   $('listView').hidden = true; $('detailView').hidden = false;
   const v = await api('/api/onboarding/batches/' + encodeURIComponent(id));
   renderDetail(v);
+  renderOperator(v);
   if (v.latest_by_stage && v.latest_by_stage.snapshot) await loadSnapshot(id); else $('snapshot').innerHTML = '';
   if (v.latest_by_stage && v.latest_by_stage.activity_bridge) await loadBridge(id); else $('bridge').innerHTML = '';
 }
@@ -264,10 +289,13 @@ $('upload').onsubmit = async (ev) => {
 };
 $('newBatch').onsubmit = async (ev) => {
   ev.preventDefault();
-  try {
-    const r = await api('/api/onboarding/batches', json({ community_id: $('nb_comm').value, batch_code: $('nb_code').value.trim(), as_of_date: $('nb_date').value, source_system: $('nb_src').value }));
-    location.href = '/admin/onboarding?batch=' + encodeURIComponent(r.id);
-  } catch (e) { say(e.message, 'bad'); }
+  const files = $('nb_files').files; if (!files.length) return say('Add the legacy reports first.', 'bad');
+  const fd = new FormData(); fd.append('community_id', $('nb_comm').value); fd.append('as_of_date', $('nb_date').value); fd.append('source_system', $('nb_src').value);
+  if ($('nb_code').value.trim()) fd.append('batch_code', $('nb_code').value.trim());
+  for (const f of files) fd.append('files', f);
+  say('Working: reading the reports and running the checks…', 'warn');
+  try { const r = await api('/api/onboarding/onboard', { method: 'POST', body: fd }); location.href = '/admin/onboarding?batch=' + encodeURIComponent(r.id); }
+  catch (e) { say(e.message, 'bad'); }
 };
 
 (async function boot() {

@@ -98,7 +98,7 @@ check('page: talks only to /api/onboarding (and auth config); never sends an act
   assert.ok(urls.length > 5);
   for (const u of urls) assert.ok(u.startsWith('/api/onboarding') || u === '/api/auth/config', u);
   const bodies = [...html.matchAll(/json\(\{([^}]*)\}\)/g)].map((m) => m[1]);
-  assert.ok(bodies.length >= 3, 'found the request bodies');
+  assert.ok(bodies.length >= 2, 'found the request bodies');
   assert.ok(!/body = \{[^;]*\b(actor|role|kind)\b/.test(html), 'the run body carries only roles + authoritative');
   for (const b of bodies) assert.ok(!/actor|role|kind/.test(b), 'page must not send identity: ' + b);
   assert.ok(!/fd\.append\(['"](actor|role|kind)/.test(html));
@@ -112,7 +112,7 @@ check('repo guard: nothing writes the onboarding tables directly (only the 482 S
 });
 check('service guard: its only database calls are the onboarding_* rpc allowlist and the write-once artifact store', () => {
   const s = fs.readFileSync(path.join(__dirname, '..', 'lib', 'onboarding', 'service.js'), 'utf8').replace(/\/\/.*$/gm, '');
-  assert.ok(RPC.length === 12 && RPC.every((n) => /^onboarding_/.test(n)));
+  assert.ok(RPC.length === 13 && RPC.every((n) => /^onboarding_/.test(n)));
   assert.strictEqual((s.match(/\.rpc\(/g) || []).length, 1, 'exactly one rpc call site');
   assert.ok(/if \(!RPC\.includes\(name\)\) throw/.test(s));
   assert.ok(!/\.from\(\s*['"](?!documents)/.test(s.replace(/storage\.from\(bucket\)/g, '').replace(/Buffer\.from\(/g, '')), 'no table access');

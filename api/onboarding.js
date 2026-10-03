@@ -4,6 +4,10 @@
 // Thin HTTP layer over lib/onboarding/service.js (the single guarded path).
 // Mounted at /api/onboarding.
 //
+//   POST /onboard                      Ed: community + system + cutoff + exported files -> batch (as Ed),
+//                                      originals kept, the operator runs the engine (admin)
+//   POST /batches/:id/files            add requested reports, operator resumes (admin)
+//   POST /batches/:id/operate          resume the operator (admin)
 //   GET  /status                       schema readiness (481/482 applied?)
 //   GET  /communities                  alphabetical list for the batch form
 //   GET  /batches[?community_id=]      engine batches
@@ -73,6 +77,43 @@ function buildRouter({ service, auth, listCommunities }) {
       for (const k of ['community_id', 'batch_code', 'as_of_date', 'source_system']) if (!b[k]) return res.status(400).json({ error: `${k}_required` });
       res.json({ id: await service.createBatch(a, { community_id: b.community_id, batch_code: b.batch_code, as_of_date: b.as_of_date, source_system: b.source_system }) });
     } catch (e) { fail(res, e, 'create'); }
+  });
+
+  // ---- Operator: Ed picks the community / system / cutoff and drops the exports;
+  // Trusted creates the batch (as Ed), keeps the originals, and runs the engine.
+  const uploadMany = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024, files: 40 } });
+  const batchCodeFor = async (communityId, cutoff) => {
+    const c = (await listCommunities()).find((x) => x.id === communityId);
+    const initials = c ? c.name.split(/\s+/).filter(Boolean).map((w) => w[0]).join('').toUpperCase().replace(/[^A-Z0-9]/g, '') : 'X';
+    return `CONV-${initials || 'X'}-${String(cutoff).replace(/-/g, '')}`;
+  };
+  async function storeOriginals(actor, batchId, files) {
+    const out = [];
+    for (const f of files || []) out.push(await service.registerArtifact(actor, batchId, { buffer: f.buffer, filename: f.originalname, artifact_type: /\.pdf$/i.test(f.originalname) ? 'original_pdf' : 'original' }));
+    return out;
+  }
+  router.post('/onboard', uploadMany.array('files', 40), async (req, res) => {
+    try {
+      const a = await admin(req, res); if (!a) return;
+      const b = req.body || {};
+      for (const k of ['community_id', 'as_of_date', 'source_system']) if (!b[k]) return res.status(400).json({ error: `${k}_required` });
+      if (!req.files || !req.files.length) return res.status(400).json({ error: 'files_required' });
+      const id = await service.createBatch(a, { community_id: b.community_id, batch_code: b.batch_code || await batchCodeFor(b.community_id, b.as_of_date), as_of_date: b.as_of_date, source_system: b.source_system });
+      await storeOriginals(a, id, req.files);
+      res.json({ id, operator: await service.operate(id) });
+    } catch (e) { fail(res, e, 'onboard'); }
+  });
+  router.post('/batches/:id/files', uploadMany.array('files', 40), async (req, res) => {
+    try {
+      const a = await admin(req, res); if (!a) return;
+      if (!req.files || !req.files.length) return res.status(400).json({ error: 'files_required' });
+      await storeOriginals(a, req.params.id, req.files);
+      res.json({ operator: await service.operate(req.params.id) });
+    } catch (e) { fail(res, e, 'files'); }
+  });
+  router.post('/batches/:id/operate', async (req, res) => {
+    try { if (!(await admin(req, res))) return; res.json({ operator: await service.operate(req.params.id) }); }
+    catch (e) { fail(res, e, 'operate'); }
   });
 
   router.post('/batches/:id/artifacts', upload.single('file'), async (req, res) => {

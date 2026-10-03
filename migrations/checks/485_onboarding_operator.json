@@ -1,0 +1,64 @@
+{
+  "migration": "485_onboarding_operator.sql",
+  "summary": "Onboarding operator (Issue #15): AI-operated onboarding over the gated engine. The operator (actor_kind system) may record a stage advance ONLY on a plain PASS result and only into routine stages (normalize, source_controls, snapshot, activity_bridge, preflight); never on a waived FAIL/BLOCKED and never into execute. Replaces CHECK onboarding_events_human_gates, onboarding_stage_events_validate and conversion_batches_onboarding_guard accordingly; adds onboarding_auto_advance (system only, PASS only). Waivers, approvals and EXECUTE stay human / owner only. No rows change. service_role only.",
+  "requires": [
+    "484_onboarding_activity_bridge.sql"
+  ],
+  "preflight": [
+    {
+      "name": "operator advance function does not exist yet",
+      "sql": "SELECT count(*)::int FROM pg_proc WHERE proname = 'onboarding_auto_advance'",
+      "expect": 0
+    },
+    {
+      "name": "484 bridge tables are in place",
+      "sql": "SELECT count(*)::int FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'onboarding_bridge_items'",
+      "expect": 1
+    }
+  ],
+  "expected_changes": [
+    "Replaces CHECK onboarding_events_human_gates (stage_advanced may also be actor_kind system).",
+    "Replaces onboarding_stage_events_validate (system advance only on a PASS result into routine stages) and conversion_batches_onboarding_guard (re-proves it; execute still needs a human).",
+    "Creates onboarding_auto_advance (EXECUTE to service_role only).",
+    "No row changes."
+  ],
+  "objects": {
+    "added": [
+      "function:onboarding_auto_advance"
+    ],
+    "changed": [
+      "constraint:onboarding_stage_events.onboarding_events_human_gates",
+      "function:conversion_batches_onboarding_guard",
+      "function:onboarding_stage_events_validate"
+    ],
+    "removed": []
+  },
+  "row_changes": {
+    "conversion_batches": 0,
+    "onboarding_stage_events": 0
+  },
+  "protected": [
+    {
+      "table": "conversion_batches",
+      "order_by": "id"
+    },
+    {
+      "table": "journal_entries",
+      "order_by": "id"
+    }
+  ],
+  "verify": [
+    {
+      "name": "operator advance function present",
+      "sql": "SELECT count(*)::int FROM pg_proc WHERE proname = 'onboarding_auto_advance'",
+      "expect": 1
+    },
+    {
+      "name": "human gates still enforced for waivers and approvals",
+      "sql": "SELECT count(*)::int FROM pg_constraint WHERE conname = 'onboarding_events_human_gates' AND pg_get_constraintdef(oid) LIKE '%stage_advanced%system%'",
+      "expect": 1
+    }
+  ],
+  "api_checks": [],
+  "reload_schema": true
+}

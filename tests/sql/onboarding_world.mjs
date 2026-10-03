@@ -9,7 +9,7 @@ const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '.
 const lf = (p) => fs.readFileSync(p, 'utf8').replace(/\r\n/g, '\n');
 export const COMM = '00000000-0000-0000-0000-0000000000c1';
 
-export async function onboardingWorld(PGlite, { through = 484 } = {}) {
+export async function onboardingWorld(PGlite, { through = 485 } = {}) {
   const db = new PGlite();
   await db.exec(`
     CREATE ROLE anon; CREATE ROLE authenticated; CREATE ROLE service_role;
@@ -30,6 +30,7 @@ export async function onboardingWorld(PGlite, { through = 484 } = {}) {
   if (through >= 482) { await db.exec(lf(`${REPO}/migrations/482_onboarding_service.sql`)); await db.exec(`INSERT INTO schema_migrations (filename, sha256) VALUES ('482_onboarding_service.sql', 'recorded')`); }
   if (through >= 483) { await db.exec(lf(`${REPO}/migrations/483_onboarding_snapshot.sql`)); await db.exec(`INSERT INTO schema_migrations (filename, sha256) VALUES ('483_onboarding_snapshot.sql', 'recorded')`); }
   if (through >= 484) { await db.exec(lf(`${REPO}/migrations/484_onboarding_activity_bridge.sql`)); await db.exec(`INSERT INTO schema_migrations (filename, sha256) VALUES ('484_onboarding_activity_bridge.sql', 'recorded')`); }
+  if (through >= 485) { await db.exec(lf(`${REPO}/migrations/485_onboarding_operator.sql`)); await db.exec(`INSERT INTO schema_migrations (filename, sha256) VALUES ('485_onboarding_operator.sql', 'recorded')`); }
   const client = { query: async (sql, params) => {
     if (params) { const r = await db.query(sql, params.map((v) => (v && typeof v === 'object' ? JSON.stringify(v) : v))); return { rows: r.rows, rowCount: r.affectedRows ?? r.rows.length }; }
     const rs = await db.exec(sql); const last = rs[rs.length - 1] || { rows: [] }; return { rows: last.rows, rowCount: last.affectedRows ?? 0 };

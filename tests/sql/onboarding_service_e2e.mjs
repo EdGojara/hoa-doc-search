@@ -54,10 +54,10 @@ check('schema status: ready when 481/482 are applied', (await svc.schemaStatus()
 
 check('create: an agent (or any non-staff actor) cannot create a batch', (await code(() => svc.createBatch({ kind: 'agent', id: 'claude', assigned_stage: 'intake' }, { community_id: COMM, batch_code: 'X', as_of_date: '2026-03-31', source_system: 'vantaca' }))) === 'STAFF_ONLY');
 const B = await svc.createBatch(ADMIN, { community_id: COMM, batch_code: 'CONV-EX-20260331', as_of_date: '2026-03-31', source_system: 'vantaca' });
-const TYPES = ['gl_trial_balance', 'balance_sheet', 'ar_aging', 'homeowner_transactions'];
+const TYPES = ['gl_trial_balance', 'balance_sheet', 'ar_aging', 'homeowner_transactions', 'prepaid_homeowners'];
 for (const t of TYPES) await svc.registerArtifact(ADMIN, B, { buffer: fs.readFileSync(path.join(FX, `${t}.txt`)), filename: `${t}.txt`, artifact_type: t });
 let v = await svc.getBatch(B, OWNER);
-check('artifacts: 4 registered, hashed, stored write-once by content hash', v.artifacts.length === 4 && v.artifacts.every((a) => a.sha256.length === 64 && a.storage_path.endsWith(a.sha256)) && storage.m.size === 4);
+check('artifacts: 5 registered, hashed, stored write-once by content hash', v.artifacts.length === 5 && v.artifacts.every((a) => a.sha256.length === 64 && a.storage_path.endsWith(a.sha256)) && storage.m.size === 5);
 check('view: intake has no result yet -> staff must run it; owner sees no advance yet', v.derived.required_action.who === 'staff' && !v.derived.permitted_actions.some((x) => x.action === 'advance'));
 
 check('run: an agent assigned to another stage cannot run intake', /AGENT_OUTSIDE_ASSIGNED_STAGE/.test((await code(() => svc.runStage({ kind: 'agent', id: 'claude', assigned_stage: 'normalize' }, B))) || ''));
@@ -104,12 +104,12 @@ check('snapshot: the stage now has a runner; an agent assigned elsewhere cannot 
 const sn1 = await svc.runStage({ kind: 'agent', id: 'claude', assigned_stage: 'snapshot' }, B);
 let sv = await svc.getSnapshot(B);
 const comp = (n) => sv.components.find((c) => c.component === n);
-check('snapshot recorded: uses the VALIDATED roles (1300 / 2400); GL, AR and prepaid supported; AP BLOCKED (no AP account/source); not stale',
-  sn1.status === 'BLOCKED' && sv.completion_id === sn1.completion_id && sv.stale === false && comp('gl').status === 'PASS' && comp('ar_detail').supported_cents === 51000 && comp('prepaid_detail').supported_cents === -8500 && comp('ap_detail').status === 'BLOCKED');
+check('snapshot recorded: uses the VALIDATED roles (1300 / 2400); GL, AR and prepaid supported; AP not applicable (the source chart has no AP account); PASS; not stale',
+  sn1.status === 'PASS' && sv.completion_id === sn1.completion_id && sv.stale === false && comp('gl').status === 'PASS' && comp('ar_detail').supported_cents === 51000 && comp('prepaid_detail').supported_cents === -8500 && comp('ap_detail').status === 'NOT_APPLICABLE');
 const glLines = sv.lines.filter((l) => l.kind === 'gl_opening_balance');
 check('snapshot lines: GL opening balances balance; each line keeps provenance; AR detail per account', glLines.reduce((t, l) => t + Number(l.amount_cents), 0) === 0 && sv.lines.every((l) => l.provenance.length && /^[0-9a-f]{64}$/.test(l.provenance[0].artifact_sha256)) && sv.lines.filter((l) => l.kind === 'ar_detail').length === 2);
 v = await svc.getBatch(B, OWNER);
-check('snapshot: the owner is offered a waiver for the BLOCKED AP control, no advance yet', v.derived.permitted_actions.some((x) => x.action === 'waive' && x.code === 'snapshot.ap_detail_supports_gl') && !v.derived.permitted_actions.some((x) => x.action === 'advance'));
+check('snapshot: a PASS snapshot offers the owner an advance and no waiver', v.derived.permitted_actions.some((x) => x.action === 'advance' && x.to === 'activity_bridge') && !v.derived.permitted_actions.some((x) => x.action === 'waive'));
 const sn2 = await svc.runStage(ADMIN, B, { ap_account: '2400' });   // re-run (different AP setting) -> a new snapshot
 const oldView = await svc.getSnapshot(B, sn1.completion_id); sv = await svc.getSnapshot(B);
 check('snapshot re-run: new completion and sha; the earlier snapshot is still readable and flagged stale', sv.completion_id === sn2.completion_id && sv.snapshot_sha256 !== oldView.snapshot_sha256 && oldView.stale === true && sv.stale === false);
