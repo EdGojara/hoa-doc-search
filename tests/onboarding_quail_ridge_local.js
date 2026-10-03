@@ -127,5 +127,35 @@ check('gate: the agent cannot advance its own stage', agentRefused === 'ADVANCE_
   check('snapshot: every source as of 7/31; every line has provenance; sha256 recorded', ['snapshot.sources_as_of_cutoff', 'snapshot.every_line_has_provenance'].every((c) => snap.controls.find((x) => x.code === c).status === 'PASS') && /^[0-9a-f]{64}$/.test(snap.sha256));
 }
 
+// Prepaid Homeowners report as of 7/31 (Ed, 2026-10-03): explains the 737.53 as previous-owner
+// credits. Read locally when present (ONBOARDING_QR_PREPAID or Downloads); never committed.
+{
+  const PREPAID = process.env.ONBOARDING_QR_PREPAID || path.join(os.homedir(), 'Downloads', 'PrepaidHomeowners (1).pdf');
+  let text = null;
+  try { if (fs.existsSync(PREPAID)) text = execFileSync('pdftotext', ['-layout', PREPAID, '-'], { maxBuffer: 16e6 }).toString('utf8'); } catch (_) { text = null; }
+  if (!text) console.log('  - SKIP prepaid report checks (report or pdftotext not on this machine)');
+  else {
+    const { buildSnapshot } = require('../lib/onboarding/snapshot');
+    const { sourceControls } = require('../lib/onboarding/source_controls');
+    const adapter = require('../lib/onboarding/adapters').get('vantaca');
+    const art = makeArtifact(Buffer.from(text), { batch_code: 'CONV-QR-20260731-DRYRUN', community_id: QR, source_system: 'vantaca', artifact_type: 'prepaid_homeowners', filename: 'PrepaidHomeowners.txt', cutoff_date: '2026-07-31' });
+    const pp = adapter.parse('prepaid_homeowners', text, art);
+    const parsed = { ...n1.parsed, prepaid_homeowners: pp };
+    const ext = adapter.extractionControls({ prepaid_homeowners: pp }).find((c) => c.code === 'prepaid_homeowners.rows_tie_to_printed_total');
+    check('prepaid report: 6 account rows (4 previous owners) tie to the printed 922.13; as of 7/31; no unreadable rows', pp.rows.length === 6 && pp.rows.filter((r) => r.previous_owner).length === 4 && ext.status === 'PASS' && pp.printed.total === 92213 && pp.as_of === '2026-07-31' && pp.defects.length === 0);
+    const sc = sourceControls(parsed, { roles: { ar_account: '1300', prepaid_account: '2400' } });
+    const k = sc.find((c) => c.code === 'subledger.credit_balances_equal_gl_prepaid');
+    check('prepaid report: ledger credits 184.60 + previous-owner credits 737.53 = GL 2400 922.13 (PASS, no waiver); report = GL; current owners match the ledger',
+      k.status === 'PASS' && k.detail.ledger_credits_cents === 18460 && k.detail.previous_owner_credits_cents === 73753
+      && sc.find((c) => c.code === 'prepaid_report.total_equals_gl_prepaid').status === 'PASS' && sc.find((c) => c.code === 'prepaid_report.current_owner_credits_match_ledger').status === 'PASS');
+    const snap = buildSnapshot(parsed, { batch_code: 'CONV-QR-20260731-DRYRUN', cutoff_date: '2026-07-31', roles: { ar_account: '1300', prepaid_account: '2400', ap_account: '2000' } });
+    const pc = snap.components.find((c) => c.component === 'prepaid_detail');
+    check('snapshot with the report: prepaid PASS: 2 current + 4 previous-owner lines = 922.13; nothing unsupported; AP still BLOCKED (561.70, no AP aging)',
+      pc.status === 'PASS' && pc.supported_cents === -92213 && pc.unsupported_cents === 0 && pc.former_owner_accounts === 4
+      && snap.lines.filter((l) => l.kind === 'prepaid_detail' && l.former_owner).length === 4 && !snap.lines.some((l) => l.kind === 'unsupported_detail' && l.component === 'prepaid_detail')
+      && snap.components.find((c) => c.component === 'ap_detail').status === 'BLOCKED');
+  }
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

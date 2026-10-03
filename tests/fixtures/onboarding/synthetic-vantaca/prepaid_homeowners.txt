@@ -1,0 +1,13 @@
+             Example Creek Homeowners Association, Inc
+
+                       Pre Paid Homeowners For 3/31/2026
+
+Account      Property                          Owner Name                      Credit Amount
+
+90000003     103 Example Lane                  Example Owner Three                                85.00
+                                                                                           85.00
+                                                                        Total
+
+(*** indicates previous owners)
+
+Report generated on 4/1/2026 9:00 AM - V3.21                                  Page 1
