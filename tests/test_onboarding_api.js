@@ -36,6 +36,7 @@ function fakeService() {
     createBatch: rec('createBatch', 'b-new'), registerArtifact: rec('registerArtifact', 'a-1'), runStage: rec('runStage', { status: 'PASS' }),
     sourcePackage: rec('sourcePackage', (sys, cutoff) => require('../lib/onboarding/adapters').get(sys).sourcePackage(cutoff)),
     recognize: rec('recognize', (sys, cutoff, files) => files.map((x) => ({ filename: x.originalname, type: /GL/.test(x.originalname) ? 'gl_trial_balance' : null }))),
+    decide: rec('decide', [{ id: 'd-1', event_key: 'je:x', choice: 'record_after_cutoff' }]),
     operate: rec('operate', (id) => ({ batch: id, stopped_at: 'activity_bridge', reason: 'needs_human', steps: [] })), waive: rec('waive', 'w-1'), advance: rec('advance', (actor, id, body) => { if (body.to === 'snapshot') throw new ServiceError(409, 'REFUSED_BY_DATABASE', 'stage advance refused: stage source_controls is FAIL; not waived: x'); return 'e-1'; }),
     approve: rec('approve', () => { throw new Error('Supabase exploded with secret details'); }) };
 }
@@ -114,7 +115,7 @@ check('repo guard: nothing writes the onboarding tables directly (only the 482 S
 });
 check('service guard: its only database calls are the onboarding_* rpc allowlist and the write-once artifact store', () => {
   const s = fs.readFileSync(path.join(__dirname, '..', 'lib', 'onboarding', 'service.js'), 'utf8').replace(/\/\/.*$/gm, '');
-  assert.ok(RPC.length === 13 && RPC.every((n) => /^onboarding_/.test(n)));
+  assert.ok(RPC.length === 15 && RPC.every((n) => /^onboarding_/.test(n)));
   assert.strictEqual((s.match(/\.rpc\(/g) || []).length, 1, 'exactly one rpc call site');
   assert.ok(/if \(!RPC\.includes\(name\)\) throw/.test(s));
   assert.ok(!/\.from\(\s*['"](?!documents)/.test(s.replace(/storage\.from\(bucket\)/g, '').replace(/Buffer\.from\(/g, '')), 'no table access');
@@ -142,8 +143,32 @@ check('UI: the operator panel is the primary path; manual run / upload / require
   const adv = html.indexOf('<details class="card" id="advanced">'); const advEnd = html.indexOf('</details>', html.indexOf('<div id="run">'));
   assert.ok(adv > 0 && advEnd > adv, 'advanced section exists');
   assert.ok(html.indexOf('<div id="operator">') < adv, 'operator panel comes first');
-  for (const id of ['<div id="required">', '<form id="upload"', '<div id="run">']) { const i = html.indexOf(id); assert.ok(i > adv && i < advEnd, id + ' sits inside Advanced'); }
+  for (const id of ['<div id="required">', '<form id="upload"', '<div id="run">', '<div id="waivers">']) { const i = html.indexOf(id); assert.ok(i > adv && i < advEnd, id + ' sits inside Advanced'); }
+  assert.ok(html.indexOf('<div id="advance">') > 0 && html.indexOf('<div id="advance">') < adv, 'the owner authorization stays in the normal flow');
+  assert.ok(/'<h3>Owner waiver \(recovery\)<\/h3>'/.test(html) && /'<h2>Your authorization \(owner\)<\/h2>/.test(html));
 });
+check('UI: open bridge items are plain questions with choices; the owner records DECISIONS (never waivers); decisions and source notes are shown', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'onboarding.html'), 'utf8');
+  assert.ok(/const decisions = asks\.filter\(\(a\) => a\.type === 'decision'\)/.test(html) && /id="op_questions"/.test(html));
+  assert.ok(/<input type="radio" name="q' \+ i \+ '"/.test(html) && /Recommended<\/span>/.test(html), 'each question offers its choices');
+  assert.ok(/<button id="opAnswer">Record my decisions<\/button>/.test(html) && /The owner answers these\./.test(html), 'owner answers; others see read-only');
+  assert.ok(/api\('\/api\/onboarding\/batches\/' \+ encodeURIComponent\(v\.batch\.id\) \+ '\/decisions', json\(\{ completion_id: decisions\[0\]\.completion_id, decisions: picked\.map\(\(p\) => \(\{ event_key: p\.q\.event_key, choice: p\.c\.key \}\)\) \}\)\)/.test(html), 'answers are posted as structured decisions');
+  const answerHandler = html.slice(html.indexOf("if ($('opAnswer'))"), html.indexOf("if ($('opAnswer'))") + 900);
+  assert.ok(!/\/waivers/.test(answerHandler) && !/reason/.test(answerHandler), 'the answer path never touches the waiver endpoint');
+  assert.ok(/if \(picked\.some\(\(p\) => !p\)\) return say\('Answer every question first\.'/.test(html), 'all questions answered before anything is recorded');
+  assert.ok(/id="op_decisions"/.test(html) && /id="op_source_notes"/.test(html) && /For accounting review after conversion<\/b> \(not a blocker\)/.test(html), 'recorded decisions and source anomalies are visible');
+});
+check('POST /decisions: owner only (an admin is refused before the service); records through decide() then lets the operator continue', async () => withServer(async ({ req, service }) => {
+  const body = { completion_id: 'c1', decisions: [{ event_key: 'je:x', choice: 'record_after_cutoff' }], actor: 'spoofed' };
+  assert.strictEqual((await req('POST', '/batches/b1/decisions', { user: 'admin', body })).status, 403);
+  assert.deepStrictEqual(service.calls.map((c) => c.name), []);
+  const r = await req('POST', '/batches/b1/decisions', { user: 'owner', body });
+  assert.strictEqual(r.status, 200);
+  assert.deepStrictEqual(service.calls.map((c) => c.name), ['decide', 'operate']);
+  assert.deepStrictEqual(service.calls[0].args[0], { kind: 'human', id: 'u-owner', email: OWNER_EMAIL, role: 'owner' }, 'the actor comes from auth, not the body');
+  assert.deepStrictEqual(service.calls[0].args[2], { completion_id: 'c1', decisions: body.decisions });
+  assert.ok(!service.calls.some((c) => c.name === 'waive'), 'never a waiver');
+}));
 
 check('a fresh Vantaca onboarding screen can tell the user what to supply: GET /source-package (admin) returns the dated report list; nothing else is called', async () => withServer(async ({ req, service }) => {
   assert.strictEqual((await req('GET', '/source-package?system=vantaca&cutoff=2026-07-31')).status, 403);

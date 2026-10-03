@@ -124,6 +124,14 @@ function buildRouter({ service, auth, listCommunities }) {
       res.json({ operator: await service.operate(req.params.id) });
     } catch (e) { fail(res, e, 'files'); }
   });
+  router.post('/batches/:id/decisions', express.json({ limit: '64kb' }), async (req, res) => {
+    try {
+      const a = await owner(req, res); if (!a) return;
+      const b = req.body || {};
+      const recorded = await service.decide(a, req.params.id, { completion_id: b.completion_id, decisions: b.decisions });
+      res.json({ decisions: recorded, operator: await service.operate(req.params.id) });
+    } catch (e) { fail(res, e, 'decisions'); }
+  });
   router.post('/batches/:id/operate', async (req, res) => {
     try { if (!(await admin(req, res))) return; res.json({ operator: await service.operate(req.params.id) }); }
     catch (e) { fail(res, e, 'operate'); }

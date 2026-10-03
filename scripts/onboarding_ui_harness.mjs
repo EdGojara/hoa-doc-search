@@ -17,7 +17,7 @@ const { onboardingWorld, COMM } = await import('../tests/sql/onboarding_world.mj
 const { buildRouter } = require('../api/onboarding.js');
 const { createOnboardingService } = require('../lib/onboarding/service.js');
 
-const world = await onboardingWorld(PGlite, { through: 485 });
+const world = await onboardingWorld(PGlite, { through: 486 });
 const mem = new Map();
 const storage = { async putOnce(p, b) { if (!mem.has(p)) mem.set(p, Buffer.from(b)); }, async get(p) { return Buffer.from(mem.get(p)); } };
 // Synthetic Trusted activity for the bridge view (no client data).

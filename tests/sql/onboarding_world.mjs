@@ -31,6 +31,7 @@ export async function onboardingWorld(PGlite, { through = 485 } = {}) {
   if (through >= 483) { await db.exec(lf(`${REPO}/migrations/483_onboarding_snapshot.sql`)); await db.exec(`INSERT INTO schema_migrations (filename, sha256) VALUES ('483_onboarding_snapshot.sql', 'recorded')`); }
   if (through >= 484) { await db.exec(lf(`${REPO}/migrations/484_onboarding_activity_bridge.sql`)); await db.exec(`INSERT INTO schema_migrations (filename, sha256) VALUES ('484_onboarding_activity_bridge.sql', 'recorded')`); }
   if (through >= 485) { await db.exec(lf(`${REPO}/migrations/485_onboarding_operator.sql`)); await db.exec(`INSERT INTO schema_migrations (filename, sha256) VALUES ('485_onboarding_operator.sql', 'recorded')`); }
+  if (through >= 486) { await db.exec(lf(`${REPO}/migrations/486_onboarding_bridge_decisions.sql`)); await db.exec(`INSERT INTO schema_migrations (filename, sha256) VALUES ('486_onboarding_bridge_decisions.sql', 'recorded')`); }
   const client = { query: async (sql, params) => {
     if (params) { const r = await db.query(sql, params.map((v) => (v && typeof v === 'object' ? JSON.stringify(v) : v))); return { rows: r.rows, rowCount: r.affectedRows ?? r.rows.length }; }
     const rs = await db.exec(sql); const last = rs[rs.length - 1] || { rows: [] }; return { rows: last.rows, rowCount: last.affectedRows ?? 0 };

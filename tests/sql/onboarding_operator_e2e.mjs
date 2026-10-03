@@ -42,7 +42,7 @@ async function toPdf(text) {
 }
 function memoryStorage() { const m = new Map(); return { m, async putOnce(p, b) { if (!m.has(p)) m.set(p, Buffer.from(b)); }, async get(p) { return Buffer.from(m.get(p)); } }; }
 
-const world = await onboardingWorld(PGlite, { through: 485 });
+const world = await onboardingWorld(PGlite, { through: 486 });
 const tje = (id, d, mod, amt, extra = {}) => ({ id, posting_date: d, source_module: mod, status: 'posted', total_debits_cents: amt, total_credits_cents: amt, description: '', ...extra });
 const trustedReader = async () => ({ trusted: { journal_entries: [tje('t-legacy', '2026-02-01', 'vantaca_import', 61000), tje('t-ach', '2026-03-05', 'payment_intake', 15000, { description: 'AP payment ach' })], journal_entry_lines: [], ap_invoices: [], ap_payments: [], ar_charges: [], ar_payments: [], payments: [], homeowner_transactions: [] }, accountNumber: () => null, accountOfProperty: () => null });
 const storage = memoryStorage();
@@ -72,7 +72,8 @@ check('after the upload: intake, normalize, source controls, snapshot all PASS a
 pk = await pkgOf(B);
 check('after the requested upload the prepaid report shows supplied; nothing is still needed', pk.prepaid_homeowners.status === 'supplied' && !Object.values(pk).some((r) => r.status === 'needed'), JSON.stringify(pk));
 check('roles were inferred from the source chart (1300 / 2400) without a human typing them', v.latest_by_stage.source_controls.summary.roles.ar_account === '1300' && v.latest_by_stage.source_controls.summary.roles.prepaid_account === '2400');
-check('it stops at the activity bridge, the first stage that needs a human, and says why', run2.stopped_at === 'activity_bridge' && run2.reason === 'needs_human' && v.operator.asks.some((a) => a.type === 'ambiguity'), JSON.stringify(v.operator.asks));
+check('it stops at the activity bridge, the first stage that needs a human, and asks one plain question per open item', run2.stopped_at === 'activity_bridge' && run2.reason === 'needs_human' && v.operator.asks.length > 0 && v.operator.asks.every((a) => a.type === 'decision' && a.question && a.choices.length === 2 && a.completion_id === v.current.completion_id && a.control === 'bridge.ambiguous_items_reviewed'), JSON.stringify(v.operator.asks));
+check('the bridge question is plain words with the exact factual choice (one per open item; no control codes in the question)', v.operator.asks.some((a) => a.question === 'payment intake of $150.00 dated 3/5/2026: is it already in the legacy books, or is it real activity Trusted must keep?') && v.operator.asks.every((a) => !/bridge.|_/.test(a.question)), JSON.stringify(v.operator.asks.map((a) => a.question)));
 check('every automatic advance is recorded as the operator (system), every stage before the bridge PASS', v.events.filter((e) => e.type === 'stage_advanced').every((e) => e.actor_kind === 'system' && e.actor_id === 'onboarding-operator') && ['intake', 'normalize', 'source_controls', 'snapshot'].every((s) => v.latest_by_stage[s].status === 'PASS'));
 const m = v.operator.metrics;
 check('metrics: 2 human interventions = the handoff + the ONE requested-source upload; no manual run/advance anywhere; 0 AI calls', m.human_interventions === 2 && m.interventions.handoff === 1 && m.interventions.source_uploads === 1 && m.interventions.judgments === 0 && m.interventions.authorizations === 0 && m.manual_engine_actions === 0 && m.ai_calls === 0 && m.operator_steps >= 8, JSON.stringify(m));
@@ -102,6 +103,59 @@ for (const c of openAtBridge) await svc.waive(ED, B, { completion_id: bridgeComp
 await svc.advance(ED, B, { completion_id: bridgeCompletion, to: 'preflight' });
 const m2 = (await svc.getBatch(B, ED)).operator.metrics;
 check('metrics: each waiver is a judgment, the owner advance of a waived result is an authorization; still no manual engine ceremony', m2.interventions.judgments === openAtBridge.length && m2.interventions.authorizations === 1 && m2.human_interventions === 2 + openAtBridge.length + 1 && m2.manual_engine_actions === 0, JSON.stringify(m2));
+
+// 3c. The database accepts the evidence-settled classifications (line identity; the period question).
+const B6 = await world.rpc('onboarding_create_batch', { p_community: COMM, p_batch_code: 'CONV-EX-EVIDENCE', p_as_of: '2026-03-31', p_source_system: 'vantaca', p_actor_kind: 'human', p_actor_id: 'ed' });
+for (const s of ['intake', 'normalize', 'source_controls']) { const c = await world.rpc('onboarding_record_completion', { p_batch: B6, p_stage: s, p_status: 'PASS', p_open: [], p_controls: ctl, p_summary: {}, p_actor_kind: 'system', p_actor_id: 'op' }); await world.rpc('onboarding_auto_advance', { p_batch: B6, p_completion: c, p_actor_id: 'op' }); }
+const sn6 = await world.rpc('onboarding_record_snapshot', { p_batch: B6, p_status: 'PASS', p_open: [], p_controls: ctl, p_summary: {}, p_lines: [], p_snapshot_sha256: 'd'.repeat(64), p_actor_kind: 'system', p_actor_id: 'op' });
+await world.rpc('onboarding_auto_advance', { p_batch: B6, p_completion: sn6, p_actor_id: 'op' });
+const item = (n, cls, method, evidence) => ({ item_no: n, event_key: `je:x${n}`, kind: 'system', classification: cls, method, confidence: 'high', event_date: '2026-01-01', amount_cents: 218833, evidence, structural_issues: [], records: [`journal_entries:x${n}`], batch_code: 'CONV-EX-EVIDENCE', cutoff_date: '2026-03-31' });
+const recorded = await code(() => world.rpc('onboarding_record_bridge', { p_batch: B6, p_status: 'BLOCKED', p_open: ['bridge.ambiguous_items_reviewed'], p_controls: [{ code: 'bridge.ambiguous_items_reviewed', label: 'x', status: 'BLOCKED' }], p_summary: { snapshot_completion_id: sn6 },
+  p_items: [item(1, 'ALREADY_IN_SOURCE', 'gl_entry_lines_identical_in_source', { source_matches: [{ locator: { line: 7 } }] }), item(2, 'AMBIGUOUS', 'in_source_period_absent_from_source', { decision: { question: 'q', choices: [], recommended: 'record_after_cutoff' } })],
+  p_bridge_sha256: 'e'.repeat(64), p_trusted_fingerprint: 'f'.repeat(64), p_actor_kind: 'system', p_actor_id: 'op' }));
+check('DB: the bridge table accepts ALREADY_IN_SOURCE by line identity and the period question (no CHECK refuses them)', recorded === null, recorded);
+check('DB: an amount-only ALREADY_IN_SOURCE is still refused by the database', /never_duplicate_on_amount|check/i.test((await code(() => world.db.query(`INSERT INTO onboarding_bridge_items (batch_id, completion_event_id, run_id, bridge_sha256, trusted_fingerprint, item_no, event_key, kind, classification, method, confidence, amount_cents, evidence, batch_code, cutoff_date) SELECT batch_id, completion_event_id, run_id, bridge_sha256, trusted_fingerprint, 99, 'je:zz', 'x', 'ALREADY_IN_SOURCE', 'amount_match_without_identifier', 'low', 1, '{}'::jsonb, batch_code, cutoff_date FROM onboarding_bridge_items WHERE batch_id = $1 LIMIT 1`, [B6]))) || ''));
+
+// 3d. Owner DECISIONS (486): answered as decisions, never as waivers; the operator recomputes the bridge and continues.
+async function toBridge(service, code6) {
+  const id = await service.createBatch(ED, { community_id: COMM, batch_code: code6, as_of_date: '2026-03-31', source_system: 'vantaca' });
+  for (const t of ['gl_trial_balance', 'balance_sheet', 'ar_aging', 'homeowner_transactions', 'prepaid_homeowners']) await service.registerArtifact(ED, id, { buffer: await toPdf(fs.readFileSync(path.join(FX, `${t}.txt`), 'utf8')), filename: `${t}.pdf`, artifact_type: 'original_pdf' });
+  await service.operate(id); return id;
+}
+const BD = await toBridge(svc, 'CONV-EX-DECIDE');
+let vd = await svc.getBatch(BD, ED);
+const q = vd.operator.asks.find((a) => a.type === 'decision');
+check('decision setup: the batch stops at the bridge with one typed question', vd.batch.stage === 'activity_bridge' && q && q.decision_type === 'source_or_keep' && q.event_key === 'je:t-ach', JSON.stringify(vd.operator.asks));
+check('only the owner records a decision (an admin is refused before the database)', /owner/.test((await code(() => svc.decide({ kind: 'human', id: 'staff', role: 'admin' }, BD, { completion_id: q.completion_id, decisions: [{ event_key: q.event_key, choice: 'keep_as_trusted_activity' }] }))) || ''));
+await svc.decide(ED, BD, { completion_id: q.completion_id, decisions: [{ event_key: q.event_key, choice: 'keep_as_trusted_activity', reason: 'real ACH payment after the source period' }] });
+const runD = await svc.operate(BD);
+vd = await svc.getBatch(BD, ED);
+check('after the decision the operator recomputes the stale bridge on its own (no Advanced control) and says why', runD.steps.some((st) => st.action === 'recompute' && /owner decisions recorded after this result/.test(st.why)), JSON.stringify(runD.steps));
+const brD = vd.latest_by_stage.activity_bridge;
+check('the recomputed bridge carries the decision on the item and its control PASSES; the run continues to preflight (never execute)', brD.status === 'PASS' && vd.batch.stage === 'preflight' && runD.stopped_at === 'preflight', JSON.stringify({ stage: vd.batch.stage, status: brD.status, steps: runD.steps }));
+const itD = ((await svc.getBridge(BD, brD.completion_id)).items || []).find((i) => i.event_key === 'je:t-ach');
+check('the item keeps its evidence classification (AMBIGUOUS) and records who decided what, when, on which result', itD.classification === 'AMBIGUOUS' && itD.evidence.decision.recorded.choice_key === 'keep_as_trusted_activity' && itD.evidence.decision.recorded.decided_by === 'ed' && itD.evidence.decision.recorded.on_bridge_result === q.completion_id, JSON.stringify(itD.evidence.decision));
+check('decisions are not waivers: no control_waived event and no waiver disposition anywhere on this batch', !vd.events.some((e) => e.type === 'control_waived') && vd.operator.decisions.length === 1 && vd.operator.decisions[0].choice_key === 'keep_as_trusted_activity');
+check('metrics: the decision is one judgment; no manual engine action; the operator advanced (system), not a human', vd.operator.metrics.interventions.judgments === 1 && vd.operator.metrics.manual_engine_actions === 0 && vd.events.filter((e) => e.type === 'stage_advanced' && e.to_stage === 'preflight').every((e) => e.actor_kind === 'system'), JSON.stringify(vd.operator.metrics));
+check('a decision against a superseded result (or after the batch moved on) is refused by the database', /current bridge result|while the batch is in activity_bridge/.test((await code(() => svc.decide(ED, BD, { completion_id: q.completion_id, decisions: [{ event_key: q.event_key, choice: 'already_in_legacy_books' }] }))) || ''));
+
+// 3e. Safe stale recomputation: Trusted activity changes, or the bridge was recorded by other rules.
+let extra = [];
+const liveReader = async () => { const base = await trustedReader(); return { ...base, trusted: { ...base.trusted, journal_entries: [...base.trusted.journal_entries, ...extra] } }; };
+const svc2 = createOnboardingService({ rpc: world.rpc, storage, trustedReader: liveReader });
+const BS = await toBridge(svc2, 'CONV-EX-STALE');
+const first = (await svc2.getBatch(BS, ED)).latest_by_stage.activity_bridge.completion_id;
+const still = await svc2.operate(BS);
+check('nothing changed -> the operator does NOT recompute (one result, no new event)', !still.steps.some((st) => st.action === 'recompute') && (await svc2.getBatch(BS, ED)).latest_by_stage.activity_bridge.completion_id === first);
+extra = [tje('t-new', '2026-04-02', 'payment_intake', 7700, { description: 'AP payment ach' })];
+const moved = await svc2.operate(BS);
+check('Trusted activity changed -> recomputed automatically, the new result replaces the old (append-only history kept)', moved.steps.some((st) => st.action === 'recompute' && /Trusted financial activity changed/.test(st.why)) && (await svc2.getBatch(BS, ED)).latest_by_stage.activity_bridge.completion_id !== first, JSON.stringify(moved.steps));
+const vs = await svc2.getBatch(BS, ED);
+const snapId = vs.latest_by_stage.snapshot.completion_id;
+await world.rpc('onboarding_record_bridge', { p_batch: BS, p_status: 'BLOCKED', p_open: ['bridge.ambiguous_items_reviewed'], p_controls: [{ code: 'bridge.ambiguous_items_reviewed', label: 'x', status: 'BLOCKED' }], p_summary: { snapshot_completion_id: snapId, bridge_engine: 'older-rules' }, p_items: [], p_bridge_sha256: '1'.repeat(64), p_trusted_fingerprint: '2'.repeat(64), p_actor_kind: 'system', p_actor_id: 'op' });
+const rules = await svc2.operate(BS);
+check('a bridge recorded by other rules is recomputed (engine version), still write-locked, still never into execute', rules.steps.some((st) => st.action === 'recompute' && /bridge rules changed \(older-rules ->/.test(st.why)) && (await svc2.getBatch(BS, ED)).batch.write_locked === true && (await svc2.getBatch(BS, ED)).batch.stage !== 'execute', JSON.stringify(rules.steps));
+check('still nothing posted anywhere', (await world.db.query(`SELECT count(*)::int AS n FROM journal_entries`)).rows[0].n === 0);
 
 // 4. An unknown report format is reported, not guessed.
 const B3 = await svc.createBatch(ED, { community_id: COMM, batch_code: 'CONV-EX-UNKNOWN', as_of_date: '2026-03-31', source_system: 'vantaca' });

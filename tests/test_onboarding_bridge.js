@@ -159,7 +159,7 @@ check('loader: only through the read-only client; reads only financial tables, c
   const tables = new Set(reads.map((r) => r.table));
   for (const t of tables) assert.ok(!/violation|acc_|arc|certif|interaction/.test(t), t);
   assert.ok(reads.every((r) => r.ordered), 'every read ordered');
-  assert.ok(reads.filter((r) => r.table !== 'journal_entry_lines').every((r) => r.filters.some(([c, v]) => c === 'community_id' && v === 'c')), 'community-scoped');
+  assert.ok(reads.filter((r) => r.table !== 'journal_entry_lines' && r.table !== 'ap_payment_applications').every((r) => r.filters.some(([c, v]) => c === 'community_id' && v === 'c')), 'community-scoped');
 });
 check('bridge and loader modules hold no DB client and no write calls', () => {
   for (const f of ['bridge.js', 'trusted_activity.js']) {

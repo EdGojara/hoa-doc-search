@@ -1,0 +1,104 @@
+{
+  "migration": "486_onboarding_bridge_decisions.sql",
+  "summary": "Onboarding bridge decisions (Issue #15): owner answers to activity-bridge questions are recorded as structured, append-only DECISIONS (not waivers): onboarding_bridge_decisions (bound to the bridge result and item, question, choices offered, choice taken, who/when, reason, evidence at decision time), onboarding_record_bridge_decisions (human only; current bridge result only; open AMBIGUOUS item with a question; choice must be one offered; one decision per item per result) and onboarding_bridge_decisions_view. No accounting table is touched. service_role only.",
+  "requires": [
+    "485_onboarding_operator.sql"
+  ],
+  "preflight": [
+    {
+      "name": "decision table does not exist yet",
+      "sql": "SELECT count(*)::int FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'onboarding_bridge_decisions'",
+      "expect": 0
+    },
+    {
+      "name": "485 operator function is in place",
+      "sql": "SELECT count(*)::int FROM pg_proc WHERE proname = 'onboarding_auto_advance'",
+      "expect": 1
+    }
+  ],
+  "expected_changes": [
+    "Creates table onboarding_bridge_decisions (append-only; human-only; unique per bridge result and item) with two indexes and its append-only trigger.",
+    "Creates onboarding_record_bridge_decisions and onboarding_bridge_decisions_view (EXECUTE to service_role only).",
+    "No row changes in any existing table."
+  ],
+  "objects": {
+    "added": [
+      "column:onboarding_bridge_decisions.actor_id",
+      "column:onboarding_bridge_decisions.actor_kind",
+      "column:onboarding_bridge_decisions.batch_id",
+      "column:onboarding_bridge_decisions.bridge_completion_id",
+      "column:onboarding_bridge_decisions.bridge_item_id",
+      "column:onboarding_bridge_decisions.bridge_sha256",
+      "column:onboarding_bridge_decisions.choice_key",
+      "column:onboarding_bridge_decisions.choice_label",
+      "column:onboarding_bridge_decisions.choices",
+      "column:onboarding_bridge_decisions.community_id",
+      "column:onboarding_bridge_decisions.decided_at",
+      "column:onboarding_bridge_decisions.decision_type",
+      "column:onboarding_bridge_decisions.event_key",
+      "column:onboarding_bridge_decisions.evidence",
+      "column:onboarding_bridge_decisions.id",
+      "column:onboarding_bridge_decisions.item_amount_cents",
+      "column:onboarding_bridge_decisions.item_event_date",
+      "column:onboarding_bridge_decisions.item_no",
+      "column:onboarding_bridge_decisions.question",
+      "column:onboarding_bridge_decisions.reason",
+      "constraint:onboarding_bridge_decisions.onboarding_bridge_decisions_actor_id_check",
+      "constraint:onboarding_bridge_decisions.onboarding_bridge_decisions_actor_kind_check",
+      "constraint:onboarding_bridge_decisions.onboarding_bridge_decisions_batch_id_fkey",
+      "constraint:onboarding_bridge_decisions.onboarding_bridge_decisions_bridge_completion_id_event_key_key",
+      "constraint:onboarding_bridge_decisions.onboarding_bridge_decisions_bridge_completion_id_fkey",
+      "constraint:onboarding_bridge_decisions.onboarding_bridge_decisions_bridge_item_id_fkey",
+      "constraint:onboarding_bridge_decisions.onboarding_bridge_decisions_bridge_sha256_check",
+      "constraint:onboarding_bridge_decisions.onboarding_bridge_decisions_choices_check",
+      "constraint:onboarding_bridge_decisions.onboarding_bridge_decisions_decision_type_check",
+      "constraint:onboarding_bridge_decisions.onboarding_bridge_decisions_item_no_check",
+      "constraint:onboarding_bridge_decisions.onboarding_bridge_decisions_pkey",
+      "constraint:onboarding_bridge_decisions.onboarding_bridge_decisions_question_check",
+      "function:onboarding_bridge_decisions_view",
+      "function:onboarding_record_bridge_decisions",
+      "index:idx_onboarding_bridge_decisions_batch",
+      "index:idx_onboarding_bridge_decisions_item",
+      "index:onboarding_bridge_decisions_bridge_completion_id_event_key_key",
+      "index:onboarding_bridge_decisions_pkey",
+      "table:onboarding_bridge_decisions",
+      "trigger:onboarding_bridge_decisions.trg_onboarding_bridge_decisions_append_only"
+    ],
+    "changed": [],
+    "removed": []
+  },
+  "row_changes": {
+    "conversion_batches": 0,
+    "onboarding_stage_events": 0,
+    "onboarding_bridge_items": 0
+  },
+  "protected": [
+    {
+      "table": "conversion_batches",
+      "order_by": "id"
+    },
+    {
+      "table": "journal_entries",
+      "order_by": "id"
+    }
+  ],
+  "verify": [
+    {
+      "name": "decision table present and append-only",
+      "sql": "SELECT count(*)::int FROM pg_trigger WHERE tgname = 'trg_onboarding_bridge_decisions_append_only'",
+      "expect": 1
+    },
+    {
+      "name": "decision functions present",
+      "sql": "SELECT count(*)::int FROM pg_proc WHERE proname IN ('onboarding_record_bridge_decisions', 'onboarding_bridge_decisions_view')",
+      "expect": 2
+    },
+    {
+      "name": "decisions are human-only",
+      "sql": "SELECT count(*)::int FROM pg_constraint WHERE conrelid = 'onboarding_bridge_decisions'::regclass AND pg_get_constraintdef(oid) LIKE '%actor_kind%human%'",
+      "expect": 1
+    }
+  ],
+  "api_checks": [],
+  "reload_schema": true
+}
