@@ -1,0 +1,104 @@
+{
+  "migration": "483_onboarding_snapshot.sql",
+  "summary": "Onboarding Engine conversion snapshot persistence (Issue #15 Milestone 3). Creates append-only onboarding_snapshot_lines (proposed opening-position rows bound to the snapshot stage completion and run, with batch code, cutoff, source provenance and snapshot sha256; an unsupported_detail row can never name a homeowner) and onboarding_record_snapshot (snapshot result + every line in one transaction; line identity must equal the batch). Replaces onboarding_record_completion (unchanged except a snapshot-stage result must come with its lines) and onboarding_batch_view (latest results carry their summary). Adds onboarding_snapshot_view (read-only; stale flag). Nothing posts to any accounting table. Service_role only. No rows change.",
+  "requires": [
+    "482_onboarding_service.sql"
+  ],
+  "preflight": [
+    {
+      "name": "snapshot table does not exist yet",
+      "sql": "SELECT count(*)::int FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'onboarding_snapshot_lines'",
+      "expect": 0
+    },
+    {
+      "name": "482 service functions are in place",
+      "sql": "SELECT count(*)::int FROM pg_proc WHERE proname IN ('onboarding_record_completion','onboarding_batch_view')",
+      "expect": 2
+    }
+  ],
+  "expected_changes": [
+    "Creates onboarding_snapshot_lines (append-only; CHECKs on kind, provenance, sha256, unsupported_never_assigned; UNIQUE(completion_event_id, line_no); two indexes; SELECT/INSERT grant).",
+    "Creates functions onboarding_record_snapshot and onboarding_snapshot_view (EXECUTE to service_role only).",
+    "Replaces onboarding_record_completion (snapshot results only via onboarding_record_snapshot) and onboarding_batch_view (latest_by_stage includes summary).",
+    "No row changes."
+  ],
+  "objects": {
+    "added": [
+      "column:onboarding_snapshot_lines.account_code",
+      "column:onboarding_snapshot_lines.amount_cents",
+      "column:onboarding_snapshot_lines.batch_code",
+      "column:onboarding_snapshot_lines.batch_id",
+      "column:onboarding_snapshot_lines.completion_event_id",
+      "column:onboarding_snapshot_lines.component",
+      "column:onboarding_snapshot_lines.created_at",
+      "column:onboarding_snapshot_lines.cutoff_date",
+      "column:onboarding_snapshot_lines.detail",
+      "column:onboarding_snapshot_lines.fund_code",
+      "column:onboarding_snapshot_lines.id",
+      "column:onboarding_snapshot_lines.kind",
+      "column:onboarding_snapshot_lines.line_no",
+      "column:onboarding_snapshot_lines.provenance",
+      "column:onboarding_snapshot_lines.run_id",
+      "column:onboarding_snapshot_lines.snapshot_sha256",
+      "column:onboarding_snapshot_lines.source_account_key",
+      "constraint:onboarding_snapshot_lines.onboarding_snapshot_lines_batch_id_fkey",
+      "constraint:onboarding_snapshot_lines.onboarding_snapshot_lines_completion_event_id_fkey",
+      "constraint:onboarding_snapshot_lines.onboarding_snapshot_lines_completion_event_id_line_no_key",
+      "constraint:onboarding_snapshot_lines.onboarding_snapshot_lines_kind_check",
+      "constraint:onboarding_snapshot_lines.onboarding_snapshot_lines_line_no_check",
+      "constraint:onboarding_snapshot_lines.onboarding_snapshot_lines_pkey",
+      "constraint:onboarding_snapshot_lines.onboarding_snapshot_lines_provenance_check",
+      "constraint:onboarding_snapshot_lines.onboarding_snapshot_lines_run_id_fkey",
+      "constraint:onboarding_snapshot_lines.onboarding_snapshot_lines_snapshot_sha256_check",
+      "constraint:onboarding_snapshot_lines.onboarding_snapshot_unsupported_never_assigned",
+      "function:onboarding_record_snapshot",
+      "function:onboarding_snapshot_view",
+      "index:idx_onboarding_snapshot_lines_batch",
+      "index:idx_onboarding_snapshot_lines_completion",
+      "index:onboarding_snapshot_lines_completion_event_id_line_no_key",
+      "index:onboarding_snapshot_lines_pkey",
+      "table:onboarding_snapshot_lines",
+      "trigger:onboarding_snapshot_lines.trg_onboarding_snapshot_lines_append_only"
+    ],
+    "changed": [
+      "function:onboarding_batch_view",
+      "function:onboarding_record_completion"
+    ],
+    "removed": []
+  },
+  "row_changes": {
+    "conversion_batches": 0,
+    "conversion_runs": 0,
+    "conversion_control_results": 0,
+    "onboarding_stage_events": 0
+  },
+  "protected": [
+    {
+      "table": "conversion_batches",
+      "order_by": "id"
+    },
+    {
+      "table": "journal_entries",
+      "order_by": "id"
+    }
+  ],
+  "verify": [
+    {
+      "name": "no snapshot lines yet",
+      "sql": "SELECT count(*)::int FROM onboarding_snapshot_lines",
+      "expect": 0
+    },
+    {
+      "name": "snapshot functions present",
+      "sql": "SELECT count(*)::int FROM pg_proc WHERE proname IN ('onboarding_record_snapshot','onboarding_snapshot_view')",
+      "expect": 2
+    },
+    {
+      "name": "snapshot lines append-only trigger present",
+      "sql": "SELECT count(*)::int FROM pg_trigger WHERE tgname = 'trg_onboarding_snapshot_lines_append_only'",
+      "expect": 1
+    }
+  ],
+  "api_checks": [],
+  "reload_schema": true
+}

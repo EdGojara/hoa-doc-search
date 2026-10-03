@@ -85,6 +85,7 @@
     <div id="run"></div>
     <h2>Controls for the current stage</h2>
     <div id="controls" class="card tablewrap"></div>
+    <div id="snapshot" class="tablewrap"></div>
     <div id="waivers"></div>
     <div id="advance"></div>
     <h2>Audit trail</h2>
@@ -133,6 +134,7 @@ function renderDetail(v) {
   // run
   const run = can('run_stage')[0];
   $('run').innerHTML = run ? '<div class="card"><b>Run the ' + esc(label(run.stage)) + ' stage</b> <span class="muted">Records a new result for this stage. Earlier waivers do not carry over to a new result.</span>'
+    + (run.stage === 'snapshot' ? '<div class="row"><div><label for="r_ap">AP account (optional)</label><input id="r_ap" placeholder="2000"></div></div><div class="muted">Uses the AR and prepaid accounts the source controls were validated with. Builds a proposed opening position only; nothing is posted.</div>' : '')
     + (run.stage === 'source_controls' ? '<div class="row"><div><label for="r_ar">AR account</label><input id="r_ar" placeholder="1300"></div><div><label for="r_pp">Prepaid owner account</label><input id="r_pp" placeholder="2400"></div></div><label for="r_auth">Authoritative controls (JSON, optional)</label><textarea id="r_auth" class="mono" placeholder=\'{"ar":{"label":"AR = 19,767.91","cents":1976791,"derive":{"kind":"gl_ending","account":"1300"}}}\'></textarea>' : '')
     + '<br><button id="runBtn">Run ' + esc(label(run.stage)) + '</button></div>' : '';
   if (run) $('runBtn').onclick = () => doRun(b.id, run.stage);
@@ -158,15 +160,45 @@ function renderDetail(v) {
       + (e.type === 'stage_completed' ? '<span class="pill ' + esc(e.status) + '">' + esc(e.status) + '</span> ' + esc((e.open_controls || []).join(', ')) : '') + (e.control_code ? '<span class="mono">' + esc(e.control_code) + '</span>: ' + esc(e.reason) : '') + '</td></tr>').join('') + '</tbody></table>' : '<span class="muted">No events yet.</span>';
 }
 
+// ---- Conversion snapshot (stage 3): proposed opening position at the cutoff. Read-only.
+const KIND_LABEL = { gl_opening_balance: 'GL opening balance', ar_detail: 'Homeowner AR', ar_aging_item: 'AR charge detail', prepaid_detail: 'Homeowner credit / prepaid', ap_detail: 'AP open item', unsupported_detail: 'UNSUPPORTED (not assigned)' };
+function lineTable(rows, cols) {
+  if (!rows.length) return '<span class="muted">None.</span>';
+  return '<table><thead><tr>' + cols.map((c) => '<th' + (c.num ? ' class="num"' : '') + '>' + esc(c.h) + '</th>').join('') + '</tr></thead><tbody>'
+    + rows.map((l) => '<tr>' + cols.map((c) => '<td' + (c.num ? ' class="num"' : '') + '>' + c.f(l) + '</td>').join('') + '</tr>').join('') + '</tbody></table>';
+}
+const provCell = (l) => '<span class="mono muted">' + esc((l.provenance || []).map((p) => p.artifact_sha256.slice(0, 8) + '…:' + (p.locator && p.locator.line)).join(', ')) + '</span>';
+async function loadSnapshot(batchId) {
+  let s;
+  try { s = await api('/api/onboarding/batches/' + encodeURIComponent(batchId) + '/snapshot'); }
+  catch (e) { $('snapshot').innerHTML = e.status === 404 ? '' : '<div class="banner warn">' + esc(e.message) + '</div>'; return; }
+  const lines = s.lines || [];
+  const by = (k) => lines.filter((l) => l.kind === k);
+  const comps = s.components || [];
+  $('snapshot').innerHTML = '<h2>Conversion snapshot (proposed opening position, nothing posted)</h2>'
+    + '<div class="card"><div class="muted">Result <span class="pill ' + esc(s.status) + '">' + esc(s.status) + '</span>' + (s.stale ? ' <span class="pill BLOCKED">stale: a newer snapshot exists</span>' : '') + ' · ' + lines.length + ' proposed lines · snapshot sha256 <span class="mono" title="' + esc(s.snapshot_sha256) + '">' + esc(String(s.snapshot_sha256 || '').slice(0, 16)) + '…</span> · recorded by ' + esc(s.recorded_by) + '</div>'
+    + lineTable(comps, [{ h: 'Component', f: (c) => esc(label(c.component)) }, { h: 'Status', f: (c) => '<span class="pill ' + esc(c.status) + '">' + esc(c.status) + '</span>' },
+      { h: 'Control (GL)', num: true, f: (c) => money(c.control_cents) }, { h: 'Supported by detail', num: true, f: (c) => money(c.supported_cents) }, { h: 'Unsupported', num: true, f: (c) => (c.unsupported_cents ? '<b>' + money(c.unsupported_cents) + '</b>' : (c.unsupported_cents === 0 ? '$0.00' : '')) },
+      { h: 'Needs', f: (c) => esc((c.needs || []).join(', ') || c.reason || '') }]) + '</div>'
+    + (by('unsupported_detail').length ? '<div class="banner bad"><b>Unsupported detail (kept as an exception, never assigned or plugged):</b><br>' + by('unsupported_detail').map((l) => esc(l.account_code) + ' ' + money(l.amount_cents) + ': ' + esc((l.detail || {}).reason || '')).join('<br>') + '</div>' : '')
+    + '<details class="card" open><summary>GL opening balances (' + by('gl_opening_balance').length + ')</summary>' + lineTable(by('gl_opening_balance'), [{ h: 'Account', f: (l) => esc(l.account_code) + ' ' + esc((l.detail || {}).account_name || '') }, { h: 'Fund', f: (l) => esc(l.fund_code || '') }, { h: 'Debit', num: true, f: (l) => (l.amount_cents > 0 ? money(l.amount_cents) : '') }, { h: 'Credit', num: true, f: (l) => (l.amount_cents < 0 ? money(-l.amount_cents) : '') }, { h: 'Source', f: provCell }]) + '</details>'
+    + '<details class="card"><summary>Homeowner AR detail (' + by('ar_detail').length + ' accounts, ' + by('ar_aging_item').length + ' charge lines)</summary>' + lineTable(by('ar_detail'), [{ h: 'Account', f: (l) => esc(l.source_account_key) }, { h: 'Balance', num: true, f: (l) => money(l.amount_cents) }, { h: 'Charge detail', f: (l) => esc(by('ar_aging_item').filter((i) => i.source_account_key === l.source_account_key).map((i) => (i.detail || {}).charge_type + ' ' + money(i.amount_cents)).join('; ')) }, { h: 'Source', f: provCell }]) + '</details>'
+    + '<details class="card"><summary>Homeowner credits / prepaids (' + by('prepaid_detail').length + ')</summary>' + lineTable(by('prepaid_detail'), [{ h: 'Account', f: (l) => esc(l.source_account_key) }, { h: 'Credit', num: true, f: (l) => money(l.amount_cents) }, { h: 'Source', f: provCell }]) + '</details>'
+    + '<details class="card"><summary>AP open items (' + by('ap_detail').length + ')</summary>' + lineTable(by('ap_detail'), [{ h: 'Vendor', f: (l) => esc((l.detail || {}).source_vendor_key || '') }, { h: 'Amount', num: true, f: (l) => money(-l.amount_cents) }, { h: 'Source', f: provCell }]) + '</details>';
+}
+
 async function loadDetail(id) {
   $('listView').hidden = true; $('detailView').hidden = false;
-  renderDetail(await api('/api/onboarding/batches/' + encodeURIComponent(id)));
+  const v = await api('/api/onboarding/batches/' + encodeURIComponent(id));
+  renderDetail(v);
+  if (v.latest_by_stage && v.latest_by_stage.snapshot) await loadSnapshot(id); else $('snapshot').innerHTML = '';
 }
 const json = (body) => ({ method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
 const batchId = () => new URLSearchParams(location.search).get('batch');
 async function act(fn, okText) { try { await fn(); say(okText, 'ok'); await loadDetail(batchId()); } catch (e) { say(e.message, 'bad'); } }
 function doRun(id, stage) {
   let body = {};
+  if (stage === 'snapshot') body = { ap_account: ($('r_ap').value || '').trim() || undefined };
   if (stage === 'source_controls') {
     let authoritative = {};
     const t = ($('r_auth').value || '').trim();

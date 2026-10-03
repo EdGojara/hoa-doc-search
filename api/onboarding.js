@@ -9,9 +9,10 @@
 //   GET  /batches[?community_id=]      engine batches
 //   GET  /batches/:id                  batch, artifacts, events, current controls,
 //                                      waivers, permitted actions, required human action
+//   GET  /batches/:id/snapshot[?completion_id=]  proposed opening position (latest or a given result)
 //   POST /batches                      create (admin)
 //   POST /batches/:id/artifacts        upload one source file (admin; intake only)
-//   POST /batches/:id/run              run the CURRENT stage, 0-2 only (admin)
+//   POST /batches/:id/run              run the CURRENT stage, 0-3 only (admin)
 //   POST /batches/:id/waivers          waive one open control (OWNER)
 //   POST /batches/:id/advance          advance one stage (OWNER)
 //   POST /batches/:id/approve          approve an exact preflight report (OWNER)
@@ -49,6 +50,11 @@ function buildRouter({ service, auth, listCommunities }) {
   router.get('/batches', async (req, res) => { try { if (!(await admin(req, res))) return; res.json(await service.listBatches(req.query.community_id || null)); } catch (e) { fail(res, e, 'list'); } });
   router.get('/batches/:id', async (req, res) => { try { const a = await admin(req, res); if (!a) return; res.json(await service.getBatch(req.params.id, a)); } catch (e) { fail(res, e, 'view'); } });
 
+  router.get('/batches/:id/snapshot', async (req, res) => {
+    try { if (!(await admin(req, res))) return; const v = await service.getSnapshot(req.params.id, req.query.completion_id || null); if (!v) return res.status(404).json({ error: 'no_snapshot' }); res.json(v); }
+    catch (e) { fail(res, e, 'snapshot'); }
+  });
+
   router.post('/batches', express.json({ limit: '64kb' }), async (req, res) => {
     try {
       const a = await admin(req, res); if (!a) return;
@@ -70,7 +76,7 @@ function buildRouter({ service, auth, listCommunities }) {
   });
 
   router.post('/batches/:id/run', express.json({ limit: '64kb' }), async (req, res) => {
-    try { const a = await admin(req, res); if (!a) return; const b = req.body || {}; res.json(await service.runStage(a, req.params.id, { roles: b.roles, authoritative: b.authoritative })); }
+    try { const a = await admin(req, res); if (!a) return; const b = req.body || {}; res.json(await service.runStage(a, req.params.id, { roles: b.roles, authoritative: b.authoritative, ap_account: b.ap_account, fund_by_account: b.fund_by_account })); }
     catch (e) { fail(res, e, 'run'); }
   });
 

@@ -4,7 +4,8 @@
 // create -> register artifacts -> run intake / normalize / source controls ->
 // waive -> advance, read back through the view, plus every bypass we can think
 // of: wrong role, agent outside its stage, forged body identity, stale result,
-// tampered artifact bytes, no runner for later stages, EXECUTE, direct table
+// tampered artifact bytes, snapshot (stage 3) incl. stale replay, no runner for
+// later stages, EXECUTE, direct table
 // writes. Postgres 17 (PGlite 0.3.x). Skips without PGlite.
 import fs from 'fs';
 import path from 'path';
@@ -26,7 +27,7 @@ const OWNER = { kind: 'human', id: 'ed', role: 'owner' };
 const ADMIN = { kind: 'human', id: 'staffer', role: 'admin' };
 function memoryStorage() { const m = new Map(); return { m, async putOnce(p, b) { if (!m.has(p)) m.set(p, Buffer.from(b)); }, async get(p) { if (!m.has(p)) throw new Error('missing'); return Buffer.from(m.get(p)); } }; }
 
-const world = await onboardingWorld(PGlite, { through: 482 });
+const world = await onboardingWorld(PGlite, { through: 483 });
 const storage = memoryStorage();
 let rpcCalls = [];
 const svc = createOnboardingService({ rpc: async (n, a) => { rpcCalls.push(n); return world.rpc(n, a); }, storage });
@@ -85,8 +86,28 @@ check('waived: still FAIL with its difference; disposition WAIVED by ed with the
 check('advance on the OLD result id is refused (stale), on the current one accepted', /REFUSED_BY_DATABASE/.test((await code(() => svc.advance(OWNER, B, { completion_id: r2.completion_id, to: 'snapshot' }))) || '')
   && (await code(() => svc.advance(OWNER, B, { completion_id: r2b.completion_id, to: 'snapshot' }))) === null);
 v = await svc.getBatch(B, OWNER);
-check('snapshot: no runner in this milestone; the view says so and running is refused', v.derived.runner_available === false && /no runner yet/.test(v.derived.required_action.text) && (await code(() => svc.runStage(ADMIN, B))) === 'NO_RUNNER_FOR_STAGE');
 check('audit trail: every human action is an event with the server-side identity', v.events.filter((e) => e.type === 'stage_advanced').every((e) => e.actor_kind === 'human' && e.actor_id === 'ed') && v.events.some((e) => e.type === 'control_waived' && e.actor_id === 'ed'));
+// ---- Stage 3: conversion snapshot (read-only proposed opening position)
+check('snapshot: the stage now has a runner; an agent assigned elsewhere cannot build it', v.derived.runner_available === true && /AGENT_OUTSIDE_ASSIGNED_STAGE/.test((await code(() => svc.runStage({ kind: 'agent', id: 'claude', assigned_stage: 'source_controls' }, B))) || ''));
+const sn1 = await svc.runStage({ kind: 'agent', id: 'claude', assigned_stage: 'snapshot' }, B);
+let sv = await svc.getSnapshot(B);
+const comp = (n) => sv.components.find((c) => c.component === n);
+check('snapshot recorded: uses the VALIDATED roles (1300 / 2400); GL, AR and prepaid supported; AP BLOCKED (no AP account/source); not stale',
+  sn1.status === 'BLOCKED' && sv.completion_id === sn1.completion_id && sv.stale === false && comp('gl').status === 'PASS' && comp('ar_detail').supported_cents === 51000 && comp('prepaid_detail').supported_cents === -8500 && comp('ap_detail').status === 'BLOCKED');
+const glLines = sv.lines.filter((l) => l.kind === 'gl_opening_balance');
+check('snapshot lines: GL opening balances balance; each line keeps provenance; AR detail per account', glLines.reduce((t, l) => t + Number(l.amount_cents), 0) === 0 && sv.lines.every((l) => l.provenance.length && /^[0-9a-f]{64}$/.test(l.provenance[0].artifact_sha256)) && sv.lines.filter((l) => l.kind === 'ar_detail').length === 2);
+v = await svc.getBatch(B, OWNER);
+check('snapshot: the owner is offered a waiver for the BLOCKED AP control, no advance yet', v.derived.permitted_actions.some((x) => x.action === 'waive' && x.code === 'snapshot.ap_detail_supports_gl') && !v.derived.permitted_actions.some((x) => x.action === 'advance'));
+const sn2 = await svc.runStage(ADMIN, B, { ap_account: '2400' });   // re-run (different AP setting) -> a new snapshot
+const oldView = await svc.getSnapshot(B, sn1.completion_id); sv = await svc.getSnapshot(B);
+check('snapshot re-run: new completion and sha; the earlier snapshot is still readable and flagged stale', sv.completion_id === sn2.completion_id && sv.snapshot_sha256 !== oldView.snapshot_sha256 && oldView.stale === true && sv.stale === false);
+check('replay: a waiver against the stale snapshot is refused by the database', /REFUSED_BY_DATABASE/.test((await code(() => svc.waive(OWNER, B, { completion_id: sn1.completion_id, code: 'snapshot.ap_detail_supports_gl', reason: 'AP aging to follow; reviewed' }))) || ''));
+check('the unsupported AP remainder is its own line naming nobody', sv.lines.some((l) => l.kind === 'unsupported_detail' && l.component === 'ap_detail' && l.source_account_key === null));
+await svc.waive(OWNER, B, { completion_id: sn2.completion_id, code: 'snapshot.ap_detail_supports_gl', reason: 'AP aging to follow; reviewed for the test' });
+await svc.advance(OWNER, B, { completion_id: sn2.completion_id, to: 'activity_bridge' });
+v = await svc.getBatch(B, OWNER);
+check('activity bridge: no runner in this milestone; the view says so and running is refused', v.derived.runner_available === false && /no runner yet/.test(v.derived.required_action.text) && (await code(() => svc.runStage(ADMIN, B))) === 'NO_RUNNER_FOR_STAGE');
+check('no accounting table was touched by any of it', (await world.db.query(`SELECT count(*)::int AS n FROM journal_entries`)).rows[0].n === 0);
 
 // Tampered artifact bytes refuse the stage (new batch so we are back in intake/normalize).
 const B2 = await svc.createBatch(ADMIN, { community_id: COMM, batch_code: 'CONV-EX-TAMPER', as_of_date: '2026-03-31', source_system: 'vantaca' });
@@ -98,7 +119,7 @@ const tv = await svc.getBatch(B2, OWNER);
 check('tampered artifact: intake FAILS on the re-hash check (the stored bytes no longer match the record)', t0.status === 'FAIL' && tv.current.controls.find((c) => c.code === 'intake.artifacts_match_recorded_hashes').status === 'FAIL');
 
 // Only allowlisted guarded functions were ever called; the service holds no table writes.
-check('service used only the allowlisted onboarding_* functions', rpcCalls.every((n) => /^onboarding_(batches|batch_view|create_batch|register_artifact|record_completion|waive|approve|advance)$/.test(n)));
+check('service used only the allowlisted onboarding_* functions', rpcCalls.every((n) => /^onboarding_(batches|batch_view|create_batch|register_artifact|record_completion|waive|approve|advance|record_snapshot|snapshot_view)$/.test(n)));
 const forged = await code(() => svc.waive({ kind: 'human', id: 'ed', role: 'admin' }, B, { completion_id: r2b.completion_id, code: 'x', reason: 'pretending to be the owner' }));
 check('identity: an actor without the owner role cannot waive even with the owner id', forged === 'OWNER_ONLY');
 console.log(`\n${pass} passed, ${fail} failed`);

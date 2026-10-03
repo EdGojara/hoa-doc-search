@@ -107,5 +107,25 @@ check('gate: the agent cannot advance its own stage', agentRefused === 'ADVANCE_
   check('waiver: with the human waiver the stage may advance (human only)', S.advance(waived, HUMAN, 'snapshot').stage === 'snapshot');
 }
 
+// Milestone 3: conversion snapshot, built PURELY from the validated parse (no stage machine:
+// reaching the snapshot stage would need Ed's waiver of the prepaid control, which is his call).
+{
+  const { buildSnapshot } = require('../lib/onboarding/snapshot');
+  const snap = buildSnapshot(n1.parsed, { batch_code: 'CONV-QR-20260731-DRYRUN', cutoff_date: '2026-07-31', roles: { ar_account: '1300', prepaid_account: '2400', ap_account: '2000' } });
+  const comp = (c) => snap.components.find((x) => x.component === c);
+  const k = (kind) => snap.lines.filter((l) => l.kind === kind);
+  const gl = k('gl_opening_balance');
+  check('snapshot: 24 GL opening lines = source ending TB; debits = credits = 84,201.13', gl.length === 24 && gl.filter((l) => l.amount_cents > 0).reduce((t, l) => t + l.amount_cents, 0) === 8420113 && gl.reduce((t, l) => t + l.amount_cents, 0) === 0);
+  check('snapshot: AR detail 30 accounts support 19,767.91 exactly; each = its aging (97 charge lines)', comp('ar_detail').status === 'PASS' && comp('ar_detail').supported_cents === 1976791 && k('ar_detail').length === 30 && k('ar_aging_item').length === 97
+    && snap.controls.find((c) => c.code === 'snapshot.ar_detail_matches_aging_by_account').status === 'PASS');
+  const pre = comp('prepaid_detail');
+  check('snapshot: prepaid BLOCKED: 2 accounts support 184.60; 737.53 is ONE unsupported line naming nobody; GL 2400 kept at 922.13 (no plug)',
+    pre.status === 'BLOCKED' && pre.control_cents === -92213 && pre.supported_cents === -18460 && pre.unsupported_cents === -73753 && k('prepaid_detail').length === 2
+    && k('unsupported_detail').filter((l) => l.component === 'prepaid_detail').length === 1 && k('unsupported_detail').find((l) => l.component === 'prepaid_detail').source_account_key === undefined
+    && gl.find((l) => l.account_code === '2400').amount_cents === -92213);
+  check('snapshot: AP BLOCKED (no AP aging in the package); 561.70 control kept and reported unsupported', comp('ap_detail').status === 'BLOCKED' && comp('ap_detail').control_cents === -56170 && k('unsupported_detail').some((l) => l.component === 'ap_detail' && l.amount_cents === -56170));
+  check('snapshot: every source as of 7/31; every line has provenance; sha256 recorded', ['snapshot.sources_as_of_cutoff', 'snapshot.every_line_has_provenance'].every((c) => snap.controls.find((x) => x.code === c).status === 'PASS') && /^[0-9a-f]{64}$/.test(snap.sha256));
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

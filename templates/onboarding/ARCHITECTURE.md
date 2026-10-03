@@ -193,3 +193,51 @@ Tests:
 - `tests/sql/onboarding_service_e2e.mjs` (25, real 452/481/482 SQL);
 - `tests/test_onboarding_api.js` (8);
 - plus the Milestone 1 suites.
+
+## Milestone 3: Conversion Snapshot (read-only proposed opening position)
+
+Branch `feat/onboarding-m3`. Persisting a snapshot needs **migration 483** (a proposal, not applied).
+
+**Builder (`lib/onboarding/snapshot.js`, pure).** It takes the validated canonical source and the roles the source-controls stage was validated with. It produces:
+
+| Line kind | What it is | Component |
+|---|---|---|
+| `gl_opening_balance` | one per source GL account, from the ending trial balance; must balance | gl |
+| `ar_detail` | one per homeowner account with a debit balance | ar_detail |
+| `ar_aging_item` | charge-type and bucket detail **behind** each AR line (do not add to AR lines) | ar_detail |
+| `prepaid_detail` | one per homeowner account with a credit balance | prepaid_detail |
+| `ap_detail` | one per open AP item, only when an AP source exists | ap_detail |
+| `unsupported_detail` | the part of a validated control balance the source detail does not support. It is its own line, names nobody, and is never a plug | the affected component |
+
+**Components.** Each component (gl, ar_detail, prepaid_detail, ap_detail) is `PASS` or `BLOCKED`, with the control balance, the supported detail and the unsupported remainder. Missing detail blocks only that component, and the GL line keeps the validated control balance.
+
+**Controls:**
+- `snapshot.gl_lines_equal_source_ending_tb`;
+- `snapshot.gl_opening_balances_balance`;
+- `snapshot.sources_as_of_cutoff`;
+- `snapshot.ar_detail_supports_gl`;
+- `snapshot.prepaid_detail_supports_gl`;
+- `snapshot.ar_detail_matches_aging_by_account`;
+- `snapshot.ap_detail_supports_gl`;
+- `snapshot.every_line_has_provenance`.
+
+Every line carries the batch code, cutoff and source provenance. The snapshot sha256 is canonical over its lines and components.
+
+**Persistence (483).** `onboarding_snapshot_lines` is append-only and bound to the snapshot stage completion and run.
+- `onboarding_record_snapshot` records the result and its lines in one transaction, and line identity must equal the batch. A bare snapshot completion is refused.
+- A re-run is a new completion, so the earlier snapshot is stale and so is any waiver against it.
+- `onboarding_snapshot_view` serves the lines; `onboarding_batch_view` now carries each result's summary.
+
+**Service, API and UI.**
+- The snapshot stage runs through the same guarded path, using the validated AR/prepaid roles. Only the AP account and an optional fund map may be added.
+- `GET /api/onboarding/batches/:id/snapshot` serves it.
+- The page shows the components table, an unsupported-detail exception banner, GL opening lines, AR detail with charge lines, credits and AP.
+
+**Quail Ridge (local, read-only).**
+
+| Component | Result |
+|---|---|
+| GL | 24 lines; debits = credits = 84,201.13 |
+| AR | PASS: 30 accounts = 19,767.91; each matches its aging; 97 charge lines |
+| Prepaid | **BLOCKED**: 2 accounts support 184.60; **737.53 unsupported** (one line, names nobody); GL 2400 kept at 922.13 |
+| AP | **BLOCKED**: no AP aging; 561.70 kept |
