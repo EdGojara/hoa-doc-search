@@ -1,0 +1,15 @@
+account_code,date,ledger_id,description,debit,credit,type
+1000,01/15/2026,4001,Chk #100 - Payment,300.00,0.0,Owner Payment
+1000,02/20/2026,5001,EX-0001 - Example Landscaping LLC - Monthly,0.0,150.00,Invoice
+1000,03/01/2026,4004,eCheck (VP) 2222 - One time payment,25.00,0.0,Owner Payment
+1300,01/01/2026,,101 Example Lane: Annual Assessment,300.00,0.0,Owner Charge
+1300,01/01/2026,,102 Example Lane: Annual Assessment,300.00,0.0,Owner Charge
+1300,01/01/2026,4003,Credit Distribution - Prepaid applied,0.0,40.00,Credit Distribution
+1300,01/15/2026,4001,Chk #100 - Payment,0.0,300.00,Owner Payment
+1300,02/01/2026,,101 Example Lane: Late Fees,10.00,0.0,Owner Charge
+2400,01/01/2026,4003,Credit Distribution - Prepaid applied,40.00,0.0,Credit Distribution
+2400,03/01/2026,4004,eCheck (VP) 2222 - One time payment,0.0,25.00,Owner Payment
+4000,01/01/2026,,101 Example Lane: Annual Assessment,0.0,300.00,Owner Charge
+4000,01/01/2026,,102 Example Lane: Annual Assessment,0.0,300.00,Owner Charge
+4030,02/01/2026,,101 Example Lane: Late Fees,0.0,10.00,Owner Charge
+5200,02/20/2026,5001,EX-0001 - Example Landscaping LLC - Monthly,150.00,0.0,Invoice

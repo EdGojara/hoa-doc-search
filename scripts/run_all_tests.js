@@ -182,6 +182,7 @@ const CHECKS = [
   'tests/sql/478_apply_one_e2e.mjs',
   'tests/sql/479_apply_one_e2e.mjs',
   'tests/sql/480_apply_one_e2e.mjs',
+  'tests/sql/481_apply_one_e2e.mjs',
   'tests/test_ai_router.js',
   'tests/test_check_register_grouping.js',
   'scripts/check_model_ids.js',
@@ -219,6 +220,8 @@ const CHECKS = [
   'tests/test_acc_completion.js',
   'tests/test_acc_finalization_record.js',
   'tests/test_acc_letter_conditions.js',
+  'tests/test_onboarding_engine.js',
+  'tests/onboarding_quail_ridge_local.js',
 ];
 
 const args = process.argv.slice(2);

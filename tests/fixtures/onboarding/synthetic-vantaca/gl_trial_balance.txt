@@ -1,0 +1,80 @@
+                                 Example Creek Homeowners Association, Inc
+                                            GL Trial Balance For 1/1/2026 - 3/31/2026
+                                                                                                               Current
+                                                                         Beginning Balance           Debit               Credit    Ending Balance
+
+1000 - Operating Cash Account                                                       1,000.00       585.00            150.00             1,435.00
+  Date           Ledger ID Description                                                             Debit               Credit             Type
+  01/15/2026         4001       Chk #100 - Payment                                                 300.00                   -         Owner Payment
+  02/10/2026         4002       Credit Card (VP) 1111 - Guest payment -                            260.00                   -         Owner Payment
+                                example.owner.two@example.test
+  02/20/2026         5001       EX-0001 - Example Landscaping LLC - Monthly                              -             150.00         Invoice
+                                Service
+  03/01/2026         4004       eCheck (VP) 2222 - One time payment                                 25.00                   -         Owner Payment
+
+
+
+1100 - Savings Account                                                              2,000.00          .73                   -              2,000.73
+  Date           Ledger ID Description                                                             Debit               Credit             Type
+  01/30/2026         6001       January Interest                                                       .38                   -         GL Entry
+  02/27/2026         6002       February Interest                                                      .35                   -         GL Entry
+
+
+
+1300 - Accounts Receivable                                                            500.00       610.00            600.00               510.00
+  Date           Ledger ID Description                                                             Debit               Credit             Type
+  01/01/2026                    101 Example Lane: Annual Assessment                             300.00                   -         Owner Charge
+  01/01/2026                    102 Example Lane: Annual Assessment                             300.00                   -         Owner Charge
+  01/01/2026         4003       Credit Distribution - Prepaid applied                                -              40.00         Credit Distribution
+
+Report generated on 4/1/2026 9:00 AM - V3.11                                                                                        Page 1
+                                 Example Creek Homeowners Association, Inc
+                                            GL Trial Balance For 1/1/2026 - 3/31/2026
+                                                                                                               Current
+                                                                         Beginning Balance           Debit               Credit    Ending Balance
+1300 - Accounts Receivable                                                            500.00       610.00            600.00               510.00
+  Date           Ledger ID Description                                                             Debit               Credit             Type
+  01/15/2026         4001       Chk #100 - Payment                                                     -             300.00         Owner Payment
+  02/01/2026                    101 Example Lane: Late Fees                                      10.00                   -         Owner Charge
+  02/10/2026         4002       Credit Card (VP) 1111 - Guest payment -                                -             260.00         Owner Payment
+                                example.owner.two@example.test
+
+
+
+2400 - Prepaid Owners Assessments                                                    -100.00        40.00             25.00               -85.00
+  Date           Ledger ID Description                                                             Debit               Credit             Type
+  01/01/2026         4003       Credit Distribution - Prepaid applied                            40.00                   -         Credit Distribution
+  03/01/2026         4004       eCheck (VP) 2222 - One time payment                                    -              25.00         Owner Payment
+
+
+
+3000 - Current Year Surplus/(Deficit)                                              -3,400.00            -                   -             -3,400.00
+
+
+
+4000 - Current Year Assessment Income                                                      -            -            600.00              -600.00
+  Date           Ledger ID Description                                                             Debit               Credit             Type
+  01/01/2026                    101 Example Lane: Annual Assessment                                  -             300.00         Owner Charge
+  01/01/2026                    102 Example Lane: Annual Assessment                                  -             300.00         Owner Charge
+
+
+
+4030 - Admin/Late/Interest Fee Income                                                      -            -             10.00               -10.00
+  Date           Ledger ID Description                                                             Debit               Credit             Type
+  02/01/2026                    101 Example Lane: Late Fees                                          -              10.00         Owner Charge
+
+
+
+4100 - Interest - Operating                                                                -            -               .73                 -.73
+  Date           Ledger ID Description                                                             Debit               Credit             Type
+  01/30/2026         6001       January Interest                                                         -                .38         GL Entry
+  02/27/2026         6002       February Interest                                                        -                .35         GL Entry
+
+
+
+5200 - Landscape Operating & Management                                                    -       150.00                 -               150.00
+  Date           Ledger ID Description                                                             Debit               Credit             Type
+  02/20/2026         5001       EX-0001 - Example Landscaping LLC - Monthly                         150.00                   -         Invoice
+                                Service
+
+Report generated on 4/1/2026 9:00 AM - V3.11                                                                                        Page 2

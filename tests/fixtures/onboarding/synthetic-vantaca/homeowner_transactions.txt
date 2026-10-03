@@ -1,0 +1,55 @@
+                           Example Creek Homeowners Association, Inc
+                       Homeowner Transaction History For 1/1/2026 - 3/31/2026
+
+                                                90000001 - Example Owner One - 101 Example Lane
+
+
+Date                 Description                                                         Charge     Payment               Balance
+1/1/2026             Prior Balance                                                          $0.00       $0.00              $200.00
+
+1/1/2026             Annual Assessment                                                    $300.00       $0.00              $500.00
+
+1/15/2026            Chk #100 - Payment                                                     $0.00    ($300.00)             $200.00
+
+2/1/2026             Late Fees                                                             $10.00       $0.00              $210.00
+
+
+
+
+Report generated on 4/1/2026 9:00 AM - V3.11                                                                    Page 1
+                           Example Creek Homeowners Association, Inc
+                       Homeowner Transaction History For 1/1/2026 - 3/31/2026
+
+                                                90000002 - Example Owner Two - 102 Example Lane
+
+
+Date                 Description                                                         Charge     Payment               Balance
+1/1/2026             Prior Balance                                                          $0.00       $0.00              $300.00
+
+1/1/2026             Annual Assessment                                                    $300.00       $0.00              $560.00
+
+1/1/2026             Credit Distribution - Prepaid applied                                  $0.00     ($40.00)             $560.00
+
+2/10/2026            Credit Card (VP) 1111 - Guest payment                                  $0.00    ($260.00)             $300.00
+
+
+
+
+Report generated on 4/1/2026 9:00 AM - V3.11                                                                    Page 2
+                           Example Creek Homeowners Association, Inc
+                       Homeowner Transaction History For 1/1/2026 - 3/31/2026
+
+                                                90000003 - Example Owner Three - 103 Example Lane
+
+
+Date                 Description                                                         Charge     Payment               Balance
+1/1/2026             Prior Balance                                                          $0.00       $0.00            ($100.00)
+
+1/1/2026             Prepaid credit transfer                                               $40.00       $0.00             ($60.00)
+
+3/1/2026             eCheck (VP) 2222 - One time payment                                    $0.00     ($25.00)             ($85.00)
+
+
+
+
+Report generated on 4/1/2026 9:00 AM - V3.11                                                                    Page 3

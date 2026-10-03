@@ -1,0 +1,21 @@
+                                 Example Creek Homeowners Association, Inc
+                                                        AR Aging - 3/31/2026
+
+                                     SUMMARY                                              DISTRIBUTION
+  Charge                                                    Balance
+  Annual Assessment (2)                                        $500.00
+  Late Fees (1)                                                 $10.00
+                                                Total          $510.00
+
+
+
+Property                                                          0-30       Over 30    Over 60      Over 90               Balance
+90000001 - 101 Example Lane - Example Owner One
+Coll Status: Payment Plan                                            -        $10.00          -       $200.00            $210.00
+   Annual Assessment                                                     -          -         -        $200.00            $200.00
+   Late Fees                                                             -     $10.00         -              -             $10.00
+90000002 - 102 Example Lane - Example Owner Two
+                                                                     -             -    $300.00             -            $300.00
+   Annual Assessment                                                     -          -   $300.00              -            $300.00
+
+Total:                                                               -        $10.00    $300.00       $200.00            $510.00
