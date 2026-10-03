@@ -1,3 +1,4 @@
+require('./_legacy_identity_guard')('import_canyon_gate');   // Issue #15: refuses to run unless explicitly allowed
 // scripts/import_canyon_gate.js
 // ----------------------------------------------------------------------------
 // Canyon Gate at Cinco Ranch initial import. Greenfield — 0 properties in

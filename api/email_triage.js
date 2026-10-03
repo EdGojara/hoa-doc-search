@@ -834,15 +834,13 @@ router.post('/:id/link', express.json(), async (req, res) => {
     // Learning loop: capture the sender's email + the phone in their signature
     // onto the confirmed contact (contact_methods — the canonical store the
     // resolver reads, so the NEXT email auto-links, and we keep their number).
-    let learned = false;
-    if (write_back_email && contact_id && msg && msg.sender_email) {
-      try {
-        const { enrichContactFromEmail } = require('../lib/email/contact_enrich');
-        const added = await enrichContactFromEmail(supabase, contact_id, { email: msg.sender_email, phone: msg.extracted && msg.extracted.sender_phone });
-        learned = added.length > 0;
-      } catch (e) { console.warn('[email_triage] enrich on link failed:', e.message); }
-    }
-    res.json({ message: data, learned, cascaded });
+    // Issue #15 identity safety: linking a message no longer writes the sender's email /
+    // phone onto the contact (the sender may be a tenant, spouse, realtor or attorney).
+    // The details are returned as suggestions for staff to add on the contact by hand.
+    const learned = false;
+    const suggested_contact_methods = (write_back_email && contact_id && msg && msg.sender_email)
+      ? [{ type: 'email', value: msg.sender_email }, ...(msg.extracted && msg.extracted.sender_phone ? [{ type: 'phone', value: msg.extracted.sender_phone }] : [])] : [];
+    res.json({ message: data, learned, cascaded, suggested_contact_methods });
   } catch (err) {
     console.error('[email_triage] link failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
@@ -2512,23 +2510,12 @@ router.post('/:id/assign-homeowner', express.json(), async (req, res) => {
     const { error: upErr } = await supabase.from('email_messages').update(patch).in('id', convRows);
     if (upErr) throw upErr;
 
-    // Capture every external address in the thread onto the contact so the next
-    // email from any of them auto-links.
-    let capturedAddrs = [];
-    try {
-      const { enrichContactFromEmail } = require('../lib/email/contact_enrich');
-      const addrs = new Set();
-      for (const t of threadMsgs) {
-        const p = externalParty(t);
-        if (p && p.email) addrs.add(p.email);
-      }
-      for (const a of addrs) {
-        const added = await enrichContactFromEmail(supabase, contactId, { email: a });
-        if (added && added.length) capturedAddrs.push(a);
-      }
-    } catch (e) { console.warn('[email_triage] assign capture skipped:', e.message); }
+    // Issue #15 identity safety: the thread's other participants (realtors, title,
+    // attorneys, tenants, spouses) are NOT written onto the homeowner. Their addresses
+    // are returned as suggestions only.
+    const suggested_addresses = [...new Set(threadMsgs.map((t) => externalParty(t)).filter((p) => p && p.email).map((p) => p.email))];
 
-    res.json({ ok: true, linked: convRows.length, captured_addresses: capturedAddrs, property_id: propertyId, community_id: communityId });
+    res.json({ ok: true, linked: convRows.length, captured_addresses: [], suggested_addresses, property_id: propertyId, community_id: communityId });
   } catch (err) {
     console.error('[email_triage] assign-homeowner failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });

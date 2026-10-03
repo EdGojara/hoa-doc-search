@@ -1,3 +1,4 @@
+require('./_legacy_identity_guard')('fix_placeholder_owners');   // Issue #15: refuses to run unless explicitly allowed
 // scripts/fix_placeholder_owners.js
 // ----------------------------------------------------------------------------
 // Fixes the placeholder-owner data-quality issue Ed identified:

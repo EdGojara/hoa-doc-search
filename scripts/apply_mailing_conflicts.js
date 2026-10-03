@@ -1,3 +1,4 @@
+require('./_legacy_identity_guard')('apply_mailing_conflicts');   // Issue #15: refuses to run unless explicitly allowed
 // scripts/apply_mailing_conflicts.js
 // Applies the 13 mailing conflicts: use file's value, enrich missing city/zip
 // from a matching property record when possible (so bare-street mailings get

@@ -49,6 +49,7 @@
 
 const express = require('express');
 const router = express.Router();
+const { refusePaused } = require('../lib/identity_safety');
 const multer = require('multer');
 const XLSX = require('xlsx');
 const { createClient } = require('@supabase/supabase-js');
@@ -426,7 +427,7 @@ router.post('/communities/:id/roster-import/preview', upload.single('file'), asy
 // contacts in place, stamps data_verified_at + verified_by +
 // verified_source = 'template_import' on every written row.
 // ----------------------------------------------------------------------------
-router.post('/communities/:id/roster-import/apply', upload.single('file'), async (req, res) => {
+router.post('/communities/:id/roster-import/apply', (req, res, next) => refusePaused(res, 'roster_import_apply'), upload.single('file'), async (req, res) => {
   try {
     const communityId = req.params.id;
     if (!req.file) return res.status(400).json({ error: 'file_required' });
@@ -707,7 +708,7 @@ router.post('/communities/:id/mailing-delta/preview', upload.single('file'), asy
 // ownership + creating a new contact + new ownership, which is non-trivial.
 // MVP: surface them in the preview; operator handles via existing tools
 // (manual contact creation + ownership transfer) until Phase 2.
-router.post('/communities/:id/mailing-delta/apply', express.json({ limit: '256kb' }), async (req, res) => {
+router.post('/communities/:id/mailing-delta/apply', (req, res, next) => refusePaused(res, 'mailing_delta_apply'), express.json({ limit: '256kb' }), async (req, res) => {
   try {
     const communityId = req.params.id;
     const verifiedBy = _norm(req.body && req.body.verified_by);

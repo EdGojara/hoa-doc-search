@@ -34,6 +34,7 @@ const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
 const { BEDROCK_MGMT_CO_ID } = require('../lib/company');
 const router = express.Router();
+const { refusePaused } = require('../lib/identity_safety');
 
 // ---------------------------------------------------------------------------
 // VANTACA UPLOAD — parse + diff + preview (no writes to spine yet)
@@ -136,6 +137,8 @@ router.post('/contacts/vantaca/upload', upload.single('file'), async (req, res) 
 // "all" can be passed instead of arrays to apply everything in that category.
 // ---------------------------------------------------------------------------
 router.post('/contacts/vantaca/apply/:id', express.json({ limit: '50mb' }), async (req, res) => {
+  return refusePaused(res, 'vantaca_contacts_apply');   // Issue #15 identity safety: fail closed before any read or write
+  // eslint-disable-next-line no-unreachable
   try {
     const { data: log, error } = await supabase
       .from('vantaca_sync_log')
@@ -477,6 +480,8 @@ router.post('/contacts/vantaca/apply/:id', express.json({ limit: '50mb' }), asyn
 //   { processed, created_renter, created_owner_occupied, skipped_existing, errors }
 // ---------------------------------------------------------------------------
 router.post('/contacts/infer-residency', express.json(), async (req, res) => {
+  return refusePaused(res, 'infer_residency');   // Issue #15: occupancy only from evidence
+  // eslint-disable-next-line no-unreachable
   try {
     const communityId = (req.body && req.body.community_id) || req.query.community_id;
     if (!communityId) return res.status(400).json({ error: 'community_id is required.' });
@@ -968,64 +973,73 @@ router.patch('/property-residencies/:id', express.json(), async (req, res) => {
 // Single-source-of-truth discipline.
 // ----------------------------------------------------------------------------
 router.post('/property-residencies/add-renter', express.json(), async (req, res) => {
+  // Issue #15 identity safety. Every check runs FIRST (reads only); a refused request
+  // makes zero identity or relationship writes. Then, in order: the contact (created
+  // only if none was explicitly chosen), the residencies to end (ONLY the ones named
+  // explicitly, plus guessed rows under the documented rule), the new residency.
+  // Several open residencies may coexist (co-tenants): nothing assumes one per home.
   try {
     const b = req.body || {};
     if (!b.property_id) return res.status(400).json({ error: 'property_id_required' });
     if (!b.full_name || !String(b.full_name).trim()) {
       return res.status(400).json({ error: 'full_name_required' });
     }
+    if (b.end_previous !== undefined) return res.status(400).json({ error: 'end_previous is no longer accepted: name the residencies to end (end_residency_ids), or add this renter alongside them (add_alongside).', code: 'END_PREVIOUS_NOT_ACCEPTED' });
+    const endIds = Array.isArray(b.end_residency_ids) ? [...new Set(b.end_residency_ids.map(String))] : [];
     const fullName = String(b.full_name).trim();
     const primaryEmail = (b.primary_email || '').trim() || null;
     const primaryPhone = (b.primary_phone || '').trim() || null;
 
-    // Dedupe — if a contact already exists with the same last-10 of phone,
-    // reuse that contact. Single source of truth for the renter as a person.
+    // ---- preflight 1: who is this person? (a shared phone is NOT the same person)
     let contact = null;
     let reusedContact = false;
-    if (primaryPhone) {
+    if (b.existing_contact_id) {
+      const { data: chosen, error: chErr } = await supabase.from('contacts').select('id, full_name, primary_phone, primary_email').eq('id', b.existing_contact_id).maybeSingle();
+      if (chErr || !chosen) return res.status(400).json({ error: 'existing_contact_not_found' });
+      contact = chosen; reusedContact = true;
+    } else if (primaryPhone && !b.create_new_contact) {
       const last10 = primaryPhone.replace(/\D/g, '').slice(-10);
       if (last10.length === 10) {
-        const { data: candidates } = await supabase
+        const { data: candidates, error: candErr } = await supabase
           .from('contacts')
           .select('id, full_name, primary_phone, primary_email')
           .or(`primary_phone.ilike.%${last10}%,secondary_phone.ilike.%${last10}%,notification_phone.ilike.%${last10}%`)
           .limit(5);
-        contact = (candidates || []).find((c) => {
-          for (const f of ['primary_phone', 'secondary_phone', 'notification_phone']) {
-            const d = String(c[f] || '').replace(/\D/g, '').slice(-10);
-            if (d === last10) return true;
-          }
-          return false;
-        }) || null;
-        if (contact) reusedContact = true;
+        if (candErr) return res.status(500).json({ error: candErr.message });
+        const hit = (candidates || []).find((c) => ['primary_phone', 'secondary_phone', 'notification_phone'].some((fld) => String(c[fld] || '').replace(/\D/g, '').slice(-10) === last10));
+        if (hit) return res.status(409).json({ error: 'This phone number is already on another contact. Choose that contact (existing_contact_id) or confirm a new one (create_new_contact): a shared number does not make them the same person.', code: 'PHONE_MATCHES_EXISTING_CONTACT', candidates: [{ id: hit.id, full_name: hit.full_name }] });
       }
     }
 
-    // Create the contact if no match
+    // ---- preflight 2: what is already open on this property?
+    const { data: openRes, error: openErr } = await supabase.from('property_residencies').select('id, residency_type, source, contact_id').eq('property_id', b.property_id).is('end_date', null);
+    if (openErr) return res.status(500).json({ error: openErr.message });
+    const open = openRes || [];
+    const unknownIds = endIds.filter((id) => !open.some((r) => String(r.id) === id));
+    if (unknownIds.length) return res.status(409).json({ error: 'A residency named to end is not an open residency of this property.', code: 'END_RESIDENCY_NOT_OPEN_HERE', residency_ids: unknownIds });
+    // guessed rows (documented rule): a row inferred from a mailing address is not evidence
+    // and is ended when real occupancy evidence arrives.
+    const guessed = open.filter((r) => /^inferred/i.test(String(r.source || '')));
+    const real = open.filter((r) => !/^inferred/i.test(String(r.source || '')));
+    const realKept = real.filter((r) => !endIds.includes(String(r.id)));
+    if (realKept.length && !b.add_alongside) return res.status(409).json({ error: 'This property already has an open residency entered by hand. Add the renter alongside it (add_alongside, e.g. a co-tenant), or name the residency(ies) this renter replaces (end_residency_ids).', code: 'OPEN_RESIDENCY_EXISTS', open_residencies: realKept.map((r) => ({ id: r.id, residency_type: r.residency_type })) });
+
+    // ---- writes (only after every check passed)
     if (!contact) {
       const { data: created, error: createErr } = await supabase
         .from('contacts')
-        .insert({
-          full_name: fullName,
-          primary_phone: primaryPhone,
-          primary_email: primaryEmail,
-          notes: 'Added via Add Renter workflow',
-        })
+        .insert({ full_name: fullName, primary_phone: primaryPhone, primary_email: primaryEmail, notes: 'Added via Add Renter workflow' })
         .select()
         .single();
       if (createErr) return res.status(500).json({ error: createErr.message });
       contact = created;
     }
-
-    // End any current residency on this property
     const today = new Date().toISOString().slice(0, 10);
-    await supabase
-      .from('property_residencies')
-      .update({ end_date: today, updated_at: new Date().toISOString() })
-      .eq('property_id', b.property_id)
-      .is('end_date', null);
-
-    // Insert the new renter residency
+    const toEnd = [...new Set([...guessed.map((r) => String(r.id)), ...endIds])];
+    if (toEnd.length) {
+      const { error: endErr } = await supabase.from('property_residencies').update({ end_date: today, updated_at: new Date().toISOString() }).in('id', toEnd).eq('property_id', b.property_id).is('end_date', null);
+      if (endErr) return res.status(500).json({ error: endErr.message });
+    }
     const { data: residency, error: resErr } = await supabase
       .from('property_residencies')
       .insert({
@@ -1043,7 +1057,7 @@ router.post('/property-residencies/add-renter', express.json(), async (req, res)
       .single();
     if (resErr) return res.status(500).json({ error: resErr.message });
 
-    res.json({ contact, residency, reused_contact: reusedContact });
+    res.json({ contact, residency, reused_contact: reusedContact, ended_residency_ids: toEnd, kept_residency_ids: realKept.map((r) => r.id) });
   } catch (err) {
     console.error('[contacts] add-renter failed:', err.message);
     res.status(500).json({ error: err.message });
@@ -1725,7 +1739,7 @@ router.post('/properties', express.json(), async (req, res) => {
 //
 // Returns the count cleaned + a sample for confirmation.
 // ---------------------------------------------------------------------------
-router.post('/communities/:id/clean-redundant-mailings', express.json(), async (req, res) => {
+router.post('/communities/:id/clean-redundant-mailings', (req, res, next) => ((req.query.dry_run === 'true') ? next() : refusePaused(res, 'clean_redundant_mailings')), /* the dry run (preview) still works */ express.json(), async (req, res) => {
   try {
     const communityId = req.params.id;
     // Pull all properties + their current owners for this community.
@@ -2410,7 +2424,7 @@ router.post('/contacts/methods/import', upload.single('file'), async (req, res) 
   }
 });
 
-router.post('/contacts/methods/import/:id/apply', express.json({ limit: '50mb' }), async (req, res) => {
+router.post('/contacts/methods/import/:id/apply', (req, res, next) => refusePaused(res, 'contact_methods_import_apply'), express.json({ limit: '50mb' }), async (req, res) => {
   try {
     const { data: log, error: logErr } = await supabase
       .from('contact_methods_sync_log')

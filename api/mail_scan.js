@@ -253,13 +253,9 @@ router.post('/log', upload.single('file'), async (req, res) => {
           const fieldVal = (re) => (cls.fields || []).find((f) => re.test(String(f.label || '')))?.value || '';
           const email = cls.homeownerEmail || fieldVal(/e-?mail/i);
           const phone = cls.homeownerPhone || fieldVal(/phone|mobile|cell/i);
-          if (r.contact_id && (email || phone)) {
-            try {
-              const { enrichContactFromEmail } = require('../lib/email/contact_enrich');
-              const added = await enrichContactFromEmail(supabase, r.contact_id, { email, phone });
-              linked.contact_updated = { added, from_info_sheet: !!cls.isContactInfoSheet };
-            } catch (e) { console.warn('[mail-scan] contact update skipped:', e.message); }
-          }
+          // Issue #15 identity safety: the addressee can be resolved by surname; never write
+          // a scanned email / phone onto that contact automatically. Return them for staff.
+          if (r.contact_id && (email || phone)) linked.contact_suggestions = { email: email || null, phone: phone || null, from_info_sheet: !!cls.isContactInfoSheet };
         }
       }
     } catch (e) { console.warn('[mail-scan] addressee link skipped:', e.message); }

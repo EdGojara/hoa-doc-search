@@ -3396,13 +3396,14 @@ app.post('/acc-review/decisions/:id/finalize', async (req, res) => {
       // when empty, and never capture a system/relay address.
       try {
         const { SYSTEM_ADDR } = require('./lib/email/contact_enrich');
-        if (contact && contact.id && toEmail && !SYSTEM_ADDR.test(toEmail)) {
+        // Issue #15 identity safety: only for a contact identified by that exact email (a
+        // name / community match never receives an address; nothing is overwritten).
+        if (contact && contact.id && contact.match_method === 'email' && toEmail && !SYSTEM_ADDR.test(toEmail)) {
           const lower = toEmail.toLowerCase();
           const onFile = [contact.primary_email, contact.secondary_email]
             .filter(Boolean).map((e) => String(e).toLowerCase());
           if (!onFile.includes(lower)) {
-            const patch = contact.primary_email ? { secondary_email: lower } : { primary_email: lower };
-            await supabase.from('contacts').update(patch).eq('id', contact.id);
+            if (!contact.primary_email) await supabase.from('contacts').update({ primary_email: lower }).eq('id', contact.id);
           }
         }
       } catch (e) { console.warn('[acc-finalize] contact email capture skipped:', e.message); }

@@ -1,3 +1,4 @@
+require('./_legacy_identity_guard')('apply_reconciliation');   // Issue #15: refuses to run unless explicitly allowed
 // scripts/apply_reconciliation.js
 // ----------------------------------------------------------------------------
 // Applies the reconciliation findings directly to the trustEd DB. Safe scope:

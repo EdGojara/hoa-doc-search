@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+require('./_legacy_identity_guard')('generate_address_correction_sql');   // Issue #15: refuses to run unless explicitly allowed
 // =============================================================================
 // generate_address_correction_sql.js
 // -----------------------------------------------------------------------------
