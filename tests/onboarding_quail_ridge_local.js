@@ -157,5 +157,32 @@ check('gate: the agent cannot advance its own stage', agentRefused === 'ADVANCE_
   }
 }
 
+// AP Aging as of 7/31 (Ed, 2026-10-03): supports GL 2000 561.70. Read locally when present.
+{
+  const APA = process.env.ONBOARDING_QR_AP_AGING || path.join(os.homedir(), 'Downloads', 'APAging (4).pdf');
+  const PREPAID = process.env.ONBOARDING_QR_PREPAID || path.join(os.homedir(), 'Downloads', 'PrepaidHomeowners (1).pdf');
+  const pdf = (p) => { try { return fs.existsSync(p) ? execFileSync('pdftotext', ['-layout', p, '-'], { maxBuffer: 16e6 }).toString('utf8') : null; } catch (_) { return null; } };
+  const apText = pdf(APA); const ppText = pdf(PREPAID);
+  if (!apText) console.log('  - SKIP AP aging checks (report or pdftotext not on this machine)');
+  else {
+    const { buildSnapshot } = require('../lib/onboarding/snapshot');
+    const { sourceControls } = require('../lib/onboarding/source_controls');
+    const adapter = require('../lib/onboarding/adapters').get('vantaca');
+    const mk = (type, text) => adapter.parse(type, text, makeArtifact(Buffer.from(text), { batch_code: 'CONV-QR-20260731-DRYRUN', community_id: QR, source_system: 'vantaca', artifact_type: type, filename: type + '.txt', cutoff_date: '2026-07-31' }));
+    const ap = mk('ap_aging', apText);
+    const ext = adapter.extractionControls({ ap_aging: ap });
+    check('AP aging: 2 open invoices tie to the printed 561.70 (all buckets); as of 7/31; no defects', ap.rows.length === 2 && ap.printed.total.balance_cents === 56170 && ap.as_of === '2026-07-31' && ap.defects.length === 0 && ext.filter((c) => c.code.startsWith('ap_aging.')).every((c) => c.status === 'PASS'));
+    const parsed = { ...n1.parsed, ap_aging: ap, ...(ppText ? { prepaid_homeowners: mk('prepaid_homeowners', ppText) } : {}) };
+    const roles = { ar_account: '1300', prepaid_account: '2400', ap_account: '2000' };
+    const sc = sourceControls(parsed, { roles });
+    check('AP aging = GL 2000 561.70 (PASS, no waiver)', sc.find((c) => c.code === 'ap_aging.total_equals_gl_ap').status === 'PASS');
+    const snap = buildSnapshot(parsed, { batch_code: 'CONV-QR-20260731-DRYRUN', cutoff_date: '2026-07-31', roles });
+    const apc = snap.components.find((c) => c.component === 'ap_detail');
+    check('snapshot with AP aging: AP PASS: 2 invoice lines = 561.70; nothing unsupported', apc.status === 'PASS' && apc.supported_cents === -56170 && apc.unsupported_cents === 0 && snap.lines.filter((l) => l.kind === 'ap_detail').length === 2);
+    if (ppText) check('snapshot with BOTH reports: every component PASS; no unsupported lines; every snapshot control PASS',
+      snap.components.every((c) => c.status === 'PASS') && !snap.lines.some((l) => l.kind === 'unsupported_detail') && snap.controls.every((c) => c.status === 'PASS'));
+  }
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

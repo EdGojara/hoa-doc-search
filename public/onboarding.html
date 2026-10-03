@@ -77,7 +77,7 @@
         <div><label for="up_type">Report type</label><select id="up_type">
           <option value="gl_trial_balance">GL trial balance (text)</option><option value="balance_sheet">Balance sheet (text)</option>
           <option value="ar_aging">AR aging (text)</option><option value="homeowner_transactions">Homeowner transaction history (text)</option>
-          <option value="prepaid_homeowners">Pre Paid Homeowners (text)</option><option value="gl_transactions_csv">Normalized GL transactions (CSV)</option><option value="original_pdf">Original report (PDF)</option><option value="other">Other</option></select></div>
+          <option value="prepaid_homeowners">Pre Paid Homeowners (text)</option><option value="ap_aging">AP aging (text)</option><option value="gl_transactions_csv">Normalized GL transactions (CSV)</option><option value="original_pdf">Original report (PDF)</option><option value="other">Other</option></select></div>
         <div><label for="up_from">Derived from (for extracted text)</label><select id="up_from"><option value="">(original file)</option></select></div>
       </div>
       <button type="submit">Register artifact</button>
@@ -137,7 +137,7 @@ function renderDetail(v) {
   $('run').innerHTML = run ? '<div class="card"><b>Run the ' + esc(label(run.stage)) + ' stage</b> <span class="muted">Records a new result for this stage. Earlier waivers do not carry over to a new result.</span>'
     + (run.stage === 'activity_bridge' ? '<div class="muted">Reads the Trusted financial activity of this community (read-only) and classifies every record against the snapshot. Changes nothing.</div>' : '')
     + (run.stage === 'snapshot' ? '<div class="row"><div><label for="r_ap">AP account (optional)</label><input id="r_ap" placeholder="2000"></div></div><div class="muted">Uses the AR and prepaid accounts the source controls were validated with. Builds a proposed opening position only; nothing is posted.</div>' : '')
-    + (run.stage === 'source_controls' ? '<div class="row"><div><label for="r_ar">AR account</label><input id="r_ar" placeholder="1300"></div><div><label for="r_pp">Prepaid owner account</label><input id="r_pp" placeholder="2400"></div></div><label for="r_auth">Authoritative controls (JSON, optional)</label><textarea id="r_auth" class="mono" placeholder=\'{"ar":{"label":"AR = 19,767.91","cents":1976791,"derive":{"kind":"gl_ending","account":"1300"}}}\'></textarea>' : '')
+    + (run.stage === 'source_controls' ? '<div class="row"><div><label for="r_ar">AR account</label><input id="r_ar" placeholder="1300"></div><div><label for="r_pp">Prepaid owner account</label><input id="r_pp" placeholder="2400"></div><div><label for="r_apc">AP account</label><input id="r_apc" placeholder="2000"></div></div><label for="r_auth">Authoritative controls (JSON, optional)</label><textarea id="r_auth" class="mono" placeholder=\'{"ar":{"label":"AR = 19,767.91","cents":1976791,"derive":{"kind":"gl_ending","account":"1300"}}}\'></textarea>' : '')
     + '<br><button id="runBtn">Run ' + esc(label(run.stage)) + '</button></div>' : '';
   if (run) $('runBtn').onclick = () => doRun(b.id, run.stage);
   // controls
@@ -186,7 +186,7 @@ async function loadSnapshot(batchId) {
     + '<details class="card" open><summary>GL opening balances (' + by('gl_opening_balance').length + ')</summary>' + lineTable(by('gl_opening_balance'), [{ h: 'Account', f: (l) => esc(l.account_code) + ' ' + esc((l.detail || {}).account_name || '') }, { h: 'Fund', f: (l) => esc(l.fund_code || '') }, { h: 'Debit', num: true, f: (l) => (l.amount_cents > 0 ? money(l.amount_cents) : '') }, { h: 'Credit', num: true, f: (l) => (l.amount_cents < 0 ? money(-l.amount_cents) : '') }, { h: 'Source', f: provCell }]) + '</details>'
     + '<details class="card"><summary>Homeowner AR detail (' + by('ar_detail').length + ' accounts, ' + by('ar_aging_item').length + ' charge lines)</summary>' + lineTable(by('ar_detail'), [{ h: 'Account', f: (l) => esc(l.source_account_key) }, { h: 'Balance', num: true, f: (l) => money(l.amount_cents) }, { h: 'Charge detail', f: (l) => esc(by('ar_aging_item').filter((i) => i.source_account_key === l.source_account_key).map((i) => (i.detail || {}).charge_type + ' ' + money(i.amount_cents)).join('; ')) }, { h: 'Source', f: provCell }]) + '</details>'
     + '<details class="card"><summary>Homeowner credits / prepaids (' + by('prepaid_detail').length + ')</summary>' + lineTable(by('prepaid_detail'), [{ h: 'Account', f: (l) => esc(l.source_account_key) + ((l.detail || {}).former_owner ? ' <span class="pill WAIVED">previous owner</span>' : '') }, { h: 'Credit', num: true, f: (l) => money(l.amount_cents) }, { h: 'Source', f: provCell }]) + '</details>'
-    + '<details class="card"><summary>AP open items (' + by('ap_detail').length + ')</summary>' + lineTable(by('ap_detail'), [{ h: 'Vendor', f: (l) => esc((l.detail || {}).source_vendor_key || '') }, { h: 'Amount', num: true, f: (l) => money(-l.amount_cents) }, { h: 'Source', f: provCell }]) + '</details>';
+    + '<details class="card"><summary>AP open items (' + by('ap_detail').length + ')</summary>' + lineTable(by('ap_detail'), [{ h: 'Vendor', f: (l) => esc((l.detail || {}).source_vendor_key || '') }, { h: 'Invoice', f: (l) => esc(((l.detail || {}).invoice_number || '') + ' ' + ((l.detail || {}).invoice_date || '')) }, { h: 'Amount', num: true, f: (l) => money(-l.amount_cents) }, { h: 'Source', f: provCell }]) + '</details>';
 }
 
 // ---- Activity bridge (stage 4): source cutoff position vs actual Trusted activity. Read-only.
@@ -244,7 +244,7 @@ function doRun(id, stage) {
     let authoritative = {};
     const t = ($('r_auth').value || '').trim();
     if (t) { try { authoritative = JSON.parse(t); } catch (_) { return say('Authoritative controls must be valid JSON.', 'bad'); } }
-    body = { roles: { ar_account: $('r_ar').value.trim() || undefined, prepaid_account: $('r_pp').value.trim() || undefined }, authoritative };
+    body = { roles: { ar_account: $('r_ar').value.trim() || undefined, prepaid_account: $('r_pp').value.trim() || undefined, ap_account: $('r_apc').value.trim() || undefined }, authoritative };
   }
   act(() => api('/api/onboarding/batches/' + encodeURIComponent(id) + '/run', json(body)), 'Stage result recorded.');
 }
