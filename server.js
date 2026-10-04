@@ -1321,6 +1321,8 @@ const todayRouter = require('./api/today');
 app.use('/api/today', todayRouter);
 // Amanda Operating Manager, Phase 1 (Issue #27): read-only shadow view (admin).
 app.use('/api/manager', require('./api/manager'));
+// Operations Feed, Phase 1 (Issue #29): read-only read model over objectives + domain queues (admin).
+app.use('/api/feed', require('./api/feed'));
 // Community Data Readiness — read-only, staff sign-in (Issue #6).
 app.use('/api/readiness', require('./api/readiness'));
 // Operations overview — read-only, staff sign-in (Issue #6).
