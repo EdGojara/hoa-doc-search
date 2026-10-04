@@ -78,6 +78,7 @@
     <p><a href="/admin/onboarding">&larr; All batches</a></p>
     <div id="head" class="card"></div>
     <div id="operator"></div>
+    <div id="preflight"></div>
     <div id="decisions"><div id="advance"></div></div>
     <h2>What Trusted found</h2>
     <div id="snapshot" class="tablewrap"></div>
@@ -279,11 +280,48 @@ function renderOperator(v) {
   };
 }
 
+// ---- Preflight (stage 5): the exact review package for EXECUTE, and the owner's approval of THAT hash.
+// Approval only; nothing is posted here and there is no execute control on this panel.
+async function loadPreflight(v) {
+  const el = $('preflight'); el.innerHTML = '';
+  if (!v.latest_by_stage || !v.latest_by_stage.preflight) return;
+  let p;
+  try { p = await api('/api/onboarding/batches/' + encodeURIComponent(v.batch.id) + '/preflight'); }
+  catch (e) { el.innerHTML = e.status === 404 ? '' : '<div class="banner warn">' + esc(e.message) + '</div>'; return; }
+  const r = p.report; const s = r.status; const w = r.plan.writes; const sm = r.plan.summary;
+  const approved = v.batch.approved_preflight_sha256;
+  const owner = v.viewer_is_owner === true;
+  const current = v.current && v.current.completion_id === p.completion_id && v.batch.stage === 'preflight';
+  const canApprove = owner && current && !p.stale && !approved && s.eligibility !== 'not_eligible';
+  const usd = (c) => money(c);
+  let html = '<h2>Preflight: the exact package EXECUTE would carry out</h2><div class="card" style="border-left:4px solid var(--navy)">'
+    + '<div>Result <span class="pill ' + esc(s.overall) + '">' + esc(s.overall) + '</span> · ' + s.counts.PASS + ' pass, ' + s.counts.FAIL + ' fail, ' + s.counts.BLOCKED + ' blocked; ' + s.waived + ' waived'
+    + ' · fingerprint <span class="mono" id="pf_sha" title="' + esc(r.sha256) + '">' + esc(r.sha256) + '</span></div>'
+    + (p.stale ? '<div class="banner bad" style="margin-top:6px"><b>Stale:</b> ' + esc(p.stale) + '. Run the operator again to rebuild it; it cannot be approved.</div>' : '')
+    + (approved ? '<div class="banner ' + (approved === r.sha256 ? 'ok' : 'bad') + '" style="margin-top:6px"><b>Approved fingerprint:</b> <span class="mono">' + esc(approved) + '</span>' + (approved === r.sha256 ? ' (this preflight)' : ' (a DIFFERENT preflight)') + '</div>' : '')
+    + '<ul style="font-size:13.5px;margin:8px 0">'
+    + w.opening_journal_entries.map((j) => '<li>Opening entry <span class="mono">' + esc(j.reference) + '</span> ' + esc(j.posting_date) + ': ' + j.lines.length + ' lines, ' + usd(j.total_debits_cents) + ' Dr = ' + usd(j.total_credits_cents) + ' Cr</li>').join('')
+    + '<li>Supersede ' + sm.supersede_journal_entries + ' legacy-import entries; revert ' + sm.revert_ar_batches + ' legacy ledger batch (rows kept)</li>'
+    + '<li>Neutralize ' + sm.neutralize_journal_entries + ' entries on their own dates; re-post ' + sm.repost_journal_entries + ' on ' + esc(r.plan.cutover) + '</li>'
+    + '<li>Homeowner ledger: ' + sm.ar_opening_rows + ' rows · receivables ' + usd(w.ar_opening_batch.receivable_cents) + ' · current-owner prepaids ' + usd(w.ar_opening_batch.current_owner_prepaid_cents) + ' · prior-owner credits ' + usd(w.ar_opening_batch.prior_owner_credit_cents) + '</li>'
+    + '<li>Open AP invoices: ' + sm.ap_opening_invoices + ' (' + usd(w.ap_opening_invoices.reduce((t, a) => t + a.total_cents, 0)) + ')</li>'
+    + '<li>GL cutover date ' + esc(w.cutover_date.from || '(none)') + ' &rarr; ' + esc(w.cutover_date.to) + ' · untouched: ' + sm.untouched_items + ' bridge items, ' + sm.post_cutover_entries_preserved + ' post-cutover entries</li></ul>'
+    + '<details><summary>Full preflight report</summary><pre class="mono" style="white-space:pre-wrap;font-size:12px">' + esc(p.markdown) + '</pre></details>';
+  if (canApprove) html += '<div style="margin-top:10px"><button id="pfApprove">Approve this exact preflight</button> <span class="muted" style="font-size:12px">Recorded under your name, bound to this fingerprint. It authorizes these writes only; nothing is posted until EXECUTE is run separately.</span></div>';
+  else if (!approved && current && !owner) html += '<div class="muted" style="margin-top:8px">The owner approves the preflight.</div>';
+  el.innerHTML = html + '</div>';
+  if ($('pfApprove')) $('pfApprove').onclick = () => {
+    if (!confirm('Approve this exact preflight?\n\nFingerprint ' + r.sha256 + '\n\nThis authorizes these writes only; it does not run them.')) return;
+    act(() => api('/api/onboarding/batches/' + encodeURIComponent(v.batch.id) + '/approve', json({ completion_id: p.completion_id, preflight: r })), 'Preflight approved (fingerprint ' + r.sha256.slice(0, 8) + '…). Nothing has been posted.');
+  };
+}
+
 async function loadDetail(id) {
   $('listView').hidden = true; $('detailView').hidden = false;
   const v = await api('/api/onboarding/batches/' + encodeURIComponent(id));
   renderDetail(v);
   renderOperator(v);
+  await loadPreflight(v);
   if (v.latest_by_stage && v.latest_by_stage.snapshot) await loadSnapshot(id); else $('snapshot').innerHTML = '';
   if (v.latest_by_stage && v.latest_by_stage.activity_bridge) await loadBridge(id); else $('bridge').innerHTML = '';
 }

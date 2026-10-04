@@ -55,6 +55,28 @@ await service.waive(OWNER, B2, { completion_id: r.completion_id, code: 'snapshot
 await service.advance(OWNER, B2, { completion_id: r.completion_id, to: 'activity_bridge' });
 await service.runStage(OWNER, B2);
 
+// Third batch at PREFLIGHT with a recorded v2 conversion preflight (synthetic, empty write set) for the approval panel.
+{
+  const { buildConversionPlan } = require('../lib/onboarding/conversion_plan.js');
+  const { trustedFingerprint } = require('../lib/onboarding/bridge.js');
+  const PF = require('../lib/onboarding/preflight.js');
+  const rpc = world.rpc; const ctl = [{ code: 'ok', label: 'ok', status: 'PASS' }]; const FP = trustedFingerprint(trusted);
+  const B3 = await rpc('onboarding_create_batch', { p_community: COMM, p_batch_code: 'CONV-EX-PREFLIGHT', p_as_of: '2026-03-31', p_source_system: 'vantaca', p_actor_kind: 'human', p_actor_id: 'ed' });
+  for (const s of ['intake', 'normalize', 'source_controls']) { const c = await rpc('onboarding_record_completion', { p_batch: B3, p_stage: s, p_status: 'PASS', p_open: [], p_controls: ctl, p_summary: {}, p_actor_kind: 'system', p_actor_id: 'onboarding-operator' }); await rpc('onboarding_auto_advance', { p_batch: B3, p_completion: c, p_actor_id: 'onboarding-operator' }); }
+  const sn = await rpc('onboarding_record_snapshot', { p_batch: B3, p_status: 'PASS', p_open: [], p_controls: ctl, p_summary: {}, p_lines: [], p_snapshot_sha256: 'a'.repeat(64), p_actor_kind: 'system', p_actor_id: 'onboarding-operator' });
+  await rpc('onboarding_auto_advance', { p_batch: B3, p_completion: sn, p_actor_id: 'onboarding-operator' });
+  const br = await rpc('onboarding_record_bridge', { p_batch: B3, p_status: 'PASS', p_open: [], p_controls: ctl, p_summary: { snapshot_completion_id: sn, bridge_engine: 'harness' }, p_items: [], p_bridge_sha256: 'b'.repeat(64), p_trusted_fingerprint: FP, p_actor_kind: 'system', p_actor_id: 'onboarding-operator' });
+  await rpc('onboarding_auto_advance', { p_batch: B3, p_completion: br, p_actor_id: 'onboarding-operator' });
+  const plan = buildConversionPlan({ batch: { id: B3, batch_code: 'CONV-EX-PREFLIGHT', community_id: COMM, as_of_date: '2026-03-31' }, snapshot: { completion_id: sn, sha256: 'a'.repeat(64), roles: {}, lines: [] },
+    bridge: { completion_id: br, sha256: 'b'.repeat(64), trusted_fingerprint: FP, status: 'PASS', items: [] }, trusted, ctx: { accounts: [], funds: [], properties: [], tenures: [], vendors: [], periods: [], gl_cutover_date: null, current_trusted_fingerprint: FP } });
+  const { controls, ...body } = plan;
+  const report = PF.buildConversionPreflight({ batch: { batch_code: 'CONV-EX-PREFLIGHT', community_id: COMM, source_system: 'vantaca', stage: 'preflight' }, source_cutoff: { cutoff_date: '2026-03-31', cutover_date: plan.cutover },
+    inputs: { snapshot: { completion_id: sn, sha256: 'a'.repeat(64), status: 'PASS' }, bridge: { completion_id: br, sha256: 'b'.repeat(64), trusted_fingerprint: FP, status: 'PASS', engine: 'harness' }, decisions: [], bridge_waivers: [], artifacts: [] }, plan: body, controls });
+  await rpc('onboarding_record_completion', { p_batch: B3, p_stage: 'preflight', p_status: report.status.overall, p_open: [], p_controls: report.controls.map((c) => ({ code: c.code, label: c.label, status: c.status })),
+    p_summary: { preflight_format: report.format, preflight_sha256: report.sha256, preflight_report: report }, p_actor_kind: 'system', p_actor_id: 'onboarding-operator' });
+  console.log(`preflight batch ${B3}`);
+}
+
 const app = express();
 app.use('/js', express.static(path.join(REPO, 'public', 'js')));
 app.get('/api/auth/config', (req, res) => res.json({ enabled: false }));
