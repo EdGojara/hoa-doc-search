@@ -50,10 +50,10 @@
           "parent_file": "amanda_group_original.png"
         },
         {
-          "repo": "public/assets/presentations/team/amanda.jpg",
+          "repo": "public/assets/presentations/team/amanda_legacy_v1.jpg",
           "role": "derived",
           "origin": "repo",
-          "origin_ref": "public/assets/presentations/team/amanda.jpg",
+          "origin_ref": "public/assets/presentations/team/amanda_legacy_v1.jpg (byte-identical to the pre-2026-10-04 team/amanda.jpg; kept as the poster for old-face videos)",
           "parent_file": "amanda_v1_upstream_original_2026-08-18.png"
         }
       ]
@@ -95,6 +95,13 @@
           "role": "rejected_candidate",
           "origin": "chatgpt",
           "origin_ref": "First candidate 2026-09-26 17:54; rejected (neckline, glossy polish). Kept as a drift example."
+        },
+        {
+          "repo": "public/assets/presentations/team/amanda.jpg",
+          "role": "derived",
+          "origin": "repo",
+          "origin_ref": "public/assets/presentations/team/amanda.jpg: 800px square crop (x 415-1215, y 0-800) of the face-v2 master, 640x640 JPEG (2026-10-04); same framing as the Microsoft 365 photo",
+          "parent_file": "amanda_candidate_v2_2026-09-26.png"
         }
       ]
     },
