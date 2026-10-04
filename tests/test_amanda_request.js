@@ -13,7 +13,7 @@ const CG = u(901); const NOW = Date.parse('2026-10-05T15:00:00Z');
 const ACTOR = { email: 'owner@example.test', name: 'Ed Owner' };
 const OPEN = ['open', 'waiting_resident', 'waiting_third_party', 'waiting_human'];
 
-function db(seed = {}) {
+function db(seed = {}, { failInsert = {} } = {}) {
   const T = { communities: [{ id: CG, name: 'Canyon Gate at Cinco Ranch', management_status: 'active', financials_active: true, arc_active: true, is_demo: false }], objectives: [], objective_events: [], ...JSON.parse(JSON.stringify(seed)) };
   const writes = []; let seq = 0;
   const WRITABLE = new Set(['objectives', 'objective_events']);
@@ -34,6 +34,7 @@ function db(seed = {}) {
     function exec() {
       const rows = T[t] || (T[t] = []);
       if (mode === 'insert') {
+        if (failInsert[t]) return { data: null, error: failInsert[t] };
         const row = { id: u(500 + (++seq)), created_at: new Date().toISOString(), ...payload };
         if (t === 'objectives' && row.subject_key && OPEN.includes(row.status || 'open') && rows.some((r) => r.subject_key === row.subject_key && OPEN.includes(r.status))) return { data: null, error: { code: '23505', message: 'duplicate key' } };
         rows.push(row); writes.push({ t, op: 'insert', row });
@@ -151,6 +152,52 @@ check('one model call maximum: a failing or unusable model is never retried and 
   }
   const none = await ask(db(), null, { text: 'what needs me?' });
   assert.strictEqual(none.ok, false); assert.strictEqual(none.model_calls, 0);
+});
+
+check('WORK with a stale / closed objective_id is NOT accepted: tracking_failed, no plan, nothing written', async () => {
+  const d = db({ objectives: [{ id: u(70), title: 'Old work', status: 'resolved', subject_key: 'amanda_request:x:y', accountable_persona: 'amanda', community_id: CG }] });
+  const m = model(WORK_REPLY);
+  const r = await ask(d, m, { text: 'Get Canyon Gate ready for Monday.', objective_id: u(70) });
+  assert.strictEqual(r.ok, false); assert.strictEqual(r.error, 'tracking_failed'); assert.strictEqual(r.intent, 'work');
+  assert.strictEqual(r.durable, false); assert.strictEqual(r.objective, null);
+  assert.deepStrictEqual(r.plan, [], 'the model plan is not presented as accepted work'); assert.deepStrictEqual(r.specialists, []); assert.strictEqual(r.next_dependency, null);
+  assert.strictEqual(r.reply, 'I could not track this work, so I have not accepted it. Nothing else was changed.');
+  assert.match(r.tracking_reason, /closed or not found/);
+  assert.strictEqual(r.model_calls, 1); assert.strictEqual(m.calls, 1, 'no model retry'); assert.strictEqual(d.writes.length, 0);
+  const missing = await ask(db(), model(WORK_REPLY), { text: 'Get Canyon Gate ready for Monday.', objective_id: u(71) });
+  assert.strictEqual(missing.error, 'tracking_failed');
+});
+
+check('WORK whose objective insert fails (not a duplicate) is NOT accepted: tracking_failed, no events, one model call', async () => {
+  const d = db({}, { failInsert: { objectives: { code: '42501', message: 'permission denied for table objectives' } } });
+  const m = model(WORK_REPLY);
+  const r = await ask(d, m, { text: 'Get Canyon Gate ready for Monday.' });
+  assert.strictEqual(r.ok, false); assert.strictEqual(r.error, 'tracking_failed'); assert.strictEqual(r.durable, false); assert.deepStrictEqual(r.plan, []);
+  assert.match(r.tracking_reason, /could not open the objective: permission denied/);
+  assert.strictEqual(d.T.objective_events.length, 0); assert.strictEqual(m.calls, 1);
+});
+
+check('WORK tracked but a timeline entry fails: still durable, and the gap is surfaced as an audit warning (never swallowed)', async () => {
+  const d = db({}, { failInsert: { objective_events: { code: '42501', message: 'permission denied for table objective_events' } } });
+  const r = await ask(d, model(WORK_REPLY), { text: 'Get Canyon Gate ready for Monday.' });
+  assert.strictEqual(r.ok, true); assert.strictEqual(r.durable, true); assert.ok(r.objective && r.objective.id);
+  assert.ok(Array.isArray(r.audit_warnings) && r.audit_warnings.length === 3, 'opened + message_in + message_out each reported');
+  assert.ok(r.audit_warnings.every((w) => /not recorded on the work.s history/.test(w)));
+  const ok = await ask(db(), model(WORK_REPLY), { text: 'Get Canyon Gate ready for Monday.' });
+  assert.strictEqual(ok.audit_warnings, undefined, 'no warning when everything was recorded');
+});
+
+check('UI + API show a tracking failure as a failure, never as tracked work', () => {
+  const api = fs.readFileSync(path.join(__dirname, '..', 'api', 'amanda.js'), 'utf8');
+  assert.ok(api.includes("out.error === 'tracking_failed' ? 409"), 'tracking_failed is a non-2xx response');
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'app', 'today.html'), 'utf8').split(String.fromCharCode(13)).join('');
+  const js = html.slice(html.indexOf('// ---- Message Amanda (Issue #29 Phase 2A)'), html.indexOf('var feedSeq = 0;'));
+  assert.ok(js.includes('var d = r && (r.data || r.body)'), 'reads the body of a non-2xx response');
+  const fail = js.indexOf('if (d.ok === false)'); const tracked = js.indexOf('Tracked as new work'); const plan = js.indexOf('d.plan && d.plan.length');
+  assert.ok(fail > 0 && fail < tracked && fail < plan, 'the failure branch renders and returns before any plan or Tracked-as text');
+  const branch = js.slice(fail, fail + 400);
+  assert.ok(js.includes('data-ask-failed=') && branch.includes('tx-err') && branch.includes('return;'));
+  assert.ok(js.includes('Audit warning: '), 'audit warnings are shown');
 });
 
 check('session actor only; proposals only; no background work; board portal untouched; cost attributed', () => {

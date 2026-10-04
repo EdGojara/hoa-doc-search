@@ -420,8 +420,14 @@
     if (feedScope === 'one' && c) body.community_id = c.id;
     var r = await TX.post('/api/amanda/request', body);
     askBusy = false; $('th-ask-send').disabled = false;
-    var d = r && r.data ? r.data : null;
+    var d = r && (r.data || r.body) ? (r.data || r.body) : null;
     if (!d) { $('th-ask-out').innerHTML = '<div class="tx-err">' + icon('alert', { size: 16 }) + '<span>Couldn’t reach Amanda. Nothing was changed.</span></div>'; return; }
+    // A failed request (e.g. work that could not be tracked) is shown as a failure:
+    // its plain-text reason only, never a plan or "Tracked as..." that looks accepted.
+    if (d.ok === false) {
+      $('th-ask-out').innerHTML = '<div class="tx-err" data-ask-failed="' + esc(d.error || 'failed') + '">' + icon('alert', { size: 16 }) + '<span>' + esc(d.reply || 'Amanda could not complete this. Nothing was changed.') + '</span></div>';
+      return;
+    }
     var pill = { query: ['tx-pill--info', 'Question'], work: ['tx-pill--warn', 'Work request'], decision: ['tx-pill--bad', 'Decision request'] }[d.intent] || ['tx-pill--mute', 'Reply'];
     var html = '<span class="tx-pill ' + pill[0] + '">' + pill[1] + '</span> <span>' + esc(d.reply || '') + '</span>';
     if (d.plan && d.plan.length) html += '<ol>' + d.plan.map(function (p) { return '<li>' + esc(p) + '</li>'; }).join('') + '</ol>';
@@ -430,6 +436,7 @@
     if (d.next_dependency) meta.push('First needed: ' + d.next_dependency);
     if (d.objective) meta.push((d.objective.created ? 'Tracked as new work: ' : 'Added to existing work: ') + d.objective.title);
     if (meta.length) html += '<div class="th-ask-meta">' + meta.map(esc).join(' · ') + '</div>';
+    if (d.audit_warnings && d.audit_warnings.length) html += '<div class="th-ask-meta" data-audit-warning="1" style="color:var(--tx-warn)">Audit warning: ' + d.audit_warnings.map(esc).join(' ') + '</div>';
     var dest = d.destination || (d.action_request && d.action_request.destination);
     if (dest) html += '<a class="tx-btn tx-btn--sec" style="margin-top:8px;display:inline-flex" href="' + esc(dest.href) + '">' + esc(dest.label || 'Take action') + '</a>';
     if (d.objective) html += ' <button type="button" class="tx-btn tx-btn--sec" style="margin-top:8px" data-open-obj="' + esc(d.objective.id) + '">Open the work</button>';

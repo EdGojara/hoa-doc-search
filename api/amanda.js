@@ -36,7 +36,9 @@ router.post('/request', async (req, res) => {
     const anthropic = process.env.ANTHROPIC_API_KEY ? new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY }) : null;
     const out = await handleRequest({ channel: 'app', actor, text: b.text, community_id: b.community_id, refs: b.refs, objective_id: b.objective_id }, { supabase: sb(), anthropic });
     console.log('[amanda.request]', JSON.stringify({ actor: actor.email, intent: out.intent, durable: out.durable, objective: out.objective && out.objective.id, model_calls: out.model_calls, ok: out.ok, error: out.error || null }));
-    res.status(out.ok ? 200 : (out.error === 'empty' || out.error === 'too_long' ? 400 : 200)).json(out);
+    // tracking_failed is a real failure (work was NOT accepted), so it is a non-2xx with the plain-text reason in the body
+    const status = out.ok ? 200 : out.error === 'empty' || out.error === 'too_long' ? 400 : out.error === 'tracking_failed' ? 409 : 200;
+    res.status(status).json(out);
   } catch (e) {
     console.error('[amanda.request] failed:', e.message);
     res.status(500).json({ ok: false, error: safeErrorMessage(e) });
