@@ -250,7 +250,8 @@ function renderOperator(v) {
   const runnable = v.derived && v.derived.runner_available;
   let html = '<div class="card" style="border-left:4px solid var(--gold)"><div style="font-weight:800;color:var(--navy)">Onboarding operator</div>';
   if (!asks.length && runnable) html += '<div class="muted">Nothing needed from you right now.</div>';
-  if (!asks.length && !runnable) html += '<div class="muted">Stopped at <b>' + esc(label(v.batch.stage)) + '</b>: this stage is not built yet (later milestone).</div>';
+  if (v.batch.stage === 'complete') html += '<div><span class="pill PASS">COMPLETE</span> Converted, proven and closed. The books are write-locked for this batch.</div>';
+  else if (!asks.length && !runnable) html += '<div class="muted">Stopped at <b>' + esc(label(v.batch.stage)) + '</b>: this stage is not built yet (later milestone).</div>';
   if (missing.length) html += '<div style="margin-top:6px"><b>I need these reports from the legacy system:</b><ul>' + missing.map((a) => '<li>' + esc(a.report || (a.needs || []).join(', ') || a.text) + (a.why ? ' <span class="muted">(' + esc(a.why) + ')</span>' : '') + '</li>').join('') + '</ul></div>';
   if (unknown.length) html += '<div><b>I do not recognize these files yet:</b> ' + unknown.map((a) => esc(a.file)).join(', ') + '</div>';
   if (missing.length || unknown.length) html += '<label for="op_files">Add the requested reports (as exported)</label><input id="op_files" type="file" multiple><br><button id="opUpload">Upload and continue</button>';

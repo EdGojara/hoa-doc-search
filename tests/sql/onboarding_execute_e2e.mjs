@@ -291,5 +291,60 @@ check('zero duplicate postings: references unique, one opening batch, one AP inv
 const op = await svc.operate(W.B);
 check('the operator never acts on an executed batch (no runner for execute; nothing written)', op.reason === 'no_runner' && op.stopped_at === 'execute' && JSON.stringify(await counts()) === JSON.stringify(afterExec));
 
+// =========================================================== POST-PROOF -> COMPLETE
+// A read-only view of the books after execution, shaped like the production loader (ISO timestamps).
+const iso = (col) => `to_json(${col})#>>'{}' AS ${col.split('.').pop()}`;
+await db.exec(`CREATE OR REPLACE VIEW v_current_owner_ledger AS SELECT h.id FROM homeowner_transactions h JOIN transaction_upload_batches b ON b.id = h.source_batch_id AND b.status = 'committed' WHERE h.tenure_id IS NOT NULL`);
+const postProofReader = async (comm, { execution_id, ar_uploaded_by }) => {
+  const ub = await q(`SELECT id, status, uploaded_by, row_count, replaced_by_batch_id FROM transaction_upload_batches WHERE community_id = $1`, [comm]);
+  const conv2 = ub.filter((b) => b.uploaded_by === ar_uploaded_by);
+  const rows = conv2.length === 1 ? await q(`SELECT id, property_id, tenure_id, vantaca_account_id, txn_type, amount_cents::int, transaction_date::text, raw_row_jsonb FROM homeowner_transactions WHERE source_batch_id = $1`, [conv2[0].id]) : [];
+  return {
+    journal_entries: await q(`SELECT id, reference, posting_date::text, status, source_module, period_id, total_debits_cents::int, total_credits_cents::int, void_reversal_je_id, notes, superseded_by_conversion, ${iso('created_at')} FROM journal_entries WHERE community_id = $1`, [comm]),
+    journal_entry_lines: await q(`SELECT l.id, l.journal_entry_id, l.account_id, l.debit_cents::int, l.credit_cents::int FROM journal_entry_lines l JOIN journal_entries j ON j.id = l.journal_entry_id WHERE j.community_id = $1`, [comm]),
+    accounts: await q(`SELECT id, account_number FROM chart_of_accounts WHERE community_id = $1`, [comm]),
+    upload_batches: ub, conversion_rows: rows,
+    ap_invoices: await q(`SELECT id, vendor_invoice_number, total_cents::int, status, posting_journal_entry_id, notes FROM ap_invoices WHERE community_id = $1`, [comm]),
+    properties: await q(`SELECT id, vantaca_account_id FROM properties WHERE community_id = $1`, [comm]),
+    current_owner_ledger_ids: (await q(`SELECT id FROM v_current_owner_ledger`)).map((r) => r.id),
+    gl_cutover_date: (await one(`SELECT gl_cutover_date::text AS d FROM communities WHERE id = $1`, [comm])).d,
+    execution_writes: await q(`SELECT id, table_name, write_kind, row_id FROM onboarding_execution_writes WHERE execution_id = $1`, [execution_id]),
+    canonical_counts: { cd_parties: 0, cd_ownerships: 0, cd_addresses: 0, cd_contact_methods: 0, cd_occupancies: 0, cd_evidence: 0 },   // canonical tables are not part of this world; readable, untouched
+  };
+};
+const svcPP = createOnboardingService({ rpc, storage, trustedReader, conversionContext: ctxNow, postProofReader });
+const exV = await svcPP.getBatch(W.B, ED);
+await svcPP.advance(ED, W.B, { completion_id: exV.current.completion_id, to: 'post_proof' });
+check('post-proof setup: the owner moves the executed batch to post_proof (write lock stays closed)', (await one(`SELECT onboarding_stage, write_locked FROM conversion_batches WHERE id = $1`, [W.B])).onboarding_stage === 'post_proof');
+// 1) a post-execution change to the books makes post-proof FAIL and the batch stays non-complete
+const stray = u(990);
+await postJe(stray, 'JE-STRAY', '2026-03-25', 'manual', [[5000, 70, 0], [1000, 0, 70]]);
+const beforeFail = await counts();
+const opFail = await svcPP.operate(W.B);
+let vpp = await svcPP.getBatch(W.B, ED);
+check('post-proof FAILS when the books no longer tie (a stray pre-cutoff entry after execution); it names the broken checks', opFail.stopped_at === 'post_proof' && opFail.reason === 'needs_human' && vpp.latest_by_stage.post_proof.status === 'FAIL'
+  && vpp.latest_by_stage.post_proof.open_controls.includes('post_proof.cutoff_tb_equals_source'), JSON.stringify({ op: opFail, open: vpp.latest_by_stage.post_proof.open_controls }));
+check('post-proof is READ-ONLY: no accounting / ledger / AP / batch row written by it', JSON.stringify(await counts()) === JSON.stringify(beforeFail));
+check('a FAILED post-proof cannot be completed (the owner advance is refused; the batch stays in post_proof)', /not waived|refused|FAIL/.test((await code(() => svcPP.advance(ED, W.B, { completion_id: vpp.current.completion_id, to: 'complete' }))) || '')
+  && (await one(`SELECT onboarding_stage FROM conversion_batches WHERE id = $1`, [W.B])).onboarding_stage === 'post_proof');
+// 2) the stray entry is withdrawn (draft = never counted); post-proof re-runs PASS
+await db.query(`UPDATE journal_entries SET status = 'draft' WHERE id = $1`, [stray]);
+const beforePass = await counts();
+const opPass = await svcPP.runStage({ kind: 'system', id: 'onboarding-operator' }, W.B);
+vpp = await svcPP.getBatch(W.B, ED);
+const ppr = vpp.latest_by_stage.post_proof;
+check('post-proof PASSES on the books as executed: every check PASS, bound to the execution and the approved preflight', opPass.status === 'PASS' && ppr.status === 'PASS' && ppr.summary.post_proof.execution_id === EX && ppr.summary.post_proof.preflight_sha256 === report.sha256
+  && ppr.summary.post_proof.ar_cents === 2000 && ppr.summary.post_proof.prior_owner_credit_cents === -200, JSON.stringify(ppr.summary && ppr.summary.post_proof));
+check('post-proof PASS wrote only its stage result (no accounting rows; counts identical)', JSON.stringify(await counts()) === JSON.stringify(beforePass));
+check('the operator stops for the owner at post_proof (never advances into complete itself)', (await svcPP.operate(W.B)).reason === 'ready_for_human_authorization'
+  && /refused|never into/.test((await code(() => rpc('onboarding_auto_advance', { p_batch: W.B, p_completion: ppr.completion_id, p_actor_id: 'onboarding-operator' }))) || ''));
+await svcPP.advance(ED, W.B, { completion_id: ppr.completion_id, to: 'complete' });
+const fin = await one(`SELECT onboarding_stage, write_locked, status FROM conversion_batches WHERE id = $1`, [W.B]);
+vpp = await svcPP.getBatch(W.B, ED);
+check('the owner completes the batch: stage complete, write-locked, posted; the batch view says complete', fin.onboarding_stage === 'complete' && fin.write_locked === true && fin.status === 'posted' && /Batch complete/.test(vpp.derived.required_action.text), JSON.stringify(fin));
+check('after completion: still exactly one committed execution and no duplicate conversion entries', (await one(`SELECT count(*)::int AS n FROM onboarding_executions WHERE batch_id = $1 AND status = 'committed'`, [W.B])).n === 1
+  && (await one(`SELECT count(*)::int AS n FROM journal_entries WHERE left(reference, 16) = 'CONV-EX-20260331'`)).n === 4 && JSON.stringify(await counts()) === JSON.stringify(beforePass));
+check('a completed batch cannot be executed again', /ALREADY_EXECUTED|already_executed|NOT_IN_PREFLIGHT/.test(JSON.stringify(await svcPP.execute(ED, W.B, { completion_id: pf, preflight_sha256: report.sha256 }).catch((e) => ({ e: e.code })))));
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
