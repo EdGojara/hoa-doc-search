@@ -1,0 +1,100 @@
+{
+  "migration": "490_amanda_auto_reply_receipts.sql",
+  "summary": "Amanda controlled send (Issue #29): outbound_email_drafts becomes the durable automatic-reply receipt store for draft_kind 'amanda_auto_reply'. The status CHECK gains claimed, draft_created, draft_ready, send_requested, unverified and failed (draft, sent, discarded unchanged); 15 nullable or defaulted lease / Graph-handle / audit columns; a unique claim index for this kind across every status; sweep and rate-cap indexes. Additive: no existing row is changed. The feature stays off until AMANDA_AUTO_REPLY=on.",
+  "requires": [
+    "489_amanda_manager_phase1.sql"
+  ],
+  "preflight": [
+    {
+      "name": "outbound_email_drafts exists (migration 327)",
+      "sql": "SELECT count(*)::int FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'outbound_email_drafts'",
+      "expect": 1
+    },
+    {
+      "name": "the status CHECK being replaced is named outbound_email_drafts_status_check (327 inline default)",
+      "sql": "SELECT count(*)::int FROM pg_constraint WHERE conrelid = 'outbound_email_drafts'::regclass AND conname = 'outbound_email_drafts_status_check'",
+      "expect": 1
+    },
+    {
+      "name": "no receipt columns yet",
+      "sql": "SELECT count(*)::int FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'outbound_email_drafts' AND column_name IN ('lease_token', 'lease_expires_at', 'claimed_at', 'graph_draft_id', 'sent_internet_message_id', 'conversation_id', 'objective_id', 'inbound_email_id', 'attempts', 'verify_checks', 'send_requested_at', 'verified_at', 'escalated_at', 'last_error', 'policy')",
+      "expect": 0
+    },
+    {
+      "name": "no amanda_auto_reply rows yet (unique claim index builds cleanly)",
+      "sql": "SELECT count(*)::int FROM outbound_email_drafts WHERE draft_kind = 'amanda_auto_reply'",
+      "expect": 0
+    },
+    {
+      "name": "claim index does not exist yet",
+      "sql": "SELECT count(*)::int FROM pg_indexes WHERE indexname IN ('uq_outbound_drafts_amanda_auto_reply', 'idx_outbound_drafts_auto_reply_open', 'idx_outbound_drafts_auto_reply_rate')",
+      "expect": 0
+    }
+  ],
+  "expected_changes": [
+    "Replaces outbound_email_drafts_status_check: same name, the existing values draft/sent/discarded plus claimed, draft_created, draft_ready, send_requested, unverified, failed.",
+    "Adds nullable columns lease_token (uuid), lease_expires_at, claimed_at, graph_draft_id, sent_internet_message_id, conversation_id, objective_id (uuid), inbound_email_id (uuid), send_requested_at, verified_at, escalated_at, last_error, policy (jsonb), plus attempts and verify_checks (integer NOT NULL DEFAULT 0).",
+    "Adds uq_outbound_drafts_amanda_auto_reply UNIQUE (source_email_ref, draft_kind) WHERE draft_kind = 'amanda_auto_reply' (one automatic reply per inbound message, every status).",
+    "Adds idx_outbound_drafts_auto_reply_open (status, lease_expires_at) and idx_outbound_drafts_auto_reply_rate (to_email, created_at DESC), both partial on draft_kind = 'amanda_auto_reply'.",
+    "No existing outbound_email_drafts row is changed; no other table is touched; GRANTs from 327 still apply."
+  ],
+  "objects": {
+    "added": [
+      "column:outbound_email_drafts.attempts",
+      "column:outbound_email_drafts.claimed_at",
+      "column:outbound_email_drafts.conversation_id",
+      "column:outbound_email_drafts.escalated_at",
+      "column:outbound_email_drafts.graph_draft_id",
+      "column:outbound_email_drafts.inbound_email_id",
+      "column:outbound_email_drafts.last_error",
+      "column:outbound_email_drafts.lease_expires_at",
+      "column:outbound_email_drafts.lease_token",
+      "column:outbound_email_drafts.objective_id",
+      "column:outbound_email_drafts.policy",
+      "column:outbound_email_drafts.send_requested_at",
+      "column:outbound_email_drafts.sent_internet_message_id",
+      "column:outbound_email_drafts.verified_at",
+      "column:outbound_email_drafts.verify_checks",
+      "index:idx_outbound_drafts_auto_reply_open",
+      "index:idx_outbound_drafts_auto_reply_rate",
+      "index:uq_outbound_drafts_amanda_auto_reply"
+    ],
+    "changed": [
+      "constraint:outbound_email_drafts.outbound_email_drafts_status_check"
+    ],
+    "removed": []
+  },
+  "row_changes": {
+    "outbound_email_drafts": 0
+  },
+  "protected": [
+    {
+      "table": "outbound_email_drafts",
+      "order_by": "id"
+    }
+  ],
+  "verify": [
+    {
+      "name": "status CHECK accepts the receipt states",
+      "sql": "SELECT count(*)::int FROM pg_constraint WHERE conrelid = 'outbound_email_drafts'::regclass AND conname = 'outbound_email_drafts_status_check' AND pg_get_constraintdef(oid) ILIKE '%send_requested%' AND pg_get_constraintdef(oid) ILIKE '%discarded%'",
+      "expect": 1
+    },
+    {
+      "name": "unique claim index present",
+      "sql": "SELECT count(*)::int FROM pg_indexes WHERE indexname = 'uq_outbound_drafts_amanda_auto_reply'",
+      "expect": 1
+    },
+    {
+      "name": "all 15 receipt columns present",
+      "sql": "SELECT count(*)::int FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'outbound_email_drafts' AND column_name IN ('lease_token', 'lease_expires_at', 'claimed_at', 'graph_draft_id', 'sent_internet_message_id', 'conversation_id', 'objective_id', 'inbound_email_id', 'attempts', 'verify_checks', 'send_requested_at', 'verified_at', 'escalated_at', 'last_error', 'policy')",
+      "expect": 15
+    },
+    {
+      "name": "existing rows untouched (new columns at their defaults)",
+      "sql": "SELECT count(*)::int FROM outbound_email_drafts WHERE attempts <> 0 OR verify_checks <> 0 OR lease_token IS NOT NULL OR graph_draft_id IS NOT NULL OR escalated_at IS NOT NULL",
+      "expect": 0
+    }
+  ],
+  "api_checks": [],
+  "reload_schema": true
+}
