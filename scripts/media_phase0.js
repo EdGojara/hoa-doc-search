@@ -18,9 +18,9 @@ const { createClient } = require('@supabase/supabase-js');
 const { readOnlyClient } = require('../lib/onboarding/write_gate');
 const { visualCanon } = require('../lib/characters/approval');
 const { freezeShotSpec, canonicalJson, sha256 } = require('../lib/media/shotspec');
-const { ADAPTERS, DOC_DATE, probeAll, quote } = require('../lib/media/providers');
+const { ADAPTERS, DOC_DATE, probeAll } = require('../lib/media/providers');
 
-const TAKES_PER_CELL = 2;          // identity variance needs more than one take
+const TAKES_PER_CELL = 1;          // research-first: one take per test unless research shows a need (Ed, #10)
 const CONTINGENCY = 0.20;          // retries / minimums; the run stops at the cap
 const CELLS = [ ['veo_3_1', '1080p'], ['omni_flash_1_1', '720p'], ['seedance_2_5', '1080p'], ['kling_3', '1080p'] ];
 const TAKE_FIELDS = ['provider', 'model', 'model_version', 'request_id', 'shotspec_sha256', 'reference_sha256s', 'compiled_prompt', 'seed', 'quoted_cost', 'actual_cost',
@@ -81,8 +81,9 @@ function shots(c) {
   const frozen = shots(canon).map(freezeShotSpec);
   const cells = [];
   for (const f of frozen) for (const [adapter, resolution] of CELLS) {
-    const qt = quote(adapter, { resolution, duration_seconds: f.spec.duration_seconds });
-    cells.push({ shot_key: f.spec.shot_key, shotspec_sha256: f.shotspec_sha256, adapter, model: ADAPTERS[adapter].model, resolution, takes: TAKES_PER_CELL, unit_cost: qt.cost, cost: Math.round(qt.cost * TAKES_PER_CELL * 100) / 100, price_basis: qt.basis, source: qt.source });
+    const qt = ADAPTERS[adapter].quote(f.spec, { resolution });
+    if (!qt.usable) throw new Error(`${adapter}: no usable price for ${resolution}`);
+    cells.push({ shot_key: f.spec.shot_key, shotspec_sha256: f.shotspec_sha256, adapter, model: ADAPTERS[adapter].model, resolution, takes: TAKES_PER_CELL, unit_cost: qt.per_attempt, cost: Math.round(qt.per_attempt * TAKES_PER_CELL * 100) / 100, price_basis: `${qt.channel} (${qt.basis})`, source: qt.source });
   }
   const subtotal = Math.round(cells.reduce((t, c) => t + c.cost, 0) * 100) / 100;
   const cap = Math.round(subtotal * (1 + CONTINGENCY) * 100) / 100;

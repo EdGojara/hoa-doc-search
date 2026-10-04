@@ -1,7 +1,7 @@
 // tests/test_media_phase0.js  (Issue #10 Media Studio, Phase 0) — pure checks, no network, no spend
 const assert = require('assert');
 const { freezeShotSpec, validateShotSpec } = require('../lib/media/shotspec');
-const { ADAPTERS, probeAll, quote, hasCredentials } = require('../lib/media/providers');
+const { ADAPTERS, CATALOG, probeAll, hasCredentials } = require('../lib/media/providers');
 
 const tests = []; const check = (n, fn) => tests.push([n, fn]);
 const pin = (c) => c.repeat(64);
@@ -26,11 +26,12 @@ check('cast must be pinned by approved spec_sha256; references must be content-a
   assert.ok(!validateShotSpec({ ...base(), segment_class: 'cinematic' }).ok);
 });
 check('quotes use the documented price per second and the provider minimum', () => {
-  assert.strictEqual(quote('veo_3_1', { resolution: '1080p', duration_seconds: 8 }).cost, 3.2);
-  assert.strictEqual(quote('omni_flash_1_1', { resolution: '360p', duration_seconds: 8 }).cost, 0.24);
-  assert.strictEqual(quote('seedance_2_5', { resolution: '1080p', duration_seconds: 1 }).cost, 0.8, 'the $0.80 minimum applies');
-  assert.throws(() => quote('veo_3_1', { resolution: '360p', duration_seconds: 8 }), /no price/);
-  for (const a of Object.values(ADAPTERS)) assert.ok(a.sources.length && a.price_basis, 'every adapter cites its source');
+  const spec = { ...base(), audio: { ambient: true } };
+  assert.strictEqual(ADAPTERS.veo_3_1.quote(spec, { resolution: '1080p' }).per_attempt, 3.2);
+  assert.strictEqual(ADAPTERS.omni_flash_1_1.quote(spec, { resolution: '360p' }).per_attempt, 0.24);
+  assert.strictEqual(ADAPTERS.seedance_2_5.quote({ ...spec, duration_seconds: 1 }, { resolution: '1080p' }).per_attempt, 0.8, 'the $0.80 minimum applies');
+  assert.strictEqual(ADAPTERS.veo_3_1.quote(spec, { resolution: '360p' }).usable, false);
+  for (const a of CATALOG) assert.ok(a.sources.length && a.channels.every((c) => c.source && c.as_of), 'every adapter and channel cites its source and date');
 });
 check('credentials: any one group satisfies, unless the adapter needs all of them; names only', () => {
   assert.ok(hasCredentials(ADAPTERS.omni_flash_1_1, { GOOGLE_API_KEY: 'x' }));
