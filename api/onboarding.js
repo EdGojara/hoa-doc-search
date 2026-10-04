@@ -23,6 +23,8 @@
 //   POST /batches/:id/waivers          waive one open control (OWNER)
 //   POST /batches/:id/advance          advance one stage (OWNER)
 //   POST /batches/:id/approve          approve an exact preflight report (OWNER)
+//   POST /batches/:id/execute          execute the approved preflight: { completion_id, preflight_sha256 } (OWNER)
+//   GET  /batches/:id/execution        execution records (committed / failed attempts; read-only)
 //
 // The actor is ALWAYS built here from the authenticated user; any actor /
 // actor_kind / role in a request body is ignored. Admin = role admin; owner =
@@ -171,6 +173,16 @@ function buildRouter({ service, auth, listCommunities }) {
   router.post('/batches/:id/approve', express.json({ limit: '1mb' }), async (req, res) => {
     try { const o = await owner(req, res); if (!o) return; const b = req.body || {}; res.json({ id: await service.approve(o, req.params.id, { completion_id: b.completion_id, preflight: b.preflight }) }); }
     catch (e) { fail(res, e, 'approve'); }
+  });
+
+  router.post('/batches/:id/execute', express.json({ limit: '64kb' }), async (req, res) => {
+    try { const o = await owner(req, res); if (!o) return; const b = req.body || {}; res.json({ execution: await service.execute(o, req.params.id, { completion_id: b.completion_id, preflight_sha256: b.preflight_sha256 }) }); }
+    catch (e) { fail(res, e, 'execute'); }
+  });
+
+  router.get('/batches/:id/execution', async (req, res) => {
+    try { if (!(await admin(req, res))) return; res.json({ executions: await service.getExecution(req.params.id) }); }
+    catch (e) { fail(res, e, 'execution'); }
   });
 
   return router;

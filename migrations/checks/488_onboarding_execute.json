@@ -1,0 +1,171 @@
+{
+  "migration": "488_onboarding_execute.sql",
+  "summary": "Onboarding EXECUTE (Issue #15 M6): onboarding_execute carries out exactly the write contract of an owner-approved preflight in ONE transaction, reading the writes from the recorded preflight result (never from the caller), after re-checking every precondition against live data; verifies the cutoff / current trial balance, homeowner ledger, post-cutover activity and write counts in the database (any mismatch rolls everything back); records provenance on every row and an append-only execution record + write index (onboarding_executions, onboarding_execution_writes). Human only; one committed execution per batch; a retry writes nothing. Also onboarding_record_execution_failure and onboarding_execution_view. Applying it changes no rows. service_role only.",
+  "requires": [
+    "486_onboarding_bridge_decisions.sql"
+  ],
+  "preflight": [
+    {
+      "name": "execution tables do not exist yet",
+      "sql": "SELECT count(*)::int FROM information_schema.tables WHERE table_schema = 'public' AND table_name IN ('onboarding_executions', 'onboarding_execution_writes')",
+      "expect": 0
+    },
+    {
+      "name": "486 decisions function is in place",
+      "sql": "SELECT count(*)::int FROM pg_proc WHERE proname = 'onboarding_record_bridge_decisions'",
+      "expect": 1
+    },
+    {
+      "name": "accounting schema EXECUTE writes is present (superseded columns, ledger tenure + replacement, period table)",
+      "sql": "SELECT count(*)::int FROM information_schema.columns WHERE table_schema = 'public' AND ((table_name = 'journal_entries' AND column_name IN ('superseded_at', 'superseded_reason', 'superseded_by_conversion', 'period_id')) OR (table_name = 'homeowner_transactions' AND column_name IN ('tenure_id', 'charge_category', 'raw_row_jsonb')) OR (table_name = 'transaction_upload_batches' AND column_name IN ('replaced_by_batch_id', 'reverted_reason', 'management_company_id')) OR (table_name = 'accounting_periods' AND column_name = 'status') OR (table_name = 'communities' AND column_name = 'gl_cutover_date'))",
+      "expect": 12
+    },
+    {
+      "name": "journal_entries accepts the source_module values EXECUTE writes (opening_entry, reversal, manual) and the superseded status",
+      "sql": "SELECT count(*)::int FROM pg_constraint WHERE conrelid = 'journal_entries'::regclass AND contype = 'c' AND ((pg_get_constraintdef(oid) LIKE '%source_module%' AND pg_get_constraintdef(oid) LIKE '%opening_entry%' AND pg_get_constraintdef(oid) LIKE '%reversal%' AND pg_get_constraintdef(oid) LIKE '%manual%') OR (pg_get_constraintdef(oid) LIKE '%status%' AND pg_get_constraintdef(oid) LIKE '%superseded%' AND pg_get_constraintdef(oid) NOT LIKE '%superseded_at%'))",
+      "expect": 2
+    }
+  ],
+  "expected_changes": [
+    "Creates table onboarding_executions (append-only; human actor; one committed execution per batch via a partial unique index; committed / failed shape checks) with its indexes and append-only trigger.",
+    "Creates table onboarding_execution_writes (append-only write index: table, row id, action, kind, key, before/after; deferred FK to the execution) with its index and append-only trigger.",
+    "Creates onboarding_execute, onboarding_record_execution_failure, onboarding_execution_view and the internal helpers onboarding_exec_post_je and onboarding_exec_tb_diff (EXECUTE to service_role only).",
+    "No row changes in any existing table. No accounting row is written until an owner executes an approved batch."
+  ],
+  "objects": {
+    "added": [
+      "column:onboarding_execution_writes.action",
+      "column:onboarding_execution_writes.after",
+      "column:onboarding_execution_writes.batch_id",
+      "column:onboarding_execution_writes.before",
+      "column:onboarding_execution_writes.created_at",
+      "column:onboarding_execution_writes.execution_id",
+      "column:onboarding_execution_writes.id",
+      "column:onboarding_execution_writes.row_id",
+      "column:onboarding_execution_writes.table_name",
+      "column:onboarding_execution_writes.write_key",
+      "column:onboarding_execution_writes.write_kind",
+      "column:onboarding_executions.actor_id",
+      "column:onboarding_executions.actor_kind",
+      "column:onboarding_executions.advance_event_id",
+      "column:onboarding_executions.approval_event_id",
+      "column:onboarding_executions.batch_id",
+      "column:onboarding_executions.community_id",
+      "column:onboarding_executions.created_at",
+      "column:onboarding_executions.error",
+      "column:onboarding_executions.execute_completion_id",
+      "column:onboarding_executions.id",
+      "column:onboarding_executions.preflight_completion_id",
+      "column:onboarding_executions.preflight_sha256",
+      "column:onboarding_executions.proof",
+      "column:onboarding_executions.proof_plan",
+      "column:onboarding_executions.record_ownership",
+      "column:onboarding_executions.status",
+      "column:onboarding_executions.write_counts",
+      "constraint:onboarding_execution_writes.onboarding_execution_writes_action_check",
+      "constraint:onboarding_execution_writes.onboarding_execution_writes_batch_id_fkey",
+      "constraint:onboarding_execution_writes.onboarding_execution_writes_execution_id_fkey",
+      "constraint:onboarding_execution_writes.onboarding_execution_writes_execution_id_table_name_row_id_key",
+      "constraint:onboarding_execution_writes.onboarding_execution_writes_pkey",
+      "constraint:onboarding_execution_writes.onboarding_execution_writes_table_name_check",
+      "constraint:onboarding_execution_writes.onboarding_execution_writes_write_kind_check",
+      "constraint:onboarding_executions.onboarding_executions_actor_kind_check",
+      "constraint:onboarding_executions.onboarding_executions_advance_event_id_fkey",
+      "constraint:onboarding_executions.onboarding_executions_approval_event_id_fkey",
+      "constraint:onboarding_executions.onboarding_executions_batch_id_fkey",
+      "constraint:onboarding_executions.onboarding_executions_committed_shape",
+      "constraint:onboarding_executions.onboarding_executions_community_id_fkey",
+      "constraint:onboarding_executions.onboarding_executions_execute_completion_id_fkey",
+      "constraint:onboarding_executions.onboarding_executions_failed_shape",
+      "constraint:onboarding_executions.onboarding_executions_pkey",
+      "constraint:onboarding_executions.onboarding_executions_preflight_completion_id_fkey",
+      "constraint:onboarding_executions.onboarding_executions_preflight_sha256_check",
+      "constraint:onboarding_executions.onboarding_executions_record_ownership_check",
+      "constraint:onboarding_executions.onboarding_executions_status_check",
+      "function:onboarding_exec_post_je",
+      "function:onboarding_exec_tb_diff",
+      "function:onboarding_execute",
+      "function:onboarding_execution_view",
+      "function:onboarding_record_execution_failure",
+      "index:idx_onboarding_execution_writes_exec",
+      "index:idx_onboarding_executions_batch",
+      "index:onboarding_execution_writes_execution_id_table_name_row_id_key",
+      "index:onboarding_execution_writes_pkey",
+      "index:onboarding_executions_pkey",
+      "index:uq_onboarding_executions_committed",
+      "table:onboarding_execution_writes",
+      "table:onboarding_executions",
+      "trigger:onboarding_execution_writes.trg_onboarding_execution_writes_append_only",
+      "trigger:onboarding_executions.trg_onboarding_executions_append_only"
+    ],
+    "changed": [],
+    "removed": []
+  },
+  "row_changes": {
+    "conversion_batches": 0,
+    "onboarding_stage_events": 0,
+    "journal_entries": 0,
+    "homeowner_transactions": 0,
+    "transaction_upload_batches": 0,
+    "ap_invoices": 0
+  },
+  "protected": [
+    {
+      "table": "conversion_batches",
+      "order_by": "id"
+    },
+    {
+      "table": "journal_entries",
+      "order_by": "id"
+    },
+    {
+      "table": "journal_entry_lines",
+      "order_by": "id"
+    },
+    {
+      "table": "homeowner_transactions",
+      "order_by": "id"
+    },
+    {
+      "table": "transaction_upload_batches",
+      "order_by": "id"
+    },
+    {
+      "table": "ap_invoices",
+      "order_by": "id"
+    },
+    {
+      "table": "communities",
+      "order_by": "id"
+    }
+  ],
+  "verify": [
+    {
+      "name": "execution tables present and append-only",
+      "sql": "SELECT count(*)::int FROM pg_trigger WHERE tgname IN ('trg_onboarding_executions_append_only', 'trg_onboarding_execution_writes_append_only')",
+      "expect": 2
+    },
+    {
+      "name": "one committed execution per batch",
+      "sql": "SELECT count(*)::int FROM pg_indexes WHERE indexname = 'uq_onboarding_executions_committed' AND indexdef LIKE '%committed%'",
+      "expect": 1
+    },
+    {
+      "name": "execute functions present",
+      "sql": "SELECT count(*)::int FROM pg_proc WHERE proname IN ('onboarding_execute', 'onboarding_record_execution_failure', 'onboarding_execution_view', 'onboarding_exec_post_je', 'onboarding_exec_tb_diff')",
+      "expect": 5
+    },
+    {
+      "name": "executions are human-only",
+      "sql": "SELECT count(*)::int FROM pg_constraint WHERE conrelid = 'onboarding_executions'::regclass AND pg_get_constraintdef(oid) LIKE '%actor_kind%human%'",
+      "expect": 1
+    },
+    {
+      "name": "no execution exists after apply",
+      "sql": "SELECT count(*)::int FROM onboarding_executions",
+      "expect": 0
+    }
+  ],
+  "api_checks": [],
+  "reload_schema": true
+}

@@ -318,3 +318,57 @@ Final authorization (preflight approval and EXECUTE) stays human.
 - **Snapshot:** AR 19,767.91, prepaid 922.13 and AP 561.70, every component supported.
 - **Stopped at the activity bridge** for the 16 ambiguous items and the 9/11 structural exception.
 - **Metrics:** 1 human touch, 0 AI calls.
+
+## Milestone 6: EXECUTE (migration 488, proposal; synthetic proving only)
+
+EXECUTE carries out **exactly** the write contract of the preflight the owner approved: one owner action, one database transaction.
+
+**Gates (service and database).**
+- Only a human owner can execute: `OWNER_ONLY` in the service; `actor_kind = 'human'` in the database. An operator or agent can neither approve nor execute.
+- Execute binds to the exact current preflight completion **and** the approved hash, from a human approval of that completion. The database refuses:
+  - a superseded result ("a newer result was recorded");
+  - a never-approved newer result;
+  - any other hash.
+- Before the call, the service re-proves what SQL cannot compute: the recorded report still verifies; the approved hash = the recorded report plus its current waivers; the report is not stale (snapshot, bridge, decisions, plan rules, and the **full** Trusted fingerprint).
+- The database then re-checks every recorded precondition against live data:
+  - batch status, and no `<batch_code>*` entry yet;
+  - the GL cutover date;
+  - supersede targets still posted;
+  - neutralize originals unchanged (posted; same date, total and line count);
+  - legacy ledger batches still committed;
+  - post-cutover count and debits unchanged;
+  - every entry's accounting period still open.
+- The 482 `onboarding_advance(..., 'execute')` refusal stays. Entering execute is part of `onboarding_execute`, so a batch is never "in execute" without its writes.
+
+**Writes (one transaction).** The writes are read from the recorded preflight result, never from the caller:
+1. the human advance into execute; the write lock opens;
+2. opening, neutralization and re-post journal entries;
+3. supersede legacy imports;
+4. the homeowner-ledger opening batch: current owners on their tenure; prior-owner rows with no tenure, and no lot unless the source printed one. The legacy batch(es) become `reverted`, replaced by the new batch;
+5. open AP invoices, posted by the opening entry;
+6. `gl_cutover_date`;
+7. **verification in the database**: cutoff TB = source; current TB = projection; ledger receivables, prepaids and prior-owner credits = the plan; post-cutover entries unchanged; exact write counts. Any mismatch raises and rolls everything back;
+8. the PASS execute result; the batch becomes `posted` and is write-locked again; the execution record.
+
+**Provenance.** Every created or changed row carries `onboarding <code> · batch <id> · preflight <completion> · execution <id>` in its notes, reason or raw-row column. `onboarding_execution_writes` indexes every row by table, id, action, kind, key and prior values. It is the source for M7 post-proof and for the after-commit rollback the preflight describes.
+
+**Idempotency and failure.**
+- One committed execution per batch (partial unique index).
+- A retry with the same completion and hash returns the committed execution and writes nothing; anything else is refused.
+- A failed attempt rolls back completely and is recorded as `failed`, with its error, in a separate transaction. A retry re-runs the same writes.
+
+**Plan rules 2026-10-04.1 (needed to be insertable).**
+- Entries use the live `source_module` values (LOPF precedent): `opening_entry`, which bank rec excludes from operational activity; `reversal`; `manual`. The constraint does not accept `conversion`.
+- Each entry names the one open accounting period of its date (control `preflight.posting_periods_open`).
+- No empty fund entry.
+- AP lines need an invoice date and a positive amount.
+- The ledger batch needs the management company.
+- Changing the plan version makes earlier preflights stale. The operator rebuilds them and the owner approves the rebuilt report.
+
+**Record ownership.** Executions and the write index are `workpaper`. The accounting rows are the association's records, in their existing tables.
+
+**Tests.**
+- `tests/sql/onboarding_execute_e2e.mjs` runs on the real 452–488 SQL with realistic accounting tables, synthetic community only. It covers: success; injected mid-transaction failure with full rollback and a truthful failure record; idempotent retry; stale, tampered, wrong-hash, superseded and unapproved refusals; operator and agent refused; zero duplicates.
+- `tests/sql/488_apply_one_e2e.mjs` applies 488 through the single-migration tool with its checks file.
+
+**Not in M6.** M7 post-proof (read-only verification after commit), the after-commit rollback tool, and any UI button. Quail Ridge is not approved or executed.

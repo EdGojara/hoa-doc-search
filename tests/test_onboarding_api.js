@@ -60,9 +60,9 @@ check('reads need an admin; the view gets an actor built from auth (owner email 
   assert.deepStrictEqual(o, { kind: 'human', id: 'u-owner', email: OWNER_EMAIL, role: 'owner' });
   assert.strictEqual((await req('GET', '/status', { user: 'admin' })).json.ready, true);
 }));
-check('waive / advance / approve: an admin (not owner) is refused BEFORE the service is called', async () => withServer(async ({ req, service }) => {
-  for (const p of ['/batches/b1/waivers', '/batches/b1/advance', '/batches/b1/approve']) assert.strictEqual((await req('POST', p, { user: 'admin', body: { completion_id: 'c', code: 'x', reason: 'some reason here', to: 'normalize' } })).status, 403, p);
-  assert.ok(!service.calls.some((c) => ['waive', 'advance', 'approve'].includes(c.name)));
+check('waive / advance / approve / execute: an admin (not owner) is refused BEFORE the service is called', async () => withServer(async ({ req, service }) => {
+  for (const p of ['/batches/b1/waivers', '/batches/b1/advance', '/batches/b1/approve', '/batches/b1/execute']) assert.strictEqual((await req('POST', p, { user: 'admin', body: { completion_id: 'c', code: 'x', reason: 'some reason here', to: 'normalize' } })).status, 403, p);
+  assert.ok(!service.calls.some((c) => ['waive', 'advance', 'approve', 'execute'].includes(c.name)));
 }));
 check('identity in the request body is ignored: the service receives the authenticated owner as a human', async () => withServer(async ({ req, service }) => {
   const r = await req('POST', '/batches/b1/waivers', { user: 'owner', body: { completion_id: 'c1', code: 'gl.x', reason: 'reviewed and documented', actor: { kind: 'agent', id: 'claude' }, actor_kind: 'agent', actor_id: 'someone-else', role: 'owner' } });
@@ -115,7 +115,8 @@ check('repo guard: nothing writes the onboarding tables directly (only the 482 S
 });
 check('service guard: its only database calls are the onboarding_* rpc allowlist and the write-once artifact store', () => {
   const s = fs.readFileSync(path.join(__dirname, '..', 'lib', 'onboarding', 'service.js'), 'utf8').replace(/\/\/.*$/gm, '');
-  assert.ok(RPC.length === 15 && RPC.every((n) => /^onboarding_/.test(n)));
+  assert.ok(RPC.length === 18 && RPC.every((n) => /^onboarding_/.test(n)));
+  for (const n of ['onboarding_execute', 'onboarding_record_execution_failure', 'onboarding_execution_view']) assert.ok(RPC.includes(n), `M6 rpc ${n}`);
   assert.strictEqual((s.match(/\.rpc\(/g) || []).length, 1, 'exactly one rpc call site');
   assert.ok(/if \(!RPC\.includes\(name\)\) throw/.test(s));
   assert.ok(!/\.from\(\s*['"](?!documents)/.test(s.replace(/storage\.from\(bucket\)/g, '').replace(/Buffer\.from\(/g, '')), 'no table access');
