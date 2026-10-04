@@ -38,6 +38,7 @@
   a.view { color:var(--navy); font-weight:700; text-decoration:none; }
 </style>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="/app/deeplink.js"></script>
 </head>
 <body>
 <div class="wrap">
@@ -159,6 +160,19 @@ async function loadStragglers(){
   }
 }
 
+// Operations Feed 'Take action' (Issue #29): /admin/ap?exception=<uuid> scrolls to and
+// highlights that row once. Navigation only; resolve/dismiss keep their own checks.
+let _excFocused=false;
+function focusExceptionFromUrl(){
+  if(_excFocused||!window.TXDeepLink) return;
+  const id=window.TXDeepLink.parseExceptionParam(location.search); if(!id) return;
+  _excFocused=true;
+  const card=document.querySelector('.exc[data-id="'+id+'"]');
+  const wrap=document.getElementById('exceptionsWrap');
+  if(!card){ if(wrap) wrap.insertAdjacentHTML('afterbegin','<div class="note" style="margin:0 0 10px;padding:8px 11px;border:1px solid #d7dee7;border-radius:8px;background:#f8fafc;color:#334155;font-size:12.5px;">That exception is no longer pending (it may already be resolved). The current list is below.</div>'); return; }
+  card.scrollIntoView({behavior:'smooth',block:'center'});
+  card.style.boxShadow='0 0 0 3px #D4AF37'; card.setAttribute('tabindex','-1'); try{card.focus({preventScroll:true});}catch(_){}
+}
 async function loadExceptions(){
   const wrap=document.getElementById('exceptionsWrap'); if(!wrap) return;
   try{
@@ -169,6 +183,7 @@ async function loadExceptions(){
     // a bill silently missing is the whole problem. (Ed 2026-09-08.)
     if(!items.length){
       wrap.innerHTML=`<div style="margin:0 0 14px;padding:9px 12px;border:1px solid #d1fadf;background:#f2faf5;border-radius:9px;color:#14532d;font-size:12.5px;">✓ No exceptions — every emailed bill posted or is in the review queue below.</div>`;
+      focusExceptionFromUrl();
       return;
     }
     const commOpts=(window._comms||[]).map(c=>`<option value="${c.id}">${escapeHtml(c.name)}</option>`).join('');
@@ -177,6 +192,7 @@ async function loadExceptions(){
       <h2 style="color:#92400e;margin:0 0 4px;">🧾 Exceptions · ${items.length} bill${items.length===1?'':'s'} couldn’t auto-file${total?` · ${money(total)} on hold`:''}</h2>
       <div class="note" style="margin:0 0 10px;color:#7c5a1e;">Emma saved each invoice but couldn’t place it. Pick the community (and vendor if asked) to send it to Payables, or dismiss it if it isn’t a bill. Nothing here has posted yet.</div>
       ${items.map(x=>excRow(x,commOpts)).join('')}</div>`;
+    focusExceptionFromUrl();
   }catch(e){
     wrap.innerHTML=`<div style="margin:0 0 14px;padding:9px 12px;border:1px solid #f3c0c0;background:#fdecec;border-radius:9px;color:#b91c1c;font-size:12.5px;">Could not load the exceptions list (${escapeHtml(e.message||'error')}). Bills may be waiting — retry, don’t assume it’s empty.</div>`;
   }

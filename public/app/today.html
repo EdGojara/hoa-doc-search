@@ -45,6 +45,10 @@
   .th-fi-t { font-size: 13.5px; font-weight: 600; color: var(--navy); margin-top: 1px; }
   .th-fi-d { font-size: 12.5px; color: var(--tx-text-2); margin-top: 2px; }
   .th-fi-tag { font-size: 11px; white-space: nowrap; }
+  .th-fi-row { display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; gap: 12px; align-items: start; border-top: 1px solid var(--tx-rule-soft); padding: 11px 0; }
+  .th-fi-row .th-fi-main { display: block; border-top: 0; padding: 0; }
+  .th-fi-act { white-space: nowrap; align-self: center; }
+  @media (max-width: 560px) { .th-fi-row { grid-template-columns: 34px minmax(0, 1fr); } .th-fi-act { grid-column: 2; justify-self: start; } }
   .th-drawer-bg { position: fixed; inset: 0; background: rgba(11, 29, 52, .28); z-index: 40; }
   .th-drawer { position: fixed; top: 0; right: 0; bottom: 0; width: min(460px, 100%); background: var(--tx-surface); box-shadow: -8px 0 30px rgba(11, 29, 52, .18); z-index: 41; display: flex; flex-direction: column; }
   .th-drawer header { padding: 18px 20px 12px; border-bottom: 1px solid var(--tx-rule-soft); }
@@ -302,14 +306,23 @@
   var lastFeed = null;
   function initials(n) { return String(n || '?').charAt(0).toUpperCase(); }
   function fmtWhen(iso) { if (!iso) return ''; var d = new Date(iso); return isNaN(d) ? String(iso) : d.toLocaleString('en-US', { timeZone: 'America/Chicago', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }); }
+  // One row = WHAT (title) · WHY (one line) · WHERE ("Take action" opens the exact
+  // controlled record; it is a link, never an action). Clicking the row text opens
+  // the read-only history drawer.
   function feedRow(i) {
-    var tag = i.class === 'BLOCK' ? '<span class="tx-pill tx-pill--warn th-fi-tag">Waiting on something</span>'
-      : i.priority === 'high' || i.priority === 'critical' ? '<span class="tx-pill tx-pill--bad th-fi-tag">Urgent</span>'
-      : '<span class="tx-pill tx-pill--info th-fi-tag">Needs a person</span>';
-    var age = i.age_days != null && i.age_days > 0 ? ' · waiting ' + i.age_days + ' day' + (i.age_days === 1 ? '' : 's') : '';
-    return '<button type="button" class="th-fi" data-key="' + esc(i.key) + '"><span class="th-av" data-p="' + esc(i.specialist.key) + '" aria-hidden="true">' + esc(initials(i.specialist.name)) + '</span>' +
-      '<span><span class="th-fi-who">' + esc(i.specialist.name) + ' · ' + esc(i.specialist.role) + (i.community ? ' · ' + esc(i.community) : '') + age + '</span>' +
-      '<span class="th-fi-t" style="display:block">' + esc(i.title) + '</span><span class="th-fi-d" style="display:block">' + esc(i.detail || '') + '</span></span>' + tag + '</button>';
+    var urgent = i.priority === 'high' || i.priority === 'critical';
+    var age = i.age_days != null && i.age_days > 0 ? ' · ' + i.age_days + ' day' + (i.age_days === 1 ? '' : 's') : '';
+    var act = i.action ? '<a class="tx-btn tx-btn--sec th-fi-act" href="' + esc(i.action.href) + '" title="' + esc(i.action.where || '') + '">' + esc(i.action.label || 'Take action') + '</a>' : '';
+    return '<div class="th-fi-row"><span class="th-av" data-p="' + esc(i.specialist.key) + '" aria-hidden="true">' + esc(initials(i.specialist.name)) + '</span>' +
+      '<button type="button" class="th-fi th-fi-main" data-key="' + esc(i.key) + '"><span class="th-fi-who">' + esc(i.specialist.name) + ' · ' + esc(i.specialist.role) + (i.community ? ' · ' + esc(i.community) : '') + age + (urgent ? ' · <b style="color:var(--tx-bad)">urgent</b>' : '') + '</span>' +
+      '<span class="th-fi-t" style="display:block">' + esc(i.title) + '</span><span class="th-fi-d" style="display:block">' + esc(i.why || '') + '</span>' +
+      (i.policy_note ? '<span class="th-fi-d" style="display:block;color:var(--tx-warn)">' + esc(i.policy_note) + '</span>' : '') + '</button>' + act + '</div>';
+  }
+  function laneHtml(title, items, empty, cap) {
+    if (!items.length) return '<div class="th-am-sec"><h3>' + esc(title) + ' · 0</h3><div class="tx-muted" style="font-size:13px;padding:6px 0">' + esc(empty) + '</div></div>';
+    var shown = items.slice(0, cap), more = items.slice(cap);
+    return '<div class="th-am-sec"><h3>' + esc(title) + ' · ' + items.length + '</h3>' + shown.map(feedRow).join('') +
+      (more.length ? '<details style="margin-top:4px"><summary class="tx-muted" style="font-size:12.5px;cursor:pointer;padding:6px 0">' + more.length + ' more</summary>' + more.map(feedRow).join('') + '</details>' : '') + '</div>';
   }
   function renderFeed(res) {
     var box = $('th-amanda');
@@ -327,8 +340,19 @@
     var html = '<p class="th-am-summary">' + esc(d.summary) + '</p><div class="th-am-meta">' + esc(meta) + '</div>';
     if (fails.length) html += '<div class="tx-err" style="margin-top:10px">' + icon('alert', { size: 16 }) + '<span>Some sources didn’t answer (' + esc(fails.join(', ')) + '), so this list may be incomplete. Unavailable is not the same as clear.</span></div>';
     if ((d.capped || []).length) html += '<div class="tx-muted" style="font-size:12px;margin-top:6px">Showing the oldest items first; more are waiting in ' + esc(d.capped.join(', ')) + '.</div>';
-    html += '<div class="th-am-sec"><h3>Needs a person</h3>' + (d.needs.length ? d.needs.map(feedRow).join('') : '<div class="tx-muted" style="font-size:13px;padding:6px 0">' + (fails.length ? 'Nothing found in the sources that answered.' : 'Nothing needs a person right now.') + '</div>') +
-      (d.more && d.more.length ? '<details style="margin-top:4px"><summary class="tx-muted" style="font-size:12.5px;cursor:pointer;padding:6px 0">' + d.more.length + ' more</summary>' + d.more.map(feedRow).join('') + '</details>' : '') + '</div>';
+    var L = d.lanes || { now: [], waiting: [], policy: [] };
+    var none = fails.length ? 'Nothing found in the sources that answered.' : null;
+    html += laneHtml('Needs you now', L.now, none || 'Nothing needs you right now.', 5);
+    html += laneHtml('Waiting on something', L.waiting, none || 'Nothing is waiting.', 3);
+    if (L.policy.length) html += laneHtml('Policy / Ed decision', L.policy, '', 3);
+    var e = d.elsewhere || {};
+    var kept = [];
+    if (e.ap_routine_in_payables) kept.push(e.ap_routine_in_payables + ' routine bill approval' + (e.ap_routine_in_payables === 1 ? '' : 's') + ' in Payables');
+    if (e.ap_approved_awaiting_release) kept.push(e.ap_approved_awaiting_release + ' approved bill' + (e.ap_approved_awaiting_release === 1 ? '' : 's') + ' awaiting release');
+    if (e.inactive_community) kept.push(e.inactive_community + ' from communities no longer managed (closeout)');
+    if (e.acc_possible_duplicates) kept.push(e.acc_possible_duplicates + ' possible duplicate ACC case' + (e.acc_possible_duplicates === 1 ? '' : 's'));
+    if (e.acc_legacy_or_incomplete) kept.push(e.acc_legacy_or_incomplete + ' legacy or incomplete ACC record' + (e.acc_legacy_or_incomplete === 1 ? '' : 's'));
+    if (kept.length) html += '<div class="tx-muted" style="font-size:12px;margin-top:10px">Not in this list on purpose: ' + esc(kept.join(' · ')) + '. Nothing was changed or closed.</div>';
     html += '<div class="th-am-sec"><h3>Recently handled or changed</h3>' + ((d.recent || []).length ? d.recent.slice(0, 5).map(function (r) {
       return '<button type="button" class="th-fi" data-key="' + esc(r.key) + '"><span class="th-av" data-p="' + esc(r.specialist.key) + '" aria-hidden="true">' + esc(initials(r.specialist.name)) + '</span><span><span class="th-fi-who">' + esc(r.specialist.name) + ' · ' + esc(fmtWhen(r.when)) + (r.community ? ' · ' + esc(r.community) : '') + '</span><span class="th-fi-t" style="display:block">' + esc(r.title) + '</span><span class="th-fi-d" style="display:block">' + esc(r.reason || 'Resolved') + '</span></span><span class="tx-pill tx-pill--ok th-fi-tag">Cleared</span></button>';
     }).join('') : '') + '<div class="tx-muted" style="font-size:12.5px;padding:6px 0">' + (d.routine_24h == null ? 'Routine count unavailable.' : d.routine_24h + ' routine bill' + (d.routine_24h === 1 ? '' : 's') + ' continued on the normal path in the last 24 hours (you still release payments).') + '</div></div>';
@@ -363,7 +387,7 @@
     body.innerHTML = (facts.length ? '<ul class="th-facts">' + facts.map(function (x) { return '<li>' + esc(x) + '</li>'; }).join('') + '</ul>' : '') +
       '<span class="tx-lbl" style="display:block;margin:6px 0 8px">History</span>' +
       (d.timeline.length ? '<div class="th-tl">' + d.timeline.map(function (t) { return '<div class="th-tl-e">' + esc(t.text) + '<small>' + esc(fmtWhen(t.at)) + (t.actor ? ' · ' + esc(t.actor) : '') + '</small></div>'; }).join('') + '</div>' : '<div class="tx-muted" style="font-size:13px">No history recorded yet.</div>') +
-      (d.link ? '<a class="tx-btn tx-btn--pri" href="' + esc(d.link.href) + '" style="margin-top:14px;display:inline-flex">' + esc(d.link.label) + '</a>' : '') +
+      (d.action ? '<a class="tx-btn tx-btn--pri" href="' + esc(d.action.href) + '" style="margin-top:14px;display:inline-flex">' + esc(d.action.label || 'Take action') + '</a>' + (d.action.where ? '<div class="tx-muted" style="font-size:12px;margin-top:4px">Opens ' + esc(d.action.where) + '</div>' : '') : '') +
       '<div class="tx-muted" style="font-size:12px;margin-top:10px">Read-only. Actions stay on the screen above, where their usual checks apply.</div>';
   }
 

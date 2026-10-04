@@ -34,134 +34,227 @@ window.TX_FIXTURE = {
     15
    ],
    "business_days_only": true,
-   "scheduled": true
+   "scheduled": false
   },
-  "summary": "In the last 24 hours: 6 routine bills continued on the normal path, 2 items cleared. 5 items need a person (Emma 3, Annie 1, Paige 1).",
-  "total": 5,
+  "lanes": {
+   "now": [
+    {
+     "key": "ap_invoice:00000000-0000-4000-8000-000000000001",
+     "kind": "ap_invoice",
+     "lane": "now",
+     "specialist": {
+      "key": "emma",
+      "name": "Emma",
+      "role": "Accounts payable"
+     },
+     "title": "Past due: Sample Pool Co #7316 ($1,470.00)",
+     "why": "Past due since Sep 30 and not approved.",
+     "community": "Drama Creek (sample)",
+     "priority": "high",
+     "age_days": 6,
+     "action": {
+      "label": "Take action",
+      "href": "/#tab=ap&invoice=00000000-0000-4000-8000-000000000001",
+      "where": "Payables · this bill"
+     }
+    },
+    {
+     "key": "ap_invoice:00000000-0000-4000-8000-000000000002",
+     "kind": "ap_invoice",
+     "lane": "now",
+     "specialist": {
+      "key": "emma",
+      "name": "Emma",
+      "role": "Accounts payable"
+     },
+     "title": "Pre-cutover bill: Sample Ice Co #700500 ($84.00)",
+     "why": "Dated before this community's GL cutover; a person decides how it posts.",
+     "community": "Drama Creek (sample)",
+     "priority": "high",
+     "age_days": 1,
+     "action": {
+      "label": "Take action",
+      "href": "/#tab=ap&invoice=00000000-0000-4000-8000-000000000002",
+      "where": "Payables · this bill"
+     }
+    },
+    {
+     "key": "acc_decision:00000000-0000-4000-8000-000000000003",
+     "kind": "acc_decision",
+     "lane": "now",
+     "specialist": {
+      "key": "annie",
+      "name": "Annie",
+      "role": "ACC / ARC"
+     },
+     "title": "ACC: Driveway extension",
+     "why": "New documents arrived Aug 27 and haven't been reviewed.",
+     "community": "Drama Creek (sample)",
+     "priority": "normal",
+     "age_days": 38,
+     "action": {
+      "label": "Take action",
+      "href": "/#tab=acc&decision=00000000-0000-4000-8000-000000000003",
+      "where": "ACC review · this application"
+     }
+    },
+    {
+     "key": "acc_decision:00000000-0000-4000-8000-000000000004",
+     "kind": "acc_decision",
+     "lane": "now",
+     "specialist": {
+      "key": "annie",
+      "name": "Annie",
+      "role": "ACC / ARC"
+     },
+     "title": "ACC: Fence replacement",
+     "why": "No decision has been sent yet (recommendation: request more info).",
+     "community": "Drama Creek (sample)",
+     "priority": "normal",
+     "age_days": 37,
+     "action": {
+      "label": "Take action",
+      "href": "/#tab=acc&decision=00000000-0000-4000-8000-000000000004",
+      "where": "ACC review · this application"
+     }
+    },
+    {
+     "key": "ap_exception:00000000-0000-4000-8000-000000000005",
+     "kind": "ap_exception",
+     "lane": "now",
+     "specialist": {
+      "key": "emma",
+      "name": "Emma",
+      "role": "Accounts payable"
+     },
+     "title": "Bill couldn't load: Sample Insurance ($6,125.68)",
+     "why": "Payment requested, but the attachment is not an invoice: review in Payables",
+     "community": "Drama Creek (sample)",
+     "priority": "normal",
+     "age_days": 3,
+     "action": {
+      "label": "Take action",
+      "href": "/admin/ap?exception=00000000-0000-4000-8000-000000000005",
+      "where": "Payables exceptions · this bill"
+     }
+    },
+    {
+     "key": "ap_invoice:00000000-0000-4000-8000-000000000006",
+     "kind": "ap_invoice",
+     "lane": "now",
+     "specialist": {
+      "key": "emma",
+      "name": "Emma",
+      "role": "Accounts payable"
+     },
+     "title": "New payee: Sample Party Rentals ($96.00)",
+     "why": "First bill from this vendor for this community.",
+     "community": "Drama Creek (sample)",
+     "priority": "normal",
+     "age_days": 10,
+     "action": {
+      "label": "Take action",
+      "href": "/#tab=ap&invoice=00000000-0000-4000-8000-000000000006",
+      "where": "Payables · this bill"
+     }
+    }
+   ],
+   "waiting": [
+    {
+     "key": "ap_invoice:00000000-0000-4000-8000-000000000007",
+     "kind": "ap_invoice",
+     "lane": "waiting",
+     "specialist": {
+      "key": "emma",
+      "name": "Emma",
+      "role": "Accounts payable"
+     },
+     "title": "On hold: Sample Access Works #03-072 ($9,513.03)",
+     "why": "On hold 2026-08-18: check voided because the invoiced amount is incorrect. Release once the corrected invoice is in hand.",
+     "community": "Drama Creek (sample)",
+     "priority": "normal",
+     "age_days": 67,
+     "action": {
+      "label": "Take action",
+      "href": "/#tab=ap&invoice=00000000-0000-4000-8000-000000000007",
+      "where": "Payables · this bill"
+     }
+    },
+    {
+     "key": "ap_exception:00000000-0000-4000-8000-000000000008",
+     "kind": "ap_exception",
+     "lane": "waiting",
+     "specialist": {
+      "key": "emma",
+      "name": "Emma",
+      "role": "Accounts payable"
+     },
+     "title": "Bill couldn't load: Sample Law PC #4068652 ($270.00)",
+     "why": "Waiting on which community it belongs to.",
+     "community": "Community not identified",
+     "priority": "normal",
+     "age_days": 51,
+     "action": {
+      "label": "Take action",
+      "href": "/admin/ap?exception=00000000-0000-4000-8000-000000000008",
+      "where": "Payables exceptions · this bill"
+     }
+    }
+   ],
+   "policy": [
+    {
+     "key": "ap_invoice:00000000-0000-4000-8000-000000000009",
+     "kind": "ap_invoice",
+     "lane": "policy",
+     "specialist": {
+      "key": "emma",
+      "name": "Emma",
+      "role": "Accounts payable"
+     },
+     "title": "On hold: Sample DJ #1010 ($300.00)",
+     "why": "ON HOLD: W-9 required before payment.",
+     "community": "Drama Creek (sample)",
+     "priority": "high",
+     "age_days": 2,
+     "action": {
+      "label": "Take action",
+      "href": "/#tab=ap&invoice=00000000-0000-4000-8000-000000000009",
+      "where": "Payables · this bill"
+     },
+     "policy_note": "Held for a W-9; the standing rule says a W-9 is informational and never blocks payment. Ed decides."
+    }
+   ]
+  },
+  "counts": {
+   "now": 6,
+   "waiting": 2,
+   "policy": 1
+  },
+  "total": 9,
   "by_specialist": {
-   "Emma": 3,
-   "Annie": 1,
-   "Paige": 1
+   "Emma": 4,
+   "Annie": 2
   },
-  "routine_24h": 6,
-  "needs": [
-   {
-    "key": "ap_invoice:s1",
-    "kind": "ap_invoice",
-    "specialist": {
-     "key": "emma",
-     "name": "Emma",
-     "role": "Accounts payable"
-    },
-    "title": "On hold: Sample Pool Co #7316 ($1,470.00)",
-    "detail": "Held as a possible duplicate; a person confirms before it can move.",
-    "community": "Drama Creek (sample)",
-    "class": "REVIEW",
-    "priority": "high",
-    "age_days": 2
-   },
-   {
-    "key": "board_packet:s2",
-    "kind": "board_packet",
-    "specialist": {
-     "key": "paige",
-     "name": "Paige",
-     "role": "Board operations"
-    },
-    "title": "Board packet October 2026 still draft",
-    "detail": "Meeting in 2 days.",
-    "community": "Drama Creek (sample)",
-    "class": "REVIEW",
-    "priority": "high",
-    "age_days": null
-   },
-   {
-    "key": "ap_exception:s3",
-    "kind": "ap_exception",
-    "specialist": {
-     "key": "emma",
-     "name": "Emma",
-     "role": "Accounts payable"
-    },
-    "title": "Bill from Sample Landscaping #262093 ($1,185.22)",
-    "detail": "Can't load it yet: needs which community it belongs to.",
-    "community": "Community not identified",
-    "class": "BLOCK",
-    "priority": "normal",
-    "age_days": 3
-   },
-   {
-    "key": "acc_decision:s4",
-    "kind": "acc_decision",
-    "specialist": {
-     "key": "annie",
-     "name": "Annie",
-     "role": "ACC / ARC"
-    },
-    "title": "ACC review: Backyard patio cover",
-    "detail": "Drafted and waiting for a reviewer.",
-    "community": "Drama Creek (sample)",
-    "class": "REVIEW",
-    "priority": "normal",
-    "age_days": 1
-   },
-   {
-    "key": "ap_invoice:s5",
-    "kind": "ap_invoice",
-    "specialist": {
-     "key": "emma",
-     "name": "Emma",
-     "role": "Accounts payable"
-    },
-    "title": "Check coding: Sample Electric #A-118 ($312.40)",
-    "detail": "New payee: confirm GL coding before approval.",
-    "community": "Drama Creek (sample)",
-    "class": "REVIEW",
-    "priority": "normal",
-    "age_days": 0
-   }
-  ],
-  "more": [],
-  "recent": [
-   {
-    "key": "objective:s6",
-    "title": "Possible duplicate: bill 7290 ($880.00)",
-    "when": new Date(Date.now() - 5 * 3600e3).toISOString(),
-    "reason": "bill is voided",
-    "community": "Drama Creek (sample)",
-    "specialist": {
-     "key": "emma",
-     "name": "Emma",
-     "role": "Accounts payable"
-    }
-   },
-   {
-    "key": "objective:s7",
-    "title": "Bill waiting on the vendor: Sample Tree Care #55",
-    "when": new Date(Date.now() - 20 * 3600e3).toISOString(),
-    "reason": "exception resolved",
-    "community": "Drama Creek (sample)",
-    "specialist": {
-     "key": "emma",
-     "name": "Emma",
-     "role": "Accounts payable"
-    }
-   }
-  ],
-  "last_sweep": {
-   "started_at": new Date(Date.now() - 2 * 3600e3).toISOString(),
-   "ok": true
-  }
+  "summary": "6 need you now (Emma 4, Annie 2) · 2 waiting on something · 1 for your decision.",
+  "elsewhere": {
+   "ap_routine_in_payables": 37,
+   "ap_approved_awaiting_release": 20,
+   "inactive_community": 18,
+   "acc_possible_duplicates": 3,
+   "acc_legacy_or_incomplete": 3
+  },
+  "recent": [],
+  "routine_24h": 0,
+  "last_sweep": null
  }
 },
   '/api/feed/item': {
  "ok": true,
  "data": {
-  "key": "ap_invoice:s1",
+  "key": "ap_invoice:00000000-0000-4000-8000-000000000001",
   "kind": "ap_invoice",
   "title": "Sample Pool Co #7316 ($1,470.00)",
-  "status": "on_hold",
-  "class": "REVIEW",
+  "status": "awaiting_approval",
   "community": "Drama Creek (sample)",
   "specialist": {
    "key": "emma",
@@ -169,27 +262,21 @@ window.TX_FIXTURE = {
    "role": "Accounts payable"
   },
   "facts": [
-   "Status: on hold",
-   "Needs review: possible duplicate of bill #7290"
+   "Status: awaiting approval",
+   "Due: 2026-09-30"
   ],
-  "next_action": "A person confirms whether this bill is a duplicate before it can move.",
   "timeline": [
    {
-    "at": new Date(Date.now() - 50 * 3600e3).toISOString(),
+    "at": new Date(Date.now() - 6 * 86400e3).toISOString(),
     "actor": "Emma",
     "text": "Bill loaded",
     "source": "payables"
-   },
-   {
-    "at": new Date(Date.now() - 46 * 3600e3).toISOString(),
-    "actor": "amanda",
-    "text": "REVIEW: Possible duplicate: bill 7316 ($1,470.00)",
-    "source": "objective"
    }
   ],
-  "link": {
-   "label": "Open Payables",
-   "href": "/#tab=ap"
+  "action": {
+   "label": "Take action",
+   "href": "/#tab=ap&invoice=00000000-0000-4000-8000-000000000001",
+   "where": "Payables · this bill"
   },
   "actions": [],
   "model_calls": 0
