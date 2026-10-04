@@ -1,18 +1,21 @@
-// tests/test_ops_feed_phase1.js  (Issue #29 Phase 1) — read-only Operations Feed
-// In-memory read-only fake (any write throws). No network, no model, no action.
+// tests/test_ops_feed_phase1.js  (Issue #29 Phase 1 + refinement) — read-only Operations Feed
+// Three lanes, the audited selection rules, exact "Take action" destinations, and
+// the navigation-only deep-link parsers. In-memory read-only fake (any write throws).
 const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
-const { buildFeed, buildItem, summarize } = require('../lib/feed/build');
+const { buildFeed, buildItem, summarize, holdReason, activeFor } = require('../lib/feed/build');
+const DL = require('../public/app/deeplink');
 
 const tests = []; const check = (n, fn) => tests.push([n, fn]);
 const NOW = Date.parse('2026-10-05T15:00:00Z');
-const C1 = '11111111-1111-4111-8111-111111111111'; const C2 = '22222222-2222-4222-8222-222222222222';
+const u = (n) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
+const C1 = u(901); const C2 = u(902); const EAGLE = u(903);
 const iso = (h) => new Date(NOW - h * 3600000).toISOString();
+const day = (d) => new Date(NOW + d * 86400000).toISOString().slice(0, 10);
 
 function readOnlyDb(seed = {}, { fail = [] } = {}) {
   const T = JSON.parse(JSON.stringify(seed));
-  const calls = [];
   function from(t) {
     const f = []; let order = null; let lim = null;
     const deny = () => { throw new Error(`write attempted on ${t}`); };
@@ -22,12 +25,12 @@ function readOnlyDb(seed = {}, { fail = [] } = {}) {
       in(c, v) { f.push((r) => v.includes(r[c])); return q; },
       gte(c, v) { f.push((r) => r[c] != null && String(r[c]) >= String(v)); return q; },
       lte(c, v) { f.push((r) => r[c] != null && String(r[c]) <= String(v)); return q; },
+      lt(c, v) { f.push((r) => r[c] != null && String(r[c]) < String(v)); return q; },
       or(expr) { const parts = expr.split(',').map((p) => p.split('.')); f.push((r) => parts.some(([c, op, v]) => (op === 'eq' ? r[c] === v : op === 'is' && v === 'null' ? r[c] == null : false))); return q; },
       order(c, o = {}) { order = [c, o.ascending !== false]; return q; },
       limit(n) { lim = n; return q; },
       insert: deny, update: deny, upsert: deny, delete: deny,
       then(res, rej) {
-        calls.push(t);
         if (fail.includes(t)) return Promise.resolve({ data: null, error: { message: `relation "${t}" unavailable` } }).then(res, rej);
         let out = (T[t] || []).filter((r) => f.every((p) => p(r)));
         if (order) { const [c, asc] = order; out = [...out].sort((a, b) => (String(a[c] ?? '') < String(b[c] ?? '') ? -1 : String(a[c] ?? '') > String(b[c] ?? '') ? 1 : 0) * (asc ? 1 : -1)); }
@@ -37,156 +40,183 @@ function readOnlyDb(seed = {}, { fail = [] } = {}) {
     };
     return q;
   }
-  return { from, T, calls };
+  return { from, T };
 }
 
-const comm = (id, name) => ({ communities: { name } });
+const inv = (n, o = {}) => ({ id: u(n), community_id: C1, vendor_id: `v${n}`, vendor_invoice_number: `INV-${n}`, total_cents: 10000, status: 'awaiting_approval', needs_review: true, cutover_review: null, due_date: day(10), notes: 'Emma: loaded from email.', created_at: iso(48), vendor: { name: `Vendor ${n}` }, communities: { name: 'Alpha' }, ...o });
+const accRow = (n, o = {}) => ({ id: u(n), status: 'pending_review', community_id: C1, community_name: 'Alpha', homeowner_address: `${n} Sample Ln`, project_summary: `Project ${n}`, decision_type: null, ai_recommendation: 'request_more_info', current_ai_recommendation: null, conversation_id: `conv${n}`, last_document_added_at: null, current_review_at: null, letter_draft_saved_at: null, finalization_id: null, created_at: iso(24 * 20), updated_at: iso(24 * 19), ...o });
 const world = () => ({
-  objectives: [
-    { id: 'o1', title: 'Check coding: bill A-1 ($125.00)', status: 'open', autonomy_class: 'REVIEW', priority: 'normal', next_action: 'A person checks the coding.', domain: 'ap', subject_key: 'ap_invoice:i1', accountable_persona: 'amanda', community_id: C1, last_activity_at: iso(30), opened_at: iso(30), ...comm(C1, 'Alpha') },
-    { id: 'o2', title: 'Bill waiting on the community', status: 'open', autonomy_class: 'BLOCK', priority: 'normal', blocked_reason: 'Payables needs to supply the community.', domain: 'ap', subject_key: 'ap_exception:e9', accountable_persona: 'amanda', community_id: null, last_activity_at: iso(50), opened_at: iso(50) },
-    { id: 'o3', title: 'Legacy email objective, quiet', status: 'open', domain: null, subject_key: null, accountable_persona: null, community_id: C1, last_activity_at: iso(10), opened_at: iso(10) },
-    { id: 'o4', title: 'Homeowner follow-up waiting on staff', status: 'waiting_human', domain: null, subject_key: null, accountable_persona: null, community_id: C1, last_activity_at: iso(5), opened_at: iso(5), ...comm(C1, 'Alpha') },
-    { id: 'o5', title: 'Resolved thing', status: 'resolved', domain: 'ap', subject_key: 'ap_invoice:i7', accountable_persona: 'amanda', closed_at: iso(3), closed_reason: 'bill is voided', community_id: C1, ...comm(C1, 'Alpha') },
-  ],
-  objective_events: [
-    { objective_id: 'o1', at: iso(30), actor: 'amanda', kind: 'opened', summary: 'REVIEW: Check coding: bill A-1 ($125.00)' },
-  ],
-  manager_wakes: [
-    { status: 'consumed', outcome: 'execute_candidate', consumed_at: iso(2), community_id: C1 },
-    { status: 'consumed', outcome: 'execute_candidate', consumed_at: iso(4), community_id: C1 },
-    { status: 'consumed', outcome: 'review', consumed_at: iso(4), community_id: C1 },
-  ],
-  ap_intake_exceptions: [
-    { id: 'e9', status: 'pending', reason: 'no_community', vendor_name: 'Lake Pro', invoice_number: '262093', total_cents: 118522, community_id: null, created_at: iso(50) },
-    { id: 'e2', status: 'pending', reason: 'unreadable_attachment', vendor_name: 'Zoo Co', invoice_number: null, total_cents: null, community_id: C2, created_at: iso(70), ...comm(C2, 'Beta') },
+  communities: [
+    { id: C1, name: 'Alpha', management_status: 'active', financials_active: true, arc_active: true, is_demo: false },
+    { id: C2, name: 'Beta', management_status: 'active', financials_active: true, arc_active: true, is_demo: false },
+    { id: EAGLE, name: 'Eaglewood', management_status: 'terminating', financials_active: false, arc_active: true, is_demo: false },
   ],
   ap_invoices: [
-    { id: 'i1', status: 'awaiting_approval', needs_review: true, vendor_invoice_number: 'A-1', total_cents: 12500, community_id: C1, created_at: iso(30), vendor: { name: 'Acme' }, ...comm(C1, 'Alpha') },
-    { id: 'i2', status: 'on_hold', needs_review: true, vendor_invoice_number: '7316', total_cents: 147000, community_id: C1, created_at: iso(20), vendor: { name: 'Swim Co' }, ...comm(C1, 'Alpha') },
-    { id: 'i3', status: 'awaiting_approval', needs_review: false, vendor_invoice_number: 'OK-1', total_cents: 5000, community_id: C1, created_at: iso(10), vendor: { name: 'Clean Co' } },
+    inv(1, { status: 'on_hold', notes: 'Emma: loaded from email.\nOn hold 2026-08-18: check #1008 was voided. Release once the corrected invoice is in hand.' }),
+    inv(2, { status: 'on_hold', notes: 'Emma: loaded from email. ON HOLD (Issue #14, Ed 2026-10-01): W-9 required before payment.' }),
+    inv(3, { cutover_review: 'PENDING', vendor_id: 'vX' }),
+    inv(4, { due_date: day(-5), vendor_id: 'vRecurring' }),                    // past due, unapproved, NOT flagged needs_review -> still surfaces
+    inv(5, { vendor_id: 'vNew', needs_review: false }),                          // first bill from this vendor -> new payee
+    inv(6, { vendor_id: 'vRecurring', created_at: iso(10) }),                   // routine line flags only -> stays in Payables
+    inv(7, { vendor_id: 'vRecurring', due_date: day(-9), created_at: iso(5) }), // approved already -> residue, not surfaced even though past due
+    inv(8, { community_id: EAGLE, due_date: day(-30), communities: { name: 'Eaglewood' } }), // inactive community
+    inv(9, { vendor_id: 'vRecurring', created_at: iso(24 * 400), status: 'paid' }),          // history: makes vRecurring not new
   ],
-  ap_invoice_approvals: [
-    { invoice_id: 'i1', action: 'approved', user_name: 'Celina', notes: null, created_at: iso(1) },
+  ap_invoice_approvals: [{ invoice_id: u(7), action: 'approved', user_name: 'Celina', created_at: iso(2) }],
+  ap_intake_exceptions: [
+    { id: u(20), status: 'pending', reason: 'no_community', vendor_name: 'Law PC', invoice_number: '4068652', total_cents: 27000, community_id: null, notes: '', created_at: iso(24 * 51) },
+    { id: u(21), status: 'pending', reason: 'other', vendor_name: 'Insurance Co', total_cents: 612568, community_id: C2, notes: 'payment requested, but the attachment is not an invoice: review in Payables', created_at: iso(72), communities: { name: 'Beta' } },
+    { id: u(22), status: 'pending', reason: 'other', vendor_name: 'Reimbursement: Pat', total_cents: 165000, community_id: C1, notes: 'reimbursement: which expense account? no coding instruction from staff', created_at: iso(24) },
+    { id: u(23), status: 'pending', reason: 'other', vendor_name: null, community_id: EAGLE, notes: 'payment requested, but no PDF', created_at: iso(96) },
   ],
   acc_decisions: [
-    { id: 'a1', status: 'pending_review', community_id: C2, community_name: 'Beta', homeowner_address: '1 Sample Ln', project_summary: 'Patio cover', created_at: iso(24) },
-    { id: 'a2', status: 'decided', community_id: C2, community_name: 'Beta', project_summary: 'Fence', created_at: iso(240) },
+    accRow(30, { last_document_added_at: iso(24 * 10) }),                                  // new docs -> now
+    accRow(31, { conversation_id: 'c31' }),                                                // inbound after update -> now
+    accRow(32),                                                                            // no decision -> now
+    accRow(33, { decision_type: 'request_more_info' }),                                    // waiting
+    accRow(34, { homeowner_address: '1 Dup Ln', created_at: iso(24 * 3) }),                // follow-up of a decided case -> duplicate
+    accRow(35, { conversation_id: null, updated_at: iso(24 * 20), created_at: iso(24 * 20) }), // legacy, never touched
+    accRow(36, { ai_recommendation: null }),                                               // incomplete
+    accRow(37, { community_id: EAGLE, community_name: 'Eaglewood' }),                      // inactive
+    { id: u(38), status: 'decided', community_id: C1, homeowner_address: '1 Dup Ln', created_at: iso(24 * 8), decided_at: iso(24 * 8) },
   ],
-  board_packets: [
-    { id: 'b1', status: 'draft', community_id: C1, period_label: 'October 2026', meeting_date: '2026-10-07', ...comm(C1, 'Alpha') },
-    { id: 'b2', status: 'final', community_id: C1, period_label: 'Old', meeting_date: '2026-10-06' },
-    { id: 'b3', status: 'draft', community_id: C1, period_label: 'Far', meeting_date: '2026-12-01' },
-  ],
-  board_packet_distribution_log: [],
-  acc_finalizations: [],
-  cron_runs: [
-    { id: 'r1', job_name: 'cure_lapse', ok: false, error: 'boom', started_at: iso(6) },
-    { id: 'r2', job_name: 'manager_sweep', ok: true, started_at: iso(7) },
-  ],
+  email_messages: [{ conversation_id: 'c31', direction: 'inbound', received_at: iso(24 * 2) }],
+  objectives: [], objective_events: [], manager_wakes: [], board_packets: [], cron_runs: [], acc_finalizations: [], board_packet_distribution_log: [],
 });
 
-check('empty state: nothing needs a person, $0 model, no writes, no actions', async () => {
-  const db = readOnlyDb({});
-  const f = await buildFeed(db, { now: NOW, env: {} });
-  assert.strictEqual(f.total, 0); assert.strictEqual(f.model_calls, 0); assert.deepStrictEqual(f.actions, []);
-  assert.strictEqual(f.summary, 'Nothing needs a person right now.');
-  assert.deepStrictEqual(f.section_errors, {});
-});
+const keysOf = (f, lane) => f.lanes[lane].map((i) => i.key);
 
-check('items come from objectives + domain queues, with deterministic specialist identity and no duplicates', async () => {
+check('three lanes from the audited rules: needs you now / waiting / policy (W-9 hold)', async () => {
   const f = await buildFeed(readOnlyDb(world()), { now: NOW, env: {} });
-  const keys = [...f.needs, ...f.more].map((i) => i.key);
-  assert.ok(keys.includes('objective:o1') && !keys.includes('ap_invoice:i1'), 'the Amanda objective supersedes the raw invoice row');
-  assert.ok(keys.includes('objective:o2') && !keys.includes('ap_exception:e9'), 'and the raw exception row');
-  assert.ok(keys.includes('ap_invoice:i2'), 'an on-hold bill with no objective yet still shows');
-  assert.ok(!keys.includes('ap_invoice:i3'), 'a clean bill is not "needs a person"');
-  assert.ok(keys.includes('ap_exception:e2') && keys.includes('acc_decision:a1') && keys.includes('board_packet:b1') && keys.includes('cron_run:r1'));
-  assert.ok(!keys.includes('acc_decision:a2') && !keys.includes('board_packet:b2') && !keys.includes('board_packet:b3'), 'decided ACC, final packet, far meeting are out');
-  assert.ok(!keys.includes('objective:o3'), 'quiet legacy objectives stay on their own screen');
-  assert.ok(keys.includes('objective:o4'), 'a legacy objective waiting on a human is in');
-  const by = Object.fromEntries([...f.needs, ...f.more].map((i) => [i.key, i.specialist.name]));
-  assert.strictEqual(by['ap_invoice:i2'], 'Emma'); assert.strictEqual(by['acc_decision:a1'], 'Annie'); assert.strictEqual(by['board_packet:b1'], 'Paige'); assert.strictEqual(by['cron_run:r1'], 'Amanda'); assert.strictEqual(by['objective:o1'], 'Emma');
-  assert.strictEqual(new Set(keys).size, keys.length, 'no item appears twice');
+  assert.deepStrictEqual(keysOf(f, 'policy'), [`ap_invoice:${u(2)}`]);
+  assert.ok(f.lanes.policy[0].policy_note && /informational/.test(f.lanes.policy[0].policy_note));
+  assert.deepStrictEqual(new Set(keysOf(f, 'now')), new Set([`ap_invoice:${u(3)}`, `ap_invoice:${u(4)}`, `ap_invoice:${u(5)}`, `ap_exception:${u(21)}`, `acc_decision:${u(30)}`, `acc_decision:${u(31)}`, `acc_decision:${u(32)}`]));
+  assert.deepStrictEqual(new Set(keysOf(f, 'waiting')), new Set([`ap_invoice:${u(1)}`, `ap_exception:${u(20)}`, `ap_exception:${u(22)}`, `acc_decision:${u(33)}`]));
+  assert.deepStrictEqual(f.counts, { now: 7, waiting: 4, policy: 1 });
+  assert.strictEqual(f.model_calls, 0); assert.deepStrictEqual(f.actions, []);
 });
 
-check('3-5 items up top: highest priority first, then whoever has waited longest; the rest under "more"', async () => {
+check('AP rules: residue, routine line flags and inactive communities never surface; past-due counts even without needs_review', async () => {
   const f = await buildFeed(readOnlyDb(world()), { now: NOW, env: {} });
-  assert.ok(f.needs.length <= 5 && f.needs.length + f.more.length === f.total);
-  const pri = { critical: 0, high: 1, normal: 2, low: 3 };
-  const all = [...f.needs, ...f.more];
-  for (let i = 1; i < all.length; i += 1) assert.ok(pri[all[i - 1].priority] <= pri[all[i].priority], 'priority order');
-  assert.strictEqual(f.needs[0].priority, 'high');
-  const normals = all.filter((i) => i.priority === 'normal' && i.kind !== 'board_packet');
-  for (let i = 1; i < normals.length; i += 1) assert.ok(String(normals[i - 1].at) <= String(normals[i].at), 'oldest first within a priority');
+  const all = [...keysOf(f, 'now'), ...keysOf(f, 'waiting'), ...keysOf(f, 'policy')];
+  assert.ok(!all.includes(`ap_invoice:${u(6)}`), 'routine line-level flags stay in Payables');
+  assert.ok(!all.includes(`ap_invoice:${u(7)}`), 'human-approved needs_review residue is not surfaced');
+  assert.ok(!all.includes(`ap_invoice:${u(8)}`), 'inactive community excluded from the daily feed');
+  assert.ok(all.includes(`ap_invoice:${u(4)}`), 'past due + unapproved surfaces');
+  assert.strictEqual(f.elsewhere.ap_routine_in_payables, 1);
+  assert.strictEqual(f.elsewhere.ap_approved_awaiting_release, 1);
+  const pd = f.lanes.now.find((i) => i.key === `ap_invoice:${u(4)}`); assert.match(pd.why, /past due since .* and not approved/i);
+  const np = f.lanes.now.find((i) => i.key === `ap_invoice:${u(5)}`); assert.match(np.why, /First bill from this vendor/);
+  const hold = f.lanes.waiting.find((i) => i.key === `ap_invoice:${u(1)}`); assert.match(hold.why, /^On hold 2026-08-18/);
 });
 
-check('deterministic summary + recent handled + routine count; template text, no model', async () => {
+check('ACC rules: new docs / homeowner wrote / no decision = now; more-info requested = waiting; duplicates, legacy, incomplete and inactive are kept out (counted)', async () => {
   const f = await buildFeed(readOnlyDb(world()), { now: NOW, env: {} });
-  assert.match(f.summary, /^In the last 24 hours: 2 routine bills continued on the normal path, 1 item cleared\. \d+ items need a person \(/);
-  assert.match(f.summary, /Emma \d/);
-  assert.strictEqual(f.routine_24h, 2); assert.strictEqual(f.recent.length, 1); assert.strictEqual(f.recent[0].reason, 'bill is voided');
-  assert.strictEqual(f.last_sweep.started_at, iso(7)); assert.strictEqual(f.last_sweep.ok, true);
-  assert.strictEqual(summarize({ total: 0, recent: [], routine_24h: 0, by_specialist: {}, capped: [] }), 'Nothing needs a person right now.');
+  const why = (n) => (f.lanes.now.concat(f.lanes.waiting).find((i) => i.key === `acc_decision:${u(n)}`) || {}).why || '';
+  assert.match(why(30), /New documents arrived/); assert.match(why(31), /homeowner wrote again/); assert.match(why(32), /No decision has been sent yet/); assert.match(why(33), /More information requested/);
+  assert.strictEqual(f.elsewhere.acc_possible_duplicates, 1);
+  assert.strictEqual(f.elsewhere.acc_legacy_or_incomplete, 2);
+  assert.ok(f.elsewhere.inactive_community >= 3, 'Eaglewood bill + exception + ACC counted, not surfaced');
 });
 
-check('failure semantics: a source that does not answer is reported, never counted as clear', async () => {
-  const f = await buildFeed(readOnlyDb(world(), { fail: ['ap_invoices', 'manager_wakes'] }), { now: NOW, env: {} });
-  assert.ok(f.section_errors.ap_invoices && f.section_errors.wakes);
-  assert.strictEqual(f.routine_24h, null, 'unknown, not zero');
-  assert.ok([...f.needs, ...f.more].some((i) => i.kind === 'acc_decision'), 'the sources that answered still show');
+check('intake exceptions: missing piece or reimbursement coding = waiting; otherwise now; unidentified community stays visible', async () => {
+  const f = await buildFeed(readOnlyDb(world()), { now: NOW, env: {} });
+  const w = f.lanes.waiting.find((i) => i.key === `ap_exception:${u(20)}`);
+  assert.strictEqual(w.community, 'Community not identified'); assert.match(w.why, /which community/);
+  assert.match(f.lanes.waiting.find((i) => i.key === `ap_exception:${u(22)}`).why, /expense account/);
+  assert.match(f.lanes.now.find((i) => i.key === `ap_exception:${u(21)}`).why, /^Payment requested/, 'capitalized reason from the record');
 });
 
-check('a capped source is flagged and the summary count says "+" (no silent undercount)', async () => {
-  const w = world(); w.ap_intake_exceptions = Array.from({ length: 100 }, (_, n) => ({ id: `x${n}`, status: 'pending', reason: 'no_vendor', vendor_name: 'V', community_id: C1, created_at: iso(100 + n) }));
-  const f = await buildFeed(readOnlyDb(w), { now: NOW, env: {} });
-  assert.ok(f.capped.includes('ap_exceptions'));
-  assert.match(f.summary, /\d+\+ items need a person/);
+check('every surfaced item has an exact "Take action" destination (navigation only)', async () => {
+  const f = await buildFeed(readOnlyDb(world()), { now: NOW, env: {} });
+  for (const i of [...f.lanes.now, ...f.lanes.waiting, ...f.lanes.policy]) {
+    assert.strictEqual(i.action.label, 'Take action');
+    const id = i.key.split(':')[1];
+    if (i.kind === 'ap_invoice') assert.strictEqual(i.action.href, `/#tab=ap&invoice=${id}`);
+    if (i.kind === 'acc_decision') assert.strictEqual(i.action.href, `/#tab=acc&decision=${id}`);
+    if (i.kind === 'ap_exception') assert.strictEqual(i.action.href, `/admin/ap?exception=${id}`);
+    assert.ok(i.title && i.why, 'what + why present');
+  }
 });
 
-check('community scope: that community plus items whose community is not yet identified', async () => {
+check('summary is a template over the three lanes; empty state; capped "+"', async () => {
+  const f = await buildFeed(readOnlyDb(world()), { now: NOW, env: {} });
+  assert.match(f.summary, /^7 need you now \(Emma \d, Annie 3\) · 4 waiting on something · 1 for your decision\.$/);
+  const e = await buildFeed(readOnlyDb({}), { now: NOW, env: {} });
+  assert.strictEqual(e.summary, 'Nothing needs a person right now.'); assert.deepStrictEqual(e.counts, { now: 0, waiting: 0, policy: 0 });
+  assert.match(summarize({ counts: { now: 2, waiting: 0, policy: 0 }, by_specialist: { Emma: 2 }, capped: ['ap_invoices'] }), /^2\+ need you now/);
+});
+
+check('failure semantics: an unanswered source is reported, never counted as clear', async () => {
+  const f = await buildFeed(readOnlyDb(world(), { fail: ['acc_decisions', 'manager_wakes'] }), { now: NOW, env: {} });
+  assert.ok(f.section_errors.acc && f.section_errors.wakes);
+  assert.strictEqual(f.routine_24h, null);
+  assert.ok(f.lanes.now.some((i) => i.kind === 'ap_invoice'), 'other sources still shown');
+});
+
+check('community scope keeps that community plus unidentified rows', async () => {
   const f = await buildFeed(readOnlyDb(world()), { communityId: C1, now: NOW, env: {} });
-  const keys = [...f.needs, ...f.more].map((i) => i.key);
-  assert.ok(keys.includes('objective:o2'), 'unknown-community BLOCK stays visible');
-  assert.ok(!keys.includes('ap_exception:e2') && !keys.includes('acc_decision:a1'), 'other communities drop out');
+  const all = [...keysOf(f, 'now'), ...keysOf(f, 'waiting'), ...keysOf(f, 'policy')];
+  assert.ok(all.includes(`ap_exception:${u(20)}`) && !all.includes(`ap_exception:${u(21)}`));
 });
 
-check('detail drawer: objective timeline merged with the domain history; read-only', async () => {
+check('drawer carries the same exact destination; read-only', async () => {
   const db = readOnlyDb(world());
-  const d = await buildItem(db, 'objective:o1');
-  assert.strictEqual(d.title, 'Check coding: bill A-1 ($125.00)'); assert.strictEqual(d.specialist.name, 'Emma');
-  assert.deepStrictEqual([...new Set(d.timeline.map((t) => t.source))].sort(), ['objective', 'payables']);
-  assert.ok(d.timeline.some((t) => /approved/.test(t.text) && t.actor === 'Celina'), 'AP approval history comes from ap_invoice_approvals');
-  assert.ok(d.timeline.some((t) => t.source === 'objective'));
-  for (let i = 1; i < d.timeline.length; i += 1) assert.ok(String(d.timeline[i - 1].at) <= String(d.timeline[i].at), 'chronological');
-  assert.deepStrictEqual(d.actions, []); assert.strictEqual(d.model_calls, 0); assert.deepStrictEqual(d.link, { label: 'Open in Objectives', href: '/admin/objectives' });
-  const e = await buildItem(db, 'ap_exception:e2'); assert.match(e.facts[0], /readable copy/); assert.strictEqual(e.link.href, '/#tab=ap');
-  const b = await buildItem(db, 'board_packet:b1'); assert.strictEqual(b.specialist.name, 'Paige');
-  assert.strictEqual(await buildItem(db, 'acc_decision:nope'), null);
-  await assert.rejects(() => buildItem(db, "objective:o1'; drop table"), (x) => x.code === 'BAD_INPUT');
-  await assert.rejects(() => buildItem(db, 'payments:1'), (x) => x.code === 'BAD_INPUT', 'only known kinds');
+  const d = await buildItem(db, `ap_invoice:${u(1)}`);
+  assert.strictEqual(d.action.href, `/#tab=ap&invoice=${u(1)}`); assert.ok(d.facts.some((x) => /^Hold: On hold 2026-08-18/.test(x)));
+  assert.strictEqual((await buildItem(db, `acc_decision:${u(30)}`)).action.href, `/#tab=acc&decision=${u(30)}`);
+  assert.strictEqual((await buildItem(db, `ap_exception:${u(20)}`)).action.href, `/admin/ap?exception=${u(20)}`);
+  assert.deepStrictEqual(d.actions, []); assert.strictEqual(d.model_calls, 0);
+  await assert.rejects(() => buildItem(db, 'payments:1'), (x) => x.code === 'BAD_INPUT');
 });
 
-check('read-only by construction: feed code has no writes, no model, no mail; the API is GET-only and admin-gated', () => {
-  for (const f of ['lib/feed/build.js', 'api/feed.js']) {
+check('helpers: hold reason starts at "on hold"; inactive / demo communities leave the daily feed', () => {
+  assert.strictEqual(holdReason('Emma: loaded from email. ON HOLD (Issue #14): W-9 required.'), 'ON HOLD (Issue #14): W-9 required.');
+  assert.strictEqual(holdReason(''), 'On hold; the reason is not recorded on the bill.');
+  assert.strictEqual(activeFor({ management_status: 'terminating' }, 'acc'), false);
+  assert.strictEqual(activeFor({ management_status: 'active', financials_active: false }, 'ap'), false);
+  assert.strictEqual(activeFor({ management_status: 'active', is_demo: true }, 'ap'), false);
+  assert.strictEqual(activeFor(null, 'ap'), true, 'unidentified community still needs placing');
+});
+
+check('deep links: parse exact records, keep bare #tab=, fall back on missing/invalid ids', () => {
+  assert.deepStrictEqual(DL.parseTabHash('#tab=ap'), { tab: 'ap', record: null });
+  assert.deepStrictEqual(DL.parseTabHash('#tab=vantaca-imports'), { tab: 'vantaca-imports', record: null });
+  assert.deepStrictEqual(DL.parseTabHash(`#tab=ap&invoice=${u(1)}`), { tab: 'ap', record: { kind: 'invoice', id: u(1) } });
+  assert.deepStrictEqual(DL.parseTabHash(`#tab=acc&decision=${u(2).toUpperCase()}`), { tab: 'acc', record: { kind: 'decision', id: u(2) } });
+  assert.deepStrictEqual(DL.parseTabHash('#tab=ap&invoice=not-a-uuid'), { tab: 'ap', record: null }, 'invalid id -> just the tab');
+  assert.deepStrictEqual(DL.parseTabHash(`#tab=ap&decision=${u(3)}`), { tab: 'ap', record: null }, 'a key that does not belong to the tab is ignored');
+  assert.deepStrictEqual(DL.parseTabHash(`#tab=inspect&invoice=${u(3)}`), { tab: 'inspect', record: null });
+  assert.strictEqual(DL.parseTabHash(''), null); assert.strictEqual(DL.parseTabHash('#something'), null);
+  assert.strictEqual(DL.parseExceptionParam(`?exception=${u(4)}`), u(4));
+  assert.strictEqual(DL.parseExceptionParam(`?a=1&exception=${u(4)}&b=2`), u(4));
+  assert.strictEqual(DL.parseExceptionParam('?exception=<script>'), null);
+  assert.strictEqual(DL.parseExceptionParam(''), null);
+});
+
+check('pages wire the links as navigation only, with the old bare-tab path intact', () => {
+  const idx = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+  assert.ok(/<script src="\/app\/deeplink\.js"><\/script>/.test(idx));
+  assert.ok(/window\.TXDeepLink\.parseTabHash\(location\.hash\)/.test(idx) && /window\.apOpenInvoice\(rec\.id\)/.test(idx) && /setAccMode\('review'\); accOpenDetail\(rec\.id\)/.test(idx));
+  assert.ok(/match\(\/\^#tab=\(\[a-z0-9-\]\+\)\$\/i\)/.test(idx), 'fallback for a missing helper keeps the original bare-tab regex');
+  const ap = fs.readFileSync(path.join(__dirname, '..', 'public', 'ap-invoices.html'), 'utf8');
+  assert.ok(/<script src="\/app\/deeplink\.js"><\/script>/.test(ap) && /parseExceptionParam\(location\.search\)/.test(ap) && /focusExceptionFromUrl\(\);\n?\s*\}catch/.test(ap.replace(/\r/g, '')));
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'app', 'today.html'), 'utf8');
+  const feedJs = html.slice(html.indexOf('Operations Feed (Issue #29'), html.indexOf('var feedSeq'));
+  assert.ok(/Take action/.test(feedJs) && /Needs you now/.test(feedJs) && /Waiting on something/.test(feedJs) && /Policy \/ Ed decision/.test(feedJs));
+  assert.ok(!/TX\.post\(|<form|method="post"/i.test(feedJs), 'no write controls in the feed');
+});
+
+check('read-only by construction: no writes, no model or mail modules, GET-only admin API, board portal untouched', () => {
+  for (const f of ['lib/feed/build.js', 'api/feed.js', 'public/app/deeplink.js']) {
     const src = fs.readFileSync(path.join(__dirname, '..', f), 'utf8');
     assert.ok(!/\.(insert|update|upsert|delete)\(/.test(src), `${f} writes`);
     assert.ok(!/require\([^)]*(ai\/|anthropic|openai|graph_send|notifications|email)/.test(src), `${f} pulls a model or mail module`);
   }
   const api = fs.readFileSync(path.join(__dirname, '..', 'api', 'feed.js'), 'utf8');
-  assert.ok(!/router\.(post|put|patch|delete)\(/.test(api), 'GET routes only');
-  assert.strictEqual((api.match(/requireAdmin\(req, res\)/g) || []).length, 2, 'both routes admin-gated');
-  const board = fs.readFileSync(path.join(__dirname, '..', 'api', 'board_portal.js'), 'utf8');
-  assert.ok(!/lib\/feed/.test(board), 'board Ask Amanda does not read the staff feed');
-});
-
-check('Today renders the feed from the existing card (one surface, no competing card) with failure text', () => {
-  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'app', 'today.html'), 'utf8');
-  assert.strictEqual((html.match(/id="th-amanda"/g) || []).length, 1);
-  assert.ok(/TX\.get\('\/api\/feed' \+ q\)/.test(html) && /\/api\/feed\/item\?key=/.test(html));
-  assert.ok(!/\/api\/manager\/shadow/.test(html), 'the old shadow fetch is gone');
-  assert.ok(/Unavailable is not the same as clear/.test(html));
-  assert.ok(!/<form|method="post"|TX\.post\(/i.test(html.slice(html.indexOf('Operations Feed (Issue #29'), html.indexOf('var feedSeq'))), 'no write controls in the feed');
+  assert.ok(!/router\.(post|put|patch|delete)\(/.test(api));
+  assert.strictEqual((api.match(/requireAdmin\(req, res\)/g) || []).length, 2);
+  assert.ok(!/lib\/feed/.test(fs.readFileSync(path.join(__dirname, '..', 'api', 'board_portal.js'), 'utf8')));
 });
 
 (async () => {

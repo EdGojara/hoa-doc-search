@@ -338,6 +338,7 @@
      this script.
      ============================================================================= -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="/app/deeplink.js"></script>
 <script>
   // Global, set during init so the rest of the app can call window.supa
   window.supa = null;
@@ -33875,10 +33876,26 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
   // "view →" links open a module in a NEW browser tab without disturbing the
   // in-progress packet form in the original tab. Re-applied after a short delay
   // so it wins over any default-tab set during page init.
+  //
+  // Operations Feed 'Take action' (Issue #29): '#tab=ap&invoice=<uuid>' opens that
+  // bill's detail, '#tab=acc&decision=<uuid>' opens that ACC decision in review mode.
+  // Navigation only: the record opens through the page's own read path and every
+  // action stays behind its existing route. A missing/invalid id = just the tab.
   (function () {
+    let _lastRecord = null;
+    function _openRecord(rec) {
+      const key = rec.kind + ':' + rec.id;
+      if (_lastRecord === key) return;   // the handler runs at load, +400ms and on hashchange
+      _lastRecord = key;
+      try {
+        if (rec.kind === 'invoice' && typeof window.apOpenInvoice === 'function') window.apOpenInvoice(rec.id);
+        if (rec.kind === 'decision' && typeof accOpenDetail === 'function') { if (typeof setAccMode === 'function') setAccMode('review'); accOpenDetail(rec.id); }
+      } catch (e) { console.warn('[deeplink] could not open record', key, e && e.message); }
+    }
     function _openTabFromHash() {
-      const m = (location.hash || '').match(/^#tab=([a-z0-9-]+)$/i);
-      if (m && typeof switchTab === 'function') { try { switchTab(m[1]); } catch (_) {} }
+      const p = window.TXDeepLink ? window.TXDeepLink.parseTabHash(location.hash) : (function () { const m = (location.hash || '').match(/^#tab=([a-z0-9-]+)$/i); return m ? { tab: m[1], record: null } : null; })();
+      if (p && typeof switchTab === 'function') { try { switchTab(p.tab); } catch (_) {} }
+      if (p && p.record) _openRecord(p.record); else _lastRecord = null;
     }
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', () => { _openTabFromHash(); setTimeout(_openTabFromHash, 400); });
     else { _openTabFromHash(); setTimeout(_openTabFromHash, 400); }
