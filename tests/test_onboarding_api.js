@@ -38,7 +38,7 @@ function fakeService() {
     recognize: rec('recognize', (sys, cutoff, files) => files.map((x) => ({ filename: x.originalname, type: /GL/.test(x.originalname) ? 'gl_trial_balance' : null }))),
     decide: rec('decide', [{ id: 'd-1', event_key: 'je:x', choice: 'record_after_cutoff' }]),
     operate: rec('operate', (id) => ({ batch: id, stopped_at: 'activity_bridge', reason: 'needs_human', steps: [] })), waive: rec('waive', 'w-1'), advance: rec('advance', (actor, id, body) => { if (body.to === 'snapshot') throw new ServiceError(409, 'REFUSED_BY_DATABASE', 'stage advance refused: stage source_controls is FAIL; not waived: x'); return 'e-1'; }),
-    approve: rec('approve', () => { throw new Error('Supabase exploded with secret details'); }) };
+    approve: rec('approve', () => { throw new Error('Supabase exploded with secret details'); }), approveByHash: rec('approveByHash', 'appr-1') };
 }
 async function withServer(fn) {
   const service = fakeService();
@@ -77,6 +77,14 @@ check('a database refusal comes back as 409 with its reason; an unexpected error
   const a = await req('POST', '/batches/b1/approve', { user: 'owner', body: { completion_id: 'c', preflight: {} } });
   assert.strictEqual(a.status, 500);
   assert.strictEqual(a.json.error, require('../api/_safe_error').safeErrorMessage(new Error('Supabase exploded with secret details')), 'unexpected errors go through safeErrorMessage (repo convention)');
+}));
+check('approve with { completion_id, preflight_sha256 } goes to approveByHash (owner, small body); the full report is never needed', async () => withServer(async ({ req, service }) => {
+  const sha = 'a'.repeat(64);
+  const r = await req('POST', '/batches/b1/approve', { user: 'owner', body: { completion_id: 'c9', preflight_sha256: sha } });
+  assert.strictEqual(r.status, 200); assert.strictEqual(r.json.id, 'appr-1');
+  const call = service.calls.find((c) => c.name === 'approveByHash');
+  assert.ok(call && call.args[1] === 'b1' && call.args[2].completion_id === 'c9' && call.args[2].preflight_sha256 === sha && call.args[0].role === 'owner');
+  assert.ok(!service.calls.some((c) => c.name === 'approve'), 'the full-report path is not used');
 }));
 check('create validates fields; run passes only roles + authoritative; upload passes the file bytes and name', async () => withServer(async ({ req, service }) => {
   assert.strictEqual((await req('POST', '/batches', { user: 'admin', body: { community_id: 'c1' } })).status, 400);

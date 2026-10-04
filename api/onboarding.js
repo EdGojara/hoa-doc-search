@@ -22,7 +22,7 @@
 //   POST /batches/:id/run              run the CURRENT stage, 0-4 only (admin)
 //   POST /batches/:id/waivers          waive one open control (OWNER)
 //   POST /batches/:id/advance          advance one stage (OWNER)
-//   POST /batches/:id/approve          approve an exact preflight report (OWNER)
+//   POST /batches/:id/approve          approve the exact current preflight: { completion_id, preflight_sha256 } (OWNER)
 //   POST /batches/:id/execute          execute the approved preflight: { completion_id, preflight_sha256 } (OWNER)
 //   GET  /batches/:id/execution        execution records (committed / failed attempts; read-only)
 //
@@ -171,7 +171,14 @@ function buildRouter({ service, auth, listCommunities }) {
   });
 
   router.post('/batches/:id/approve', express.json({ limit: '1mb' }), async (req, res) => {
-    try { const o = await owner(req, res); if (!o) return; const b = req.body || {}; res.json({ id: await service.approve(o, req.params.id, { completion_id: b.completion_id, preflight: b.preflight }) }); }
+    // Preferred: { completion_id, preflight_sha256 }: the server rebuilds the report it recorded and
+    // approves only if that exact hash matches (small body). A full { preflight } report is still accepted.
+    try {
+      const o = await owner(req, res); if (!o) return; const b = req.body || {};
+      const id = b.preflight_sha256 ? await service.approveByHash(o, req.params.id, { completion_id: b.completion_id, preflight_sha256: b.preflight_sha256 })
+        : await service.approve(o, req.params.id, { completion_id: b.completion_id, preflight: b.preflight });
+      res.json({ id });
+    }
     catch (e) { fail(res, e, 'approve'); }
   });
 
