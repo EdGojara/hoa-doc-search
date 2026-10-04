@@ -1388,13 +1388,41 @@ router.post('/:id/send', express.json(), async (req, res) => {
     const ccList = String((req.body || {}).cc || '').split(/[,;]/).map((x) => x.trim()).filter((x) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(x)).join(', ');
     if (!body || !String(body).trim()) return res.status(400).json({ error: 'body_required' });
     const { data: m, error } = await supabase.from('email_messages')
-      .select('persona, sender_email, sender_name, body_preview, body_full, subject, classification, community_id, resolved_contact_id, resolved_property_id, resolved_vendor_id, mailbox, graph_id, conversation_id, received_at, extracted, community:community_id(name)')
+      .select('persona, sender_email, sender_name, body_preview, body_full, subject, classification, community_id, resolved_contact_id, resolved_property_id, resolved_vendor_id, mailbox, graph_id, internet_message_id, conversation_id, received_at, extracted, community:community_id(name)')
       .eq('id', req.params.id).maybeSingle();
     if (error) throw error;
     if (!m) return res.status(404).json({ error: 'not_found' });
     // Stored persona (content routing) wins over the mailbox picker, so a Kat /
     // Amanda / Reese reply sends from the right address in the right voice.
     const persona = req.body.persona || m.persona || personaFor(m);
+
+    // Amanda controlled send (Issue #29): a person must not double-send what Amanda already
+    // sent or is sending. The automatic-reply receipt decides; an UNVERIFIED receipt gets one
+    // fresh Sent Items check first, and only then the explicit confirmation path.
+    if (persona === 'amanda' && m.internet_message_id) {
+      const autoReply = require('../lib/amanda/auto_reply').getAutoReply();
+      let rcpt = null;
+      try { rcpt = await autoReply.receiptFor(m.internet_message_id); }
+      catch (e) { return res.status(503).json({ error: 'Could not check whether Amanda already replied. Nothing was sent; try again in a moment.', sent: false }); }
+      if (rcpt) {
+        const confirmed = !!(req.body && req.body.confirm_after_amanda === true);
+        const mayHaveSent = ['send_requested', 'unverified'].includes(rcpt.status) || (rcpt.status === 'failed' && rcpt.send_requested_at);
+        const preSend = ['claimed', 'draft_created', 'draft_ready'].includes(rcpt.status);
+        if (rcpt.status === 'sent') return res.status(409).json({ error: 'already_sent_by_amanda', message: `Amanda already replied automatically${rcpt.sent_at ? ' at ' + rcpt.sent_at : ''}. Nothing was sent.`, sent: false });
+        if (mayHaveSent) {
+          let v = 'unresolved';
+          try { v = await autoReply.verifyNow(rcpt); } catch (e) { console.warn('[email-triage] amanda receipt verification failed:', e.message); }
+          if (v === 'sent') return res.status(409).json({ error: 'already_sent_by_amanda', message: 'Amanda\'s automatic reply is in her Sent Items. Nothing was sent.', sent: false });
+          if (!confirmed) return res.status(409).json({ error: 'amanda_unverified_confirm_required', message: 'Amanda may already have replied (not found in her Sent Items yet). Check Amanda\'s Sent Items, then confirm to send anyway.', sent: false });
+        } else if (preSend) {
+          if (rcpt.lease_expires_at && Date.parse(rcpt.lease_expires_at) > Date.now()) return res.status(409).json({ error: 'amanda_sending', message: 'Amanda is sending this reply right now. Nothing was sent.', sent: false });
+          if (!confirmed) return res.status(409).json({ error: 'amanda_unverified_confirm_required', message: 'Amanda started an automatic reply that did not finish (nothing was sent by her). Confirm to send this one yourself.', sent: false });
+          const released = await autoReply.releaseToHuman(rcpt).catch(() => false);
+          if (!released) return res.status(409).json({ error: 'amanda_sending', message: 'Amanda is sending this reply right now. Nothing was sent.', sent: false });
+        }
+        // failed before send_requested: proven not sent by Amanda; the person may send.
+      }
+    }
     // No classification block on send: Ed reviews and approves every outgoing
     // reply himself (admin-only), and explicitly wants to reply to any email,
     // including internal/staff mail (the staff-interaction loop). The human gate

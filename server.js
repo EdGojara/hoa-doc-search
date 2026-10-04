@@ -11435,4 +11435,7 @@ httpServer.listen(3000, () => {
   // Issue #29: mail wakes agents by Graph push (off unless GRAPH_PUSH=on + secret + mailboxes).
   try { require('./lib/email/graph_push').startGraphPush(); }
   catch (e) { console.error('[graph_push] failed to start:', e.message); }
+  // Issue #29: finish or escalate any Amanda automatic-reply receipt left open by a crash/deploy.
+  try { require('./lib/amanda/auto_reply').startAutoReplyRecovery(); }
+  catch (e) { console.error('[amanda_auto_reply] boot sweep failed to start:', e.message); }
 });
