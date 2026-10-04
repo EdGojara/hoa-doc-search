@@ -421,6 +421,12 @@
       "prior": "sonnet-4-5",
       "legacy_env": "AMANDA_ASSIST_MODEL"
     },
+    "team.amanda_request": {
+      "model": "tier:standard",
+      "fallback": "sonnet-4-6",
+      "consequence": "standard",
+      "prior": null
+    },
     "team.attachment_vision": {
       "model": "tier:standard",
       "fallback": "sonnet-4-6",
