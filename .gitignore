@@ -39,3 +39,6 @@ tmp/
 
 # Visual QA harness output (scripts/visual_snapshot.js)
 visual-snapshots/
+
+# Media Studio V1 local project store (not a production record)
+data/media_studio/

@@ -115,6 +115,10 @@ check('production modes are outcomes, not vendors; instructional content is neve
 check('live calls refuse until access is probed and spend confirmed (no accidental render)', async () => {
   for (const a of CATALOG) await assert.rejects(() => a.submit({}), /RENDER_NOT_ENABLED|not enabled/);
 });
+check('plan() refuses anything that is not a valid ShotSpec (e.g. the frozen {spec, sha} wrapper), so nothing prices as NaN or skips the face rule', () => {
+  assert.throws(() => plan(freezeShotSpec(shot()), { mode: 'draft', adapters: CATALOG }), (e) => e.code === 'INVALID_SHOTSPEC');
+  assert.strictEqual(plan(freezeShotSpec(shot()).spec, { mode: 'hero_final', adapters: CATALOG }).status, 'no_eligible_renderer');
+});
 check('face reference: UNVERIFIED support is never eligible for normal identity routing, and never a silent fallback', () => {
   const ver = fake('verified', { rate: 0.40, quality: 'hero', face: 'verified_supported' });
   const unv = fake('unverified', { rate: 0.05, quality: 'hero', face: 'unverified' });

@@ -1,0 +1,240 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Media Studio — Bedrock</title>
+<style>
+  :root{
+    --navy:#0B1D34; --ink:#1a2230; --muted:#64748b; --line:#e3e8ef;
+    --paper:#eef1f5; --surface:#fff; --surface-2:#f7f9fb; --gold:#B8892B; --gold-bar:#D4AF37;
+    --good:#166b46; --good-bg:#e7f4ec; --warn:#9a5510; --warn-bg:#fbefe0;
+    --crit:#a5271d; --crit-bg:#fbe9e7; --accent:#1d4ed8; --info-bg:#e8eefc;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--paper);color:var(--ink);font-family:"Public Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;line-height:1.5;}
+  .wrap{max-width:1180px;margin:0 auto;padding:28px 16px 90px;}
+  .crumbs{font-size:13px;color:var(--muted);margin-bottom:2px;}
+  .crumbs a{color:var(--muted);text-decoration:none;} .crumbs a:hover{color:var(--navy);text-decoration:underline;}
+  .crumbs .sep{margin:0 7px;color:var(--line);} .crumbs .here{color:var(--navy);font-weight:700;}
+  h1{font-size:26px;font-weight:800;color:var(--navy);margin:6px 0 2px;letter-spacing:-.01em;}
+  h2{font-size:17px;font-weight:800;color:var(--navy);margin:22px 0 8px;}
+  h3{font-size:14.5px;font-weight:800;color:var(--navy);margin:0 0 4px;}
+  .sub{font-size:13.5px;color:var(--muted);margin:0 0 18px;max-width:78ch;}
+  .muted{color:var(--muted);} .small{font-size:12.5px;}
+  .card{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin-bottom:12px;}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:12px;}
+  .kind{cursor:pointer;text-align:left;font:inherit;color:inherit;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:16px;}
+  .kind:hover{border-color:var(--gold-bar);} .kind.on{border-color:var(--navy);box-shadow:0 0 0 2px var(--navy) inset;}
+  .kind b{display:block;color:var(--navy);font-size:15px;margin-bottom:4px;}
+  .btn{font:inherit;font-weight:700;font-size:13px;border-radius:8px;padding:7px 14px;cursor:pointer;border:1px solid var(--navy);background:var(--navy);color:#fff;}
+  .btn.ghost{background:#fff;color:var(--navy);} .btn.warn{background:#fff;color:var(--warn);border-color:var(--warn);} .btn:disabled{opacity:.5;cursor:default;}
+  .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;}
+  label{display:block;font-size:12.5px;font-weight:700;color:var(--navy);margin:10px 0 3px;}
+  input,textarea,select{font:inherit;font-size:13.5px;width:100%;padding:7px 10px;border:1px solid var(--line);border-radius:8px;background:#fff;color:var(--ink);}
+  textarea{min-height:64px;resize:vertical;}
+  .two{display:grid;grid-template-columns:1fr 1fr;gap:12px;} @media (max-width:640px){.two{grid-template-columns:1fr;}}
+  .badge{display:inline-block;font-size:11.5px;font-weight:800;border-radius:999px;padding:2px 9px;background:var(--surface-2);color:var(--muted);border:1px solid var(--line);white-space:nowrap;}
+  .b-approved,.b-planned{background:var(--good-bg);color:var(--good);border-color:transparent;}
+  .b-in_review,.b-proposed{background:var(--info-bg);color:var(--accent);border-color:transparent;}
+  .b-changes_requested,.b-needs_changes,.b-blocked,.b-no_eligible_renderer{background:var(--warn-bg);color:var(--warn);border-color:transparent;}
+  .b-non_generative{background:var(--surface-2);color:var(--navy);}
+  .b-engagement{background:#f1ecff;color:#5b3fb8;border-color:transparent;} .b-instructional{background:#e6f3f6;color:#17606f;border-color:transparent;} .b-brand{background:#fbf4e2;color:var(--gold);border-color:transparent;}
+  .steps{display:flex;gap:6px;flex-wrap:wrap;margin:6px 0 14px;} .steps span{font-size:12px;font-weight:700;padding:4px 10px;border-radius:999px;background:var(--surface);border:1px solid var(--line);color:var(--muted);}
+  .steps span.done{background:var(--good-bg);color:var(--good);border-color:transparent;} .steps span.now{background:var(--navy);color:#fff;border-color:var(--navy);}
+  .scene{margin:16px 0 6px;} .scene .p{font-size:13px;color:var(--muted);}
+  .shots{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:10px;}
+  .shot{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:12px 14px;}
+  .shot .meta{display:flex;gap:6px;flex-wrap:wrap;margin:4px 0 8px;}
+  .shot .line{font-size:13px;margin:3px 0;} .shot .line b{color:var(--navy);font-weight:700;}
+  .shot q{font-style:italic;}
+  details.adv{margin-top:8px;font-size:12.5px;} details.adv summary{cursor:pointer;color:var(--muted);font-weight:700;}
+  table{width:100%;border-collapse:collapse;font-size:13px;} th,td{text-align:left;padding:7px 8px;border-bottom:1px solid var(--line);vertical-align:top;} th{font-size:12px;color:var(--muted);}
+  .tablewrap{overflow-x:auto;}
+  .num{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums;}
+  .note{background:var(--info-bg);color:#1e3a8a;border-radius:10px;padding:10px 12px;font-size:13px;margin:8px 0;}
+  .wbox{background:var(--warn-bg);color:var(--warn);border-radius:10px;padding:10px 12px;font-size:13px;margin:8px 0;}
+  #err{display:none;background:var(--crit-bg);color:var(--crit);border-radius:10px;padding:10px 12px;margin:10px 0;font-size:13.5px;}
+  .list a{color:var(--navy);font-weight:700;text-decoration:none;} .list a:hover{text-decoration:underline;}
+  .sticky{position:sticky;bottom:0;background:var(--paper);padding:10px 0;border-top:1px solid var(--line);margin-top:16px;}
+  @media (max-width:640px){.sticky{position:static;}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="crumbs"><a href="/admin/systems">Systems Admin</a><span class="sep">/</span><a href="/admin/media-studio">Media Studio</a><span class="sep" id="crumbSep" hidden>/</span><span class="here" id="crumbHere"></span></div>
+  <h1 id="title">Media Studio</h1>
+  <p class="sub" id="subtitle">Tell us what you want to make. Amanda proposes the treatment, script and storyboard; you review and approve. Renderers are chosen automatically when a shot is planned, so nothing here is tied to one tool. Live generation is off in this build.</p>
+  <div id="err"></div>
+  <div id="app"><div class="card muted">Loading…</div></div>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+let af = (u, o) => fetch(u, o);
+let OPT = null, P = null, PLAN = null, NEWKIND = null;
+const $ = (id) => document.getElementById(id);
+function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g,(c)=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+const badge = (s, label) => s ? `<span class="badge b-${esc(s)}">${esc(label || String(s).replace(/_/g,' '))}</span>` : '';
+const money = (n) => n == null ? '—' : '$' + Number(n).toFixed(2);
+const secs = (n) => n >= 60 ? `${Math.floor(n/60)}m ${n%60 ? (n%60)+'s' : ''}`.trim() : `${n}s`;
+function showErr(m){ const e=$('err'); e.innerHTML=m||''; e.style.display=m?'block':'none'; }
+async function api(u, o){
+  const r = await af(u, o); const j = await r.json().catch(()=>({}));
+  if (!r.ok) { const e = new Error(j.error || ('HTTP '+r.status)); e.code = j.code; e.errors = j.errors; throw e; }
+  return j;
+}
+const send = (method, u, body) => api(u, { method, headers:{'Content-Type':'application/json'}, body: JSON.stringify(body||{}) });
+async function act(fn){ try { showErr(''); await fn(); } catch(e){ showErr(esc(e.message) + (e.errors && e.errors.length > 1 ? '<br>' + e.errors.slice(1,5).map(esc).join('<br>') : '')); } }
+function crumb(t){ $('crumbSep').hidden = !t; $('crumbHere').textContent = t || ''; }
+
+// ── home: projects + "What do you want to make?" ───────────────────────────
+async function home(){
+  P = null; PLAN = null; crumb(''); $('title').textContent = 'Media Studio'; history.replaceState(null, '', '/admin/media-studio');
+  const { projects } = await api('/api/media-studio/projects');
+  const kinds = Object.entries(OPT.kinds).map(([k,v]) => `<button class="kind${NEWKIND===k?' on':''}" onclick="pickKind('${k}')"><b>${esc(v.label)}</b><span class="small muted">${esc(v.blurb)}</span></button>`).join('');
+  const modes = Object.entries(OPT.production_modes).map(([k,v]) => `<option value="${k}">${esc(v)}</option>`).join('');
+  const form = NEWKIND ? `<div class="card"><h3>${esc(OPT.kinds[NEWKIND].label)}</h3>
+    <label for="nTitle">Title</label><input id="nTitle" maxlength="140" placeholder="e.g. Lifeguard safety seminar">
+    <label for="nBrief">What should the viewer know or do afterwards?</label><textarea id="nBrief" maxlength="4000" placeholder="One or two sentences in plain words."></textarea>
+    <div class="two"><div><label for="nAud">Who is it for?</label><input id="nAud" maxlength="300" placeholder="e.g. pool vendor lifeguards"></div>
+    <div><label for="nLen">Target length (seconds)</label><input id="nLen" type="number" min="10" max="1800" value="${OPT.kinds[NEWKIND].default_seconds}"></div></div>
+    <label for="nMode">Production mode</label><select id="nMode">${modes}</select>
+    <div class="row" style="margin-top:12px"><button class="btn" onclick="createProject()">Create project</button><button class="btn ghost" onclick="pickKind(null)">Cancel</button></div></div>` : '';
+  const list = projects.length ? `<div class="card list"><table><thead><tr><th>Project</th><th>Kind</th><th>Status</th><th class="num">Length</th><th>Updated</th></tr></thead><tbody>${projects.map((p) =>
+    `<tr><td><a href="?p=${esc(p.id)}" onclick="event.preventDefault();openProject('${esc(p.id)}')">${esc(p.title)}</a></td><td>${esc((OPT.kinds[p.kind]||{}).label||p.kind)}</td><td>${badge(p.status)}</td><td class="num">${secs(p.target_seconds)}</td><td class="small muted">${esc(new Date(p.updated_at||p.created_at).toLocaleString())}</td></tr>`).join('')}</tbody></table></div>` : '<div class="card muted">No projects yet.</div>';
+  $('app').innerHTML = `<h2>What do you want to make?</h2><div class="grid">${kinds}</div>${form}<h2>Projects</h2>${list}`;
+  if (NEWKIND) $('nTitle').focus();
+}
+function pickKind(k){ NEWKIND = k; act(home); }
+function createProject(){ act(async () => {
+  const { project } = await send('POST', '/api/media-studio/projects', { kind: NEWKIND, title: $('nTitle').value, brief: $('nBrief').value, audience: $('nAud').value, target_seconds: Number($('nLen').value), production_mode: $('nMode').value });
+  NEWKIND = null; await openProject(project.id);
+}); }
+
+// ── project ─────────────────────────────────────────────────────────────────
+async function openProject(id){ await act(async () => { const { project } = await api('/api/media-studio/projects/' + id); PLAN = null; draw(project); history.replaceState(null, '', '?p=' + id); }); }
+function draw(project){
+  P = project; crumb(project.title); $('title').textContent = project.title;
+  const order = ['brief','proposed','in_review','approved'];
+  const at = project.status === 'changes_requested' ? 1 : order.indexOf(project.status);
+  const steps = ['Brief','Proposal','Review','Approved'].map((s,i) => `<span class="${i<at?'done':i===at?'now':''}">${s}</span>`).join('');
+  const modes = Object.entries(OPT.production_modes).map(([k,v]) => `<option value="${k}"${k===project.production_mode?' selected':''}>${esc(v)}</option>`).join('');
+  const head = `<div class="card"><div class="row" style="justify-content:space-between"><div>${badge(project.status)} <span class="small muted">${esc((OPT.kinds[project.kind]||{}).label)} · ${secs(project.target_seconds)} · for ${esc(project.audience||'the community')}</span></div>
+    <div class="row"><label for="pMode" style="margin:0">Mode</label><select id="pMode" style="width:auto" onchange="setMode(this.value)">${modes}</select></div></div>
+    <div class="steps">${steps}</div><div class="small"><b>Brief.</b> ${esc(project.brief)}</div>
+    ${project.status==='changes_requested' ? `<div class="wbox">Changes were requested. Edit the treatment or shots, then submit for review again.</div>` : ''}</div>`;
+  if (!project.proposal) {
+    $('app').innerHTML = head + `<div class="card"><h3>Amanda's proposal</h3><p class="small muted">Amanda drafts a treatment, script and storyboard from the brief. Instructional content is never written by her: those segments use your approved source material.</p>
+      <div class="row"><button class="btn" id="bDraft" onclick="propose('amanda')">Ask Amanda for a proposal</button><button class="btn ghost" onclick="propose('template')">Start from the standard outline</button><button class="btn ghost" onclick="act(home)">All projects</button></div></div>`;
+    return;
+  }
+  const pr = project.proposal, t = pr.treatment, locked = project.status === 'in_review' || project.status === 'approved';
+  const treat = `<div class="card"><div class="row" style="justify-content:space-between"><h3>Treatment</h3><span class="small muted">${pr.source==='amanda_draft'?'Drafted by Amanda':'Standard outline'}</span></div>
+    <label for="tLog">Logline</label><input id="tLog" value="${esc(t.logline)}"${locked?' disabled':''}>
+    <label for="tObj">Objective</label><textarea id="tObj"${locked?' disabled':''}>${esc(t.objective)}</textarea>
+    <div class="two"><div><label for="tAud">Audience</label><input id="tAud" value="${esc(t.audience)}"${locked?' disabled':''}></div><div><label for="tTone">Tone</label><input id="tTone" value="${esc(t.tone)}"${locked?' disabled':''}></div></div>
+    <div class="small muted" style="margin-top:8px">${(t.structure||[]).map(esc).join(' · ')}</div>
+    ${t.host_note ? `<div class="note">${esc(t.host_note)}</div>` : ''}
+    ${locked ? '' : `<div class="row" style="margin-top:8px"><button class="btn ghost" onclick="saveTreatment()">Save treatment</button></div>`}</div>`;
+  const rendererOpts = (sel) => `<option value="">Automatic (recommended)</option>` + OPT.renderers.map((r) => `<option value="${esc(r.id)}"${r.id===sel?' selected':''}>${esc(r.label)}</option>`).join('');
+  const shotCard = (s) => {
+    const pin = project.advanced.renderer_pins[s.shot_key] || '';
+    const gen = s.kind !== 'source_material';
+    return `<div class="shot" id="shot_${esc(s.shot_key)}"><div class="row" style="justify-content:space-between"><h3>${esc(s.title)}</h3>${badge(s.review)}</div>
+      <div class="meta">${badge(s.segment_class)} <span class="badge">${esc({generate:'generated shot',talking_head:'talking head',source_material:'approved source material'}[s.kind])}</span> <span class="badge">${secs(s.duration_seconds)}</span>${(s.cast||[]).length?` <span class="badge">cast: ${esc(s.cast.join(', ').replace(/_/g,' '))}</span>`:''}${s.requirements&&s.requirements.min_quality?` <span class="badge">min ${esc(s.requirements.min_quality)}</span>`:''}</div>
+      <div class="line"><b>Intent.</b> ${esc(s.intent)}</div>
+      ${s.framing||s.camera_move ? `<div class="line"><b>Camera.</b> ${esc([s.framing,s.camera_move].filter(Boolean).join(', '))}</div>` : ''}
+      ${s.action ? `<div class="line"><b>Action.</b> ${esc(s.action)}</div>` : ''}
+      ${s.dialogue ? `<div class="line"><b>Line.</b> <q>${esc(s.dialogue)}</q></div>` : ''}
+      ${s.notes ? `<div class="line small muted"><b>Note.</b> ${esc(s.notes)}</div>` : ''}
+      ${locked ? '' : `<div class="row" style="margin-top:8px"><button class="btn ghost" onclick="editShot('${esc(s.shot_key)}')">Edit</button><button class="btn ghost" onclick="shotReview('${esc(s.shot_key)}','approved')">Looks good</button><button class="btn warn" onclick="shotReview('${esc(s.shot_key)}','needs_changes')">Needs changes</button></div>`}
+      ${gen && !locked ? `<details class="adv"${pin?' open':''}><summary>Advanced</summary><label for="pin_${esc(s.shot_key)}">Renderer override</label><select id="pin_${esc(s.shot_key)}" onchange="setPin('${esc(s.shot_key)}', this.value)">${rendererOpts(pin)}</select><div class="muted" style="margin-top:4px">Leave on Automatic. An override only narrows the choice; it cannot skip a requirement such as verified face-reference support.</div></details>` : (pin ? `<div class="small muted">Renderer override set.</div>` : '')}
+    </div>`;
+  };
+  const board = pr.storyboard.scenes.map((sc) => `<div class="scene"><h3>${esc(sc.title)}</h3><div class="p">${esc(sc.purpose||'')}</div></div><div class="shots">${sc.shots.map(shotCard).join('')}</div>`).join('');
+  const reviewBar = `<div class="sticky row">
+    ${['proposed','changes_requested'].includes(project.status) ? `<button class="btn" onclick="reviewAct('submit')">Submit for review</button><button class="btn ghost" onclick="propose('amanda')">Ask Amanda to redraft</button>` : ''}
+    ${project.status==='in_review' ? `<button class="btn" onclick="reviewAct('approve')">Approve proposal</button><button class="btn warn" onclick="reviewAct('request_changes')">Request changes</button>` : ''}
+    ${project.status==='approved' ? `<button class="btn ghost" onclick="reviewAct('reopen')">Reopen for edits</button>` : ''}
+    <button class="btn ghost" onclick="loadPlan()">Estimate routing &amp; cost</button>
+    <button class="btn" disabled title="Live generation is off in this build">Render (off)</button>
+    <button class="btn ghost" onclick="act(home)">All projects</button>
+    <span class="small muted">Proposal ${esc((project.proposal_sha256||'').slice(0,10))}${project.approved_sha256?' · approved':''}</span></div>`;
+  $('app').innerHTML = head + treat + `<h2>Storyboard</h2>` + board + `<div id="plan">${PLAN ? planHtml(PLAN) : ''}</div>` + reviewBar;
+}
+
+function propose(draft){ act(async () => {
+  const b = $('bDraft'); if (b) { b.disabled = true; b.textContent = 'Amanda is drafting…'; }
+  const j = await send('POST', `/api/media-studio/projects/${P.id}/propose`, { draft });
+  PLAN = null; draw(j.project); if (j.fallback_reason) showErr(esc(j.fallback_reason));
+}); }
+function setMode(m){ act(async () => { const j = await send('PATCH', `/api/media-studio/projects/${P.id}`, { production_mode: m }); draw(j.project); if (PLAN) await loadPlan(); }); }
+function saveTreatment(){ act(async () => { const j = await send('PATCH', `/api/media-studio/projects/${P.id}`, { treatment: { logline: $('tLog').value, objective: $('tObj').value, audience: $('tAud').value, tone: $('tTone').value } }); draw(j.project); }); }
+function shotReview(k, state){ act(async () => {
+  const note = state === 'needs_changes' ? prompt('What should change?') : null;
+  if (state === 'needs_changes' && note === null) return;
+  const j = await send('POST', `/api/media-studio/projects/${P.id}/shots/${k}/review`, { state, note }); draw(j.project);
+}); }
+function setPin(k, v){ act(async () => { const j = await send('PUT', `/api/media-studio/projects/${P.id}/shots/${k}/pin`, { renderer: v || null }); draw(j.project); if (PLAN) await loadPlan(); }); }
+function editShot(k){
+  const s = P.proposal.storyboard.scenes.flatMap((sc) => sc.shots).find((x) => x.shot_key === k);
+  const el = $('shot_' + k); const instr = s.segment_class === 'instructional';
+  el.innerHTML = `<h3>Edit shot</h3>
+    <label>Title</label><input id="e_title" value="${esc(s.title)}">
+    <label>Intent</label><textarea id="e_intent">${esc(s.intent)}</textarea>
+    ${instr ? '<div class="note">Instructional: this shot uses approved source material and is never generated.</div>' : `
+    <div class="two"><div><label>Framing</label><input id="e_framing" value="${esc(s.framing||'')}"></div><div><label>Camera move</label><input id="e_move" value="${esc(s.camera_move||'')}"></div></div>
+    <label>Action</label><textarea id="e_action">${esc(s.action||'')}</textarea>
+    <label>Line (leave blank for no dialogue)</label><textarea id="e_dialogue">${esc(s.dialogue||'')}</textarea>`}
+    <div class="two"><div><label>Seconds</label><input id="e_secs" type="number" min="1" max="600" value="${s.duration_seconds}"></div>
+    <div><label>Minimum quality</label><select id="e_q"><option value="">Project mode decides</option>${['draft','standard','hero'].map((q)=>`<option${s.requirements&&s.requirements.min_quality===q?' selected':''}>${q}</option>`).join('')}</select></div></div>
+    <div class="row" style="margin-top:10px"><button class="btn" onclick="saveShot('${esc(k)}', ${instr})">Save</button><button class="btn ghost" onclick="draw(P)">Cancel</button></div>`;
+}
+function saveShot(k, instr){ act(async () => {
+  const body = { title: $('e_title').value, intent: $('e_intent').value, duration_seconds: Number($('e_secs').value), requirements: { min_quality: $('e_q').value || null } };
+  if (!instr) Object.assign(body, { framing: $('e_framing').value, camera_move: $('e_move').value, action: $('e_action').value, dialogue: $('e_dialogue').value });
+  const j = await send('PATCH', `/api/media-studio/projects/${P.id}/shots/${k}`, body); draw(j.project); if (PLAN) await loadPlan();
+}); }
+function reviewAct(action){ act(async () => {
+  const note = action === 'request_changes' ? prompt('What should change?') : null;
+  if (action === 'request_changes' && note === null) return;
+  try { const j = await send('POST', `/api/media-studio/projects/${P.id}/review`, { action, proposal_sha256: P.proposal_sha256, note }); draw(j.project); }
+  catch(e){ if (e.code === 'STALE') { await openProject(P.id); } throw e; }
+}); }
+
+// ── dry-run routing + cost preview ──────────────────────────────────────────
+async function loadPlan(){ await act(async () => { $('plan').innerHTML = '<div class="card muted">Estimating…</div>'; PLAN = await api(`/api/media-studio/projects/${P.id}/plan`); $('plan').innerHTML = planHtml(PLAN); $('plan').scrollIntoView({ behavior:'smooth', block:'start' }); }); }
+function planHtml(r){
+  const t = r.totals;
+  const rows = r.shots.map((s) => `<tr><td><b>${esc(s.title)}</b><div class="small muted">${esc(s.mode.replace(/_/g,' '))}${s.pinned?' · override set':''}</div></td><td>${badge(s.status)}</td>
+    <td>${s.route ? `${esc(s.route.renderer)}<div class="small muted">${esc(s.route.resolution)} · ${esc(s.route.quality)} quality${s.fallbacks&&s.fallbacks.length?` · ${s.fallbacks.length} fallback${s.fallbacks.length>1?'s':''}`:''}</div>` : `<span class="small">${esc(s.explanation||'')}</span>`}
+      ${(s.warnings||[]).map((w)=>`<div class="small" style="color:var(--warn)">${esc(w)}</div>`).join('')}
+      ${s.rejected && s.rejected.length ? `<details class="adv"><summary>Why not the others (${s.rejected.length})</summary>${s.rejected.map((x)=>`<div>${esc(x.renderer)}: ${esc(x.reasons.join('; '))}</div>`).join('')}</details>` : ''}</td>
+    <td class="num">${money(s.estimate_usd)}</td></tr>`).join('');
+  return `<h2>Estimated routing &amp; cost</h2><div class="card">
+    <div class="note">${esc(r.estimate_note)} Routes shown are today's best fit and can change as renderers are added or verified.</div>
+    <div class="row small" style="margin:6px 0 10px">${badge('planned', t.planned+' planned')} ${t.non_generative?badge('non_generative', t.non_generative+' source material'):''} ${t.blocked?badge('blocked', t.blocked+' not plannable yet'):''} <b style="margin-left:auto">Estimated generation: ${money(t.estimated_usd)}</b></div>
+    ${t.blocked ? `<div class="wbox">${t.blocked} shot${t.blocked>1?'s are':' is'} not plannable yet. Each one says why below. A shot that shows a character needs support we have verified ourselves (a verified face reference, or a consented avatar for a talking head); that evidence comes from our own acceptance testing, never from vendor claims.</div>` : ''}
+    <div class="tablewrap"><table><thead><tr><th>Shot</th><th>Status</th><th>Estimated route</th><th class="num">Estimate</th></tr></thead><tbody>${rows}</tbody></table></div>
+    <div class="small muted" style="margin-top:6px">Mode: ${esc(OPT.production_modes[r.production_mode]||r.production_mode)} · proposal ${esc(r.proposal_sha256.slice(0,10))}</div></div>`;
+}
+
+(async function boot(){
+  try {
+    const cfg = await (await fetch('/api/auth/config')).json();
+    if (cfg && cfg.enabled && window.supabase && cfg.supabase_url && cfg.supabase_anon_key){
+      const supa = window.supabase.createClient(cfg.supabase_url, cfg.supabase_anon_key);
+      af = async (u,o)=>{ o=o||{}; const h=Object.assign({}, o.headers||{});
+        try{ const s=(await supa.auth.getSession()).data.session; if(s&&s.access_token) h.Authorization='Bearer '+s.access_token; }catch(_){}
+        return fetch(u, Object.assign({}, o, { headers:h })); };
+    }
+  } catch(_){}
+  try {
+    OPT = await api('/api/media-studio/options');
+    const id = new URLSearchParams(location.search).get('p');
+    if (id) await openProject(id); else await home();
+  } catch(e){ $('app').innerHTML = ''; showErr(/owner|403|forbidden/i.test(e.message) ? 'This page is limited to the account owner. Sign in to trustEd as the owner, then reload.' : 'Could not load Media Studio: ' + esc(e.message)); }
+})();
+</script>
+</body>
+</html>

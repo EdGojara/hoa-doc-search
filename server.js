@@ -1171,6 +1171,10 @@ app.get('/admin/voices', (req, res) => {
 app.get('/admin/characters', (req, res) => {
   res.sendFile(require('path').join(__dirname, 'public', 'characters-admin.html'));
 });
+// Media Studio (Issue #10). Owner-only page; every /api/media-studio route is owner-gated server-side.
+app.get('/admin/media-studio', (req, res) => {
+  res.sendFile(require('path').join(__dirname, 'public', 'media-studio.html'));
+});
 // Onboarding Engine (Issue #15). Admin page; every /api/onboarding write is
 // admin- or owner-gated server-side and goes through the guarded SQL functions.
 app.get('/admin/onboarding', (req, res) => {
@@ -1834,6 +1838,8 @@ const { router: charactersRouter } = require('./api/characters');
 app.use('/api/characters', charactersRouter);
 // Trusted Onboarding Engine (Issue #15, Milestone 2): persisted, staged, gated.
 app.use('/api/onboarding', require('./api/onboarding').router);
+// Media Studio V1 (Issue #10): owner-only projects, proposal, storyboard, dry-run routing. No generation.
+app.use('/api/media-studio', require('./api/media_studio').router);
 
 const { router: w9Router } = require('./api/w9');
 app.use('/api/w9', w9Router);

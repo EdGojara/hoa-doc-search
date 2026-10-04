@@ -797,6 +797,12 @@
       "consequence": "standard",
       "prior": "sonnet-4-5"
     },
+    "media.proposal": {
+      "model": "tier:standard",
+      "fallback": "sonnet-4-6",
+      "consequence": "standard",
+      "prior": null
+    },
     "newsletters.generate": {
       "model": "tier:standard",
       "fallback": "sonnet-4-6",
