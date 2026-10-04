@@ -201,6 +201,8 @@ check('pages wire the links as navigation only, with the old bare-tab path intac
   assert.ok(/match\(\/\^#tab=\(\[a-z0-9-\]\+\)\$\/i\)/.test(idx), 'fallback for a missing helper keeps the original bare-tab regex');
   const ap = fs.readFileSync(path.join(__dirname, '..', 'public', 'ap-invoices.html'), 'utf8');
   assert.ok(/<script src="\/app\/deeplink\.js"><\/script>/.test(ap) && /parseExceptionParam\(location\.search\)/.test(ap) && /focusExceptionFromUrl\(\);\n?\s*\}catch/.test(ap.replace(/\r/g, '')));
+  // the highlighted row stays in view while later sections above it load (live finding 2026-10-04), and yields to the user
+  assert.ok(ap.includes('function keepExceptionInView(card)') && ap.includes('new ResizeObserver') && ap.includes("['wheel','touchstart','keydown','mousedown']") && ap.includes('setTimeout(stop,5000)'));
   const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'app', 'today.html'), 'utf8');
   const feedJs = html.slice(html.indexOf('Operations Feed (Issue #29'), html.indexOf('var feedSeq'));
   assert.ok(/Take action/.test(feedJs) && /Needs you now/.test(feedJs) && /Waiting on something/.test(feedJs) && /Policy \/ Ed decision/.test(feedJs));
