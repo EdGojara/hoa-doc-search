@@ -33,7 +33,7 @@ const reset = () => Object.assign(calls, { classify: 0, fileMessage: 0, graphFet
 
 const { ingestMailbox } = require('../lib/email/graph_ingest');
 const GP = require('../lib/email/graph_push');
-const { createGraphPush, resolveRegistry, keyFor, clientStateFor } = GP;
+const { createGraphPush, resolveRegistry, keyFor, clientStateFor, staleReason } = GP;
 const router = require('../api/graph_push');
 
 const SECRET = 'x'.repeat(48);
@@ -60,7 +60,12 @@ function push(over = {}) {
 }
 const note = (cs, extra = {}) => ({ value: [{ subscriptionId: 'sub1', changeType: 'created', clientState: cs, resource: 'Users/guid/Messages/abc', ...extra }] });
 const goodCs = clientStateFor(SECRET, AMANDA);
-const KEY = keyFor(AMANDA);
+const KEY = keyFor(AMANDA, SECRET);
+const NOTIFY = `https://app.bedrocktxai.com/api/graph/mail/notify/${KEY}`;
+const LIFE = `https://app.bedrocktxai.com/api/graph/mail/lifecycle/${KEY}`;
+const RES = "users/amandaalbright@bedrocktx.com/mailFolders('inbox')/messages";
+// A subscription exactly as we would have created it (what Graph returns for a current one).
+const ourSub = (id, exp, over = {}) => ({ id, notificationUrl: NOTIFY, lifecycleNotificationUrl: LIFE, resource: RES, changeType: 'created', clientState: goodCs, expirationDateTime: exp, ...over });
 function fakeRes() { const r = { code: null, type_: null, body: undefined, ended: false, status(c) { r.code = c; return r; }, type(t) { r.type_ = t; return r; }, send(b) { r.body = b; r.ended = true; return r; }, end() { r.ended = true; return r; } }; return r; }
 
 // ---- registry ----
@@ -159,10 +164,9 @@ check('BOOT with no subscription creates exactly one, with the right body; RESTA
 });
 
 check('RENEW near expiry; DEDUPE extras from a deploy overlap (keep latest); RECREATE when renewal 404s; other apps\' subscriptions untouched', async () => {
-  const url = `https://app.bedrocktxai.com/api/graph/mail/notify/${KEY}`;
   const g = fakeGraph([
-    { id: 'old', notificationUrl: url, expirationDateTime: '2026-10-05T01:00:00Z' },
-    { id: 'older', notificationUrl: url, expirationDateTime: '2026-10-04T22:00:00Z' },
+    ourSub('old', '2026-10-05T01:00:00Z'),
+    ourSub('older', '2026-10-04T22:00:00Z'),
     { id: 'foreign', notificationUrl: 'https://elsewhere.example/hook', expirationDateTime: '2026-10-04T21:00:00Z' }]);
   const a = push({ graph: g });
   const r = await a.p.ensureSubscription(AMANDA);
@@ -172,6 +176,49 @@ check('RENEW near expiry; DEDUPE extras from a deploy overlap (keep latest); REC
   g.renew404 = true; g.subs.find((s) => s.id === 'old').expirationDateTime = '2026-10-04T21:00:00Z';
   const r2 = await a.p.ensureSubscription(AMANDA);
   assert.strictEqual(r2.action, 'created', 'renewal 404 -> recreate');
+});
+
+check('SECRET ROTATION recreates instead of keeping: old-secret subscription is deleted as stale and a new one carries the new clientState and URL', async () => {
+  const OLD = 'o'.repeat(48);
+  const oldKey = keyFor(AMANDA, OLD);
+  const oldSub = { id: 'pre', notificationUrl: `https://app.bedrocktxai.com/api/graph/mail/notify/${oldKey}`, lifecycleNotificationUrl: `https://app.bedrocktxai.com/api/graph/mail/lifecycle/${oldKey}`,
+    resource: RES, changeType: 'created', clientState: clientStateFor(OLD, AMANDA), expirationDateTime: '2026-10-07T00:00:00Z' };
+  assert.notStrictEqual(oldKey, KEY, 'rotating the secret changes the callback key');
+  const g = fakeGraph([oldSub]); const a = push({ graph: g });     // running with the NEW secret
+  const r = await a.p.ensureSubscription(AMANDA);
+  assert.deepStrictEqual(g.removed, ['pre'], 'the old-secret subscription is not kept'); assert.strictEqual(r.action, 'created');
+  assert.strictEqual(g.created[0].clientState, goodCs); assert.strictEqual(g.created[0].notificationUrl, NOTIFY);
+  assert.deepStrictEqual(a.sb.rows.map((x) => [x.summary.action, x.summary.reason]), [['deleted_stale', 'notification_url'], ['created', undefined]]);
+  // Even if Graph's list hides clientState, the URL fingerprint still catches the rotation.
+  const g2 = fakeGraph([{ ...oldSub, id: 'pre2', clientState: null }]); const b = push({ graph: g2 });
+  await b.p.ensureSubscription(AMANDA);
+  assert.deepStrictEqual(g2.removed, ['pre2']); assert.strictEqual(g2.created.length, 1);
+  // And a notification still signed with the OLD clientState is rejected (no ingest).
+  b.p.handleNotifications(KEY, note(clientStateFor(OLD, AMANDA))); await tick(); assert.strictEqual(b.ing.calls.length, 0);
+});
+
+check('STALE CONFIG on our exact callback (clientState, resource, changeType, lifecycle URL) is deleted and recreated; a matching one with fields Graph omits is kept (no churn)', async () => {
+  const cases = [['client_state', { clientState: 'stale-client-state' }], ['resource', { resource: "users/amandaalbright@bedrocktx.com/messages" }],
+    ['change_type', { changeType: 'created,updated' }], ['lifecycle_url', { lifecycleNotificationUrl: 'https://app.bedrocktxai.com/api/graph/mail/lifecycle/0000000000000000' }]];
+  for (const [reason, over] of cases) {
+    const s = ourSub('x', '2026-10-07T00:00:00Z', over);
+    assert.strictEqual(staleReason(s, push().p.entries()[0]), reason, reason);
+    const g = fakeGraph([s]); const a = push({ graph: g });
+    const r = await a.p.ensureSubscription(AMANDA);
+    assert.deepStrictEqual(g.removed, ['x'], reason); assert.strictEqual(r.action, 'created', reason);
+    assert.strictEqual(a.sb.rows[0].summary.reason, reason);
+  }
+  // Graph omitting clientState / lifecycle URL, or returning the resource in another case, is still current.
+  const g = fakeGraph([ourSub('ok', '2026-10-07T00:00:00Z', { clientState: null, lifecycleNotificationUrl: undefined, resource: RES.toUpperCase(), changeType: 'Created' })]);
+  const a = push({ graph: g }); const r = await a.p.ensureSubscription(AMANDA);
+  assert.strictEqual(r.action, 'kept'); assert.deepStrictEqual(g.removed, []); assert.strictEqual(g.created.length, 0);
+  // Stale for ANOTHER mailbox of ours, and other apps' subscriptions, are left alone by this mailbox's pass.
+  const infoKey = keyFor('info@bedrocktx.com', SECRET);
+  const g3 = fakeGraph([ourSub('mine', '2026-10-07T00:00:00Z'),
+    { id: 'info', notificationUrl: `https://app.bedrocktxai.com/api/graph/mail/notify/${infoKey}`, resource: "users/info@bedrocktx.com/mailFolders('inbox')/messages", changeType: 'created', expirationDateTime: '2026-10-07T00:00:00Z' },
+    { id: 'foreign', notificationUrl: 'https://elsewhere.example/hook', resource: RES, changeType: 'updated', expirationDateTime: '2026-10-07T00:00:00Z' }]);
+  await push({ graph: g3 }).p.ensureSubscription(AMANDA);
+  assert.deepStrictEqual(g3.removed, [], 'nothing outside this mailbox registration is touched');
 });
 
 check('CREATE FAILURE retries at 2 / 10 / 30 minutes, then waits for recovery; each failure is recorded', async () => {
@@ -186,8 +233,7 @@ check('CREATE FAILURE retries at 2 / 10 / 30 minutes, then waits for recovery; e
 });
 
 check('LIFECYCLE events: reauthorizationRequired renews, subscriptionRemoved recreates, missed runs one catch-up ingest; bad clientState ignored', async () => {
-  const url = `https://app.bedrocktxai.com/api/graph/mail/notify/${KEY}`;
-  const g = fakeGraph([{ id: 's1', notificationUrl: url, expirationDateTime: '2026-10-07T00:00:00Z' }]);
+  const g = fakeGraph([ourSub('s1', '2026-10-07T00:00:00Z')]);
   const a = push({ graph: g });
   a.p.handleLifecycle(KEY, { value: [{ lifecycleEvent: 'reauthorizationRequired', clientState: goodCs }] }); await tick(); await tick();
   assert.deepStrictEqual(g.renewed, ['s1'], 'renewed even though not near expiry');
@@ -205,8 +251,7 @@ check('RECOVERY is low-frequency (default 6h, floor 1h) and an empty pass record
     delete process.env.GRAPH_PUSH_RECOVERY_HOURS; assert.strictEqual(GP.recoveryMs(), 6 * 3600e3);
     process.env.GRAPH_PUSH_RECOVERY_HOURS = '0.01'; assert.strictEqual(GP.recoveryMs(), 3600e3, 'never faster than hourly');
   } finally { if (saved === undefined) delete process.env.GRAPH_PUSH_RECOVERY_HOURS; else process.env.GRAPH_PUSH_RECOVERY_HOURS = saved; }
-  const url = `https://app.bedrocktxai.com/api/graph/mail/notify/${KEY}`;
-  const a = push({ graph: fakeGraph([{ id: 's1', notificationUrl: url, expirationDateTime: '2026-10-07T00:00:00Z' }]) });
+  const a = push({ graph: fakeGraph([ourSub('s1', '2026-10-07T00:00:00Z')]) });
   await a.p.recover('recovery');
   assert.strictEqual(a.ing.calls.length, 1); assert.strictEqual(a.ing.calls[0][1].fileBacklog, false);
   assert.strictEqual(a.sb.rows.length, 0, 'kept subscription + empty catch-up = no rows');
