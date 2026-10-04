@@ -90,14 +90,82 @@ check('intent screen: decisions / work / questions; "send me" is a question, not
   assert.strictEqual(screenIntent('Mrs. Smith says she already submitted her ACC application. See what is going on.').intent, null, 'left to the single model call');
 });
 
-check('QUERY: "what still needs me today?" answers from state with ONE model call and creates nothing', async () => {
-  const d = db(); const m = model({ intent: 'query', reply: 'Three things need you — the Gexa bill and two ACC cases.', plan: [], specialists: ['emma'] });
-  const r = await ask(d, m, { text: 'Amanda, what still needs me today?' });
+check('QUERY (broader question) answers from state with ONE model call and creates nothing', async () => {
+  const d = db(); const m = model({ intent: 'query', reply: 'The Gexa bill is late because nobody approved it — Emma has it.', plan: [], specialists: ['emma'] });
+  const r = await ask(d, m, { text: 'Why is the Gexa bill late?' });
   assert.strictEqual(r.intent, 'query'); assert.strictEqual(r.model_calls, 1); assert.strictEqual(m.calls, 1);
   assert.strictEqual(r.durable, false); assert.strictEqual(r.objective, null);
   assert.strictEqual(d.writes.length, 0, 'a question writes nothing');
   assert.ok(!/—/.test(r.reply), 'no em-dashes');
   assert.match(m.prompts[0], /CURRENT STATE \(from trustEd records/); assert.match(m.prompts[0], /You PROPOSE/);
+  assert.match(m.prompts[0], /Never write as if the work is underway or promised/); assert.match(m.prompts[0], /Copy any count exactly/);
+});
+
+// A feed with known lanes: now 3 (Emma 2, Annie 1), waiting 1, policy 1 (the W-9 hold).
+const statusWorld = () => ({
+  objectives: [
+    { id: u(81), title: 'Past due: Gexa Energy', status: 'open', autonomy_class: 'REVIEW', priority: 'high', next_action: 'Approve in Payables', domain: 'ap', subject_key: 'amanda_request:a:1', accountable_persona: 'amanda', community_id: CG, opened_at: '2026-10-01T00:00:00Z', last_activity_at: '2026-10-01T00:00:00Z' },
+    { id: u(82), title: 'New payee: Sky High', status: 'open', autonomy_class: 'REVIEW', priority: 'normal', next_action: 'Check W-9', domain: 'ap', subject_key: 'amanda_request:a:2', accountable_persona: 'amanda', community_id: CG, opened_at: '2026-10-02T00:00:00Z', last_activity_at: '2026-10-02T00:00:00Z' },
+    { id: u(83), title: 'ACC: Driveway extension', status: 'open', autonomy_class: 'REVIEW', priority: 'normal', next_action: 'Review new documents', domain: 'acc', subject_key: 'amanda_request:a:3', accountable_persona: 'amanda', community_id: CG, opened_at: '2026-10-03T00:00:00Z', last_activity_at: '2026-10-03T00:00:00Z' },
+    { id: u(84), title: 'Bill waiting on the community', status: 'open', autonomy_class: 'BLOCK', blocked_reason: 'Payables needs the community.', domain: 'ap', subject_key: 'amanda_request:a:4', accountable_persona: 'amanda', community_id: CG, opened_at: '2026-09-20T00:00:00Z', last_activity_at: '2026-09-20T00:00:00Z' },
+  ],
+  ap_invoices: [{ id: u(85), community_id: CG, vendor_id: 'vDJ', vendor_invoice_number: '1010', total_cents: 30000, status: 'on_hold', needs_review: true, notes: 'Emma: loaded from email. ON HOLD (Issue #14, Ed 2026-10-01): W-9 required before payment.', created_at: '2026-10-02T00:00:00Z', vendor: { name: 'Rene Rosales (DJ Randy)' }, communities: { name: 'Canyon Gate at Cinco Ranch' } }],
+});
+
+check('EXACT STATUS: "What still needs me today?" is answered from the feed read model with 0 model calls and exact lane/specialist counts', async () => {
+  const d = db(statusWorld()); const m = model(WORK_REPLY);
+  const r = await ask(d, m, { text: 'What still needs me today?' });
+  assert.strictEqual(r.intent, 'query'); assert.strictEqual(r.deterministic, 'status');
+  assert.strictEqual(r.model_calls, 0); assert.strictEqual(m.calls, 0, 'no model for the exact-status family');
+  assert.deepStrictEqual(r.status.counts, { now: 3, waiting: 1, policy: 1 });
+  assert.deepStrictEqual(r.status.by_specialist, { Emma: 2, Annie: 1 });
+  assert.match(r.reply, /^3 items need you now \(Emma 2, Annie 1\), 1 is waiting on something, and 1 needs your decision\./);
+  assert.match(r.reply, /For your decision: On hold: Rene Rosales \(DJ Randy\) #1010 \(\$300\.00\)/);
+  assert.match(r.reply, /Most urgent: Past due: Gexa Energy/);
+  assert.strictEqual(r.durable, false); assert.strictEqual(d.writes.length, 0);
+  assert.strictEqual(r.status.policy[0].action.href, `/#tab=ap&invoice=${u(85)}`);
+  for (const t of ['Amanda, what still needs me today?', 'what needs me', 'What is on my plate today?', 'Give me a status update', 'What needs me at Canyon Gate today?']) {
+    const x = await ask(db(statusWorld()), m, { text: t });
+    assert.strictEqual(x.model_calls, 0, t); assert.strictEqual(x.deterministic, 'status', t);
+  }
+  assert.strictEqual(m.calls, 0);
+  const scoped = await ask(db(statusWorld()), m, { text: 'What needs me at Canyon Gate today?' });
+  assert.strictEqual(scoped.community.name, 'Canyon Gate at Cinco Ranch'); assert.match(scoped.reply, /your decision at Canyon Gate at Cinco Ranch\./);
+  const empty = await ask(db(), m, { text: 'What still needs me today?' });
+  assert.strictEqual(empty.reply, 'Nothing needs a person right now.'); assert.strictEqual(empty.model_calls, 0);
+});
+
+check('EXACT STATUS stays narrow: broader questions still take the single model call', async () => {
+  for (const t of ['Why is the Texas Access Works bill on hold?', 'What still needs me to approve the Gexa bill and why is it late?', 'Summarize Canyon Gate']) {
+    const m = model({ intent: 'query', reply: 'ok' });
+    const r = await ask(db(statusWorld()), m, { text: t });
+    assert.strictEqual(r.model_calls, 1, t); assert.strictEqual(m.calls, 1, t); assert.notStrictEqual(r.deterministic, 'status', t);
+  }
+});
+
+check('HONESTY: the exact production phrases are rewritten as proposals; harmless future language is kept', () => {
+  assert.strictEqual(honestyGuard("I'll route the two approvals to Emma now and flag the three blockers so we can clear what's possible before Monday."),
+    "I would route the two approvals to Emma and flag the three blockers so we can clear what's possible before Monday.");
+  assert.strictEqual(honestyGuard('On it. Canyon Gate has two past due invoices, Gexa Energy and the Bedrock management fee, that need to go to Emma for approval before Monday.'),
+    'Canyon Gate has two past due invoices, Gexa Energy and the Bedrock management fee, that need to go to Emma for approval before Monday.');
+  assert.strictEqual(honestyGuard("I'm routing the Gexa bill to Emma. I'm sending the reminder to staff."), 'I would route the Gexa bill to Emma. I would send the reminder to staff.');
+  assert.strictEqual(honestyGuard("I'm handling it."), 'I can track this work and propose the plan.');
+  assert.strictEqual(honestyGuard("I'll take care of it right away."), 'I can track this work and propose the plan.');
+  assert.strictEqual(honestyGuard('Let me flag the Winstead bill for Payables.'), 'I would flag the Winstead bill for Payables.');
+  assert.strictEqual(honestyGuard('I am going to chase the corrected invoice now.'), 'I would chase the corrected invoice.');
+  const harmless = "Emma will need your approval on both. I'll need the September financials first. The meeting will be Monday.";
+  assert.strictEqual(honestyGuard(harmless), harmless, 'non-execution future language is untouched');
+});
+
+check('HONESTY end to end: a model reply with "On it" / "I will ... now" never reaches the operator or the timeline', async () => {
+  const d = db();
+  const m = model({ ...WORK_REPLY, reply: "On it. I'll route the two approvals to Emma now and flag the three blockers.", plan: ["I'm sending the Gexa bill to Emma", 'Check the packet with Paige'] });
+  const r = await ask(d, m, { text: 'Get Canyon Gate ready for Monday.' });
+  assert.strictEqual(r.reply, 'I would route the two approvals to Emma and flag the three blockers.');
+  assert.deepStrictEqual(r.plan, ['I would send the Gexa bill to Emma', 'Check the packet with Paige']);
+  const out = d.T.objective_events.find((e) => e.kind === 'message_out').summary;
+  assert.ok(!/On it|I'll route|now and|I'm sending/i.test(out), 'the timeline records the proposal language, not an execution claim');
+  assert.strictEqual(r.durable, true); assert.strictEqual(d.T.objectives.length, 1, 'work durability unchanged');
 });
 
 check('WORK: opens exactly one bounded Amanda objective and logs request + proposal (session actor)', async () => {
@@ -150,7 +218,7 @@ check('one model call maximum: a failing or unusable model is never retried and 
     const r = await ask(d, m, { text: 'Get Canyon Gate ready for Monday.' });
     assert.strictEqual(r.ok, false); assert.strictEqual(m.calls, 1); assert.strictEqual(r.model_calls, 1); assert.strictEqual(d.writes.length, 0);
   }
-  const none = await ask(db(), null, { text: 'what needs me?' });
+  const none = await ask(db(), null, { text: 'Why is the Gexa bill late?' }); // (the exact-status family needs no model at all)
   assert.strictEqual(none.ok, false); assert.strictEqual(none.model_calls, 0);
 });
 
