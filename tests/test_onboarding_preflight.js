@@ -20,7 +20,8 @@ const ctxBase = () => ({
   accounts: [A(1000), A(1300), A(2000), A(2400), A(3000), A(4000)], funds: [{ id: 'f-opr', code: 'OPR' }],
   properties: [{ id: 'p1', vantaca_account_id: '10001', street_address: '1 Example Lane' }, { id: 'p2', vantaca_account_id: '10002', street_address: '2 Example Lane' }],
   tenures: [{ id: 't1', property_id: 'p1', kind: 'owner', end_date: null }, { id: 't2', property_id: 'p2', kind: 'owner', end_date: null }],
-  vendors: [{ id: 'v1', name: 'Acme LLC' }], gl_cutover_date: '2026-06-01', current_trusted_fingerprint: 'f'.repeat(64),
+  vendors: [{ id: 'v1', name: 'Acme LLC' }], gl_cutover_date: '2026-06-01', current_trusted_fingerprint: 'f'.repeat(64), management_company_id: 'mc1',
+  periods: Array.from({ length: 12 }, (_, i) => ({ id: `per${i + 1}`, period_start: `2026-${String(i + 1).padStart(2, '0')}-01`, period_end: new Date(Date.UTC(2026, i + 1, 0)).toISOString().slice(0, 10), status: 'open' })),
 });
 const je = (id, date, module, lines, extra = {}) => ({ id, posting_date: date, source_module: module, reference: `JE-${id}`, status: 'posted', total_debits_cents: lines.reduce((t, l) => t + (l.debit_cents || 0), 0), total_credits_cents: lines.reduce((t, l) => t + (l.credit_cents || 0), 0), ...extra });
 const ln = (je_id, n, acct, dr, cr) => ({ id: `${je_id}-${n}`, journal_entry_id: je_id, line_number: n, account_id: `a${acct}`, debit_cents: dr, credit_cents: cr });
@@ -140,6 +141,29 @@ check('report: a waived FAIL/BLOCKED stays FAIL/BLOCKED with separate waiver met
 check('report renders a readable package (writes, untouched, proof plan, rollback, idempotency) from the hashed JSON', () => {
   const md = PF.renderConversionMarkdown(PF.buildConversionPreflight(base(build())));
   for (const s of ['CONV-EX-20260731-OPEN-OPR', 'Supersede 1', 'Neutralize 2', 'Re-post 1', 'prior-owner credits', 'After EXECUTE, prove', 'Rollback', 'Idempotency']) assert.ok(md.includes(s), s);
+});
+check('M6 insertability: entries carry the live source_module values (opening_entry / reversal / manual) and the open period of their date', () => {
+  const w = build().writes;
+  assert.deepStrictEqual(w.opening_journal_entries.map((j) => [j.source_module, j.period_id]), [['opening_entry', 'per7']]);
+  assert.deepStrictEqual(w.neutralize_journal_entries.map((j) => [j.source_module, j.period_id]), [['reversal', 'per3'], ['reversal', 'per7']]);
+  assert.deepStrictEqual(w.repost_journal_entries.map((j) => [j.source_module, j.period_id]), [['manual', 'per8']]);
+  assert.strictEqual(w.ar_opening_batch.management_company_id, 'mc1');
+});
+check('M6 insertability: a closed or missing period BLOCKS (posting_periods_open); EXECUTE would refuse it too', () => {
+  const closed = ctxBase(); closed.periods = closed.periods.map((p) => (p.id === 'per8' ? { ...p, status: 'closed' } : p));
+  const p = build({ ctx: closed });
+  assert.strictEqual(status(p, 'preflight.posting_periods_open'), 'BLOCKED');
+  assert.ok(/closed/.test(p.controls.find((c) => c.code === 'preflight.posting_periods_open').failures[0].problem));
+  const none = ctxBase(); none.periods = [];
+  assert.strictEqual(status(build({ ctx: none }), 'preflight.posting_periods_open'), 'BLOCKED');
+});
+check('M6 insertability: an open AP line with no invoice date or a non-positive amount BLOCKS; a community with no management company BLOCKS the ledger batch', () => {
+  const noDate = snapshotBase(); noDate.lines[8] = { ...noDate.lines[8], detail: { ...noDate.lines[8].detail, invoice_date: null } };
+  assert.strictEqual(status(build({ snapshot: noDate }), 'preflight.ap_invoices_resolved'), 'BLOCKED');
+  const credit = snapshotBase(); credit.lines[8] = { ...credit.lines[8], amount_cents: 200 };
+  assert.strictEqual(status(build({ snapshot: credit }), 'preflight.ap_invoices_resolved'), 'BLOCKED');
+  const noMc = ctxBase(); delete noMc.management_company_id;
+  assert.strictEqual(status(build({ ctx: noMc }), 'preflight.ar_rows_resolved'), 'BLOCKED');
 });
 check('no preflight module can write: the plan builder and report have no database client', () => {
   const fs = require('fs');
