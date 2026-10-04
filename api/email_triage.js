@@ -1457,7 +1457,14 @@ router.post('/:id/send', express.json(), async (req, res) => {
     // the quoted history, so the body must NOT also embed its own quote — otherwise
     // the history appears twice (Ed 2026-09-09). Only the fresh-message fallback
     // embeds the inline quote.
-    const inlineQuote = m.graph_id ? '' : quoted;
+    // In-thread only when the source message lives in the mailbox we send FROM: Graph
+    // cannot createReply across mailboxes (Exchange answers "Mailbox move in progress
+    // ... Cross Server access is not allowed"). Claire answering info@ mail, Kat
+    // answering accounting@, etc. send a fresh reply from their own mailbox instead,
+    // with the history quoted inline, so the sender identity is preserved. (Issue #29.)
+    const replyFrom = graphSend.personaMailbox(persona);
+    const threaded = !!m.graph_id && graphSend.sameMailbox(m.mailbox, replyFrom);
+    const inlineQuote = threaded ? '' : quoted;
     let html, attachments, fromMailbox, senderLabel;
     if (persona === 'emma') {
       const { buildEmmaEmail } = require('../lib/email/emma_signature');
@@ -1610,15 +1617,15 @@ router.post('/:id/send', express.json(), async (req, res) => {
       </div>`;
     } catch (_) { /* quoting best-effort — never block a send */ }
 
-    if (m.graph_id) {
+    if (threaded && graphSend.sameMailbox(fromMailbox, replyFrom)) {
       // Real threaded reply — Graph carries the actual Outlook quoted history and
       // sets the In-Reply-To/References headers, so the recipient sees ONE growing
       // thread instead of a fresh email each time (Melody Hess's ask, 2026-09-09).
       // Graph adds the quote, so we send just our body (no reconstructed block).
-      await graphSend.sendReplyAs({ from: fromMailbox, sourceGraphId: m.graph_id, cc: ccList || undefined, html, attachments });
+      await graphSend.sendReplyAs({ from: fromMailbox, sourceMailbox: m.mailbox, sourceGraphId: m.graph_id, cc: ccList || undefined, html, attachments });
     } else {
-      // No source message id to reply to — fall back to a fresh message with our
-      // reconstructed history block appended so the recipient still has context.
+      // No source message id, OR the message lives in another mailbox (shared inbox
+      // answered by a persona): a fresh message from the persona's own mailbox.
       // Fallback: fresh message. The body already carries the inline quote
       // (inlineQuote), so do NOT also append the reconstructed history block —
       // that was the second copy. One history, from the inline quote.
