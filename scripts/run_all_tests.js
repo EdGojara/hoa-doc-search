@@ -127,6 +127,7 @@ const CHECKS = [
   'tests/test_billing_arc_dedupe.js',
   'tests/test_team_roster.js',
   'tests/test_claire_scope.js',
+  'tests/test_voice_socket_auth.js',   // Issue #29: voice WS upgrades + Twilio webhooks must authenticate
   'scripts/check_owner_concentration.js',
   'scripts/check_pagination.js',
   'scripts/check_inline_scripts.js',

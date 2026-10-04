@@ -35,7 +35,7 @@ const express = require('express');
 const { createClient } = require('@supabase/supabase-js');
 const { safeErrorMessage } = require('./_safe_error');
 const { requireStaff } = require('./_require_admin');
-const { resolveVisitor, resolveVisitCommunity, canAccessCommunity } = require('../lib/claire/scope');
+const { resolveVisitor, resolveVisitCommunity, canAccessCommunity, ownsSession } = require('../lib/claire/scope');
 const { screen } = require('../lib/claire/guardrails');
 const { stripEmDashes } = require('../lib/tone');
 const roster = require('../lib/team/roster');
@@ -71,13 +71,7 @@ async function loadOwnedSession(req, res) {
   if (error) { console.error('[claire] session read failed:', error.message); res.status(500).json({ error: safeErrorMessage(error) }); return null; }
   if (!s) { res.status(404).json({ error: 'session_not_found' }); return null; }
 
-  const mine =
-    (visitor.role === 'homeowner' && s.portal_user_id && s.portal_user_id === visitor.portalUserId) ||
-    (visitor.role === 'board' && s.board_email && visitor.email
-      && s.board_email.toLowerCase() === visitor.email.toLowerCase()) ||
-    (visitor.role === 'staff' && s.visitor_email && visitor.email
-      && s.visitor_email.toLowerCase() === visitor.email.toLowerCase());
-  if (!mine) { res.status(403).json({ error: 'not_your_session' }); return null; }
+  if (!ownsSession(visitor, s)) { res.status(403).json({ error: 'not_your_session' }); return null; }
   return { visitor, session: s };
 }
 

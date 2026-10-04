@@ -475,7 +475,8 @@ function stopConvo(){ CONVO=false; $('mic').classList.remove('on'); $('mic').tit
 async function startDeepgram(){
   MIC_STREAM=await navigator.mediaDevices.getUserMedia({audio:{channelCount:1,echoCancellation:true,noiseSuppression:true,autoGainControl:true}});
   const lang=(SESSION&&SESSION.language)||'en';
-  const wsUrl=location.origin.replace(/^http/,'ws')+'/api/claire/stt-stream'+(lang&&lang!=='en'?('?lang='+encodeURIComponent(lang)):'');
+  // The server only opens the stream for a live visit you own (Issue #29).
+  const wsUrl=location.origin.replace(/^http/,'ws')+'/api/claire/stt-stream?session='+encodeURIComponent(SESSION.id)+(lang&&lang!=='en'?('&lang='+encodeURIComponent(lang)):'');
   await new Promise((resolve,reject)=>{
     STT_WS=new WebSocket(wsUrl);
     let opened=false;
