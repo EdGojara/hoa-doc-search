@@ -11430,4 +11430,7 @@ httpServer.listen(3000, () => {
   } catch (e) {
     console.error('[scheduler] failed to start:', e.message);
   }
+  // Issue #29 W1: direct mail to Amanda wakes Amanda (off unless AMANDA_WAKE=on).
+  try { require('./lib/email/amanda_wake').startAmandaWake(); }
+  catch (e) { console.error('[amanda_wake] failed to start:', e.message); }
 });
