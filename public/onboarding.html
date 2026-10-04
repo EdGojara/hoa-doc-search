@@ -309,7 +309,20 @@ async function loadPreflight(v) {
     + '<details><summary>Full preflight report</summary><pre class="mono" style="white-space:pre-wrap;font-size:12px">' + esc(p.markdown) + '</pre></details>';
   if (canApprove) html += '<div style="margin-top:10px"><button id="pfApprove">Approve this exact preflight</button> <span class="muted" style="font-size:12px">Recorded under your name, bound to this fingerprint. It authorizes these writes only; nothing is posted until EXECUTE is run separately.</span></div>';
   else if (!approved && current && !owner) html += '<div class="muted" style="margin-top:8px">The owner approves the preflight.</div>';
+  // EXECUTE: owner only, and only for the approved, current, non-stale, eligible preflight. Sends id + hash only;
+  // the server re-verifies everything and the database runs the write set in ONE transaction (a retry never posts twice).
+  const canExecute = owner && current && !p.stale && approved === r.sha256 && s.eligibility !== 'not_eligible';
+  if (canExecute) html += '<div class="banner warn" style="margin-top:10px"><b>Execute the conversion</b> (posts the writes above to the books, in one all-or-nothing transaction).<br><button id="pfExecute">Execute this approved conversion</button> <span class="muted" style="font-size:12px">You will type the batch code to confirm. Recorded under your name.</span></div>';
+  let execs = [];
+  try { execs = (await api('/api/onboarding/batches/' + encodeURIComponent(v.batch.id) + '/execution')).executions || []; } catch (_) {}
+  if (execs.length) html += '<details open style="margin-top:8px"><summary>Execution record (' + execs.length + ')</summary><ul style="font-size:13px">' + execs.map((x) => '<li><span class="pill ' + (x.status === 'committed' ? 'PASS' : 'FAIL') + '">' + esc(x.status) + '</span> <span class="mono">' + esc(x.id) + '</span> · ' + esc(String(x.committed_at || x.created_at || '').slice(0, 19).replace('T', ' ')) + ' · preflight <span class="mono">' + esc(String(x.preflight_sha256 || '').slice(0, 12)) + '…</span>' + (x.error ? ' · ' + esc(x.error) : '') + '</li>').join('') + '</ul></details>';
   el.innerHTML = html + '</div>';
+  if ($('pfExecute')) $('pfExecute').onclick = () => {
+    const typed = prompt('This posts the approved conversion for ' + v.batch.batch_code + ' to the books.\n\nFingerprint ' + r.sha256 + '\n\nType the batch code to confirm:');
+    if (typed === null) return;
+    if (typed.trim() !== v.batch.batch_code) return say('Not executed: the batch code did not match.', 'bad');
+    act(() => api('/api/onboarding/batches/' + encodeURIComponent(v.batch.id) + '/execute', json({ completion_id: p.completion_id, preflight_sha256: r.sha256 })), 'Conversion executed. Proof runs next (read-only).');
+  };
   if ($('pfApprove')) $('pfApprove').onclick = () => {
     if (!confirm('Approve this exact preflight?\n\nFingerprint ' + r.sha256 + '\n\nThis authorizes these writes only; it does not run them.')) return;
     act(() => api('/api/onboarding/batches/' + encodeURIComponent(v.batch.id) + '/approve', json({ completion_id: p.completion_id, preflight_sha256: r.sha256 })), 'Preflight approved (fingerprint ' + r.sha256.slice(0, 8) + '…). Nothing has been posted.');
