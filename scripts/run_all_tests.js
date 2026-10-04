@@ -238,6 +238,7 @@ const CHECKS = [
   'tests/test_onboarding_bridge.js',
   'tests/test_onboarding_bridge_evidence.js',
   'tests/test_onboarding_preflight.js',
+  'tests/test_media_phase0.js',
   'tests/test_onboarding_community_identity.js',
   'tests/test_identity_safety.js',
   'tests/test_onboarding_prepaid_report.js',
