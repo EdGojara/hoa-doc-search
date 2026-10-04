@@ -26,16 +26,39 @@
   .th-empty { padding: 18px 0 14px; border-top: 1px solid var(--tx-rule-soft); display: flex; gap: 10px; align-items: center; color: var(--tx-ok); font-weight: 600; }
   .th-problem .tx-num { background: var(--tx-warn-bg); color: var(--tx-warn); }
   .th-warn .tx-num { background: var(--tx-warn-bg); color: var(--tx-warn); }
-  /* What Amanda would do (Issue #27 Phase 1, shadow; read-only) */
+  /* Operations Feed (Issue #29 Phase 1; read-only). Grew out of "What Amanda would do" (#27). */
   .th-amanda { margin: 22px 28px 0; padding: 20px 22px; }
-  .th-am-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
-  .th-am-cols { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; margin-top: 12px; }
-  .th-am-col h3 { font-size: 13px; font-weight: 600; color: var(--navy); margin: 0 0 6px; }
-  .th-am-item { font-size: 13px; padding: 6px 0; border-top: 1px solid var(--tx-rule-soft); }
-  .th-am-item small { display: block; color: var(--tx-muted); font-size: 12px; margin-top: 2px; }
-  .th-am-n { font-family: var(--font-serif); font-size: 28px; font-weight: 600; color: var(--navy); line-height: 1.1; }
+  .th-am-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .th-am-scope { margin-left: auto; display: inline-flex; border: 1px solid var(--tx-rule-soft); border-radius: 999px; overflow: hidden; }
+  .th-am-scope button { font: 500 12px var(--font-sans); background: none; border: 0; padding: 5px 11px; color: var(--tx-text-2); cursor: pointer; }
+  .th-am-scope button[aria-pressed="true"] { background: var(--navy); color: #fff; }
+  .th-am-summary { margin: 12px 0 4px; font-size: 14.5px; color: var(--tx-text); line-height: 1.5; }
+  .th-am-meta { font-size: 12px; color: var(--tx-muted); }
+  .th-am-sec { margin-top: 16px; }
+  .th-am-sec h3 { font-size: 12px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--tx-muted); margin: 0 0 6px; }
+  .th-fi { display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; gap: 12px; align-items: start; width: 100%; text-align: left; background: none; border: 0; border-top: 1px solid var(--tx-rule-soft); padding: 11px 0; cursor: pointer; font: inherit; color: inherit; }
+  .th-fi:hover .th-fi-t { text-decoration: underline; }
+  .th-fi:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+  .th-av { width: 34px; height: 34px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font: 600 13px var(--font-sans); color: #fff; background: var(--navy); }
+  .th-av[data-p="emma"] { background: #4B6A88; } .th-av[data-p="annie"] { background: #6B5B95; } .th-av[data-p="paige"] { background: #8A6D3B; } .th-av[data-p="miranda"] { background: #7A4A4A; }
+  .th-fi-who { font-size: 12px; color: var(--tx-muted); }
+  .th-fi-t { font-size: 13.5px; font-weight: 600; color: var(--navy); margin-top: 1px; }
+  .th-fi-d { font-size: 12.5px; color: var(--tx-text-2); margin-top: 2px; }
+  .th-fi-tag { font-size: 11px; white-space: nowrap; }
+  .th-drawer-bg { position: fixed; inset: 0; background: rgba(11, 29, 52, .28); z-index: 40; }
+  .th-drawer { position: fixed; top: 0; right: 0; bottom: 0; width: min(460px, 100%); background: var(--tx-surface); box-shadow: -8px 0 30px rgba(11, 29, 52, .18); z-index: 41; display: flex; flex-direction: column; }
+  .th-drawer header { padding: 18px 20px 12px; border-bottom: 1px solid var(--tx-rule-soft); }
+  .th-drawer header h2 { font-size: 16px; color: var(--navy); margin: 6px 0 4px; line-height: 1.35; }
+  .th-drawer .th-dx { float: right; background: none; border: 0; font-size: 20px; line-height: 1; cursor: pointer; color: var(--tx-text-2); }
+  .th-drawer .th-db { padding: 14px 20px 24px; overflow-y: auto; flex: 1; }
+  .th-facts { margin: 0 0 12px; padding: 0; list-style: none; font-size: 13px; color: var(--tx-text-2); }
+  .th-facts li { padding: 2px 0; }
+  .th-tl { border-left: 2px solid var(--tx-rule-soft); margin-left: 6px; padding-left: 14px; }
+  .th-tl-e { position: relative; padding: 0 0 12px; font-size: 13px; }
+  .th-tl-e::before { content: ''; position: absolute; left: -20px; top: 5px; width: 10px; height: 10px; border-radius: 50%; background: var(--tx-surface); border: 2px solid var(--gold); }
+  .th-tl-e small { display: block; color: var(--tx-muted); font-size: 11.5px; }
   @media (max-width: 1100px) { .th-grid, .th-lower { grid-template-columns: minmax(0, 1fr); } }
-  @media (max-width: 760px) { .th-am-cols { grid-template-columns: minmax(0, 1fr); } .th-amanda { margin: 18px 16px 0; } .th-grid, .th-lower { padding-left: 16px; padding-right: 16px; } .th-okwrap { margin: 18px 16px 0; } .th-stamp { display: none; } .th-refresh button .th-rl { display: none; } }
+  @media (max-width: 760px) { .th-amanda { margin: 18px 16px 0; } .th-grid, .th-lower { padding-left: 16px; padding-right: 16px; } .th-okwrap { margin: 18px 16px 0; } .th-stamp { display: none; } .th-refresh button .th-rl { display: none; } }
 </style>
 </head>
 <body class="tx-body">
@@ -99,12 +122,17 @@
 
     <section class="tx-card th-amanda" id="th-amanda" aria-labelledby="th-am-title" hidden>
       <div class="th-am-head">
-        <span id="th-am-title" style="font-size:15px;font-weight:600;color:var(--navy)">What Amanda would do</span>
-        <span class="tx-pill tx-pill--mute">Shadow · Phase 1 · nothing is done for you</span>
-        <span class="tx-muted" style="font-size:12.5px;margin-left:auto" id="th-am-sweep"></span>
+        <span class="th-av" data-p="amanda" aria-hidden="true">A</span>
+        <span id="th-am-title" style="font-size:15px;font-weight:600;color:var(--navy)">Amanda · Operations</span>
+        <span class="tx-pill tx-pill--mute">Read-only · nothing is done for you</span>
+        <span class="th-am-scope" role="group" aria-label="Scope">
+          <button type="button" id="th-am-all" aria-pressed="true">All communities</button>
+          <button type="button" id="th-am-one" aria-pressed="false">This community</button>
+        </span>
       </div>
-      <div id="th-am-body"></div>
+      <div id="th-am-body"><div class="tx-skel" style="height:40px;width:70%;margin-top:12px"></div></div>
     </section>
+    <div id="th-drawer-root"></div>
 
     <div class="th-okwrap" aria-label="Go to">
       <span class="tx-lbl" style="display:block;padding-bottom:8px">Go to</span>
@@ -267,39 +295,87 @@
     }).join('');
   }
 
-  // ---- What Amanda would do (Issue #27 Phase 1): read-only shadow of her sweep.
-  // Admin only, capped lists, never an activity wall. Nothing here acts.
-  function renderAmanda(res) {
+  // ---- Operations Feed (Issue #29 Phase 1): read-only, deterministic, admin only.
+  // Grew out of "What Amanda would do" (#27). Items come from Amanda's objectives
+  // and the existing domain queues; nothing here acts or calls a model.
+  var feedScope = store('tx.feed.scope') === 'one' ? 'one' : 'all';
+  var lastFeed = null;
+  function initials(n) { return String(n || '?').charAt(0).toUpperCase(); }
+  function fmtWhen(iso) { if (!iso) return ''; var d = new Date(iso); return isNaN(d) ? String(iso) : d.toLocaleString('en-US', { timeZone: 'America/Chicago', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }); }
+  function feedRow(i) {
+    var tag = i.class === 'BLOCK' ? '<span class="tx-pill tx-pill--warn th-fi-tag">Waiting on something</span>'
+      : i.priority === 'high' || i.priority === 'critical' ? '<span class="tx-pill tx-pill--bad th-fi-tag">Urgent</span>'
+      : '<span class="tx-pill tx-pill--info th-fi-tag">Needs a person</span>';
+    var age = i.age_days != null && i.age_days > 0 ? ' · waiting ' + i.age_days + ' day' + (i.age_days === 1 ? '' : 's') : '';
+    return '<button type="button" class="th-fi" data-key="' + esc(i.key) + '"><span class="th-av" data-p="' + esc(i.specialist.key) + '" aria-hidden="true">' + esc(initials(i.specialist.name)) + '</span>' +
+      '<span><span class="th-fi-who">' + esc(i.specialist.name) + ' · ' + esc(i.specialist.role) + (i.community ? ' · ' + esc(i.community) : '') + age + '</span>' +
+      '<span class="th-fi-t" style="display:block">' + esc(i.title) + '</span><span class="th-fi-d" style="display:block">' + esc(i.detail || '') + '</span></span>' + tag + '</button>';
+  }
+  function renderFeed(res) {
     var box = $('th-amanda');
     if (!res) { box.hidden = true; return; }
     box.hidden = false;
+    $('th-am-all').setAttribute('aria-pressed', String(feedScope === 'all'));
+    $('th-am-one').setAttribute('aria-pressed', String(feedScope === 'one'));
     var d = res.ok ? res.data : null;
-    if (!d || d.available === false) {
-      $('th-am-sweep').textContent = '';
-      $('th-am-body').innerHTML = '<div class="tx-err" style="margin-top:10px">' + icon('alert', { size: 16 }) + '<span>' + (d ? 'Amanda’s work list isn’t set up yet (migration 489 not applied).' : 'Couldn’t load Amanda’s shadow view.') + '</span></div>';
-      return;
-    }
-    var fmt = function (iso) { return new Date(iso).toLocaleString('en-US', { timeZone: 'America/Chicago', weekday: 'short', hour: 'numeric', minute: '2-digit' }); };
+    if (!d) { $('th-am-body').innerHTML = '<div class="tx-err" style="margin-top:12px">' + icon('alert', { size: 16 }) + '<span>Couldn’t load the operations feed. Nothing here is counted as clear.</span></div>'; return; }
+    lastFeed = d;
+    var fails = Object.keys(d.section_errors || {});
     var sch = d.schedule || {};
     var hrs = (sch.hours || []).map(function (h) { return (h % 12 || 12) + (h < 12 ? 'am' : 'pm'); }).join(' and ');
-    $('th-am-sweep').textContent = (d.last_sweep ? 'Last sweep ' + fmt(d.last_sweep.started_at) + (d.last_sweep.ok === false ? ' (failed)' : '') + ' · ' : 'No sweep has run yet · ') + (sch.scheduled ? 'sweeps ' + hrs + ' Central, weekdays' : 'sweeps are off (not enabled on the scheduler)');
-    function list(items, empty, detail) {
-      if (!items.length) return '<div class="tx-muted" style="font-size:13px">' + esc(empty) + '</div>';
-      var shown = items.slice(0, 5).map(function (i) { return '<div class="th-am-item">' + esc(i.title) + '<small>' + esc(detail(i)) + '</small></div>'; }).join('');
-      return shown + (items.length > 5 ? '<div class="tx-muted" style="font-size:12px;padding-top:6px">+' + (items.length - 5) + ' more</div>' : '');
-    }
-    var w = d.last_24h || {};
-    var pend = d.pending_wakes;
-    var fails = Object.keys(d.section_errors || {});
-    $('th-am-body').innerHTML =
-      (fails.length ? '<div class="tx-err" style="margin-top:10px">' + icon('alert', { size: 16 }) + '<span>Part of this view didn’t load (' + esc(fails.join(', ')) + '), so it may be incomplete.</span></div>' : '') +
-      '<div class="th-am-cols">' +
-      '<div class="th-am-col"><h3>Would ask a person</h3>' + list(d.needs_people || [], 'Nothing needs a person.', function (i) { return (i.community ? i.community + ' · ' : '') + (i.next_action || ''); }) + '</div>' +
-      '<div class="th-am-col"><h3>Waiting on something</h3>' + list(d.blocked || [], 'Nothing is blocked.', function (i) { return (i.community ? i.community + ' · ' : '') + (i.blocked_reason || ''); }) + '</div>' +
-      '<div class="th-am-col"><h3>Routine, last 24 hours</h3>' +
-        '<div class="th-am-n">' + (w.routine_would_continue == null ? '—' : w.routine_would_continue) + '</div><div class="tx-muted" style="font-size:12.5px">bills would continue on the normal path (you still release payments)</div>' +
-        '<div class="tx-muted" style="font-size:12.5px;margin-top:8px">' + (w.resolved == null ? 'Resolved count unavailable' : w.resolved + ' item' + (w.resolved === 1 ? '' : 's') + ' cleared') + ' · ' + (pend == null ? 'queue unknown' : pend + ' waiting for the next sweep') + '</div>' +
-      '</div></div>';
+    var meta = (d.last_sweep ? 'Amanda last swept ' + fmtWhen(d.last_sweep.started_at) + (d.last_sweep.ok === false ? ' (failed)' : '') : 'Amanda hasn’t swept yet') + ' · ' + (sch.scheduled ? 'sweeps ' + hrs + ' Central on weekdays' : 'her sweeps are off');
+    var html = '<p class="th-am-summary">' + esc(d.summary) + '</p><div class="th-am-meta">' + esc(meta) + '</div>';
+    if (fails.length) html += '<div class="tx-err" style="margin-top:10px">' + icon('alert', { size: 16 }) + '<span>Some sources didn’t answer (' + esc(fails.join(', ')) + '), so this list may be incomplete. Unavailable is not the same as clear.</span></div>';
+    if ((d.capped || []).length) html += '<div class="tx-muted" style="font-size:12px;margin-top:6px">Showing the oldest items first; more are waiting in ' + esc(d.capped.join(', ')) + '.</div>';
+    html += '<div class="th-am-sec"><h3>Needs a person</h3>' + (d.needs.length ? d.needs.map(feedRow).join('') : '<div class="tx-muted" style="font-size:13px;padding:6px 0">' + (fails.length ? 'Nothing found in the sources that answered.' : 'Nothing needs a person right now.') + '</div>') +
+      (d.more && d.more.length ? '<details style="margin-top:4px"><summary class="tx-muted" style="font-size:12.5px;cursor:pointer;padding:6px 0">' + d.more.length + ' more</summary>' + d.more.map(feedRow).join('') + '</details>' : '') + '</div>';
+    html += '<div class="th-am-sec"><h3>Recently handled or changed</h3>' + ((d.recent || []).length ? d.recent.slice(0, 5).map(function (r) {
+      return '<button type="button" class="th-fi" data-key="' + esc(r.key) + '"><span class="th-av" data-p="' + esc(r.specialist.key) + '" aria-hidden="true">' + esc(initials(r.specialist.name)) + '</span><span><span class="th-fi-who">' + esc(r.specialist.name) + ' · ' + esc(fmtWhen(r.when)) + (r.community ? ' · ' + esc(r.community) : '') + '</span><span class="th-fi-t" style="display:block">' + esc(r.title) + '</span><span class="th-fi-d" style="display:block">' + esc(r.reason || 'Resolved') + '</span></span><span class="tx-pill tx-pill--ok th-fi-tag">Cleared</span></button>';
+    }).join('') : '') + '<div class="tx-muted" style="font-size:12.5px;padding:6px 0">' + (d.routine_24h == null ? 'Routine count unavailable.' : d.routine_24h + ' routine bill' + (d.routine_24h === 1 ? '' : 's') + ' continued on the normal path in the last 24 hours (you still release payments).') + '</div></div>';
+    $('th-am-body').innerHTML = html;
+  }
+  $('th-am-body').addEventListener('click', function (e) { var b = e.target.closest('.th-fi'); if (b) openDrawer(b.getAttribute('data-key'), b); });
+  $('th-am-all').addEventListener('click', function () { feedScope = 'all'; store('tx.feed.scope', 'all'); loadFeed(); });
+  $('th-am-one').addEventListener('click', function () { feedScope = 'one'; store('tx.feed.scope', 'one'); loadFeed(); });
+
+  var drawerReturn = null;
+  function closeDrawer() { $('th-drawer-root').innerHTML = ''; document.removeEventListener('keydown', drawerKey); if (drawerReturn) drawerReturn.focus(); }
+  function drawerKey(e) { if (e.key === 'Escape') closeDrawer(); }
+  async function openDrawer(key, from) {
+    drawerReturn = from || null;
+    var root = $('th-drawer-root');
+    root.innerHTML = '<div class="th-drawer-bg" data-close="1"></div><aside class="th-drawer" role="dialog" aria-modal="true" aria-label="Item detail"><header><button type="button" class="th-dx" data-close="1" aria-label="Close">×</button><span class="tx-muted" style="font-size:12px">Loading…</span></header><div class="th-db"></div></aside>';
+    root.querySelectorAll('[data-close]').forEach(function (n) { n.addEventListener('click', closeDrawer); });
+    document.addEventListener('keydown', drawerKey);
+    root.querySelector('.th-dx').focus();
+    var r = await TX.get('/api/feed/item?key=' + encodeURIComponent(key));
+    if (!root.firstChild) return;
+    var d = r.ok ? r.data : null;
+    var head = root.querySelector('header'); var body = root.querySelector('.th-db');
+    if (!d) { head.innerHTML = '<button type="button" class="th-dx" data-close="1" aria-label="Close">×</button><h2>Couldn’t load this item</h2>'; head.querySelector('[data-close]').addEventListener('click', closeDrawer); return; }
+    head.innerHTML = '<button type="button" class="th-dx" data-close="1" aria-label="Close">×</button>' +
+      '<span class="th-fi-who"><span class="th-av" data-p="' + esc(d.specialist.key) + '" style="width:22px;height:22px;font-size:11px;vertical-align:middle;margin-right:6px">' + esc(initials(d.specialist.name)) + '</span>' + esc(d.specialist.name) + ' · ' + esc(d.specialist.role) + (d.community ? ' · ' + esc(d.community) : '') + '</span>' +
+      '<h2>' + esc(d.title) + '</h2>' + (d.class ? '<span class="tx-pill ' + (d.class === 'BLOCK' ? 'tx-pill--warn' : 'tx-pill--info') + '">' + (d.class === 'BLOCK' ? 'Waiting on something' : d.class === 'REVIEW' ? 'Needs a person' : esc(d.class)) + '</span> ' : '') + (d.status ? '<span class="tx-pill tx-pill--mute">' + esc(String(d.status).replace(/_/g, ' ')) + '</span>' : '');
+    head.querySelector('[data-close]').addEventListener('click', closeDrawer);
+    var facts = [].concat(d.facts || []);
+    if (d.blocked_reason) facts.unshift('Waiting on: ' + d.blocked_reason);
+    if (d.next_action) facts.push('Next: ' + d.next_action + (d.next_action_due ? ' (due ' + fmtWhen(d.next_action_due) + ')' : ''));
+    body.innerHTML = (facts.length ? '<ul class="th-facts">' + facts.map(function (x) { return '<li>' + esc(x) + '</li>'; }).join('') + '</ul>' : '') +
+      '<span class="tx-lbl" style="display:block;margin:6px 0 8px">History</span>' +
+      (d.timeline.length ? '<div class="th-tl">' + d.timeline.map(function (t) { return '<div class="th-tl-e">' + esc(t.text) + '<small>' + esc(fmtWhen(t.at)) + (t.actor ? ' · ' + esc(t.actor) : '') + '</small></div>'; }).join('') + '</div>' : '<div class="tx-muted" style="font-size:13px">No history recorded yet.</div>') +
+      (d.link ? '<a class="tx-btn tx-btn--pri" href="' + esc(d.link.href) + '" style="margin-top:14px;display:inline-flex">' + esc(d.link.label) + '</a>' : '') +
+      '<div class="tx-muted" style="font-size:12px;margin-top:10px">Read-only. Actions stay on the screen above, where their usual checks apply.</div>';
+  }
+
+  var feedSeq = 0;
+  async function loadFeed() {
+    if (user.role !== 'admin') { renderFeed(null); return; }
+    var mine = ++feedSeq;
+    var c = current();
+    var q = feedScope === 'one' && c ? '?community_id=' + encodeURIComponent(c.id) : '';
+    var r = await TX.get('/api/feed' + q);
+    if (mine !== feedSeq) return;
+    renderFeed(r);
   }
 
   // ---- load: one round of reads, only when the page opens or you ask -----
@@ -319,7 +395,6 @@
       }),
       TX.get('/api/today' + q),
       cid ? TX.get('/api/ar/control' + q) : Promise.resolve({ ok: false, error: 'no community' }),
-      isAdmin ? TX.get('/api/manager/shadow' + q) : Promise.resolve(null),
     ]);
     if (mine !== seq) return; // a newer load (community switch) superseded this one
     var b = TXBriefing.buildBriefing(
@@ -328,7 +403,7 @@
     );
     render(b, c);
     renderActivity(results[2], c);
-    renderAmanda(results[4]);
+    loadFeed();
     $('th-stamp').textContent = 'Loaded ' + new Date().toLocaleTimeString('en-US', { timeZone: 'America/Chicago', hour: 'numeric', minute: '2-digit' });
   }
   load();

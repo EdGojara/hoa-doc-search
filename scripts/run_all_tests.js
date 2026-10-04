@@ -208,6 +208,7 @@ const CHECKS = [
   'tests/test_mail_manifest_envelopes.js',
   'tests/test_operator_briefing.js',
   'tests/test_manager_phase1.js',
+  'tests/test_ops_feed_phase1.js',
   'tests/test_reconciliation_ar_readiness.js',
   'tests/test_today_scope.js',
   'tests/test_data_readiness.js',
