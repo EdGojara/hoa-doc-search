@@ -102,6 +102,26 @@ check('EMAIL DECISION: "please approve the Gexa bill" executes nothing; the draf
   assert.strictEqual(m.calls, 0); assert.strictEqual(legacyCalls, 0); assert.strictEqual(d.writes.length, 0);
 });
 
+check('LINK HOST: Today and destination links use the operator app host even when TRUSTED_URL / APP_BASE_URL point elsewhere', async () => {
+  const saved = { t: process.env.TRUSTED_URL, a: process.env.APP_BASE_URL };
+  process.env.TRUSTED_URL = 'https://my.bedrocktxai.com'; process.env.APP_BASE_URL = 'https://my.bedrocktxai.com';
+  try {
+    const links = (s) => s.match(/https?:\/\/\S+/g) || [];
+    const work = await draftAmandaStaffAssist({ email: staffEmail('Hi Amanda,\n\nCan you get Canyon Gate ready for Monday?\n\nThanks,\nCelina'), contract: { supabase: db(), anthropic: model(WORK) } });
+    const status = await draftAmandaStaffAssist({ email: staffEmail('Hi Amanda,\nWhat still needs me today?\nThanks'), contract: { supabase: db(), anthropic: model(WORK) } });
+    const held = { ap_invoices: [{ id: u(85), community_id: CG, vendor_id: 'vDJ', vendor_invoice_number: '1010', total_cents: 30000, status: 'on_hold', needs_review: true, notes: 'ON HOLD: W-9 required before payment.', created_at: '2026-10-02T00:00:00Z', vendor: { name: 'Sample Vendor' }, communities: { name: 'Canyon Gate at Cinco Ranch' } }] };
+    const action = await draftAmandaStaffAssist({ email: staffEmail('Hi Amanda,\nWhat still needs me today?\nThanks'), contract: { supabase: db(held), anthropic: model(WORK) } });
+    assert.ok(work.body.includes('https://app.bedrocktxai.com/app/today'), 'work: Today link on the operator host');
+    assert.ok(status.body.includes('https://app.bedrocktxai.com/app/today'), 'status: Today link on the operator host');
+    assert.ok(/Where to act: https:\/\/app\.bedrocktxai\.com\//.test(action.body), 'Take action destination on the operator host');
+    assert.ok(action.body.includes(`https://app.bedrocktxai.com/#tab=ap&invoice=${u(85)}`), 'exact destination path kept');
+    for (const l of [...links(work.body), ...links(status.body), ...links(action.body)]) assert.ok(l.startsWith('https://app.bedrocktxai.com/'), `link on wrong host: ${l}`);
+  } finally {
+    if (saved.t === undefined) delete process.env.TRUSTED_URL; else process.env.TRUSTED_URL = saved.t;
+    if (saved.a === undefined) delete process.env.APP_BASE_URL; else process.env.APP_BASE_URL = saved.a;
+  }
+});
+
 check('NARROW: writing help, reviews, open advice and attachments keep the existing staff-assist path (one call there, none in the contract)', async () => {
   for (const [body, extra] of [
     ['Hi Amanda, can you draft a reply to the Smiths about their fence? They are upset about the letter.', {}],
