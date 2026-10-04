@@ -170,8 +170,22 @@ function focusExceptionFromUrl(){
   const card=document.querySelector('.exc[data-id="'+id+'"]');
   const wrap=document.getElementById('exceptionsWrap');
   if(!card){ if(wrap) wrap.insertAdjacentHTML('afterbegin','<div class="note" style="margin:0 0 10px;padding:8px 11px;border:1px solid #d7dee7;border-radius:8px;background:#f8fafc;color:#334155;font-size:12.5px;">That exception is no longer pending (it may already be resolved). The current list is below.</div>'); return; }
-  card.scrollIntoView({behavior:'smooth',block:'center'});
   card.style.boxShadow='0 0 0 3px #D4AF37'; card.setAttribute('tabindex','-1'); try{card.focus({preventScroll:true});}catch(_){}
+  keepExceptionInView(card);
+}
+// Sections above the exceptions (bill emails with no result, duplicate vendors)
+// load on their own schedule and can push the row off screen after the first
+// scroll (seen live 2026-10-04). Re-centre on layout changes for a few seconds,
+// and stop the moment the person scrolls, clicks or types themselves.
+function keepExceptionInView(card){
+  const center=()=>{ if(document.body.contains(card)) card.scrollIntoView({block:'center'}); };
+  center();
+  let stopped=false;
+  const stop=()=>{ if(stopped) return; stopped=true; try{ro&&ro.disconnect();}catch(_){} ['wheel','touchstart','keydown','mousedown'].forEach(ev=>window.removeEventListener(ev,stop,true)); };
+  ['wheel','touchstart','keydown','mousedown'].forEach(ev=>window.addEventListener(ev,stop,{capture:true,passive:true}));
+  const ro=window.ResizeObserver?new ResizeObserver(()=>{ if(!stopped) center(); }):null;
+  if(ro) ro.observe(document.body);
+  setTimeout(stop,5000);
 }
 async function loadExceptions(){
   const wrap=document.getElementById('exceptionsWrap'); if(!wrap) return;
