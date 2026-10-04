@@ -27,7 +27,9 @@ check('cast must be pinned by approved spec_sha256; references must be content-a
 });
 check('quotes use the documented price per second and the provider minimum', () => {
   const spec = { ...base(), audio: { ambient: true } };
-  assert.strictEqual(ADAPTERS.veo_3_1.quote(spec, { resolution: '1080p' }).per_attempt, 3.2);
+  const veo = ADAPTERS.veo_3_1.quote(spec, { resolution: '1080p' });
+  assert.strictEqual(veo.per_attempt, 1.6); assert.strictEqual(veo.channel, 'aggregator:runway', 'ambient-only: the no-audio Runway channel is cheaper (ambient added in post)');
+  assert.strictEqual(ADAPTERS.veo_3_1.quote({ ...spec, audio: { dialogue: 'Hi' } }, { resolution: '1080p' }).per_attempt, 3.2, 'dialogue needs native audio');
   assert.strictEqual(ADAPTERS.omni_flash_1_1.quote(spec, { resolution: '360p' }).per_attempt, 0.24);
   assert.strictEqual(ADAPTERS.seedance_2_5.quote({ ...spec, duration_seconds: 1 }, { resolution: '1080p' }).per_attempt, 0.8, 'the $0.80 minimum applies');
   assert.strictEqual(ADAPTERS.veo_3_1.quote(spec, { resolution: '360p' }).usable, false);

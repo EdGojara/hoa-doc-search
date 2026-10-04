@@ -13,11 +13,11 @@ const shot = (over = {}) => ({ shot_key: 'r_test', segment_class: 'brand', durat
   cast: [{ character_slug: 'amanda_albright', components: { face: { version: 3, spec_sha256: pin('a') } } }], references: [{ sha256: pin('b'), use: 'identity' }], ...over });
 
 // A deterministic fake renderer. Provider-specific fields live ONLY in compile().
-function fake(id, { quality = 'standard', rate = 0.2, max_seconds = 10, resolutions = ['720p', '1080p'], audio = true, refs = 3, face = 'accepted', modes = ['generate'], min_charge = 0, channels = null } = {}) {
+function fake(id, { quality = 'standard', rate = 0.2, max_seconds = 10, resolutions = ['720p', '1080p'], audio = true, refs = 3, face = 'verified_supported', modes = ['generate'], min_charge = 0, channels = null } = {}) {
   const ch = channels || [{ channel: `direct:${id}`, rate_per_s: Object.fromEntries(resolutions.map((r) => [r, rate])), min_charge, source: 'fixture', as_of: '2026-10-04' }];
   return defineAdapter({
     id, family: id, channels: ch,
-    capabilities: () => ({ max_seconds, resolutions, native_audio: audio, max_reference_images: refs, face_reference: face, first_last_frame: true, modes, quality: { identity: quality } }),
+    capabilities: () => ({ max_seconds, resolutions, native_audio: audio, max_reference_images: refs, face_reference: { state: face }, first_last_frame: true, modes, quality: { identity: quality } }),
     quote: (spec, ctx = {}) => effectiveCost(ch.map((c) => ({ ...c, ...((ctx.channels || {})[c.channel] || {}) })), { resolution: ctx.resolution, duration_seconds: spec.duration_seconds, needs_audio: true, reference_images: (spec.references || []).length, expected_attempts: ctx.expected_attempts }),
     probe: async () => ({ reachable: true }),
     compile: (spec, rs) => ({ provider: id, request: { [`${id}_prompt`]: spec.camera.move, [`${id}_model_version`]: 'v9', refs: rs.map((r) => r.sha256) } }),
@@ -102,7 +102,7 @@ check('"no eligible renderer" is returned cleanly with every reason (never a for
   assert.strictEqual(plan(shot(), { mode: 'draft', adapters: [] }).status, 'no_eligible_renderer');
 });
 check('production modes are outcomes, not vendors; instructional content is never generated', () => {
-  assert.deepStrictEqual(Object.keys(MODES).sort(), ['draft', 'hero_final', 'instructional_non_generative', 'repair_edit', 'standard_final', 'talking_head']);
+  assert.deepStrictEqual(Object.keys(MODES).sort(), ['acceptance_test', 'draft', 'hero_final', 'instructional_non_generative', 'repair_edit', 'standard_final', 'talking_head']);
   const ins = plan(shot({ segment_class: 'instructional' }), { mode: 'standard_final', adapters: [fake('alpha')] });
   assert.strictEqual(ins.status, 'non_generative'); assert.strictEqual(ins.primary, null);
   assert.strictEqual(plan(shot(), { mode: 'instructional_non_generative', adapters: [fake('alpha')] }).status, 'non_generative');
@@ -115,11 +115,45 @@ check('production modes are outcomes, not vendors; instructional content is neve
 check('live calls refuse until access is probed and spend confirmed (no accidental render)', async () => {
   for (const a of CATALOG) await assert.rejects(() => a.submit({}), /RENDER_NOT_ENABLED|not enabled/);
 });
-check('with the real catalog (documented data): Amanda identity shot in hero_final ranks Veo above Seedance on cost; draft goes to Omni Flash', () => {
+check('face reference: UNVERIFIED support is never eligible for normal identity routing, and never a silent fallback', () => {
+  const ver = fake('verified', { rate: 0.40, quality: 'hero', face: 'verified_supported' });
+  const unv = fake('unverified', { rate: 0.05, quality: 'hero', face: 'unverified' });
+  for (const mode of ['draft', 'standard_final', 'hero_final']) {
+    const p = plan(shot(), { mode, adapters: [unv, ver], resolution: mode === 'draft' ? '720p' : undefined });
+    assert.strictEqual(p.primary.adapter, 'verified', mode);
+    assert.ok(!p.fallbacks.some((x) => x.adapter === 'unverified'), `${mode}: unverified must not appear as a fallback`);
+    assert.ok(p.rejected.some((r) => r.adapter === 'unverified' && /unverified/.test(r.reasons.join(' '))), mode);
+  }
+  const none = plan(shot(), { mode: 'hero_final', adapters: [unv] });
+  assert.strictEqual(none.status, 'no_eligible_renderer');
+  const noIdentity = plan(shot({ references: [{ sha256: pin('c'), use: 'prop_environment' }] }), { mode: 'hero_final', adapters: [unv] });
+  assert.strictEqual(noIdentity.primary.adapter, 'unverified', 'the rule applies to identity shots only (a prop-only shot is fine)');
+});
+check('face reference: an explicit acceptance_test may target an unverified route on purpose; refused stays excluded', () => {
+  const unv = fake('unverified', { rate: 0.05, face: 'unverified', resolutions: ['480p', '720p'] });
+  const ref = fake('refuser', { rate: 0.01, face: 'refused', resolutions: ['480p', '720p'] });
+  const p = plan(shot(), { mode: 'acceptance_test', adapters: [unv, ref] });
+  assert.strictEqual(p.primary.adapter, 'unverified'); assert.strictEqual(p.primary.face_reference.state, 'unverified');
+  assert.ok(p.rejected.some((r) => r.adapter === 'refuser' && /refuses/.test(r.reasons[0])));
+});
+check('face reference: our own evidence promotes a route to verified_supported (account level, with evidence + date)', () => {
+  const unv = fake('seedlike', { rate: 0.30, quality: 'hero', face: 'unverified' });
+  const evidence = { state: 'verified_supported', evidence: 'Phase 0 acceptance take ok (identity reviewed)', date: '2026-10-05' };
+  const p = plan(shot(), { mode: 'hero_final', adapters: [unv], accounts: { seedlike: { face_reference: evidence } } });
+  assert.strictEqual(p.status, 'planned'); assert.deepStrictEqual(p.primary.face_reference, { state: 'verified_supported', evidence });
+  const refused = plan(shot(), { mode: 'acceptance_test', adapters: [unv], resolution: '720p', accounts: { seedlike: { face_reference: { state: 'refused', evidence: 'refused at input filter', date: '2026-10-05' } } } });
+  assert.strictEqual(refused.status, 'no_eligible_renderer', 'a recorded refusal excludes the route even from acceptance tests');
+  const avatar = fake('avatar', { modes: ['talking_head'], face: 'not_applicable' });
+  assert.strictEqual(plan(shot(), { mode: 'talking_head', adapters: [avatar] }).primary.adapter, 'avatar', 'talking head identity comes from the consented avatar');
+  assert.strictEqual(plan(shot(), { mode: 'standard_final', adapters: [fake('na', { face: 'not_applicable' })] }).status, 'no_eligible_renderer');
+});
+check('real catalog today: every face route is unverified, so production identity routing says no_eligible_renderer; the acceptance test picks the cheapest routes', () => {
   const p = plan(shot(), { mode: 'hero_final', adapters: CATALOG });
-  assert.strictEqual(p.primary.adapter, 'veo_3_1'); assert.ok(p.fallbacks.some((f) => f.adapter === 'seedance_2_5'));
-  const d = plan(shot(), { mode: 'draft', adapters: CATALOG });
-  assert.strictEqual(d.primary.adapter, 'omni_flash_1_1');
+  assert.strictEqual(p.status, 'no_eligible_renderer'); assert.ok(p.rejected.every((r) => r.reasons.length));
+  const a = plan(shot({ duration_seconds: 4 }), { mode: 'acceptance_test', adapters: CATALOG });
+  assert.strictEqual(a.status, 'planned'); assert.ok(a.primary.cost.accepted_take_cost <= 0.5, JSON.stringify(a.primary));
+  const ok = plan(shot(), { mode: 'hero_final', adapters: CATALOG, accounts: { veo_3_1: { face_reference: { state: 'verified_supported', evidence: 'test', date: '2026-10-05' } } } });
+  assert.strictEqual(ok.primary.adapter, 'veo_3_1');
 });
 
 (async () => {

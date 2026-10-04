@@ -2,7 +2,10 @@
 // ============================================================================
 // scripts/media_phase0.js  (Issue #10 Media Studio, Phase 0) — provider acceptance harness
 // ----------------------------------------------------------------------------
-//   node scripts/media_phase0.js            freeze the 3 Amanda shots, quote the matrix (no spend)
+//   STAGE 1 ONLY (Ed, #10): the cheapest "will it accept Amanda?" check on each shortlisted route,
+//   one take each, hard cap $3. Stage 2 is NOT pre-authorized: it is built later, only from the routes
+//   that passed and looked usable, with its own estimate, hash and Confirm.
+//   node scripts/media_phase0.js            freeze the Stage 1 acceptance shot, quote the matrix (no spend)
 //   node scripts/media_phase0.js --probe    + read-only provider probes (list/account endpoints only)
 //   node scripts/media_phase0.js --run --confirm <matrix_sha256>
 //                                           runs the bounded matrix ONLY when the confirm equals the
@@ -20,9 +23,11 @@ const { visualCanon } = require('../lib/characters/approval');
 const { freezeShotSpec, canonicalJson, sha256 } = require('../lib/media/shotspec');
 const { ADAPTERS, DOC_DATE, probeAll } = require('../lib/media/providers');
 
-const TAKES_PER_CELL = 1;          // research-first: one take per test unless research shows a need (Ed, #10)
-const CONTINGENCY = 0.20;          // retries / minimums; the run stops at the cap
-const CELLS = [ ['veo_3_1', '1080p'], ['omni_flash_1_1', '720p'], ['seedance_2_5', '1080p'], ['kling_3', '1080p'] ];
+const TAKES_PER_CELL = 1;          // one take per acceptance test
+const STAGE1_CAP_USD = 3;          // hard cap (Ed): the run stops before exceeding it
+// Priority order from the research shortlist; each at its lowest tier, 4 seconds, mode acceptance_test.
+const CELLS = [ ['seedance_2_5', '480p'], ['veo_3_1_lite', '720p'], ['omni_flash_1_1', '360p'], ['minimax_h3', '768p'] ];
+const ACCEPTANCE_SECONDS = 4;
 const TAKE_FIELDS = ['provider', 'model', 'model_version', 'request_id', 'shotspec_sha256', 'reference_sha256s', 'compiled_prompt', 'seed', 'quoted_cost', 'actual_cost',
   'latency_ms', 'output_sha256', 'resolution', 'duration_s', 'refusal_or_error', 'provenance_marker'];
 const SCORES = ['identity_fidelity', 'age_face_body_drift', 'hands_body_integrity', 'wardrobe_prop_location_continuity', 'camera_obedience', 'motion_realism', 'cinematic_quality', 'audio_quality', 'latency', 'cost', 'refusal_reliability'];
@@ -78,7 +83,7 @@ function shots(c) {
   const argv = process.argv.slice(2);
   const ro = readOnlyClient(createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY));
   const canon = await amandaCanon(ro);
-  const frozen = shots(canon).map(freezeShotSpec);
+  const frozen = [freezeShotSpec({ ...shots(canon)[0], shot_key: 'p0_accept_office', title: 'Stage 1 acceptance: office close-medium (4s)', duration_seconds: ACCEPTANCE_SECONDS })];
   const cells = [];
   for (const f of frozen) for (const [adapter, resolution] of CELLS) {
     const qt = ADAPTERS[adapter].quote(f.spec, { resolution });
@@ -86,8 +91,9 @@ function shots(c) {
     cells.push({ shot_key: f.spec.shot_key, shotspec_sha256: f.shotspec_sha256, adapter, model: ADAPTERS[adapter].model, resolution, takes: TAKES_PER_CELL, unit_cost: qt.per_attempt, cost: Math.round(qt.per_attempt * TAKES_PER_CELL * 100) / 100, price_basis: `${qt.channel} (${qt.basis})`, source: qt.source });
   }
   const subtotal = Math.round(cells.reduce((t, c) => t + c.cost, 0) * 100) / 100;
-  const cap = Math.round(subtotal * (1 + CONTINGENCY) * 100) / 100;
-  const matrix = { phase: 'media_phase0', as_of: DOC_DATE, shots: frozen.map((f) => ({ shot_key: f.spec.shot_key, shotspec_sha256: f.shotspec_sha256 })), cells: cells.map(({ shot_key, adapter, model, resolution, takes, unit_cost }) => ({ shot_key, adapter, model, resolution, takes, unit_cost })), subtotal, cap };
+  const cap = STAGE1_CAP_USD;
+  if (subtotal > cap) throw new Error(`Stage 1 quote $${subtotal} exceeds the $${cap} hard cap; narrow the cells`);
+  const matrix = { phase: 'media_phase0_stage1_acceptance', as_of: DOC_DATE, shots: frozen.map((f) => ({ shot_key: f.spec.shot_key, shotspec_sha256: f.shotspec_sha256 })), cells: cells.map(({ shot_key, adapter, model, resolution, takes, unit_cost }) => ({ shot_key, adapter, model, resolution, takes, unit_cost })), subtotal, cap };
   const matrix_sha256 = sha256(canonicalJson(matrix));
   const probe = argv.includes('--probe') ? await probeAll(process.env, fetch) : null;
   const out = { amanda: { pins: canon.pins, face_sha256: canon.face_sha256, ref993_sha256: canon.ref993 ? canon.ref993.sha256 : null, voice_approved: canon.voiceApproved }, shots: frozen, cells, subtotal, cap, matrix_sha256, take_fields: TAKE_FIELDS, scores: SCORES, probe };
