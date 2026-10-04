@@ -122,6 +122,20 @@ check('LINK HOST: Today and destination links use the operator app host even whe
   }
 });
 
+check('REAL SIGNATURE: a corporate signature + confidentiality notice ("unauthorized review") never turns a work request into "review my work"', async () => {
+  legacyCalls = 0;
+  const footer = '\n\nThanks,\n\n\nSample Staffer\nSample Management, LLC\n100 Main St, Ste 1\nSugar Land, TX 77478\nMain Office: 555-555-0100\n\n\n\n\nConfidentiality Notice: This email and any attachments are intended only for the recipient(s) named above and may contain confidential information. If you are not the intended recipient, please delete this message and notify the sender immediately. Any unauthorized review, use, disclosure, or distribution is prohibited.';
+  const d = db(); const m = model(WORK);
+  const email = staffEmail('Hi Amanda, can you get canyon gate ready for Monday?' + footer);
+  assert.strictEqual(isOperationalRequest(email, requestTextFrom(email)), true, 'footer words do not change the routing');
+  const r = await draftAmandaStaffAssist({ email, contract: { supabase: d, anthropic: m } });
+  assert.strictEqual(r.assist_type, 'amanda_request:work'); assert.strictEqual(m.calls, 1); assert.strictEqual(legacyCalls, 0);
+  assert.match(d.T.objective_events.find((e) => e.kind === 'message_in').summary, /^email request: can you get canyon gate ready for Monday\?$/);
+  // A real review ask with the same footer still goes to staff assist.
+  const rv = staffEmail('Hi Amanda, can you review my response below before I send it?' + footer);
+  assert.strictEqual(isOperationalRequest(rv, requestTextFrom(rv)), false);
+});
+
 check('NARROW: writing help, reviews, open advice and attachments keep the existing staff-assist path (one call there, none in the contract)', async () => {
   for (const [body, extra] of [
     ['Hi Amanda, can you draft a reply to the Smiths about their fence? They are upset about the letter.', {}],
