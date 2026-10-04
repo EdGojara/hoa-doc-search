@@ -588,6 +588,7 @@ const _STAFF_GATE_PUBLIC = [
   /^\/api\/claire\/session\/start$/,
   /^\/api\/claire\/session\/[0-9a-f-]+\/(avatar-token|turn|heartbeat|handoff|end)$/,
   /^\/api\/payments\/webhook$/,                // Stripe webhook (signature-verified inside)
+  /^\/api\/graph\/mail\/(notify|lifecycle)\/[0-9a-f]{16}$/, // Graph mail push (per-mailbox clientState checked inside; Issue #29)
   // Twilio voice webhooks — same pattern as Stripe: outside-service webhooks,
   // never carry a staff cookie. The voice router handles them. Long-term,
   // these should validate the X-Twilio-Signature header to confirm the
@@ -1818,6 +1819,7 @@ app.use('/api/agendas', agendasRouter);
 
 const { router: emailTriageRouter } = require('./api/email_triage');
 app.use('/api/email-triage', emailTriageRouter);
+app.use('/api/graph', require('./api/graph_push'));   // Graph mail push callbacks (public; Issue #29)
 
 const { router: legalRouter } = require('./api/legal');
 app.use('/api/legal', legalRouter);
@@ -11430,4 +11432,7 @@ httpServer.listen(3000, () => {
   } catch (e) {
     console.error('[scheduler] failed to start:', e.message);
   }
+  // Issue #29: mail wakes agents by Graph push (off unless GRAPH_PUSH=on + secret + mailboxes).
+  try { require('./lib/email/graph_push').startGraphPush(); }
+  catch (e) { console.error('[graph_push] failed to start:', e.message); }
 });
