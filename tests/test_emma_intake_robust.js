@@ -261,14 +261,16 @@ check('mapReason: unreadable-file reasons map to the unreadable_attachment excep
 });
 
 check('exceptions: the same bill forwarded in a second email reuses the pending exception (no second card)', async () => {
-  // Load recordException against an in-memory table (no network, no DB).
-  const rows = [];
-  const fake = () => ({ from: () => {
-    const f = []; let ins = null;
+  // Load recordException against in-memory tables (no network, no DB). Table-aware:
+  // recordException also emits one Amanda manager wake (Issue #27) into manager_wakes.
+  const all = [];
+  const fake = () => ({ from: (t) => {
+    const f = [(r) => r._t === t]; let ins = null;
     const q = {
       select() { return q; }, eq(c, v) { f.push((r) => r[c] === v); return q; }, is(c, v) { f.push((r) => (r[c] ?? null) === v); return q; },
-      limit() { return Promise.resolve({ data: rows.filter((r) => f.every((p) => p(r))), error: null }); },
-      insert(r) { ins = { id: `E${rows.length + 1}`, ...r }; rows.push(ins); return q; },
+      limit() { return Promise.resolve({ data: all.filter((r) => f.every((p) => p(r))), error: null }); },
+      insert(r) { ins = { _t: t, id: `E${all.length + 1}`, ...r }; all.push(ins); return q; },
+      upsert(r) { all.push({ _t: t, ...r }); return Promise.resolve({ error: null }); },
       single() { return Promise.resolve({ data: ins, error: null }); },
     };
     return q;
@@ -283,7 +285,8 @@ check('exceptions: the same bill forwarded in a second email reuses the pending 
     const a = await recordException({ emailMessageId: 'm917', sourceRef: 'email:g917', reason: 'unknown vendor', sha256: 'abc', communityId: 'WV' });
     const b = await recordException({ emailMessageId: 'm921', sourceRef: 'email:g921', reason: 'unknown vendor', sha256: 'abc', communityId: 'WV' });
     assert.ok(a.ok && b.ok); assert.strictEqual(b.id, a.id); assert.ok(b.same_file_other_email);
-    assert.strictEqual(rows.length, 1);
+    assert.strictEqual(all.filter((r) => r._t === 'ap_intake_exceptions').length, 1);
+    assert.strictEqual(all.filter((r) => r._t === 'manager_wakes').length, 1, 'one wake for the new exception; the re-forward is not a new wake');
     const c = await recordException({ emailMessageId: 'm9', sourceRef: 'email:g9', reason: 'x', sha256: 'abc', communityId: 'OTHER' });
     assert.notStrictEqual(c.id, a.id, 'a different community is a different exception');
   } finally {

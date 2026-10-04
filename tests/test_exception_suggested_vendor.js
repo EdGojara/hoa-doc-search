@@ -23,6 +23,8 @@ function memDb(rows) {
       select() { return q; }, eq(c, v) { f.push((r) => r[c] === v); return q; }, is(c, v) { f.push((r) => (r[c] ?? null) === v); return q; },
       insert(p) { op = 'insert'; payload = { id: `E${rows.length + 1}`, ...p }; rows.push(payload); writes.push({ t, op, payload }); return q; },
       update(p) { op = 'update'; writes.push({ t, op, payload: p }); return q; },
+      // the Amanda manager wake (Issue #27) is an upsert into its own table, not an exception row
+      upsert(p) { writes.push({ t, op: 'upsert', payload: p }); return Promise.resolve({ error: null }); },
       limit() { return Promise.resolve({ data: rows.filter((r) => f.every((p) => p(r))), error: null }); },
       single() { return Promise.resolve({ data: payload, error: null }); },
     };
@@ -47,6 +49,7 @@ check('new-vendor exception: recordException stores the suggested vendor', async
     assert.ok(r.ok);
   });
   assert.strictEqual(rows.length, 1); assert.strictEqual(rows[0].suggested_vendor_id, 'v-zoo');
+  assert.deepStrictEqual(db.writes.filter((w) => w.t === 'manager_wakes').map((w) => w.payload.kind), ['ap_exception'], 'one wake for the new exception');
 });
 check('reused exception: returned as-is and NOT modified (no backfill of an existing record)', async () => {
   const rows = [{ id: 'E-old', intake_source_ref: 'email:g917', file_sha256: 'zoo', community_id: 'WV', status: 'pending', suggested_vendor_id: null }];

@@ -1,0 +1,117 @@
+{
+  "migration": "489_amanda_manager_phase1.sql",
+  "summary": "Amanda Operating Manager Phase 1 (Issue #27): objectives gains typed owner, accountable persona, domain, priority, autonomy class, blocked reason / dependency, wake reason, subject identity, needs_reasoning and state hash (all nullable or defaulted), objective_type adds 'ap', plus the manager_wakes de-duplicated wake outbox. No existing row is changed.",
+  "requires": [
+    "488_onboarding_execute.sql"
+  ],
+  "preflight": [
+    {
+      "name": "objectives exists (migration 399)",
+      "sql": "SELECT count(*)::int FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'objectives'",
+      "expect": 1
+    },
+    {
+      "name": "objectives has no Phase 1 columns yet",
+      "sql": "SELECT count(*)::int FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'objectives' AND column_name IN ('subject_key', 'autonomy_class', 'state_hash', 'owner_kind')",
+      "expect": 0
+    },
+    {
+      "name": "manager_wakes does not exist yet",
+      "sql": "SELECT count(*)::int FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'manager_wakes'",
+      "expect": 0
+    }
+  ],
+  "expected_changes": [
+    "Adds nullable objectives columns owner_kind, owner_key, accountable_persona, domain, priority, autonomy_class, blocked_reason, depends_on (jsonb), wake_reason, subject_key, subject_refs (jsonb), state_hash, and needs_reasoning (NOT NULL DEFAULT false).",
+    "Replaces objectives_objective_type_check with the same list plus 'ap'; adds CHECKs for owner_kind, domain, priority, autonomy_class, and that a BLOCK states its blocked_reason.",
+    "Adds uq_objectives_open_subject (one OPEN objective per subject_key) and idx_objectives_blocked.",
+    "Creates manager_wakes (UNIQUE dedup_key, kind/status/outcome CHECKs, two indexes) with SELECT/INSERT/UPDATE for service_role and SELECT for authenticated.",
+    "No existing objectives or objective_events row is changed; no other table is touched."
+  ],
+  "objects": {
+    "added": [
+      "column:manager_wakes.community_id",
+      "column:manager_wakes.consumed_at",
+      "column:manager_wakes.created_at",
+      "column:manager_wakes.dedup_key",
+      "column:manager_wakes.error",
+      "column:manager_wakes.id",
+      "column:manager_wakes.kind",
+      "column:manager_wakes.objective_id",
+      "column:manager_wakes.outcome",
+      "column:manager_wakes.source_id",
+      "column:manager_wakes.source_table",
+      "column:manager_wakes.status",
+      "column:manager_wakes.wake_reason",
+      "column:objectives.accountable_persona",
+      "column:objectives.autonomy_class",
+      "column:objectives.blocked_reason",
+      "column:objectives.depends_on",
+      "column:objectives.domain",
+      "column:objectives.needs_reasoning",
+      "column:objectives.owner_key",
+      "column:objectives.owner_kind",
+      "column:objectives.priority",
+      "column:objectives.state_hash",
+      "column:objectives.subject_key",
+      "column:objectives.subject_refs",
+      "column:objectives.wake_reason",
+      "constraint:manager_wakes.manager_wakes_community_id_fkey",
+      "constraint:manager_wakes.manager_wakes_dedup_key_key",
+      "constraint:manager_wakes.manager_wakes_kind_check",
+      "constraint:manager_wakes.manager_wakes_objective_id_fkey",
+      "constraint:manager_wakes.manager_wakes_outcome_check",
+      "constraint:manager_wakes.manager_wakes_pkey",
+      "constraint:manager_wakes.manager_wakes_status_check",
+      "constraint:objectives.objectives_autonomy_class_check",
+      "constraint:objectives.objectives_block_has_reason",
+      "constraint:objectives.objectives_domain_check",
+      "constraint:objectives.objectives_owner_kind_check",
+      "constraint:objectives.objectives_priority_check",
+      "index:idx_manager_wakes_pending",
+      "index:idx_manager_wakes_recent",
+      "index:idx_objectives_blocked",
+      "index:manager_wakes_dedup_key_key",
+      "index:manager_wakes_pkey",
+      "index:uq_objectives_open_subject",
+      "table:manager_wakes"
+    ],
+    "changed": [
+      "constraint:objectives.objectives_objective_type_check"
+    ],
+    "removed": []
+  },
+  "row_changes": {
+    "objectives": 0,
+    "objective_events": 0
+  },
+  "protected": [
+    {
+      "table": "objectives",
+      "order_by": "id"
+    },
+    {
+      "table": "objective_events",
+      "order_by": "id"
+    }
+  ],
+  "verify": [
+    {
+      "name": "existing objectives unclassified (new columns NULL, needs_reasoning false)",
+      "sql": "SELECT count(*)::int FROM objectives WHERE subject_key IS NOT NULL OR autonomy_class IS NOT NULL OR needs_reasoning",
+      "expect": 0
+    },
+    {
+      "name": "open-subject unique index present",
+      "sql": "SELECT count(*)::int FROM pg_indexes WHERE indexname = 'uq_objectives_open_subject'",
+      "expect": 1
+    },
+    {
+      "name": "manager_wakes empty",
+      "sql": "SELECT count(*)::int FROM manager_wakes",
+      "expect": 0
+    }
+  ],
+  "api_checks": [],
+  "reload_schema": true
+}
