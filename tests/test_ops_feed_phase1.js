@@ -204,7 +204,7 @@ check('pages wire the links as navigation only, with the old bare-tab path intac
   // the highlighted row stays in view while later sections above it load (live finding 2026-10-04), and yields to the user
   assert.ok(ap.includes('function keepExceptionInView(card)') && ap.includes('new ResizeObserver') && ap.includes("['wheel','touchstart','keydown','mousedown']") && ap.includes('setTimeout(stop,5000)'));
   const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'app', 'today.html'), 'utf8');
-  const feedJs = html.slice(html.indexOf('Operations Feed (Issue #29'), html.indexOf('var feedSeq'));
+  const feedJs = html.slice(html.indexOf('// ---- Operations Feed (Issue #29'), html.indexOf('// ---- Message Amanda (Issue #29 Phase 2A)')); // the feed itself; the composer below is a separate proposals-only door
   assert.ok(/Take action/.test(feedJs) && /Needs you now/.test(feedJs) && /Waiting on something/.test(feedJs) && /Policy \/ Ed decision/.test(feedJs));
   assert.ok(!/TX\.post\(|<form|method="post"/i.test(feedJs), 'no write controls in the feed');
 });
