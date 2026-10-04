@@ -216,7 +216,8 @@ function evidenceText(it) {
   if (e.note) parts.push(e.note);
   return parts.join(' · ');
 }
-async function loadBridge(batchId) {
+const settled = (v) => !!(v && v.batch && v.batch.stage === 'complete' && v.latest_by_stage && v.latest_by_stage.post_proof && v.latest_by_stage.post_proof.status === 'PASS');
+async function loadBridge(batchId, v) {
   let b;
   try { b = await api('/api/onboarding/batches/' + encodeURIComponent(batchId) + '/bridge'); }
   catch (e) { $('bridge').innerHTML = e.status === 404 ? '' : '<div class="banner warn">' + esc(e.message) + '</div>'; return; }
@@ -229,7 +230,7 @@ async function loadBridge(batchId) {
     { h: 'Why', f: (it) => '<span class="mono">' + esc(it.method) + '</span> <span class="muted">(' + esc(it.confidence) + ')</span><div class="muted" style="font-size:12px">' + esc(evidenceText(it)) + '</div>' },
     { h: 'Records', f: (it) => '<span class="muted">' + (it.records || []).length + '</span>' }, { h: 'Issues', f: (it) => esc((it.structural_issues || []).join('; ')) }]);
   $('bridge').innerHTML = '<h2>Activity bridge (Trusted activity vs the cutoff position; nothing changed)</h2>'
-    + (fresh && fresh.fresh === false ? '<div class="banner bad"><b>Trusted activity has changed since this bridge was run.</b> Re-run the bridge before relying on it.</div>' : '')
+    + (fresh && fresh.fresh === false && !settled(v) ? '<div class="banner bad"><b>Trusted activity has changed since this bridge was run.</b> Re-run the bridge before relying on it.</div>' : '')
     + '<div class="card"><div class="muted">Result <span class="pill ' + esc(b.status) + '">' + esc(b.status) + '</span>' + (b.stale ? ' <span class="pill BLOCKED">stale: a newer bridge exists</span>' : '') + ' · bridge sha256 <span class="mono">' + esc(String(b.bridge_sha256 || '').slice(0, 16)) + '…</span> · recorded by ' + esc(b.recorded_by) + '</div>'
     + lineTable(classes.map((k) => ({ k, t: totals[k] || { events: 0, records: 0, amount_cents: 0 } })), [{ h: 'Classification', f: (r) => (CLASS_PILL[r.k] ? '<span class="pill ' + CLASS_PILL[r.k] + '">' + esc(r.k) + '</span>' : esc(r.k)) + '<div class="muted" style="font-size:12px">' + esc(CLASS_TEXT[r.k]) + '</div>' },
       { h: 'Events', num: true, f: (r) => String(r.t.events) }, { h: 'Records', num: true, f: (r) => String(r.t.records) }, { h: 'Dollars', num: true, f: (r) => money(r.t.amount_cents) }]) + '</div>'
@@ -298,7 +299,7 @@ async function loadPreflight(v) {
   let html = '<h2>Preflight: the exact package EXECUTE would carry out</h2><div class="card" style="border-left:4px solid var(--navy)">'
     + '<div>Result <span class="pill ' + esc(s.overall) + '">' + esc(s.overall) + '</span> · ' + s.counts.PASS + ' pass, ' + s.counts.FAIL + ' fail, ' + s.counts.BLOCKED + ' blocked; ' + s.waived + ' waived'
     + ' · fingerprint <span class="mono" id="pf_sha" title="' + esc(r.sha256) + '">' + esc(r.sha256) + '</span></div>'
-    + (p.stale ? '<div class="banner bad" style="margin-top:6px"><b>Stale:</b> ' + esc(p.stale) + '. Run the operator again to rebuild it; it cannot be approved.</div>' : '')
+    + (p.stale && !settled(v) ? '<div class="banner bad" style="margin-top:6px"><b>Stale:</b> ' + esc(p.stale) + '. Run the operator again to rebuild it; it cannot be approved.</div>' : '')
     + (approved ? '<div class="banner ' + (approved === r.sha256 ? 'ok' : 'bad') + '" style="margin-top:6px"><b>Approved fingerprint:</b> <span class="mono">' + esc(approved) + '</span>' + (approved === r.sha256 ? ' (this preflight)' : ' (a DIFFERENT preflight)') + '</div>' : '')
     + '<ul style="font-size:13.5px;margin:8px 0">'
     + w.opening_journal_entries.map((j) => '<li>Opening entry <span class="mono">' + esc(j.reference) + '</span> ' + esc(j.posting_date) + ': ' + j.lines.length + ' lines, ' + usd(j.total_debits_cents) + ' Dr = ' + usd(j.total_credits_cents) + ' Cr</li>').join('')
@@ -337,7 +338,7 @@ async function loadDetail(id) {
   renderOperator(v);
   await loadPreflight(v);
   if (v.latest_by_stage && v.latest_by_stage.snapshot) await loadSnapshot(id); else $('snapshot').innerHTML = '';
-  if (v.latest_by_stage && v.latest_by_stage.activity_bridge) await loadBridge(id); else $('bridge').innerHTML = '';
+  if (v.latest_by_stage && v.latest_by_stage.activity_bridge) await loadBridge(id, v); else $('bridge').innerHTML = '';
 }
 const json = (body) => ({ method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
 const batchId = () => new URLSearchParams(location.search).get('batch');
