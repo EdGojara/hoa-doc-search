@@ -312,7 +312,7 @@ async function loadPreflight(v) {
   el.innerHTML = html + '</div>';
   if ($('pfApprove')) $('pfApprove').onclick = () => {
     if (!confirm('Approve this exact preflight?\n\nFingerprint ' + r.sha256 + '\n\nThis authorizes these writes only; it does not run them.')) return;
-    act(() => api('/api/onboarding/batches/' + encodeURIComponent(v.batch.id) + '/approve', json({ completion_id: p.completion_id, preflight: r })), 'Preflight approved (fingerprint ' + r.sha256.slice(0, 8) + '…). Nothing has been posted.');
+    act(() => api('/api/onboarding/batches/' + encodeURIComponent(v.batch.id) + '/approve', json({ completion_id: p.completion_id, preflight_sha256: r.sha256 })), 'Preflight approved (fingerprint ' + r.sha256.slice(0, 8) + '…). Nothing has been posted.');
   };
 }
 

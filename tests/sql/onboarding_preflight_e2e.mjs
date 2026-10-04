@@ -86,5 +86,58 @@ check('the service refuses to approve against a superseded preflight result', /N
 check('the DATABASE refuses an approval bound to a superseded preflight result', /stale|newer result/.test((await code(() => rpc('onboarding_approve', { p_batch: B, p_completion: pf1, p_preflight_sha256: report.sha256, p_actor_kind: 'human', p_actor_id: 'ed' }))) || ''));
 check('an operator (system) can never approve (database human gate)', /human/.test((await code(() => rpc('onboarding_approve', { p_batch: B, p_completion: pf2, p_preflight_sha256: report.sha256, p_actor_kind: 'system', p_actor_id: 'onboarding-operator' }))) || ''));
 check('still nothing posted anywhere', (await db.query(`SELECT count(*)::int AS n FROM journal_entries`)).rows[0].n === 0);
+
+// ---- Approval BY HASH (the owner sends only completion id + sha256; the server rebuilds what it recorded).
+// A large, real-shape preflight (1,500 homeowner-ledger rows) whose full report would not fit a request body.
+async function walk(code6) {
+  const id = await rpc('onboarding_create_batch', { p_community: COMM, p_batch_code: code6, p_as_of: '2026-03-31', p_source_system: 'vantaca', p_actor_kind: 'human', p_actor_id: 'ed' });
+  for (const s of ['intake', 'normalize', 'source_controls']) { const c = await rpc('onboarding_record_completion', { p_batch: id, p_stage: s, p_status: 'PASS', p_open: [], p_controls: ctl, p_summary: {}, p_actor_kind: 'system', p_actor_id: 'op' }); await rpc('onboarding_auto_advance', { p_batch: id, p_completion: c, p_actor_id: 'op' }); }
+  const s1 = await rpc('onboarding_record_snapshot', { p_batch: id, p_status: 'PASS', p_open: [], p_controls: ctl, p_summary: {}, p_lines: [], p_snapshot_sha256: 'a'.repeat(64), p_actor_kind: 'system', p_actor_id: 'op' });
+  await rpc('onboarding_auto_advance', { p_batch: id, p_completion: s1, p_actor_id: 'op' });
+  const b1 = await rpc('onboarding_record_bridge', { p_batch: id, p_status: 'PASS', p_open: [], p_controls: ctl, p_summary: { snapshot_completion_id: s1, bridge_engine: 'test' }, p_items: [], p_bridge_sha256: 'b'.repeat(64), p_trusted_fingerprint: FP, p_actor_kind: 'system', p_actor_id: 'op' });
+  await rpc('onboarding_auto_advance', { p_batch: id, p_completion: b1, p_actor_id: 'op' });
+  return { id, s1, b1, code6 };
+}
+function bigReport(w, { n = 1500, breakTb = false } = {}) {
+  const props = Array.from({ length: n }, (_, i) => ({ id: `p${i}`, vantaca_account_id: String(500000 + i), street_address: `${i} Example Lane` }));
+  const lines = [{ line_no: 1, kind: 'gl_opening_balance', account_code: '1300', amount_cents: n * 100 }, { line_no: 2, kind: 'gl_opening_balance', account_code: '3000', amount_cents: -(n * 100) + (breakTb ? 1 : 0) },
+    ...props.map((p, i) => ({ line_no: 3 + i, kind: 'ar_aging_item', account_code: '1300', source_account_key: p.vantaca_account_id, amount_cents: 100, detail: { charge_type: 'Annual Assessment' } }))];
+  const plan = buildConversionPlan({ batch: { id: w.id, batch_code: w.code6, community_id: COMM, as_of_date: '2026-03-31' }, snapshot: { completion_id: w.s1, sha256: 'a'.repeat(64), roles: { ar_account: '1300' }, lines },
+    bridge: { completion_id: w.b1, sha256: 'b'.repeat(64), trusted_fingerprint: FP, status: 'PASS', items: [] }, trusted,
+    ctx: { accounts: [{ id: 'a1300', account_number: '1300', fund_id: 'f' }, { id: 'a3000', account_number: '3000', fund_id: 'f' }], funds: [{ id: 'f', code: 'OPR' }], properties: props,
+      tenures: props.map((p) => ({ id: `t-${p.id}`, property_id: p.id, kind: 'owner', end_date: null })), vendors: [], periods: [{ id: 'per-mar', period_start: '2026-03-01', period_end: '2026-03-31', status: 'open' }],
+      management_company_id: 'mc1', gl_cutover_date: null, current_trusted_fingerprint: FP } });
+  const { controls, ...body } = plan;
+  return PF.buildConversionPreflight({ batch: { batch_code: w.code6, community_id: COMM, source_system: 'vantaca', stage: 'preflight' }, source_cutoff: { cutoff_date: '2026-03-31', cutover_date: plan.cutover },
+    inputs: { snapshot: { completion_id: w.s1, sha256: 'a'.repeat(64), status: 'PASS' }, bridge: { completion_id: w.b1, sha256: 'b'.repeat(64), trusted_fingerprint: FP, status: 'PASS', engine: 'test' }, decisions: [], bridge_waivers: [], artifacts: [] }, plan: body, controls });
+}
+const recordOn = (w, report) => rpc('onboarding_record_completion', { p_batch: w.id, p_stage: 'preflight', p_status: report.status.overall, p_open: report.controls.filter((c) => c.status !== 'PASS').map((c) => c.code), p_controls: report.controls.map((c) => ({ code: c.code, label: c.label, status: c.status })),
+  p_summary: { preflight_format: report.format, preflight_sha256: report.sha256, preflight_report: report }, p_actor_kind: 'system', p_actor_id: 'onboarding-operator' });
+
+const WL = await walk('CONV-EX-BIG');
+const big = bigReport(WL);
+check('the large real-shape preflight passes its controls and is far bigger than a request body allows (>100 KB; the 413 that broke the click)', big.status.overall === 'PASS' && JSON.stringify(big).length > 100000, `${big.status.overall} ${JSON.stringify(big).length} ${JSON.stringify(big.controls.filter((c) => c.status !== 'PASS'))}`);
+const pfBig = await recordOn(WL, big);
+check('approve-by-hash refuses a WRONG hash (one digit off)', /PREFLIGHT_HASH_MISMATCH/.test((await code(() => svc.approveByHash(ED, WL.id, { completion_id: pfBig, preflight_sha256: big.sha256.replace(/.$/, (c) => (c === '0' ? '1' : '0')) }))) || ''));
+check('approve-by-hash refuses a malformed request (no hash)', /COMPLETION_AND_HASH_REQUIRED/.test((await code(() => svc.approveByHash(ED, WL.id, { completion_id: pfBig }))) || ''));
+check('approve-by-hash refuses a non-owner', /OWNER_ONLY/.test((await code(() => svc.approveByHash({ kind: 'human', id: 'staff', role: 'admin' }, WL.id, { completion_id: pfBig, preflight_sha256: big.sha256 }))) || ''));
+liveTrusted = { ...trusted, journal_entries: [{ id: 'late2', posting_date: '2026-04-06', status: 'posted', total_debits_cents: 1, total_credits_cents: 1 }] };
+check('approve-by-hash refuses a STALE preflight (Trusted activity changed)', /PREFLIGHT_STALE/.test((await code(() => svc.approveByHash(ED, WL.id, { completion_id: pfBig, preflight_sha256: big.sha256 }))) || ''));
+liveTrusted = trusted;
+const okBig = await code(() => svc.approveByHash(ED, WL.id, { completion_id: pfBig, preflight_sha256: big.sha256 }));
+const vb = await svc.getBatch(WL.id, ED);
+check('approve-by-hash APPROVES the large preflight with only id + hash; the approved hash is that report; still preflight, write-locked, nothing posted', okBig === null && vb.batch.approved_preflight_sha256 === big.sha256 && vb.batch.stage === 'preflight' && vb.batch.write_locked === true && (await db.query(`SELECT count(*)::int AS n FROM journal_entries`)).rows[0].n === 0, okBig);
+
+const WS = await walk('CONV-EX-SUPERSEDED');
+const r1 = bigReport(WS, { n: 3 }); const c1 = await recordOn(WS, r1); await recordOn(WS, r1);
+check('approve-by-hash refuses a SUPERSEDED preflight result (a newer one was recorded)', /NOT_THE_CURRENT_PREFLIGHT_RESULT/.test((await code(() => svc.approveByHash(ED, WS.id, { completion_id: c1, preflight_sha256: r1.sha256 }))) || ''));
+
+const WF = await walk('CONV-EX-FAILING');
+const bad = bigReport(WF, { n: 3, breakTb: true });
+check('setup: a preflight whose controls do not all pass (opening entry would not balance)', bad.status.overall !== 'PASS');
+const cf = await recordOn(WF, bad);
+check('approve-by-hash refuses NON-PASSING controls (no waiver), exactly as before', /CONTROLS_NOT_PASSING/.test((await code(() => svc.approveByHash(ED, WF.id, { completion_id: cf, preflight_sha256: bad.sha256 }))) || ''));
+check('a tampered recorded report cannot be approved by hash (the hash never matches an altered body)', /PREFLIGHT_HASH_MISMATCH|PREFLIGHT_REPORT_ALTERED/.test((await code(() => svc.approveByHash(ED, WF.id, { completion_id: cf, preflight_sha256: big.sha256 }))) || ''));
+check('still nothing posted anywhere (after every approval path)', (await db.query(`SELECT count(*)::int AS n FROM journal_entries`)).rows[0].n === 0);
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
