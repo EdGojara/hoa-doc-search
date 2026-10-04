@@ -26,8 +26,16 @@
   .th-empty { padding: 18px 0 14px; border-top: 1px solid var(--tx-rule-soft); display: flex; gap: 10px; align-items: center; color: var(--tx-ok); font-weight: 600; }
   .th-problem .tx-num { background: var(--tx-warn-bg); color: var(--tx-warn); }
   .th-warn .tx-num { background: var(--tx-warn-bg); color: var(--tx-warn); }
+  /* What Amanda would do (Issue #27 Phase 1, shadow; read-only) */
+  .th-amanda { margin: 22px 28px 0; padding: 20px 22px; }
+  .th-am-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+  .th-am-cols { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; margin-top: 12px; }
+  .th-am-col h3 { font-size: 13px; font-weight: 600; color: var(--navy); margin: 0 0 6px; }
+  .th-am-item { font-size: 13px; padding: 6px 0; border-top: 1px solid var(--tx-rule-soft); }
+  .th-am-item small { display: block; color: var(--tx-muted); font-size: 12px; margin-top: 2px; }
+  .th-am-n { font-family: var(--font-serif); font-size: 28px; font-weight: 600; color: var(--navy); line-height: 1.1; }
   @media (max-width: 1100px) { .th-grid, .th-lower { grid-template-columns: minmax(0, 1fr); } }
-  @media (max-width: 760px) { .th-grid, .th-lower { padding-left: 16px; padding-right: 16px; } .th-okwrap { margin: 18px 16px 0; } .th-stamp { display: none; } .th-refresh button .th-rl { display: none; } }
+  @media (max-width: 760px) { .th-am-cols { grid-template-columns: minmax(0, 1fr); } .th-amanda { margin: 18px 16px 0; } .th-grid, .th-lower { padding-left: 16px; padding-right: 16px; } .th-okwrap { margin: 18px 16px 0; } .th-stamp { display: none; } .th-refresh button .th-rl { display: none; } }
 </style>
 </head>
 <body class="tx-body">
@@ -88,6 +96,15 @@
     </div>
 
     <div class="th-okwrap"><div class="tx-okstrip" id="th-ok"><span class="tx-lbl">In good shape</span></div></div>
+
+    <section class="tx-card th-amanda" id="th-amanda" aria-labelledby="th-am-title" hidden>
+      <div class="th-am-head">
+        <span id="th-am-title" style="font-size:15px;font-weight:600;color:var(--navy)">What Amanda would do</span>
+        <span class="tx-pill tx-pill--mute">Shadow · Phase 1 · nothing is done for you</span>
+        <span class="tx-muted" style="font-size:12.5px;margin-left:auto" id="th-am-sweep"></span>
+      </div>
+      <div id="th-am-body"></div>
+    </section>
 
     <div class="th-okwrap" aria-label="Go to">
       <span class="tx-lbl" style="display:block;padding-bottom:8px">Go to</span>
@@ -250,6 +267,41 @@
     }).join('');
   }
 
+  // ---- What Amanda would do (Issue #27 Phase 1): read-only shadow of her sweep.
+  // Admin only, capped lists, never an activity wall. Nothing here acts.
+  function renderAmanda(res) {
+    var box = $('th-amanda');
+    if (!res) { box.hidden = true; return; }
+    box.hidden = false;
+    var d = res.ok ? res.data : null;
+    if (!d || d.available === false) {
+      $('th-am-sweep').textContent = '';
+      $('th-am-body').innerHTML = '<div class="tx-err" style="margin-top:10px">' + icon('alert', { size: 16 }) + '<span>' + (d ? 'Amanda’s work list isn’t set up yet (migration 489 not applied).' : 'Couldn’t load Amanda’s shadow view.') + '</span></div>';
+      return;
+    }
+    var fmt = function (iso) { return new Date(iso).toLocaleString('en-US', { timeZone: 'America/Chicago', weekday: 'short', hour: 'numeric', minute: '2-digit' }); };
+    var sch = d.schedule || {};
+    var hrs = (sch.hours || []).map(function (h) { return (h % 12 || 12) + (h < 12 ? 'am' : 'pm'); }).join(' and ');
+    $('th-am-sweep').textContent = (d.last_sweep ? 'Last sweep ' + fmt(d.last_sweep.started_at) + (d.last_sweep.ok === false ? ' (failed)' : '') + ' · ' : 'No sweep has run yet · ') + (sch.scheduled ? 'sweeps ' + hrs + ' Central, weekdays' : 'sweeps are off (not enabled on the scheduler)');
+    function list(items, empty, detail) {
+      if (!items.length) return '<div class="tx-muted" style="font-size:13px">' + esc(empty) + '</div>';
+      var shown = items.slice(0, 5).map(function (i) { return '<div class="th-am-item">' + esc(i.title) + '<small>' + esc(detail(i)) + '</small></div>'; }).join('');
+      return shown + (items.length > 5 ? '<div class="tx-muted" style="font-size:12px;padding-top:6px">+' + (items.length - 5) + ' more</div>' : '');
+    }
+    var w = d.last_24h || {};
+    var pend = d.pending_wakes;
+    var fails = Object.keys(d.section_errors || {});
+    $('th-am-body').innerHTML =
+      (fails.length ? '<div class="tx-err" style="margin-top:10px">' + icon('alert', { size: 16 }) + '<span>Part of this view didn’t load (' + esc(fails.join(', ')) + '), so it may be incomplete.</span></div>' : '') +
+      '<div class="th-am-cols">' +
+      '<div class="th-am-col"><h3>Would ask a person</h3>' + list(d.needs_people || [], 'Nothing needs a person.', function (i) { return (i.community ? i.community + ' · ' : '') + (i.next_action || ''); }) + '</div>' +
+      '<div class="th-am-col"><h3>Waiting on something</h3>' + list(d.blocked || [], 'Nothing is blocked.', function (i) { return (i.community ? i.community + ' · ' : '') + (i.blocked_reason || ''); }) + '</div>' +
+      '<div class="th-am-col"><h3>Routine, last 24 hours</h3>' +
+        '<div class="th-am-n">' + (w.routine_would_continue == null ? '—' : w.routine_would_continue) + '</div><div class="tx-muted" style="font-size:12.5px">bills would continue on the normal path (you still release payments)</div>' +
+        '<div class="tx-muted" style="font-size:12.5px;margin-top:8px">' + (w.resolved == null ? 'Resolved count unavailable' : w.resolved + ' item' + (w.resolved === 1 ? '' : 's') + ' cleared') + ' · ' + (pend == null ? 'queue unknown' : pend + ' waiting for the next sweep') + '</div>' +
+      '</div></div>';
+  }
+
   // ---- load: one round of reads, only when the page opens or you ask -----
   var seq = 0;
   async function load() {
@@ -267,6 +319,7 @@
       }),
       TX.get('/api/today' + q),
       cid ? TX.get('/api/ar/control' + q) : Promise.resolve({ ok: false, error: 'no community' }),
+      isAdmin ? TX.get('/api/manager/shadow' + q) : Promise.resolve(null),
     ]);
     if (mine !== seq) return; // a newer load (community switch) superseded this one
     var b = TXBriefing.buildBriefing(
@@ -275,6 +328,7 @@
     );
     render(b, c);
     renderActivity(results[2], c);
+    renderAmanda(results[4]);
     $('th-stamp').textContent = 'Loaded ' + new Date().toLocaleTimeString('en-US', { timeZone: 'America/Chicago', hour: 'numeric', minute: '2-digit' });
   }
   load();
