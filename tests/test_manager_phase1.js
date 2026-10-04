@@ -229,6 +229,21 @@ check('wake failure never breaks the caller: missing table is a quiet skip; a re
   assert.strictEqual(dedupKey('ap_invoice', 'x', { a: 1, b: 2 }), dedupKey('ap_invoice', 'x', { b: 2, a: 1 }), 'dedup key is order-independent');
 });
 
+check('wake failure is captured through the caller client, never a separately built one (a faked client can never reach production)', async () => {
+  // Regression: an AP unit test with a fake client once wrote 8 rows to production
+  // system_errors, because capture went through lib/capture_error (its own real client).
+  const capPath = require.resolve('../lib/capture_error');
+  const wasLoaded = !!require.cache[capPath];
+  const inserted = [];
+  const fake = { from: (t) => ({ upsert: () => { throw new Error('upsert is not a function'); }, insert: async (row) => { inserted.push({ t, row }); return { error: null }; } }) };
+  const r = await emitWake(fake, { kind: 'ap_invoice', sourceId: 'inv-x', state: {} });
+  assert.strictEqual(r.ok, false);
+  assert.deepStrictEqual(inserted.map((x) => x.t), ['system_errors']);
+  assert.match(inserted[0].row.error_message, /wake not recorded/);
+  if (!wasLoaded) assert.ok(!require.cache[capPath], 'lib/capture_error (its own production client) was never loaded');
+  assert.ok(!/require\([^)]*capture_error/.test(fs.readFileSync(path.join(__dirname, '..', 'lib', 'manager', 'wake.js'), 'utf8')), 'wake.js does not require capture_error');
+});
+
 check('AP chokepoints emit AFTER their own write and keep their result (wired, source check)', () => {
   const lf = (p) => fs.readFileSync(p, 'utf8').replace(/\r\n/g, '\n');
   const intake = lf(path.join(__dirname, '..', 'lib', 'ap', 'intake.js'));
