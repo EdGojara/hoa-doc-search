@@ -343,6 +343,18 @@ failures are the enemy: a save that fails must surface a clear error to the
 user, never disappear — silent data loss teaches staff not to trust the
 platform, which is fatal to the whole thesis.
 
+### Tests never reach production
+
+**ENFORCED (2026-10-04, Issue #27 follow-up).** A unit test loaded dotenv, faked
+`@supabase/supabase-js` only for the module under test, and `lib/capture_error.js`
+(its own client) wrote 8 permanent rows to production `system_errors`. Every
+check now runs with `tests/_support/no_prod_network.js` preloaded: loopback only,
+a refused call fails the check even if swallowed. Live-data exceptions live ONLY
+in `scripts/test_network_policy.js` (read-only, or skipped unless
+`npm test -- --live`). `scripts/check_test_network_guard.js` (in `npm test`)
+fails a test that fakes a client without the guard, or fakes one while loading
+dotenv. A unit test needs a fake, never real keys.
+
 ### Mailing address ≠ property address
 
 **Scar**: The Vantaca import was writing the *mailing address* (where the

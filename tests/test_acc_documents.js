@@ -14,7 +14,7 @@
 // Real lib/acc/pending_intake.js + lib/acc/documents.js against an in-memory
 // store; the review engine is a stand-in that records what it was given.
 // ============================================================================
-require('dotenv').config({ quiet: true });
+require('./_support/no_prod_network'); // unit test: loopback only, no production keys (Issue #27 follow-up)
 const assert = require('assert');
 const fs = require('fs');
 const path = require('path');

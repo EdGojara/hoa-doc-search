@@ -2,7 +2,10 @@
 // review of 4802839b, Issue #3). Runs the REAL commitInvoice against an in-memory
 // Supabase fake injected before lib/ap/intake.js loads, and checks the PERSISTED
 // ap_invoices.needs_review against the value commitInvoice returns.
-require('dotenv').config({ quiet: true });
+// No dotenv: a unit test must never hold production keys. On 2026-10-04 this
+// test, with real SUPABASE_URL/KEY loaded, wrote 8 permanent rows to production
+// system_errors through lib/capture_error.js (Issue #27 follow-up).
+require('./_support/no_prod_network');
 const assert = require('assert');
 const Module = require('module');
 
@@ -48,8 +51,9 @@ Module._load = function (request, parent, isMain) {
   if (request === '@supabase/supabase-js') return { createClient: () => fakeClient() };
   return realLoad.apply(this, arguments);
 };
+// Left active for the whole run: intake lazily requires modules (capture_error,
+// vendor lookups, budgets) that each build their own client at call time.
 const { commitInvoice, mergedNeedsReview, lineClassificationReason } = require('../lib/ap/intake');
-Module._load = realLoad;
 
 let failed = 0;
 const results = [];

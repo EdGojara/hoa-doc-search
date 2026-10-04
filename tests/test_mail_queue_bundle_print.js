@@ -8,7 +8,10 @@
 // (numbered 1 and 2) and both evidence photos, and every member seals the SAME
 // combined bytes (sha256). On the pre-fix code the batch had one violation and
 // no photo, and each member sealed a different one-violation letter.
-require('dotenv').config({ quiet: true });
+// No dotenv: a unit test must never hold production keys. With the real
+// OPENAI_API_KEY loaded, the citation lookup made a live embeddings call
+// (found by the TEST_NO_PROD guard, Issue #27 follow-up).
+require('./_support/no_prod_network');
 const assert = require('assert');
 const crypto = require('crypto');
 const Module = require('module');
