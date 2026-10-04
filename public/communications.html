@@ -1174,8 +1174,15 @@ async function doSend(id, btn, careful, persona){
   const toEl = document.getElementById('to-'+id); const to = toEl ? (toEl.value||'').trim() : '';
   if(toEl && !to){ btn.disabled=false; btn.textContent='✅ Approve & send as '+who; alert('Enter a recipient in the To field before sending.'); toEl.focus(); return; }
   const original_draft = originalDraftByMsg[id] || '';
-  const r = await af(`${API}/${id}/send`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({body, to, also_handle, attach_doc_ids, attach_uploads, cc, original_draft})});
-  const j = await r.json();
+  const payload = {body, to, also_handle, attach_doc_ids, attach_uploads, cc, original_draft};
+  let r = await af(`${API}/${id}/send`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+  let j = await r.json();
+  // Amanda may already have replied automatically (Issue #29): the server checked her Sent
+  // Items first; only an explicit confirmation sends anyway.
+  if(r.status===409 && j.error==='amanda_unverified_confirm_required' && confirm((j.message||'Amanda may already have replied.')+'\n\nSend this reply anyway?')){
+    r = await af(`${API}/${id}/send`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...payload, confirm_after_amanda:true})});
+    j = await r.json();
+  }
   if(r.ok){
     const fu = j.followups||{};
     const fuMsg = (fu.queued&&fu.queued.length) ? `<div class="note" style="color:#166534;margin-top:4px;">✉️ Also queued a follow-up draft to ${fu.queued.map(q=>esc(q.name||q.email)).join(', ')} — review it in the <a href="/admin/draft-queue" style="color:#0B1D34;font-weight:600;">Draft Queue</a>.</div>` : '';
@@ -1187,7 +1194,7 @@ async function doSend(id, btn, careful, persona){
     // retried; also save it in this browser in case the page is closed first.
     saveUnsent(id, { body, to, cc, attach: manual });
     btn.disabled=false; btn.textContent='✅ Approve & send as '+who;
-    alert(j.detail || j.error || 'Send failed. Your message was not sent.');
+    alert(j.message || j.detail || j.error || 'Send failed. Your message was not sent.');
   }
 }
 // ---- Forward to a teammate (loop someone in before replying) --------------

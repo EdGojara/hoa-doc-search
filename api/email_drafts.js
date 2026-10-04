@@ -203,6 +203,10 @@ router.post('/:id/send', async (req, res) => {
     const { data: d, error } = await supabase.from('outbound_email_drafts').select('*').eq('id', req.params.id).maybeSingle();
     if (error) throw error;
     if (!d) return res.status(404).json({ error: 'not_found' });
+    // Amanda's automatic-reply RECEIPTS live in this table (migration 490) but are not drafts
+    // to send: the receipt state machine owns that send, and a person replies from
+    // Communications, where the receipt guard checks her Sent Items first. (Issue #29.)
+    if (d.draft_kind === 'amanda_auto_reply') return res.status(409).json({ error: 'amanda_auto_reply_receipt', message: 'This is Amanda\'s automatic-reply record, not a draft. Reply from Communications, which checks whether Amanda already sent it.' });
     if (d.status === 'sent') return res.status(409).json({ error: 'already_sent' });
     if (d.status === 'discarded') return res.status(409).json({ error: 'discarded' });
     if (!graphSend.isConfigured()) return res.status(400).json({ error: 'email not connected (Graph credentials missing)' });

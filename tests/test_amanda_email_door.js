@@ -79,7 +79,7 @@ check('CONTINUITY: an in-app Canyon Gate objective is REUSED when the same matte
   assert.match(d.T.objective_events[3].summary, /^email request: Can you get Canyon Gate ready for Monday\?$/, 'the request text, not the quoted thread or signature');
   assert.strictEqual(m.calls, 1, 'one model call for the email'); assert.strictEqual(legacyCalls, 0, 'no duplicate staff-assist call');
   assert.match(r.body, /^Hi Celina,\n\nThe next step is routing/); assert.match(r.body, /This is on the existing work item: "Canyon Gate Monday readiness"/);
-  assert.match(r.body, /What I would do next:\n1\. Route Gexa Energy/); assert.match(r.body, /\n\nAmanda$/);
+  assert.match(r.body, /What I would do next:\n1\. Route Gexa Energy/); assert.ok(!/\n\nAmanda$/.test(r.body), 'no bare sign-off: every send path adds the real signature via buildAmandaEmail (Issue #29)');
   assert.match(r.review_hint, /amanda request \(work\) · existing work: .* · AI calls: 1/);
   assert.match(m.prompts[0], /by email to amanda@/); assert.match(m.prompts[0], /THEIR EMAIL \(context only/);
 });
