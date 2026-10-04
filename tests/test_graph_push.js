@@ -90,12 +90,46 @@ check('PER-MAILBOX identity: Inbox-only created subscription on the identity, ha
 check('HANDSHAKE: ?validationToken is echoed exactly as 200 text/plain and does no work', async () => {
   const res = fakeRes(); let touched = false;
   const saved = GP.getGraphPush; GP.getGraphPush = () => { touched = true; return null; };
-  try { router.handle('notify')({ query: { validationToken: 'Validation: Token+with spaces&x' }, params: { key: KEY }, body: {} }, res); }
+  try { router.makeHandler('notify')({ query: { validationToken: 'Validation: Token+with spaces&x' }, params: { key: KEY }, body: {} }, res); }
   finally { GP.getGraphPush = saved; }
   assert.strictEqual(res.code, 200); assert.strictEqual(res.type_, 'text/plain'); assert.strictEqual(res.body, 'Validation: Token+with spaces&x');
   assert.strictEqual(touched, false, 'no push work on a handshake');
-  const res2 = fakeRes(); router.handle('lifecycle')({ query: { validationToken: 'abc' }, params: { key: KEY }, body: {} }, res2);
+  const res2 = fakeRes(); router.makeHandler('lifecycle')({ query: { validationToken: 'abc' }, params: { key: KEY }, body: {} }, res2);
   assert.strictEqual(res2.body, 'abc');
+});
+
+// Through EXPRESS itself (in-process, no socket): catches routing/mount defects the direct
+// handler calls cannot. Production scar 2026-10-04: exporting a helper as router.handle replaced
+// Express's dispatch method, every /api/graph request hung, and the direct-call tests passed.
+function viaExpress(method, url, { body, contentType = 'application/json' } = {}) {
+  const express = require('express'); const http = require('http'); const net = require('net');
+  const app = express();
+  app.use((req, res, next) => express.json()(req, res, next));
+  app.use('/api/graph', require('../api/graph_push'));
+  app.use((req, res) => res.status(404).end('nf'));
+  return new Promise((resolve) => {
+    const req = new http.IncomingMessage(new net.Socket());
+    req.method = method; req.url = url; req.headers = { host: 'app.bedrocktxai.com', 'content-type': contentType };
+    const payload = body === undefined ? '' : (typeof body === 'string' ? body : JSON.stringify(body));
+    req.headers['content-length'] = String(Buffer.byteLength(payload));
+    if (payload) req.push(payload); req.push(null);
+    const res = new http.ServerResponse(req); const chunks = [];
+    res.write = (c) => { if (c) chunks.push(Buffer.from(c)); return true; };
+    res.end = (c) => { if (c && typeof c !== 'function') chunks.push(Buffer.from(c)); resolve({ status: res.statusCode, type: String(res.getHeader('content-type') || ''), body: Buffer.concat(chunks).toString() }); return res; };
+    setTimeout(() => resolve({ status: 'HUNG' }), 2000);
+    app(req, res);
+  });
+}
+
+check('THROUGH EXPRESS: the real mount answers the handshake and a notification, and leaves other paths alone (no hang)', async () => {
+  const h = await viaExpress('POST', `/api/graph/mail/notify/${KEY}?validationToken=${encodeURIComponent('Validation: Token+x y&z')}`, { contentType: 'text/plain' });
+  assert.strictEqual(h.status, 200, 'handshake answered'); assert.match(h.type, /^text\/plain/); assert.strictEqual(h.body, 'Validation: Token+x y&z');
+  const l = await viaExpress('POST', `/api/graph/mail/lifecycle/${KEY}?validationToken=abc`, { contentType: 'text/plain' });
+  assert.strictEqual(l.status, 200); assert.strictEqual(l.body, 'abc');
+  const n = await viaExpress('POST', `/api/graph/mail/notify/${KEY}`, { body: note('bad') });
+  assert.strictEqual(n.status, 202, 'notification acknowledged');
+  const other = await viaExpress('GET', '/api/graph/mail/notify/' + KEY);
+  assert.strictEqual(other.status, 404, 'non-route falls through instead of hanging');
 });
 
 check('FAST ACK: the webhook answers 202 before any ingest starts; with push off it is a 202 no-op', async () => {
@@ -103,11 +137,11 @@ check('FAST ACK: the webhook answers 202 before any ingest starts; with push off
   const saved = GP.getGraphPush; GP.getGraphPush = () => p;
   try {
     const res = fakeRes();
-    router.handle('notify')({ query: {}, params: { key: KEY }, body: note(goodCs) }, res);
+    router.makeHandler('notify')({ query: {}, params: { key: KEY }, body: note(goodCs) }, res);
     assert.strictEqual(res.code, 202); assert.strictEqual(res.ended, true); assert.strictEqual(ing.calls.length, 0, 'nothing ran inside the request');
     await tick(); assert.strictEqual(ing.calls.length, 1, 'ingest started after the response'); release();
     GP.getGraphPush = () => null;
-    const off = fakeRes(); router.handle('notify')({ query: {}, params: { key: KEY }, body: note(goodCs) }, off);
+    const off = fakeRes(); router.makeHandler('notify')({ query: {}, params: { key: KEY }, body: note(goodCs) }, off);
     assert.strictEqual(off.code, 202);
   } finally { GP.getGraphPush = saved; }
 });

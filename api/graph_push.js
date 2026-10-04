@@ -36,4 +36,4 @@ router.post('/mail/notify/:key', handle('notify'));
 router.post('/mail/lifecycle/:key', handle('lifecycle'));
 
 module.exports = router;
-module.exports.handle = handle;
+module.exports.makeHandler = handle;   // NOT .handle: that is the Router's own dispatch method
