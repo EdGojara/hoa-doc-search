@@ -61,7 +61,10 @@ function fakeDb(seed = {}) {
 
 // ---- fake Amanda mailbox (shared across "processes") ----
 function fakeMailbox() {
-  const M = { msgs: {}, n: 0, sends: 0, creates: 0, patches: 0, attaches: 0 };
+  // The inbound SOURCE message lives in the mailbox too. Its Graph id changes when it moves
+  // (ingest files it right after the insert), exactly as regular Graph ids do.
+  const M = { msgs: {}, n: 0, sends: 0, creates: 0, patches: 0, attaches: 0, sourceId: 'src-graph-id', sourceImid: IMID, createCalls: [] };
+  M.moveSource = () => { M.sourceId = `src-moved-${++M.n}`; return M.sourceId; };
   M.addDraft = (props) => { const id = `imm-${++M.n}`; M.msgs[id] = { id, isDraft: true, parentFolderId: 'DRAFTS', conversationId: 'conv-1', marker: null, body: '<div>quoted thread</div>', attachments: [], createdDateTime: new Date().toISOString(), ...props }; return id; };
   return M;
 }
@@ -70,13 +73,20 @@ function graphFor(M, hooks = {}) {
   const after = async (name) => { if (hooks[name] === 'after') return hang(); };
   return {
     async messageMeta() { return { headers: [{ name: 'X-MS-Exchange-Organization-AuthAs', value: hooks.authAs || 'Internal' }], to: [AMANDA], cc: hooks.cc || [], conversationId: 'conv-1' }; },
+    async findByInternetMessageId(mbx, imid) { return hooks.noImidMatch || imid !== M.sourceImid || M.sourceGone ? null : M.sourceId; },
     async createReply(mbx, src, key) {
       await at('createReply');
+      M.createCalls.push(src);
       if (hooks.createReplyError) { const e = new Error(hooks.createReplyError.message); e.temporary = hooks.createReplyError.temporary; throw e; }
+      if (hooks.moveOnFirstCreate && !M.racedOnce) { M.racedOnce = true; M.moveSource(); }   // filed between resolve and reply
+      if (src !== M.sourceId || M.sourceGone) return null;                                    // Graph 404: no draft created
       M.creates += 1; const id = M.addDraft({ marker: hooks.noMarkerOnCreate ? null : key });
       await after('createReply'); return { id, internetMessageId: null, conversationId: 'conv-1' };
     },
-    async getMessage(mbx, id) { await at('getMessage'); const m = M.msgs[id]; return m ? { ...m } : null; },
+    async getMessage(mbx, id) {
+      if (id === M.sourceId && !M.sourceGone) return { id, isDraft: false, parentFolderId: 'FILED', conversationId: 'conv-1', body: '', marker: null };
+      await at('getMessage'); const m = M.msgs[id]; return m ? { ...m } : null;
+    },
     async setMarker(mbx, id, key) { M.msgs[id].marker = key; },
     async findOwnedDrafts(mbx, key) { await at('findOwnedDrafts'); return Object.values(M.msgs).filter((m) => m.isDraft && m.marker === key).map((m) => ({ id: m.id, createdDateTime: m.createdDateTime })); },
     async findConversationDrafts(mbx, conv) { return Object.values(M.msgs).filter((m) => m.isDraft && m.conversationId === conv).map((m) => ({ id: m.id, createdDateTime: m.createdDateTime })); },
@@ -311,6 +321,59 @@ check('HUMAN-OVERRIDE SUPPORT: receiptFor / verifyNow (fresh check promotes a fo
   for (let i = 0; i < 10; i++) await tick();
   assert.strictEqual(await proc(db2, M2, { clock: c }).ar.releaseToHuman(receipt(db2)), true);
   assert.strictEqual(receipt(db2).status, 'failed'); c.t += LEASE_MS + 1000; await proc(db2, M2, { clock: c }).ar.sweep(); assert.strictEqual(M2.sends, 0, 'recovery never sends what a person took over');
+});
+
+// ================= SOURCE MOVED (live proof 2026-10-04) =================
+check('LIVE-PROOF REGRESSION: the inbound message is FILED (Graph id changes) between ingest and reply creation -> resolved by internetMessageId, the stale id is never used, one send', async () => {
+  const db = fakeDb(); seedInbound(db); const M = fakeMailbox();
+  const staleId = M.sourceId;                       // what ingest saw before filing
+  const newId = M.moveSource();                     // ingest filed it; the stored id would be updated too
+  db.T.email_messages[0].graph_id = newId;
+  const r = await proc(db, M).ar.execute({ inbound: { ...inbound, graph_id: staleId }, draft, decision: EXEC, contract });
+  assert.strictEqual(r.status, 'sent'); assert.strictEqual(M.sends, 1);
+  assert.deepStrictEqual(M.createCalls, [newId], 'createReply only ever targets the current message');
+  assert.ok(!M.createCalls.includes(staleId), 'the pre-move id handed in from ingest is never trusted');
+  const src = fs.readFileSync(path.join(__dirname, '..', 'lib', 'amanda', 'auto_reply.js'), 'utf8');
+  assert.ok(!/sourceGraphId:\s*inbound\.graph_id/.test(src) && !/ctx\.sourceGraphId/.test(src), 'no hand-off of a source id from ingest');
+  const ing = fs.readFileSync(path.join(__dirname, '..', 'lib', 'email', 'graph_ingest.js'), 'utf8');
+  assert.ok(!/inbound: \{ id: insId, internet_message_id: email\.internet_message_id, graph_id: email\.graph_id/.test(ing), 'ingest no longer hands over the pre-filing graph_id');
+});
+
+check('RACE: the message moves BETWEEN resolve and createReply (404, no draft) -> re-resolved once and retried; one draft, one send', async () => {
+  const db = fakeDb(); seedInbound(db); const M = fakeMailbox();
+  const r = await proc(db, M, { hooks: { moveOnFirstCreate: true } }).ar.execute({ inbound, draft, decision: EXEC, contract });
+  assert.strictEqual(r.status, 'sent'); assert.strictEqual(M.createCalls.length, 2); assert.notStrictEqual(M.createCalls[0], M.createCalls[1]);
+  assert.strictEqual(M.creates, 1, 'exactly one draft'); assert.strictEqual(M.sends, 1); assert.strictEqual(receipt(db).attempts, 1, 'one attempt, not two');
+});
+
+check('FALLBACK: no internetMessageId match -> the stored graph_id is used ONLY if Graph confirms it; a stale stored id escalates with zero sends', async () => {
+  const db = fakeDb(); seedInbound(db); const M = fakeMailbox();
+  const r = await proc(db, M, { hooks: { noImidMatch: true } }).ar.execute({ inbound, draft, decision: EXEC, contract });
+  assert.strictEqual(r.status, 'sent'); assert.deepStrictEqual(M.createCalls, ['src-graph-id']);
+  const db2 = fakeDb(); seedInbound(db2); const M2 = fakeMailbox(); M2.sourceGone = true;   // deleted or unreachable
+  await proc(db2, M2).ar.execute({ inbound, draft, decision: EXEC, contract });
+  const rc = receipt(db2);
+  assert.strictEqual(rc.status, 'failed'); assert.ok(rc.escalated_at); assert.match(rc.last_error, /source message not found/);
+  assert.strictEqual(M2.createCalls.length, 0, 'no createReply on an unconfirmed id'); assert.strictEqual(M2.sends, 0);
+});
+
+check('PRODUCTION RECEIPT: a receipt left `claimed` by the live 404 (attempts 1, no draft, lease released) recovers under the SAME receipt and sends EXACTLY once; further sweeps, re-ingest and a human Send cannot double-send', async () => {
+  const db = fakeDb(); seedInbound(db); const M = fakeMailbox();
+  const clock = { t: Date.parse('2026-10-04T23:30:00Z') };
+  M.moveSource(); db.T.email_messages[0].graph_id = M.sourceId;   // filed after ingest, stored id updated
+  db.T.outbound_email_drafts.push({ id: '01fdf096', draft_kind: 'amanda_auto_reply', source_email_ref: KEY, status: 'claimed', persona: 'amanda', from_mailbox: AMANDA,
+    to_email: ED, subject: 'Re: Canyon Gate', body_text: draft.body, attempts: 1, verify_checks: 0, lease_token: 'live-lease', lease_expires_at: new Date(clock.t - 1000).toISOString(),
+    claimed_at: '2026-10-04T23:24:16Z', conversation_id: 'conv-1', objective_id: 'obj-c50ec1f3', last_error: 'createReply returned no draft', created_at: '2026-10-04T23:24:16Z' });
+  await proc(db, M, { clock }).ar.sweep();
+  const rc = receipt(db);
+  assert.strictEqual(rc.status, 'sent'); assert.strictEqual(rc.attempts, 2); assert.strictEqual(M.sends, 1); assert.strictEqual(M.creates, 1);
+  assert.strictEqual(db.T.outbound_email_drafts.length, 1, 'same receipt, never a second one');
+  for (let i = 0; i < 3; i++) { clock.t += LEASE_MS + 1000; await proc(db, M, { clock }).ar.sweep(); }
+  const again = await proc(db, M, { clock }).ar.execute({ inbound: { ...inbound, id: 'reingested' }, draft, decision: EXEC, contract });
+  assert.strictEqual(again.skipped, 'already_claimed');
+  const ar = proc(db, M, { clock }).ar; assert.strictEqual((await ar.receiptFor(IMID)).status, 'sent', 'the Communications guard sees sent -> 409');
+  assert.strictEqual(await ar.releaseToHuman(receipt(db)), false);
+  assert.strictEqual(M.sends, 1, 'still exactly one send');
 });
 
 // ================= HUMAN SEND GUARDS =================
