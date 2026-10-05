@@ -1404,26 +1404,15 @@ router.post('/:id/send', express.json(), async (req, res) => {
       let rcpt = null;
       try { rcpt = await autoReply.receiptFor(m.internet_message_id); }
       catch (e) { return res.status(503).json({ error: 'Could not check whether Amanda already replied. Nothing was sent; try again in a moment.', sent: false }); }
-      // An ACKNOWLEDGEMENT receipt ("I have this, it needs review") is not the answer: the person
-      // reviewing may always send the real reply.
-      if (rcpt && !(rcpt.policy && rcpt.policy.mode === 'ack')) {
-        const confirmed = !!(req.body && req.body.confirm_after_amanda === true);
-        const mayHaveSent = ['send_requested', 'unverified'].includes(rcpt.status) || (rcpt.status === 'failed' && rcpt.send_requested_at);
-        const preSend = ['claimed', 'draft_created', 'draft_ready'].includes(rcpt.status);
-        if (rcpt.status === 'sent') return res.status(409).json({ error: 'already_sent_by_amanda', message: `Amanda already replied automatically${rcpt.sent_at ? ' at ' + rcpt.sent_at : ''}. Nothing was sent.`, sent: false });
-        if (mayHaveSent) {
-          let v = 'unresolved';
-          try { v = await autoReply.verifyNow(rcpt); } catch (e) { console.warn('[email-triage] amanda receipt verification failed:', e.message); }
-          if (v === 'sent') return res.status(409).json({ error: 'already_sent_by_amanda', message: 'Amanda\'s automatic reply is in her Sent Items. Nothing was sent.', sent: false });
-          if (!confirmed) return res.status(409).json({ error: 'amanda_unverified_confirm_required', message: 'Amanda may already have replied (not found in her Sent Items yet). Check Amanda\'s Sent Items, then confirm to send anyway.', sent: false });
-        } else if (preSend) {
-          if (rcpt.lease_expires_at && Date.parse(rcpt.lease_expires_at) > Date.now()) return res.status(409).json({ error: 'amanda_sending', message: 'Amanda is sending this reply right now. Nothing was sent.', sent: false });
-          if (!confirmed) return res.status(409).json({ error: 'amanda_unverified_confirm_required', message: 'Amanda started an automatic reply that did not finish (nothing was sent by her). Confirm to send this one yourself.', sent: false });
-          const released = await autoReply.releaseToHuman(rcpt).catch(() => false);
-          if (!released) return res.status(409).json({ error: 'amanda_sending', message: 'Amanda is sending this reply right now. Nothing was sent.', sent: false });
-        }
-        // failed before send_requested: proven not sent by Amanda; the person may send.
-      }
+      // Decided by receipt STATE for both modes (lib/amanda/auto_reply.js humanSendGuard): an
+      // in-flight or uncertain send (answer OR acknowledgement) keeps the exactly-once guard; a
+      // conclusively sent acknowledgement never blocks the real answer.
+      const guard = await require('../lib/amanda/auto_reply').humanSendGuard(rcpt, {
+        confirmed: !!(req.body && req.body.confirm_after_amanda === true),
+        verifyNow: (r) => autoReply.verifyNow(r),
+        releaseToHuman: (r) => autoReply.releaseToHuman(r),
+      });
+      if (!guard.allow) return res.status(guard.status).json({ error: guard.error, message: guard.message, sent: false });
     }
     // No classification block on send: Ed reviews and approves every outgoing
     // reply himself (admin-only), and explicitly wants to reply to any email,
