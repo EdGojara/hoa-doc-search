@@ -376,6 +376,45 @@ check('PRODUCTION RECEIPT: a receipt left `claimed` by the live 404 (attempts 1,
   assert.strictEqual(M.sends, 1, 'still exactly one send');
 });
 
+// ================= REAL GRAPH ADAPTER (live proof 2026-10-05) =================
+check('REAL ADAPTER: listing a draft\'s attachments selects only base-type properties (contentId is fileAttachment-only; Graph 400s on it), and no $select names a property Graph rejects', async () => {
+  const gsPath = require.resolve('../lib/email/graph_send');
+  const savedGs = require.cache[gsPath]; const realFetch = global.fetch; const urls = [];
+  require.cache[gsPath] = { id: gsPath, filename: gsPath, loaded: true, exports: { ...(savedGs ? savedGs.exports : {}), getToken: async () => 'token' } };
+  global.fetch = async (url) => {
+    urls.push(String(url));
+    if (/\/attachments\?\$select=[^&]*contentId/.test(decodeURIComponent(String(url)))) {
+      return { ok: false, status: 400, text: async () => JSON.stringify({ error: { code: 'BadRequest', message: "Parsing OData Select and Expand failed: Could not find a property named 'contentId' on type 'microsoft.graph.attachment'." } }) };
+    }
+    return { ok: true, status: 200, text: async () => JSON.stringify({ value: [{ name: 'image001.png', '@odata.type': '#microsoft.graph.fileAttachment' }] }) };
+  };
+  try {
+    delete require.cache[require.resolve('../lib/amanda/auto_reply')];
+    const { _realGraph } = require('../lib/amanda/auto_reply');
+    const list = await _realGraph().listAttachments(AMANDA, 'draft-imm-id');
+    assert.deepStrictEqual(list, [{ name: 'image001.png' }]);
+    assert.ok(urls.some((u) => /\/attachments\?\$select=name$/.test(u)), urls.join(' '));
+  } finally {
+    global.fetch = realFetch; if (savedGs) require.cache[gsPath] = savedGs; else delete require.cache[gsPath];
+    delete require.cache[require.resolve('../lib/amanda/auto_reply')];
+  }
+  // Every $select in the adapter names only properties of the base message / folder / attachment types.
+  const src = fs.readFileSync(path.join(__dirname, '..', 'lib', 'amanda', 'auto_reply.js'), 'utf8');
+  const BASE = new Set(['id', 'name', 'isDraft', 'parentFolderId', 'internetMessageId', 'conversationId', 'sentDateTime', 'createdDateTime', 'body', 'internetMessageHeaders', 'toRecipients', 'ccRecipients']);
+  for (const m of src.matchAll(/\$select=([A-Za-z,]+)/g)) for (const f of m[1].split(',')) assert.ok(BASE.has(f), `unexpected $select property: ${f}`);
+});
+
+check('RESUME after the live 400: a draft that already has the patched body and one foreign inline image gets ONLY our missing signature images, matched by name', async () => {
+  const db = fakeDb(); seedInbound(db); const M = fakeMailbox(); const clock = { t: Date.parse('2026-10-05T00:30:00Z') };
+  proc(db, M, { hooks: { getMessage: 'before' }, clock }).ar.execute({ inbound, draft, decision: EXEC, contract });   // dies at draft_created
+  for (let i = 0; i < 10; i++) await tick();
+  const id = receipt(db).graph_draft_id;
+  M.msgs[id].attachments.push({ name: 'image001.png' });   // Ed's signature image from the quoted thread
+  clock.t += LEASE_MS + 1000; await proc(db, M, { clock }).ar.sweep();
+  assert.deepStrictEqual(M.msgs[id].attachments.map((a) => a.name).sort(), ['image001.png', 'logo.png']);
+  assert.strictEqual(M.sends, 1); assert.strictEqual(receipt(db).status, 'sent');
+});
+
 // ================= HUMAN SEND GUARDS =================
 check('COMMUNICATIONS SEND GUARD: Amanda receipt checked BEFORE any Graph send; sent=409; may-have-sent gets a FRESH verification, then explicit confirmation; live pre-send=409; stale pre-send released to the person only on confirm', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'api', 'email_triage.js'), 'utf8').replace(/\r\n/g, '\n');
