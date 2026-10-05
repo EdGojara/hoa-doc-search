@@ -212,6 +212,7 @@ const CHECKS = [
   'tests/test_amanda_request.js',
   'tests/test_amanda_email_door.js',
   'tests/test_amanda_auto_reply.js',
+  'tests/test_amanda_status_intent.js',
   'tests/test_team_portraits.js',
   'tests/test_graph_push.js',
   'tests/test_reconciliation_ar_readiness.js',
