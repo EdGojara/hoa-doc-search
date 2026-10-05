@@ -23,7 +23,7 @@
   th{font-size:11.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:800;} td.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap;}
   .tablewrap{overflow-x:auto;}
   .pill{display:inline-block;font-size:11px;font-weight:800;letter-spacing:.05em;border-radius:20px;padding:2px 9px;text-transform:uppercase;white-space:nowrap;}
-  .PASS{background:var(--live-bg);color:var(--live);} .FAIL{background:var(--bad-bg);color:var(--bad);} .BLOCKED{background:var(--warn-bg);color:var(--warn);} .WAIVED{background:var(--surface-2);color:var(--navy);border:1px solid var(--gold);}
+  .PASS{background:var(--live-bg);color:var(--live);} .FAIL{background:var(--bad-bg);color:var(--bad);} .BLOCKED{background:var(--warn-bg);color:var(--warn);} .WAIVED{background:var(--surface-2);color:var(--navy);border:1px solid var(--gold);} .COMPLETED{background:var(--surface-2);color:var(--muted);border:1px solid var(--line);}
   .stages{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0;} .stage{font-size:12px;border:1px solid var(--line);border-radius:20px;padding:3px 10px;color:var(--muted);background:var(--surface);}
   .stage.cur{border-color:var(--gold);color:var(--navy);font-weight:800;} .stage.done{color:var(--live);}
   .action{border-left:4px solid var(--gold);background:var(--surface);border-radius:8px;padding:12px 14px;margin:12px 0;font-size:14.5px;}
@@ -126,8 +126,13 @@ function say(text, kind) { $('msg').innerHTML = text ? '<div class="banner ' + (
 const commName = (id) => (communities.find((c) => c.id === id) || {}).name || id;
 
 async function loadList() {
-  const rows = await api('/api/onboarding/batches');
-  $('batches').innerHTML = rows.length ? rows.map((b) => '<tr><td><a href="/admin/onboarding?batch=' + encodeURIComponent(b.id) + '">' + esc(b.batch_code) + '</a></td><td>' + esc(commName(b.community_id)) + '</td><td>' + esc(b.as_of_date) + '</td><td>' + esc(b.source_system) + '</td><td>' + esc(label(b.stage)) + '</td><td>' + (b.current_status ? '<span class="pill ' + esc(b.current_status) + '">' + esc(b.current_status) + '</span>' : '<span class="muted">not run</span>') + '</td></tr>').join('') : '<tr><td colspan="6" class="muted">No onboarding batches yet.</td></tr>';
+  // The server (onboarding_batches, migration 491) already lists active batches first; the
+  // stable sort here keeps that order even before 491 is applied. A completed batch's result is
+  // its final post-proof result, so the cell names the stage it came from.
+  const rows = (await api('/api/onboarding/batches')).slice().sort((a, b) => (a.stage === 'complete') - (b.stage === 'complete'));
+  const result = (b) => !b.current_status ? '<span class="muted">not run</span>'
+    : '<span class="pill ' + esc(b.current_status) + '">' + esc(b.current_status) + '</span>' + (b.result_stage && b.result_stage !== b.stage ? ' <span class="muted">(' + esc(label(b.result_stage).replace(' ', '-')) + ')</span>' : '');
+  $('batches').innerHTML = rows.length ? rows.map((b) => '<tr><td><a href="/admin/onboarding?batch=' + encodeURIComponent(b.id) + '">' + esc(b.batch_code) + '</a></td><td>' + esc(commName(b.community_id)) + '</td><td>' + esc(b.as_of_date) + '</td><td>' + esc(b.source_system) + '</td><td>' + esc(label(b.stage)) + (b.stage === 'complete' ? ' <span class="pill COMPLETED">Completed</span>' : '') + '</td><td>' + result(b) + '</td></tr>').join('') : '<tr><td colspan="6" class="muted">No onboarding batches yet.</td></tr>';
 }
 
 function renderDetail(v) {

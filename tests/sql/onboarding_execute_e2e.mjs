@@ -27,7 +27,7 @@ let pass = 0, fail = 0;
 const check = (name, cond, extra = '') => { if (cond) { pass++; console.log('PASS ', name); } else { fail++; console.log('FAIL ', name, extra); } };
 const code = async (fn) => { try { await fn(); return null; } catch (e) { return `${e.code || ''} ${e.message || ''}`; } };
 
-const world = await onboardingWorld(PGlite, { through: 488, gl: true });
+const world = await onboardingWorld(PGlite, { through: 491, gl: true });
 const { rpc, db } = world;
 const q = async (sql, params) => (await db.query(sql, params)).rows;
 const one = async (sql, params) => (await q(sql, params))[0];
@@ -325,6 +325,8 @@ let vpp = await svcPP.getBatch(W.B, ED);
 check('post-proof FAILS when the books no longer tie (a stray pre-cutoff entry after execution); it names the broken checks', opFail.stopped_at === 'post_proof' && opFail.reason === 'needs_human' && vpp.latest_by_stage.post_proof.status === 'FAIL'
   && vpp.latest_by_stage.post_proof.open_controls.includes('post_proof.cutoff_tb_equals_source'), JSON.stringify({ op: opFail, open: vpp.latest_by_stage.post_proof.open_controls }));
 check('post-proof is READ-ONLY: no accounting / ledger / AP / batch row written by it', JSON.stringify(await counts()) === JSON.stringify(beforeFail));
+const listAtPostProof = (await rpc('onboarding_batches', { p_community: null })).find((b) => b.id === W.B);
+check('Batches list (491): a batch IN post_proof still reads its own current result (FAIL), unchanged', listAtPostProof.stage === 'post_proof' && listAtPostProof.current_status === 'FAIL' && listAtPostProof.result_stage === 'post_proof', JSON.stringify(listAtPostProof));
 check('a FAILED post-proof cannot be completed (the owner advance is refused; the batch stays in post_proof)', /not waived|refused|FAIL/.test((await code(() => svcPP.advance(ED, W.B, { completion_id: vpp.current.completion_id, to: 'complete' }))) || '')
   && (await one(`SELECT onboarding_stage FROM conversion_batches WHERE id = $1`, [W.B])).onboarding_stage === 'post_proof');
 // 2) the stray entry is withdrawn (draft = never counted); post-proof re-runs PASS
@@ -344,6 +346,13 @@ vpp = await svcPP.getBatch(W.B, ED);
 check('the owner completes the batch: stage complete, write-locked, posted; the batch view says complete', fin.onboarding_stage === 'complete' && fin.write_locked === true && fin.status === 'posted' && /Batch complete/.test(vpp.derived.required_action.text), JSON.stringify(fin));
 check('after completion: still exactly one committed execution and no duplicate conversion entries', (await one(`SELECT count(*)::int AS n FROM onboarding_executions WHERE batch_id = $1 AND status = 'committed'`, [W.B])).n === 1
   && (await one(`SELECT count(*)::int AS n FROM journal_entries WHERE left(reference, 16) = 'CONV-EX-20260331'`)).n === 4 && JSON.stringify(await counts()) === JSON.stringify(beforePass));
+// The Batches table read model (491): 'complete' has no stage result of its own, so a finished
+// batch must report its most recent post-proof result (this one FAILED once, then PASSED), not "not run".
+const listed = await rpc('onboarding_batches', { p_community: null });
+const done = listed.find((b) => b.id === W.B);
+check('Batches list (491): a completed batch reports its most recent post-proof result (PASS), never "not run"', done && done.stage === 'complete' && done.current_status === 'PASS' && done.result_stage === 'post_proof', JSON.stringify(done));
+const firstDone = listed.findIndex((b) => b.stage === 'complete');
+check('Batches list (491): active batches sort above completed ones (the older preflight batch is listed first)', listed.length === 2 && firstDone === 1 && listed[0].batch_code === 'CONV-EX2-20260331' && listed[0].result_stage === 'preflight', JSON.stringify(listed.map((b) => [b.batch_code, b.stage, b.current_status])));
 check('a completed batch cannot be executed again', /ALREADY_EXECUTED|already_executed|NOT_IN_PREFLIGHT/.test(JSON.stringify(await svcPP.execute(ED, W.B, { completion_id: pf, preflight_sha256: report.sha256 }).catch((e) => ({ e: e.code })))));
 
 console.log(`\n${pass} passed, ${fail} failed`);
