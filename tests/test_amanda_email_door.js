@@ -113,8 +113,10 @@ check('LINK HOST: Today and destination links use the operator app host even whe
     const action = await draftAmandaStaffAssist({ email: staffEmail('Hi Amanda,\nWhat still needs me today?\nThanks'), contract: { supabase: db(held), anthropic: model(WORK) } });
     assert.ok(work.body.includes('https://app.bedrocktxai.com/app/today'), 'work: Today link on the operator host');
     assert.ok(status.body.includes('https://app.bedrocktxai.com/app/today'), 'status: Today link on the operator host');
-    assert.ok(/Where to act: https:\/\/app\.bedrocktxai\.com\//.test(action.body), 'Take action destination on the operator host');
-    assert.ok(action.body.includes(`https://app.bedrocktxai.com/#tab=ap&invoice=${u(85)}`), 'exact destination path kept');
+    // A status answer points at Today, not a single record (Issue #29, 2026-10-05), even with a held bill on it.
+    assert.ok(!/Where to act:/.test(action.body), 'status email has no single-record link');
+    assert.ok(action.body.includes('https://app.bedrocktxai.com/app/today'), 'held-bill status: Today link on the operator host');
+    assert.match(action.body, /For your decision:\n- On hold: /, 'the held bill is listed for a decision');
     for (const l of [...links(work.body), ...links(status.body), ...links(action.body)]) assert.ok(l.startsWith('https://app.bedrocktxai.com/'), `link on wrong host: ${l}`);
   } finally {
     if (saved.t === undefined) delete process.env.TRUSTED_URL; else process.env.TRUSTED_URL = saved.t;

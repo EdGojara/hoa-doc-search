@@ -119,9 +119,9 @@ check('EXACT STATUS: "What still needs me today?" is answered from the feed read
   assert.strictEqual(r.model_calls, 0); assert.strictEqual(m.calls, 0, 'no model for the exact-status family');
   assert.deepStrictEqual(r.status.counts, { now: 3, waiting: 1, policy: 1 });
   assert.deepStrictEqual(r.status.by_specialist, { Emma: 2, Annie: 1 });
-  assert.match(r.reply, /^3 items need you now \(Emma 2, Annie 1\), 1 is waiting on something, and 1 needs your decision\./);
-  assert.match(r.reply, /For your decision: On hold: Rene Rosales \(DJ Randy\) #1010 \(\$300\.00\)/);
-  assert.match(r.reply, /Most urgent: Past due: Gexa Energy/);
+  assert.match(r.reply, /^Today, 3 items need you now, 1 is waiting on something and 1 needs your decision\./);
+  assert.match(r.reply, /For your decision:\n- On hold: Rene Rosales \(DJ Randy\) #1010 \(\$300\.00\)/);
+  assert.match(r.reply, /Needs you now:\n- Past due: Gexa Energy/);
   assert.strictEqual(r.durable, false); assert.strictEqual(d.writes.length, 0);
   assert.strictEqual(r.status.policy[0].action.href, `/#tab=ap&invoice=${u(85)}`);
   for (const t of ['Amanda, what still needs me today?', 'what needs me', 'What is on my plate today?', 'Give me a status update', 'What needs me at Canyon Gate today?']) {
@@ -130,7 +130,7 @@ check('EXACT STATUS: "What still needs me today?" is answered from the feed read
   }
   assert.strictEqual(m.calls, 0);
   const scoped = await ask(db(statusWorld()), m, { text: 'What needs me at Canyon Gate today?' });
-  assert.strictEqual(scoped.community.name, 'Canyon Gate at Cinco Ranch'); assert.match(scoped.reply, /your decision at Canyon Gate at Cinco Ranch\./);
+  assert.strictEqual(scoped.community.name, 'Canyon Gate at Cinco Ranch'); assert.match(scoped.reply, /^For Canyon Gate today, /);
   const empty = await ask(db(), m, { text: 'What still needs me today?' });
   assert.strictEqual(empty.reply, 'Nothing needs a person right now.'); assert.strictEqual(empty.model_calls, 0);
 });

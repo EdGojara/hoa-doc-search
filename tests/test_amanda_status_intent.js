@@ -109,7 +109,7 @@ check('CONTRACT: each variant is answered from the live feed scoped to Canyon Ga
     assert.strictEqual(r.model_calls, 0, v); assert.strictEqual(m.calls, 0, v);
     assert.strictEqual(r.durable, false); assert.strictEqual(r.objective, null); assert.strictEqual(d.writes.length, 0, 'creates nothing');
     assert.strictEqual(r.community && r.community.name, 'Canyon Gate at Cinco Ranch', v);
-    assert.match(r.reply, /at Canyon Gate at Cinco Ranch/);
+    assert.match(r.reply, /Canyon Gate/); assert.ok(!/Canyon Gate at Cinco Ranch at Cinco Ranch/.test(r.reply));
   }
   const m = model({ intent: 'query', reply: 'The Gexa bill has one open item.' });
   const r = await handleRequest({ channel: 'email', actor: { email: 'egojara@bedrocktx.com', name: 'Ed' }, text: "What's left for the Gexa bill today?" }, { supabase: db(), anthropic: m });
@@ -123,7 +123,58 @@ check("EMAIL DOOR: Ed's exact email (full body) -> shared contract, exact status
   assert.strictEqual(r.amanda_request.deterministic, 'status', 'the gate sees an exact-status answer (auto-send eligible)');
   assert.strictEqual(r.amanda_request.model_calls, 0); assert.strictEqual(m.calls, 0); assert.strictEqual(legacyCalls, 0);
   assert.strictEqual(d.writes.length, 0);
-  assert.match(r.body, /^Hi Ed,\n\n/); assert.match(r.body, /Canyon Gate at Cinco Ranch/);
+  assert.match(r.body, /^Hi Ed,\n\nI had a good night, thank you\. /, "Ed's approved opening"); assert.match(r.body, /Canyon Gate/);
+  assert.ok(!/Where to act:/.test(r.body), 'a status answer points at Today, not a single record');
+});
+
+// ===== Status writing (Ed, 2026-10-05): one natural acknowledgement, readable, community-only, deterministic =====
+const { handleRequest: HR } = require('../lib/amanda/request');
+// Canyon Gate work, another community's work, and a community-less system alert (failed job).
+// Rows carry communities:{name}, the shape the real communities:community_id(name) join returns.
+const writingWorld = () => ({
+  communities: [{ id: CG, name: 'Canyon Gate at Cinco Ranch', management_status: 'active', financials_active: true, arc_active: true, is_demo: false },
+    { id: u(902), name: 'Waterview Estates', management_status: 'active', financials_active: true, arc_active: true, is_demo: false }],
+  objectives: [
+    { id: u(81), title: 'Past due: Gexa Energy', status: 'open', autonomy_class: 'REVIEW', priority: 'high', domain: 'ap', subject_key: 'amanda_request:a:1', accountable_persona: 'emma', community_id: CG, communities: { name: 'Canyon Gate at Cinco Ranch' }, opened_at: '2026-10-01T00:00:00Z', last_activity_at: '2026-10-01T00:00:00Z' },
+    { id: u(82), title: 'Bill waiting on the community', status: 'open', autonomy_class: 'BLOCK', blocked_reason: 'Payables needs the community.', domain: 'ap', subject_key: 'amanda_request:a:2', accountable_persona: 'emma', community_id: CG, communities: { name: 'Canyon Gate at Cinco Ranch' }, opened_at: '2026-09-20T00:00:00Z', last_activity_at: '2026-09-20T00:00:00Z' },
+    { id: u(83), title: 'Waterview pool contract renewal', status: 'open', autonomy_class: 'REVIEW', priority: 'normal', domain: 'ap', subject_key: 'amanda_request:a:3', accountable_persona: 'emma', community_id: u(902), communities: { name: 'Waterview Estates' }, opened_at: '2026-10-02T00:00:00Z', last_activity_at: '2026-10-02T00:00:00Z' },
+  ],
+  cron_runs: [{ id: u(84), job_name: 'amanda_auto_reply', ok: false, started_at: new Date(Date.now() - 3600e3).toISOString(), error: 'escalated' }],
+});
+const ask2 = async (text) => { const m = model(WORK); const d = db(writingWorld()); const r = await HR({ channel: 'email', actor: { email: 'egojara@bedrocktx.com', name: 'Ed' }, text }, { supabase: d, anthropic: m }); return { r, m, d }; };
+
+check("WRITING: Ed's exact email opens with the approved 'I had a good night, thank you. For Canyon Gate today, ...'; 0 model calls; lists only Canyon Gate work", async () => {
+  const { r, m, d } = await ask2(requestTextFrom(edEmail()));
+  assert.strictEqual(r.deterministic, 'status'); assert.strictEqual(m.calls, 0); assert.strictEqual(r.model_calls, 0); assert.strictEqual(d.writes.length, 0);
+  assert.match(r.reply, /^I had a good night, thank you\. For Canyon Gate today, 1 item needs you now and 1 is waiting on something\./);
+  assert.match(r.reply, /Needs you now:\n- Past due: Gexa Energy, with Emma/); assert.match(r.reply, /Waiting on something:\n- Bill waiting on the community, with Emma/);
+  assert.ok(!/Waterview/.test(r.reply), "another community's work is not listed"); assert.ok(!/Scheduled job failed/.test(r.reply), 'a system alert is not Canyon Gate work');
+  assert.deepStrictEqual(r.status.counts, { now: 1, waiting: 1, policy: 0 }); assert.strictEqual(r.social_ack, 'I had a good night, thank you.');
+});
+
+check('WRITING: bounded acknowledgement set, at most ONE even with several social lines; none when there are none; the status facts never change', async () => {
+  const cases = [
+    ['Good morning Amanda, how are you? What\'s left for Canyon Gate today?', "I'm doing well, thank you."],
+    ['Hope you had a great weekend! Anything I need to handle for Canyon Gate?', 'I had a good weekend, thank you.'],
+    ['Hope you slept well. Hope your weekend was good. How are you? What needs my attention at Canyon Gate?', 'I had a good night, thank you.'],
+    ['How are we looking on Canyon Gate today?', null],
+    ['What needs my attention at Canyon Gate? Thanks!', null],
+  ];
+  const baseline = (await ask2('What needs my attention at Canyon Gate?')).r;
+  for (const [text, ack] of cases) {
+    const { r, m } = await ask2(text);
+    assert.strictEqual(m.calls, 0, text); assert.strictEqual(r.social_ack, ack, text);
+    if (ack) assert.ok(r.reply.startsWith(ack + ' For Canyon Gate today, '), text); else assert.ok(r.reply.startsWith('For Canyon Gate today, '), text);
+    assert.strictEqual((r.reply.match(/thank you\./g) || []).length, ack ? 1 : 0, `${text}: never stacked`);
+    assert.deepStrictEqual(r.status.counts, baseline.status.counts, `${text}: facts unchanged`);
+    assert.strictEqual(r.reply.replace(/^.*?For Canyon Gate today, /, ''), baseline.reply.replace(/^For Canyon Gate today, /, ''), `${text}: operational content identical`);
+  }
+});
+
+check('WRITING: the all-communities status still lists every community\'s work, names the community, and keeps system alerts', async () => {
+  const { r, m } = await ask2('What still needs me today?');
+  assert.strictEqual(m.calls, 0); assert.match(r.reply, /^Today, /);
+  assert.match(r.reply, /Waterview pool contract renewal \(Waterview Estates\)/); assert.match(r.reply, /Scheduled job failed: amanda_auto_reply/);
 });
 
 (async () => {
