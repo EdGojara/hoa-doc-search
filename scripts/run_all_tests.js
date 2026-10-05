@@ -245,6 +245,8 @@ const CHECKS = [
   'tests/onboarding_quail_ridge_local.js',
   'tests/test_vantaca_balance_sheet_funds.js',
   'tests/onboarding_canyon_gate_bs_local.js',
+  'tests/test_vantaca_ap_gl_layouts.js',
+  'tests/onboarding_cg_normalize_local.js',
   'tests/test_onboarding_api.js',
   'tests/test_onboarding_snapshot.js',
   'tests/test_onboarding_bridge.js',
