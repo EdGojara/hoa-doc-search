@@ -1,0 +1,63 @@
+{
+  "migration": "491_onboarding_batches_complete_result.sql",
+  "summary": "Onboarding Batches read model (Issue #15). onboarding_batches now reports, for a batch at stage complete, the status of its most recent post_proof stage completion (complete has no stage result of its own, so a finished batch used to read 'not run'), adds result_stage naming the stage the result belongs to, and sorts active batches above completed ones. Same signature and grants. Read-only function replacement: no table, row, event, trigger or state-machine rule changes.",
+  "requires": [
+    "482_onboarding_service.sql"
+  ],
+  "preflight": [
+    {
+      "name": "onboarding_batches exists exactly once (482)",
+      "sql": "SELECT count(*)::int FROM pg_proc WHERE proname = 'onboarding_batches'",
+      "expect": 1
+    },
+    {
+      "name": "onboarding_batches does not report result_stage yet",
+      "sql": "SELECT count(*)::int FROM pg_proc WHERE proname = 'onboarding_batches' AND prosrc LIKE '%result_stage%'",
+      "expect": 0
+    }
+  ],
+  "expected_changes": [
+    "Replaces function onboarding_batches(uuid): same signature, same fields plus result_stage; at stage complete current_status is the latest post_proof stage_completed status; active batches sort above complete ones.",
+    "No row changes; grants unchanged (service_role only)."
+  ],
+  "objects": {
+    "added": [],
+    "changed": [
+      "function:onboarding_batches"
+    ],
+    "removed": []
+  },
+  "row_changes": {
+    "conversion_batches": 0,
+    "onboarding_stage_events": 0
+  },
+  "protected": [
+    {
+      "table": "conversion_batches",
+      "order_by": "id"
+    },
+    {
+      "table": "onboarding_stage_events",
+      "order_by": "id"
+    }
+  ],
+  "verify": [
+    {
+      "name": "onboarding_batches reports result_stage",
+      "sql": "SELECT count(*)::int FROM pg_proc WHERE proname = 'onboarding_batches' AND prosrc LIKE '%result_stage%' AND prosrc LIKE '%post_proof%'",
+      "expect": 1
+    },
+    {
+      "name": "still executable by service_role only (not anon)",
+      "sql": "SELECT (CASE WHEN has_function_privilege('service_role', 'onboarding_batches(uuid)', 'EXECUTE') AND NOT has_function_privilege('anon', 'onboarding_batches(uuid)', 'EXECUTE') THEN 1 ELSE 0 END)::int",
+      "expect": 1
+    },
+    {
+      "name": "every complete batch now carries a result (none reads 'not run')",
+      "sql": "SELECT count(*)::int FROM jsonb_array_elements(onboarding_batches(NULL)) x WHERE x->>'stage' = 'complete' AND x->>'current_status' IS NULL",
+      "expect": 0
+    }
+  ],
+  "api_checks": [],
+  "reload_schema": true
+}
