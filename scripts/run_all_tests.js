@@ -247,6 +247,7 @@ const CHECKS = [
   'tests/onboarding_canyon_gate_bs_local.js',
   'tests/test_vantaca_ap_gl_layouts.js',
   'tests/onboarding_cg_normalize_local.js',
+  'tests/test_vantaca_ar_aging_detail_governs.js',
   'tests/test_onboarding_api.js',
   'tests/test_onboarding_snapshot.js',
   'tests/test_onboarding_bridge.js',
