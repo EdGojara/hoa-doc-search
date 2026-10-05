@@ -52,13 +52,50 @@ check('a credit that sits in AR aging as a negative balance (not on the prepaid 
   p.gl_trial_balance = gl(80000 - 14572, 19000);
   allPass(run(p));
 });
-check('a previous-owner AR-aging row (no current-owner ledger account) is not a per-account failure and is part of the GL AR tie', () => {
-  const p = SIMPLE(); // Q: previous owner, AR -1,470.00
-  p.ar_aging.rows.push({ domain: 'ar_aging_account', source_account_key: 'Q', balance_cents: -147000, current_cents: -147000, over_30_cents: 0, over_60_cents: 0, over_90_cents: 0 });
+check('an AR-aging row EXPLICITLY marked previous owner (no current-owner ledger account) is not a per-account failure and is part of the GL AR tie', () => {
+  const p = SIMPLE(); // Q: marked previous owner, AR -1,470.00
+  p.ar_aging.rows.push({ domain: 'ar_aging_account', source_account_key: 'Q', balance_cents: -147000, current_cents: -147000, over_30_cents: 0, over_60_cents: 0, over_90_cents: 0, previous_owner: true });
   p.gl_trial_balance = gl(80000 - 147000, 19000);
   const cs = run(p);
   allPass(cs);
-  assert.match(get(cs, 'subledger.aging_matches_ledger_by_account').label, /1 previous-owner AR-aging rows/);
+  assert.match(get(cs, 'subledger.aging_matches_ledger_by_account').label, /1 AR-aging rows marked previous owner/);
+});
+
+check('an UNMARKED AR-aging row missing from the current-owner ledger is never inferred to be a previous owner: it FAILs per account', () => {
+  const p = SIMPLE(); // R: a current owner missing from the transaction-history export (no previous-owner marker)
+  p.ar_aging.rows.push({ domain: 'ar_aging_account', source_account_key: 'R', balance_cents: 42000, current_cents: 42000, over_30_cents: 0, over_60_cents: 0, over_90_cents: 0 });
+  p.gl_trial_balance = gl(80000 + 42000, 19000);   // the GL carries it, so the aggregate tie alone would pass
+  const cs = run(p);
+  assert.strictEqual(st(cs, 'subledger.debit_balances_equal_gl_ar'), 'PASS', 'aggregate GL tie passes; it cannot catch the classification');
+  const c = get(cs, 'subledger.aging_matches_ledger_by_account');
+  assert.strictEqual(c.status, 'FAIL');
+  assert.deepStrictEqual(c.failures, [{ account: 'R', ledger_cents: null, aging_cents: 42000, reason: 'in AR aging, not marked previous owner, and no current-owner ledger account' }]);
+  assert.match(get(cs, 'subledger.debit_balances_equal_gl_ar').label, /0 marked previous owner, 1 not marked/);
+});
+check('a marked previous-owner row and an unmarked missing row together: only the unmarked one fails; both stay in the GL tie', () => {
+  const p = SIMPLE();
+  p.ar_aging.rows.push({ domain: 'ar_aging_account', source_account_key: 'Q', balance_cents: -147000, current_cents: -147000, over_30_cents: 0, over_60_cents: 0, over_90_cents: 0, previous_owner: true });
+  p.ar_aging.rows.push({ domain: 'ar_aging_account', source_account_key: 'R', balance_cents: 42000, current_cents: 42000, over_30_cents: 0, over_60_cents: 0, over_90_cents: 0 });
+  p.gl_trial_balance = gl(80000 - 147000 + 42000, 19000);
+  const cs = run(p);
+  assert.strictEqual(st(cs, 'subledger.debit_balances_equal_gl_ar'), 'PASS');
+  assert.deepStrictEqual(get(cs, 'subledger.aging_matches_ledger_by_account').failures.map((f) => f.account), ['R']);
+});
+check('the Vantaca AR reader carries the "***" previous-owner marker (only on marked rows; unmarked rows unchanged)', () => {
+  const V = require('../lib/onboarding/adapters/vantaca');
+  const text = ['                    Example Creek Homeowners Association, Inc', '                         AR Aging - 3/31/2026', '',
+    'Property                                                          0-30       Over 30    Over 60      Over 90               Balance',
+    '90000001 - 101 Example Lane - Example Owner One',
+    '                                                                     -        $10.00          -       $200.00            $210.00',
+    '   Annual Assessment                                                     -     $10.00         -        $200.00            $210.00',
+    '90000002 - *** 102 Example Lane - Example Former Owner',
+    '                                                               ($15.00)            -          -             -            ($15.00)',
+    '   Credit                                                       ($15.00)            -          -             -            ($15.00)',
+    '', 'Total:                                                         ($15.00)       $10.00          -       $200.00            $195.00',
+    '(*** indicates previous owners)'].join(String.fromCharCode(10));
+  const rows = V.parse('ar_aging', text, { sha256: 'e'.repeat(64) }).rows.filter((r) => r.domain === 'ar_aging_account');
+  assert.deepStrictEqual(rows.map((r) => [r.source_account_key, r.previous_owner]), [['90000001', undefined], ['90000002', true]]);
+  assert.ok(!('previous_owner' in rows[0]), 'unmarked rows carry no previous_owner field (output unchanged for reports without the marker)');
 });
 
 // ---- real differences still fail
