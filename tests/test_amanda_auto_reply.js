@@ -126,7 +126,7 @@ check('GATE: the Ed-only happy path is EXECUTE; Ed is not mistaken for an AI mai
   assert.ok(policy.aiMailboxes().has('claire@bedrocktx.com') && policy.aiMailboxes().has(AMANDA) && policy.aiMailboxes().has('info@bedrocktx.com'));
 });
 
-check('GATE: every condition independently forces REVIEW (kill switch, allowlist, AI sender, spoof, outside cc, attachment, class, contract, careful, intent, rate cap)', () => {
+check('GATE: every condition independently blocks EXECUTE: safety -> REVIEW, content -> ACKNOWLEDGE (kill switch, allowlist, AI sender, spoof, outside cc, attachment, class, contract, careful, intent, rate cap)', () => {
   const cases = [
     ['kill_switch_off', { env: { AMANDA_AUTO_REPLY_SENDERS: ED } }],
     ['sender_not_allowlisted', { email: { sender_email: 'celina@bedrocktx.com', direction: 'inbound' } }],
@@ -146,7 +146,10 @@ check('GATE: every condition independently forces REVIEW (kill switch, allowlist
   ];
   for (const [reason, over] of cases) {
     const d = policy.decideAmandaReply(goodInput(over));
-    assert.strictEqual(d.class, 'REVIEW', reason); assert.ok(d.reasons.includes(reason), `${reason} not in ${d.reasons}`);
+    // WHO/WHERE (safety) failures -> REVIEW (no email at all); content-only failures -> ACKNOWLEDGE
+    // (the fixed acknowledgement goes out, the answer stays in review). Never EXECUTE.
+    const safety = policy.SAFETY.some((p) => reason === p || reason.startsWith(p + ':'));
+    assert.strictEqual(d.class, safety ? 'REVIEW' : 'ACKNOWLEDGE', reason); assert.ok(d.reasons.includes(reason), `${reason} not in ${d.reasons}`);
   }
   assert.strictEqual(policy.decideAmandaReply(goodInput({ contract: { ok: true, intent: 'query', deterministic: 'status', audit_warnings: [] } })).class, 'EXECUTE', 'exact status is eligible');
   assert.strictEqual(policy.decideAmandaReply(goodInput({ contract: { ok: true, intent: 'decision', audit_warnings: [] } })).class, 'EXECUTE', 'the deterministic decision floor is eligible');
@@ -415,6 +418,72 @@ check('RESUME after the live 400: a draft that already has the patched body and 
   assert.strictEqual(M.sends, 1); assert.strictEqual(receipt(db).status, 'sent');
 });
 
+// ================= NEVER SILENT (Ed, 2026-10-05) =================
+const STATUS_CONTRACT = { ok: true, intent: 'query', deterministic: 'status', durable: false, objective: null, audit_warnings: [] };
+const MODEL_QUERY = { ok: true, intent: 'query', durable: false, objective: null, audit_warnings: [] };
+
+check("NEVER SILENT: every direct request from Ed has a VISIBLE outcome (answer sent or acknowledgement sent); none ends as a silent draft", () => {
+  const cases = [
+    ["Ed's exact email (exact status for Canyon Gate)", { contract: STATUS_CONTRACT }, 'EXECUTE'],
+    ['work request (durable objective)', { contract }, 'EXECUTE'],
+    ['decision request (controlled destination / floor)', { contract: { ok: true, intent: 'decision', audit_warnings: [] } }, 'EXECUTE'],
+    ['AI-written answer to a broader question', { contract: MODEL_QUERY }, 'ACKNOWLEDGE'],
+    ['older staff-assist drafter (no request contract)', { contract: null }, 'ACKNOWLEDGE'],
+    ['careful draft', { draft: { careful: true } }, 'ACKNOWLEDGE'],
+    ['email with attachments', { email: { sender_email: ED, direction: 'inbound', has_attachments: true } }, 'ACKNOWLEDGE'],
+    ['forwarded homeowner mail (non-internal class)', { classification: 'homeowner_request' }, 'ACKNOWLEDGE'],
+  ];
+  for (const [name, over, expected] of cases) {
+    const d = policy.decideAmandaReply(goodInput(over));
+    assert.strictEqual(d.class, expected, `${name}: ${d.reasons}`);
+    assert.ok(['EXECUTE', 'ACKNOWLEDGE'].includes(d.class), `${name} would be silent`);
+  }
+  // WHO/WHERE failures still never email (the pending draft in Communications is the outcome).
+  for (const over of [{ authAs: 'Anonymous' }, { ccRecipients: ['x@gmail.com'] }, { email: { sender_email: 'celina@bedrocktx.com', direction: 'inbound' } }]) {
+    assert.strictEqual(policy.decideAmandaReply(goodInput(over)).class, 'REVIEW');
+  }
+});
+
+check("ED'S EXACT EMAIL end to end through the send machinery: the exact-status answer is sent once, verified, inbound handled", async () => {
+  const db = fakeDb(); seedInbound(db); const M = fakeMailbox();
+  const decision = policy.decideAmandaReply(goodInput({ contract: STATUS_CONTRACT }));
+  const r = await proc(db, M).ar.execute({ inbound, draft: { body: 'Hi Ed,\n\n2 items need you now at Canyon Gate at Cinco Ranch...' }, decision, contract: STATUS_CONTRACT });
+  assert.strictEqual(r.status, 'sent'); assert.strictEqual(M.sends, 1);
+  assert.strictEqual(receipt(db).policy.mode, 'answer'); assert.strictEqual(db.T.email_messages[0].triage_status, 'handled');
+  assert.strictEqual(db.T.objective_events.length, 0, 'a status answer creates no objective event (no objective)');
+});
+
+check('ACKNOWLEDGE: the fixed, non-AI acknowledgement is sent ONCE and verified; the inbound STAYS in review with its pending answer; timeline says Acknowledged; no execution claimed', async () => {
+  const db = fakeDb(); seedInbound(db); const M = fakeMailbox();
+  const decision = policy.decideAmandaReply(goodInput({ contract: { ...MODEL_QUERY, objective: { id: 'obj-c50ec1f3' } } }));
+  assert.strictEqual(decision.class, 'ACKNOWLEDGE');
+  const aiAnswer = 'Hi Ed,\n\nThe Gexa bill is late because nobody approved it.';
+  const r = await proc(db, M).ar.execute({ inbound, draft: { body: aiAnswer }, decision, contract: { objective: { id: 'obj-c50ec1f3' } } });
+  assert.strictEqual(r.status, 'sent'); assert.strictEqual(M.sends, 1);
+  const rc = receipt(db); assert.strictEqual(rc.policy.mode, 'ack'); assert.strictEqual(rc.ai_drafted, false);
+  const sent = M.msgs[rc.graph_draft_id];
+  assert.ok(!sent.body.includes('nobody approved'), 'the AI-written answer is NOT what went out');
+  assert.ok(sent.body.includes('I have this. My reply needs a person to review it before I send it') && sent.body.includes('Nothing has been sent or changed yet.'));
+  const ackText = policy.acknowledgementText('Ed');
+  assert.ok(!/—/.test(ackText), 'no em-dash'); assert.ok(!/\b(?:I(?:'ve| have) (?:sent|done|handled|approved|paid)|on it|right away)\b/i.test(ackText), 'claims nothing was executed');
+  const inb = db.T.email_messages.find((m) => m.id === 'in-1');
+  assert.strictEqual(inb.triage_status, 'needs_review', 'still in review'); assert.strictEqual(inb.extracted.draft.status, 'pending', 'the answer is still pending');
+  assert.strictEqual(inb.extracted.draft.acknowledged.receipt_id, rc.id); assert.match(inb.extracted.draft.review_hint, /^Amanda acknowledged this by email \(no answer sent\)/);
+  assert.match(db.T.objective_events[0].summary, /^Acknowledged by email to egojara@bedrocktx\.com; the answer needs review/);
+  assert.ok(db.T.cron_runs.some((c) => c.summary && c.summary.action === 'acknowledged'));
+  // Idempotent: one inbound, one outward message total.
+  await proc(db, M).ar.execute({ inbound, draft: { body: aiAnswer }, decision, contract: {} }); await proc(db, M).ar.sweep();
+  assert.strictEqual(M.sends, 1);
+});
+
+check('ACKNOWLEDGE does not block the person: the Communications guard skips acknowledgement receipts; ingest decides for every staff-assist draft', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'api', 'email_triage.js'), 'utf8');
+  assert.match(src, /if \(rcpt && !\(rcpt\.policy && rcpt\.policy\.mode === 'ack'\)\) \{/);
+  const ing = fs.readFileSync(path.join(__dirname, '..', 'lib', 'email', 'graph_ingest.js'), 'utf8');
+  assert.match(ing, /contract: d\.amanda_request \|\| null/);
+  assert.ok(!/if \(d\.amanda_request\) \{\s*try \{\s*draft\.autonomy/.test(ing), 'the decision no longer skips the older drafter');
+});
+
 // ================= HUMAN SEND GUARDS =================
 check('COMMUNICATIONS SEND GUARD: Amanda receipt checked BEFORE any Graph send; sent=409; may-have-sent gets a FRESH verification, then explicit confirmation; live pre-send=409; stale pre-send released to the person only on confirm', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'api', 'email_triage.js'), 'utf8').replace(/\r\n/g, '\n');
@@ -449,7 +518,8 @@ check('DRAFT QUEUE: Amanda receipt records are never sent, edited or discarded f
 check('WIRING: ingest decides before the row and executes only on EXECUTE; recovery rides boot + the 6-hour push pass; no new timer; no sign-off; migration shape', () => {
   const ing = fs.readFileSync(path.join(__dirname, '..', 'lib', 'email', 'graph_ingest.js'), 'utf8');
   assert.match(ing, /draft\.autonomy = await require\('\.\.\/amanda\/auto_reply'\)\.getAutoReply\(\)\.decide\(/);
-  assert.match(ing, /draft\.autonomy\.class === 'EXECUTE'\) \{[\s\S]*?getAutoReply\(\)\.execute\(/);
+  assert.match(ing, /\['EXECUTE', 'ACKNOWLEDGE'\]\.includes\(draft\.autonomy\.class\)\) \{[\s\S]*?getAutoReply\(\)\.execute\(/);
+  assert.match(ing, /contract: d\.amanda_request \|\| null/, 'the decision runs for every staff-assist draft, including the older drafter');
   const push = fs.readFileSync(path.join(__dirname, '..', 'lib', 'email', 'graph_push.js'), 'utf8');
   assert.match(push, /getAutoReply\(\)\.sweep\(\)/);
   const server = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');

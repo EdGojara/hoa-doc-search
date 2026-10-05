@@ -1404,7 +1404,9 @@ router.post('/:id/send', express.json(), async (req, res) => {
       let rcpt = null;
       try { rcpt = await autoReply.receiptFor(m.internet_message_id); }
       catch (e) { return res.status(503).json({ error: 'Could not check whether Amanda already replied. Nothing was sent; try again in a moment.', sent: false }); }
-      if (rcpt) {
+      // An ACKNOWLEDGEMENT receipt ("I have this, it needs review") is not the answer: the person
+      // reviewing may always send the real reply.
+      if (rcpt && !(rcpt.policy && rcpt.policy.mode === 'ack')) {
         const confirmed = !!(req.body && req.body.confirm_after_amanda === true);
         const mayHaveSent = ['send_requested', 'unverified'].includes(rcpt.status) || (rcpt.status === 'failed' && rcpt.send_requested_at);
         const preSend = ['claimed', 'draft_created', 'draft_ready'].includes(rcpt.status);
