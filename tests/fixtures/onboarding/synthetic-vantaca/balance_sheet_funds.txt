@@ -1,0 +1,37 @@
+                                          Example Creek Homeowners Association, Inc
+                                                     Balance Sheet as of 3/31/2026
+
+     Assets                                               Operating               Reserve       Adopt a School                            Total
+     Cash
+     1000 - Operating Cash Account                       $41,500.25                                                                  $41,500.25
+     1200 - Reserve Cash Account                                                $2,100.50                                             $2,100.50
+     1250 - Adopt a School Fund Cash Account             ($1,250.00)                                 $3,000.00                        $1,750.00
+     Total Cash                                          $40,250.25             $2,100.50            $3,000.00                       $45,350.75
+     Investments
+     1201 - Reserve Investment Account                                        $250,000.00                                           $250,000.00
+     Total Investments                                                        $250,000.00                                           $250,000.00
+     Accounts Receivable
+     1300 - Accounts Receivable                          $12,000.00                                                                  $12,000.00
+     1305 - Allowance for Doubtful Accounts              ($2,000.00)                                                                 ($2,000.00)
+     Total Accounts Receivable                           $10,000.00                                                                  $10,000.00
+     Total Assets                                        $50,250.25           $252,100.50            $3,000.00                      $305,350.75
+
+     Report generated on 4/1/2026 9:00 AM - V3.11                                                                                                 Page 1
+                                          Example Creek Homeowners Association, Inc
+                                                        Balance Sheet as of 3/31/2026
+
+     Liabilities / Equity                                   Operating                Reserve         Adopt a School                            Total
+     Liabilities
+     2000 - Accounts Payable                                $3,000.00                                                                      $3,000.00
+     2002 - AP Adopt a school                                                                               $500.00                          $500.00
+     2400 - Prepaid Owners Assessments                        $750.00                                                                        $750.00
+     Total Liabilities                                      $3,750.00                                       $500.00                        $4,250.00
+     Equity
+     3000 - Current Year Surplus/(Deficit)                 $15,000.00              $4,100.50                $250.00                       $19,350.50
+     3020 - Reserve Fund Balance                                                 $245,000.00                                             $245,000.00
+     3030 - Adopt a School Fund Balance                                                                   $2,500.00                        $2,500.00
+     3050 - Accumulated Fund Balance                       $31,500.25              $3,000.00               ($250.00)                      $34,250.25
+     Total Equity                                          $46,500.25            $252,100.50              $2,500.00                      $301,100.75
+     Total Liabilities / Equity                            $50,250.25            $252,100.50              $3,000.00                      $305,350.75
+
+      Report generated on 4/1/2026 9:00 AM - V3.11                                                                                                         Page 2
