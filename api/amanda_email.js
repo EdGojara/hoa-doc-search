@@ -146,7 +146,7 @@ router.get('/inbox/:id', async (req, res) => {
   }
 });
 
-// POST /api/amanda/email/inbox/:id/reply { body? | thought?, cc? }
+// POST /api/amanda/email/inbox/:id/reply { body? | thought?, reply_mode? ('all' default | 'sender'), cc? }
 // Stages Amanda's reply in her Outbox for review. `body` is used as written;
 // `thought` is turned into her reply in her voice. Nothing is sent.
 router.post('/inbox/:id/reply', async (req, res) => {
@@ -173,9 +173,12 @@ router.post('/inbox/:id/reply', async (req, res) => {
       if (d.degraded) return res.status(503).json({ ok: false, error: 'draft_failed', detail: 'Amanda could not draft that reply. Nothing was staged.' });
       text = d.body;
     }
-    const row = await inbox.stageReply(sb(), { message: t.message, body: text, cc: b.cc, createdBy: u.email,
-      reason: written ? `Reply written by ${u.full_name || u.email}; waiting for review.` : `Reply drafted from ${u.full_name || u.email}'s note: "${thought.slice(0, 300)}"` });
-    res.json({ ok: true, staged: true, draft: row, threaded_reply: t.message.threaded_reply_possible,
+    // Reply All by default (sender in To, everyone else in CC, never Amanda).
+    const rcpt = inbox.replyRecipients(t, { mode: b.reply_mode === 'sender' ? 'sender' : 'all', extraCc: b.cc });
+    const row = await inbox.stageReply(sb(), { message: t.message, body: text, cc: rcpt.cc.join(', '), createdBy: u.email,
+      reason: (written ? `Reply written by ${u.full_name || u.email}` : `Reply drafted from ${u.full_name || u.email}'s note: "${thought.slice(0, 300)}"`)
+        + ` (${rcpt.mode === 'all' ? 'reply all' : 'reply to sender only'}); waiting for review.` });
+    res.json({ ok: true, staged: true, draft: row, reply_mode: rcpt.mode, threaded_reply: t.message.threaded_reply_possible,
       reply: (row.replaced ? 'Updated the reply waiting in Amanda’s outbox.' : 'Reply staged in Amanda’s outbox for review.') + ' Nothing was sent.' });
   } catch (e) {
     console.error('[amanda.email.reply] failed:', e.message);

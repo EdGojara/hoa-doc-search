@@ -15,6 +15,7 @@ const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
 const ib = require('../lib/amanda/email_inbox');
+const src = (f) => fs.readFileSync(path.join(__dirname, '..', f), 'utf8');
 
 let passed = 0; const pending = [];
 function check(name, fn) {
@@ -129,8 +130,68 @@ check('stageReply refuses an empty reply and throws on a write error (never sile
   await assert.rejects(ib.stageReply(bad, { message: msg, body: 'x' }), /stage_failed/);
 });
 
+console.log('\nReply All is the default');
+const cgThread = { reply: { to: 'president@canyongateatcincoranch.com', reply_all_cc: ['treasurer@canyongateatcincoranch.com', 'vicepresident@canyongateatcincoranch.com',
+  'secretary@canyongateatcincoranch.com', 'director@canyongateatcincoranch.com', 'propertymanager@canyongateatcincoranch.com', 'egojara@bedrocktx.com'], default_mode: 'all' } };
+check('Canyon Gate reply all: sender in To, all five board addresses + Ed in CC, Amanda never', () => {
+  const r = ib.replyRecipients(cgThread);
+  assert.strictEqual(r.mode, 'all');
+  assert.strictEqual(r.to, 'president@canyongateatcincoranch.com');
+  assert.deepStrictEqual(r.cc, cgThread.reply.reply_all_cc);
+});
+check('extra CC is merged, de-duplicated (case-insensitive), and can never add Amanda or the sender', () => {
+  const r = ib.replyRecipients(cgThread, { extraCc: 'TREASURER@canyongateatcincoranch.com, amanda@bedrocktx.com, amandaalbright@bedrocktx.com, President@CanyonGateAtCincoRanch.com, new@x.com' });
+  assert.strictEqual(r.cc.length, 7);
+  assert.ok(r.cc.includes('new@x.com'));
+  for (const a of ['amanda@bedrocktx.com', 'amandaalbright@bedrocktx.com', 'president@canyongateatcincoranch.com']) assert.ok(!r.cc.includes(a), a + ' must not be in CC');
+  assert.ok(r.cc.includes('vicepresident@canyongateatcincoranch.com'));
+});
+check('Reply to sender only stays available: no original recipients, extra CC still honored', () => {
+  assert.deepStrictEqual(ib.replyRecipients(cgThread, { mode: 'sender' }).cc, []);
+  assert.deepStrictEqual(ib.replyRecipients(cgThread, { mode: 'sender', extraCc: 'x@y.com' }).cc, ['x@y.com']);
+});
+check('the thread defaults to Reply all when there are other recipients, sender-only when there are none', async () => {
+  const t = await ib.loadThread(fakeSb({ email_messages: cgRow }), 'cg', { graphSend, graphAttachments: ga });
+  assert.strictEqual(t.reply.default_mode, 'all');
+  const solo = { fetchMessageText: async () => '', fetchMessageRecipients: async () => ({ to: [AMANDA], cc: [] }) };
+  const t2 = await ib.loadThread(fakeSb({ email_messages: { ...cgRow, recipients: [AMANDA] } }), 'cg', { graphSend, graphAttachments: solo });
+  assert.strictEqual(t2.reply.default_mode, 'sender');
+});
+check('the reply route stages with Reply All unless reply_mode is "sender"', () => {
+  const s = src('api/amanda_email.js');
+  assert.match(s, /inbox\.replyRecipients\(t, \{ mode: b\.reply_mode === 'sender' \? 'sender' : 'all', extraCc: b\.cc \}\)/);
+});
+
+console.log('\nRouting: direct mailbox identity beats content inference');
+const { personaForMessage, directIdentityPersona } = require('../lib/email/persona');
+const gsReal = require('../lib/email/graph_send');
+check('the Canyon Gate case: To amandaalbright@, board sender, enforcement-looking content -> Amanda, not Miranda', () => {
+  const got = personaForMessage({
+    mailbox: gsReal.AMANDA_MAILBOX, direction: 'inbound', classification: 'internal',
+    sender_email: 'president@canyongateatcincoranch.com', subject: 'New Team Member for Canyon Gate at Cinco Ranch HOA',
+    body_preview: 'Board, I would like to welcome Amanda Albright to our team. Courtesy notice, violation, deed restriction follow-up.',
+    extracted: { drv: { persona: 'miranda', violation_id: 'v1', current_stage: 'courtesy_1' } },
+  });
+  assert.strictEqual(got, 'amanda');
+});
+check('an ACC-looking or vendor-looking email to Amanda’s own mailbox also stays Amanda’s', () => {
+  assert.strictEqual(personaForMessage({ mailbox: gsReal.AMANDA_MAILBOX, classification: 'acc_request' }), 'amanda');
+  assert.strictEqual(personaForMessage({ mailbox: gsReal.AMANDA_MAILBOX, classification: 'vendor_financial', subject: 'Invoice past due' }), 'amanda');
+});
+check('explicit routes are unchanged: functional inboxes, Miranda’s box, and DRV mail to info@ / claire@ still go to Miranda', () => {
+  assert.strictEqual(personaForMessage({ mailbox: 'violations@bedrocktx.com' }), 'miranda');
+  assert.strictEqual(personaForMessage({ mailbox: 'acc@bedrocktx.com' }), 'annie');
+  assert.strictEqual(personaForMessage({ mailbox: 'info@bedrocktx.com', extracted: { drv: { persona: 'miranda' } } }), 'miranda');
+  assert.strictEqual(personaForMessage({ mailbox: gsReal.CLAIRE_MAILBOX, extracted: { drv: { persona: 'miranda' } } }), 'miranda', 'claire@ is the front office: DRV still hands off');
+  assert.strictEqual(directIdentityPersona(gsReal.CLAIRE_MAILBOX), null);
+});
+check('thread continuity cannot pull a directly-addressed message back to another teammate', () => {
+  const g = src('lib/email/graph_ingest.js');
+  assert.match(g, /const _direct = require\('\.\/persona'\)\.directIdentityPersona\(row\.mailbox\);/);
+  assert.match(g, /&& !\(_direct && _direct === row\.persona\)\) \{/);
+});
+
 console.log('\nWiring');
-const src = (f) => fs.readFileSync(path.join(__dirname, '..', f), 'utf8');
 check('inbox routes are admin-gated and never send', () => {
   const s = src('api/amanda_email.js');
   for (const r of ["router.get('/inbox'", "router.get('/inbox/:id'", "router.post('/inbox/:id/reply'"]) {
@@ -153,6 +214,8 @@ check('the card has an Inbox tab, loads it, and opens threads / stages replies t
   assert.ok(h.includes('id="th-em-t-inbox"') && h.includes('id="th-em-p-inbox"'));
   assert.ok(h.includes("TX.get('/api/amanda/email/inbox')") && h.includes("'/api/amanda/email/inbox/' + encodeURIComponent(id)"));
   assert.ok(h.includes("'/reply'"));
+  assert.ok(h.includes('value="all"') && h.includes('Reply to sender only') && h.includes("rp.default_mode !== 'sender' ? ' checked'"), 'Reply all selected by default, sender-only visible');
+  assert.ok(h.includes('reply_mode: ibModeVal') && h.includes("data-ibf=\"rcpt\""), 'mode sent to the server and recipients previewed');
 });
 
 Promise.all(pending).then(() => console.log('\n' + passed + ' checks passed' + (process.exitCode ? ', with failures' : '')));
