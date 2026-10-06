@@ -510,6 +510,7 @@
     prepared: ['tx-pill--info', 'Prepared'], sent: ['tx-pill--ok', 'Sent'], blocked: ['tx-pill--bad', 'Blocked'],
     failed: ['tx-pill--bad', 'Failed'], discarded: ['tx-pill--mute', 'Discarded'], in_progress: ['tx-pill--warn', 'In progress'],
     unrecorded: ['tx-pill--warn', 'Unrecorded'],
+    unchecked: ['tx-pill--mute', 'Not checked'],
   };
   var EM_TABS = ['outbox', 'ask', 'draft', 'activity'];
   function emPill(st) { var p = EM_STATUS[st] || ['tx-pill--mute', st || '?']; return '<span class="tx-pill ' + p[0] + '">' + esc(p[1]) + '</span>'; }

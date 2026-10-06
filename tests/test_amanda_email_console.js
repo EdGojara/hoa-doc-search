@@ -60,7 +60,7 @@ check('the "Photo check" case: in Sent Items, no trustEd record, shows as an UNR
   assert.strictEqual(a[0].status, 'unrecorded');
   assert.match(a[0].reason, /Needs investigation/);
   assert.strictEqual(a[0].unrecorded, true);
-  assert.match(a[0].reason, /no trustEd record/);
+  assert.match(a[0].reason, /no matching trustEd record/);
 });
 check('a send trustEd recorded is not duplicated by its Sent Items copy (subject + recipient + time)', () => {
   const a = desk.mergeActivity({
@@ -87,6 +87,71 @@ check('blocked and failed items stay in the list with their reasons, newest firs
   ] });
   assert.deepStrictEqual(a.map((i) => [i.id, i.status]), [['b', 'blocked'], ['f', 'failed'], ['p', 'prepared']]);
   assert.ok(a[0].reason && a[1].reason);
+});
+
+console.log('\nNo false "Unrecorded" alarms (PR #62 review)');
+const gm = (o) => ({ '@odata.type': '#microsoft.graph.message', internetMessageId: o.id || null, subject: o.subject, sentDateTime: o.at,
+  toRecipients: (o.to || []).map((a) => ({ emailAddress: { address: a } })), ccRecipients: (o.cc || []).map((a) => ({ emailAddress: { address: a } })) });
+const rec = (o) => ({ id: o.rid || 'r', subject: o.subject, recipients: o.to, created_at: o.at, internet_message_id: o.id || null });
+const unrec = (a) => a.filter((i) => i.status === 'unrecorded');
+check('subject prefixes stack (RE: FW: Re:), tags ([EXTERNAL]) and case/whitespace differ: still matched', () => {
+  const a = desk.mergeActivity({ logged: [rec({ subject: 'Re: Canyon Gate  gate code', to: ['ed@x.com'], at: T(0) })],
+    graph: [gm({ subject: '[EXTERNAL] RE: FW: re: canyon gate gate code', to: ['ed@x.com'], at: T(1) })] });
+  assert.strictEqual(unrec(a).length, 0);
+});
+check('en/em dash vs hyphen and curly vs straight quotes in the subject: still matched', () => {
+  const a = desk.mergeActivity({ logged: [rec({ subject: 'Quail Ridge – Amanda’s note', to: ['m@x.com'], at: T(0) })],
+    graph: [gm({ subject: "Quail Ridge - Amanda's note", to: ['m@x.com'], at: T(0) })] });
+  assert.strictEqual(unrec(a).length, 0);
+});
+check('multiple recipients in a different order, extra recipients, display names and case: still matched', () => {
+  const a = desk.mergeActivity({ drafts: [{ id: 'd', status: 'sent', to_email: 'Martha <MBravo@x.com>, alisha@x.com', subject: 'S', created_at: T(-30), sent_at: T(0) }],
+    graph: [gm({ subject: 'S', to: ['alisha@x.com', 'mbravo@x.com', 'third@x.com'], at: T(0) })] });
+  assert.strictEqual(unrec(a).length, 0);
+});
+check('a recipient shared only through CC: still matched', () => {
+  const a = desk.mergeActivity({ drafts: [{ id: 'd', status: 'sent', to_email: 'board@x.com', cc: 'mgr@x.com', subject: 'S', created_at: T(0), sent_at: T(0) }],
+    graph: [gm({ subject: 'S', to: ['other@x.com'], cc: ['MGR@x.com'], at: T(2) })] });
+  assert.strictEqual(unrec(a).length, 0);
+});
+check('the record is stamped up to an hour after Graph accepted the send: still matched', () => {
+  const a = desk.mergeActivity({ logged: [rec({ subject: 'S', to: ['a@x.com'], at: T(55) })], graph: [gm({ subject: 'S', to: ['a@x.com'], at: T(0) })] });
+  assert.strictEqual(unrec(a).length, 0);
+});
+check('message id matches exactly even when the subject differs (automatic replies)', () => {
+  const a = desk.mergeActivity({ drafts: [{ id: 'd', status: 'sent', draft_kind: 'amanda_auto_reply', to_email: 'a@x.com', subject: 'Re: X', sent_internet_message_id: '<m1@x>', created_at: T(0), sent_at: T(0) }],
+    graph: [gm({ id: '<m1@x>', subject: 'RE: X (edited by Exchange)', to: ['a@x.com'], at: T(3) })] });
+  assert.strictEqual(unrec(a).length, 0);
+});
+check('two quick sends with the same subject to the same person and ONE record: exactly one is flagged (one-to-one)', () => {
+  const a = desk.mergeActivity({ logged: [rec({ subject: 'S', to: ['a@x.com'], at: T(0) })],
+    graph: [gm({ id: '<1>', subject: 'S', to: ['a@x.com'], at: T(0) }), gm({ id: '<2>', subject: 'S', to: ['a@x.com'], at: T(5) })] });
+  assert.strictEqual(unrec(a).length, 1);
+  assert.strictEqual(unrec(a)[0].id, '<2>', 'the closest-in-time message pairs with the record');
+});
+check('two quick sends with the same subject and TWO records: none flagged', () => {
+  const a = desk.mergeActivity({ logged: [rec({ rid: 'r1', subject: 'S', to: ['a@x.com'], at: T(0) }), rec({ rid: 'r2', subject: 'S', to: ['a@x.com'], at: T(5) })],
+    graph: [gm({ id: '<1>', subject: 'S', to: ['a@x.com'], at: T(0) }), gm({ id: '<2>', subject: 'S', to: ['a@x.com'], at: T(5) })] });
+  assert.strictEqual(unrec(a).length, 0);
+});
+check('it does not over-match: different subject, or no shared recipient, or hours apart is flagged', () => {
+  const r = [rec({ subject: 'S', to: ['a@x.com'], at: T(0) })];
+  assert.strictEqual(unrec(desk.mergeActivity({ logged: r, graph: [gm({ subject: 'Different', to: ['a@x.com'], at: T(0) })] })).length, 1);
+  assert.strictEqual(unrec(desk.mergeActivity({ logged: r, graph: [gm({ subject: 'S', to: ['b@x.com'], at: T(0) })] })).length, 1);
+  assert.strictEqual(unrec(desk.mergeActivity({ logged: r, graph: [gm({ subject: 'S', to: ['a@x.com'], at: T(180) })] })).length, 1);
+});
+check('if trustEd’s records did not load, nothing is flagged (unchecked, not unrecorded)', () => {
+  const a = desk.mergeActivity({ graph: [gm({ subject: 'S', to: ['a@x.com'], at: T(0) })], coverage: { recordsComplete: false, coveredFrom: null } });
+  assert.strictEqual(unrec(a).length, 0);
+  assert.strictEqual(a[0].status, 'unchecked');
+});
+check('a Sent Items message older than the records loaded (row cap hit) is unchecked, not unrecorded', () => {
+  const a = desk.mergeActivity({ graph: [gm({ subject: 'S', to: ['a@x.com'], at: T(-600) })], coverage: { recordsComplete: true, coveredFrom: T(-60) } });
+  assert.strictEqual(a[0].status, 'unchecked');
+});
+check('meeting / calendar messages in Sent Items are never flagged', () => {
+  const ev = { ...gm({ subject: 'Accepted: Board meeting', to: ['a@x.com'], at: T(0) }), '@odata.type': '#microsoft.graph.eventMessageResponse' };
+  assert.strictEqual(desk.mergeActivity({ graph: [ev] }).length, 0);
 });
 
 check('detection never writes: the console module inserts only when staging a draft, and reads Sent Items with GET', () => {
