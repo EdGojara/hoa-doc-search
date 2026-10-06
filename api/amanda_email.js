@@ -164,7 +164,12 @@ router.post('/inbox/:id/reply', async (req, res) => {
     if (!text) {
       if (rateLimited(u.email)) return res.status(429).json({ ok: false, error: 'rate_limited' });
       const m = t.message;
+      // Attachment-first: hand Amanda the email's attachments (receipts, PDFs) so
+      // she uses their facts instead of asking for them. (lib/team/reply_judgment.js)
+      let att = { blocks: [], summary: '' };
+      if (m.graph_id) { try { att = await require('../lib/email/graph_attachments').fetchAttachmentBlocks(m.mailbox, m.graph_id); } catch (_) {} }
       const d = await desk.draftAmandaEmail({
+        attachmentBlocks: att.blocks || [], attachmentSummary: att.summary || '',
         recipientName: m.from_name || m.from_email,
         thought: `Write Amanda's REPLY to this email. Reply body only (greeting through sign-off); the original is quoted automatically below it, so do not repeat it.\n\n`
           + `From: ${m.from_name || ''} <${m.from_email || ''}>\nSubject: ${m.subject || ''}\n${m.community ? 'Community: ' + m.community + '\n' : ''}\n${String(m.body || '').slice(0, 6000)}\n\n`
