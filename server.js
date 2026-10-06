@@ -1325,6 +1325,7 @@ app.use('/api/manager', require('./api/manager'));
 // Operations Feed, Phase 1 (Issue #29): read-only read model over objectives + domain queues (admin).
 app.use('/api/feed', require('./api/feed'));
 // Amanda request contract, Phase 2A (Issue #29): in-app door, proposals only (admin).
+app.use('/api/amanda/email', require('./api/amanda_email'));  // Amanda's email desk (prepare + list; sending stays on /api/email-drafts)
 app.use('/api/amanda', require('./api/amanda'));
 // Community Data Readiness — read-only, staff sign-in (Issue #6).
 app.use('/api/readiness', require('./api/readiness'));

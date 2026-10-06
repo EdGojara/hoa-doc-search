@@ -69,6 +69,33 @@
   .th-ask-out { margin-top: 10px; font-size: 13.5px; line-height: 1.5; }
   .th-ask-out ol { margin: 6px 0 0 18px; padding: 0; }
   .th-ask-out .th-ask-meta { font-size: 12px; color: var(--tx-muted); margin-top: 6px; }
+  /* Amanda's email desk (Ed 2026-10-06): outbox, ask, draft, activity. Prepares only; sending is a person's click. */
+  .th-em { margin: 14px 0 4px; border: 1px solid var(--tx-rule-soft); border-radius: 10px; background: var(--tx-surface); }
+  .th-em-tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--tx-rule-soft); padding: 6px 8px 0; flex-wrap: wrap; }
+  .th-em-tabs button { font: 500 12.5px var(--font-sans); background: none; border: 0; border-bottom: 2px solid transparent; padding: 7px 10px 8px; color: var(--tx-text-2); cursor: pointer; }
+  .th-em-tabs button[aria-selected="true"] { color: var(--navy); border-bottom-color: var(--gold); font-weight: 600; }
+  .th-em-tabs .th-em-n { display: inline-block; min-width: 18px; padding: 0 5px; margin-left: 4px; border-radius: 999px; background: var(--tx-subtle); font-size: 11px; text-align: center; }
+  .th-em-tabs .th-em-n.is-warn { background: var(--tx-warn-bg); color: var(--tx-warn); }
+  .th-em-panel { padding: 10px 12px 12px; }
+  .th-em-row { border-top: 1px solid var(--tx-rule-soft); padding: 9px 0; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: start; }
+  .th-em-row:first-child { border-top: 0; }
+  .th-em-subj { font-size: 13.5px; font-weight: 600; color: var(--navy); }
+  .th-em-meta { font-size: 12px; color: var(--tx-muted); margin-top: 2px; overflow-wrap: anywhere; }
+  .th-em-why { font-size: 12px; color: var(--tx-warn); margin-top: 3px; }
+  .th-em-body { white-space: pre-wrap; font-size: 13px; color: var(--tx-text); background: var(--tx-subtle); border-radius: 8px; padding: 10px 12px; margin-top: 8px; max-height: 260px; overflow: auto; }
+  .th-em-acts { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; align-items: center; }
+  .th-em-acts .tx-btn { padding: 5px 10px; font-size: 12.5px; }
+  .th-em label { display: block; font-size: 12px; color: var(--tx-muted); margin: 8px 0 3px; }
+  .th-em input, .th-em textarea { width: 100%; box-sizing: border-box; border: 1px solid var(--tx-rule-soft); border-radius: 8px; padding: 7px 9px; font: 13.5px var(--font-sans); color: var(--tx-text); background: var(--tx-surface); }
+  .th-em textarea { min-height: 70px; resize: vertical; }
+  .th-em-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 12px; }
+  .th-em-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 8px; }
+  .th-em-note { font-size: 12px; color: var(--tx-muted); margin-right: auto; }
+  .th-em-out { margin-top: 10px; font-size: 13px; line-height: 1.5; }
+  .th-em-out ol { margin: 6px 0 0 18px; padding: 0; }
+  .th-em-ex { font-size: 12px; color: var(--tx-muted); margin-top: 4px; }
+  .th-em-ex button { background: none; border: 0; padding: 0; color: var(--navy); text-decoration: underline; cursor: pointer; font: inherit; }
+  @media (max-width: 760px) { .th-em-grid { grid-template-columns: 1fr; } .th-em-row { grid-template-columns: 1fr; } .th-em-acts { justify-content: flex-start; } }
   @media (max-width: 1100px) { .th-grid, .th-lower { grid-template-columns: minmax(0, 1fr); } }
   @media (max-width: 760px) { .th-amanda { margin: 18px 16px 0; } .th-grid, .th-lower { padding-left: 16px; padding-right: 16px; } .th-okwrap { margin: 18px 16px 0; } .th-stamp { display: none; } .th-refresh button .th-rl { display: none; } }
 </style>
@@ -142,6 +169,34 @@
           <button type="button" id="th-am-one" aria-pressed="false">This community</button>
         </span>
       </div>
+      <section class="th-em" id="th-em" aria-label="Amanda's email desk">
+        <div class="th-em-tabs" role="tablist">
+          <button type="button" role="tab" id="th-em-t-outbox" aria-selected="true" data-tab="outbox">Outbox<span class="th-em-n" id="th-em-n-outbox">&middot;</span></button>
+          <button type="button" role="tab" id="th-em-t-ask" aria-selected="false" data-tab="ask">Ask Amanda to email</button>
+          <button type="button" role="tab" id="th-em-t-draft" aria-selected="false" data-tab="draft">Draft an email</button>
+          <button type="button" role="tab" id="th-em-t-activity" aria-selected="false" data-tab="activity">Recent email<span class="th-em-n" id="th-em-n-activity">&middot;</span></button>
+        </div>
+        <div class="th-em-panel" id="th-em-p-outbox" role="tabpanel"><div class="tx-muted" style="font-size:13px">Loading Amanda&rsquo;s outbox&hellip;</div></div>
+        <form class="th-em-panel" id="th-em-p-ask" role="tabpanel" hidden autocomplete="off">
+          <label for="th-em-ask-text">Tell Amanda who to email and what about</label>
+          <textarea id="th-em-ask-text" maxlength="2000" placeholder="Email Martha and Alisha about the Quail Ridge self-help restriction"></textarea>
+          <div class="th-em-ex">Try: <button type="button" data-ex="Email Martha and Alisha about the Quail Ridge self-help restriction">Email Martha and Alisha about the Quail Ridge self-help restriction</button> &middot; <button type="button" data-ex="Ask the Canyon Gate board if Tuesday works">Ask the Canyon Gate board if Tuesday works</button></div>
+          <div class="th-em-bar"><span class="th-em-note">Amanda finds the people and prepares the email. It waits in her outbox until someone sends it.</span><button type="submit" class="tx-btn tx-btn--pri" id="th-em-ask-go">Prepare email</button></div>
+          <div class="th-em-out" id="th-em-ask-out" aria-live="polite"></div>
+        </form>
+        <form class="th-em-panel" id="th-em-p-draft" role="tabpanel" hidden autocomplete="off">
+          <div class="th-em-grid">
+            <div><label for="th-em-to">To</label><input id="th-em-to" type="text" placeholder="name@example.com, another@example.com"></div>
+            <div><label for="th-em-cc">CC</label><input id="th-em-cc" type="text" placeholder="optional"></div>
+          </div>
+          <label for="th-em-name">Recipient name (optional)</label><input id="th-em-name" type="text" placeholder="e.g. Martha">
+          <label for="th-em-thought">What do you want to say?</label>
+          <textarea id="th-em-thought" maxlength="4000" placeholder="A rough note is fine. Amanda writes it in her voice and adds her signature."></textarea>
+          <div class="th-em-bar"><span class="th-em-note">Prepared for review. Nothing is sent from here.</span><button type="submit" class="tx-btn tx-btn--pri" id="th-em-draft-go">Prepare draft</button></div>
+          <div class="th-em-out" id="th-em-draft-out" aria-live="polite"></div>
+        </form>
+        <div class="th-em-panel" id="th-em-p-activity" role="tabpanel" hidden><div class="tx-muted" style="font-size:13px">Loading&hellip;</div></div>
+      </section>
       <form class="th-ask" id="th-ask" autocomplete="off">
         <label for="th-ask-text" class="tx-lbl" style="display:block;margin-bottom:4px">Message Amanda</label>
         <textarea id="th-ask-text" maxlength="2000" placeholder="Ask a question or hand her something to work on, e.g. what still needs me today?"></textarea>
@@ -446,6 +501,127 @@
     if (d.durable) loadFeed();
   });
 
+  // ---- Amanda's email desk (Ed 2026-10-06) --------------------------------
+  // Outbox = what she prepared and is waiting on a person. Recent email = what
+  // happened: prepared, sent, blocked, failed (with the reason), reconciled with
+  // her real Sent Items so nothing that left the building is missing. Sending is
+  // the existing draft route (Amanda's signature, recorded result).
+  var EM_STATUS = {
+    prepared: ['tx-pill--info', 'Prepared'], sent: ['tx-pill--ok', 'Sent'], blocked: ['tx-pill--bad', 'Blocked'],
+    failed: ['tx-pill--bad', 'Failed'], discarded: ['tx-pill--mute', 'Discarded'], in_progress: ['tx-pill--warn', 'In progress'],
+    unrecorded: ['tx-pill--warn', 'Unrecorded'],
+  };
+  var EM_TABS = ['outbox', 'ask', 'draft', 'activity'];
+  function emPill(st) { var p = EM_STATUS[st] || ['tx-pill--mute', st || '?']; return '<span class="tx-pill ' + p[0] + '">' + esc(p[1]) + '</span>'; }
+  function emTab(name) {
+    EM_TABS.forEach(function (t) {
+      $('th-em-t-' + t).setAttribute('aria-selected', String(t === name));
+      $('th-em-p-' + t).hidden = t !== name;
+    });
+    store('tx.em.tab', name);
+  }
+  $('th-em').querySelector('.th-em-tabs').addEventListener('click', function (e) { var b = e.target.closest('[data-tab]'); if (b) emTab(b.getAttribute('data-tab')); });
+  function emCount(id, n, warn) { var el = $(id); el.textContent = n == null ? '·' : String(n); el.className = 'th-em-n' + (warn ? ' is-warn' : ''); }
+  function emOutboxRow(d) {
+    var who = 'To ' + esc(d.to_email || '') + (d.cc ? ' · CC ' + esc(d.cc) : '');
+    var open = d.status === 'failed' || d.status === 'blocked';
+    return '<div class="th-em-row" data-draft="' + esc(d.id) + '"><div><div class="th-em-subj">' + esc(d.subject || '(no subject)') + '</div>' +
+      '<div class="th-em-meta">' + who + ' · prepared ' + esc(fmtWhen(d.created_at)) + '</div>' +
+      (open ? '<div class="th-em-why">' + (d.status === 'blocked' ? 'Blocked: ' : 'Last attempt failed: ') + esc(String(d.reason || '').replace(/^blocked:\s*/i, '')) + '</div>' : '') +
+      '<div class="th-em-body" hidden>' + esc(d.body_text || '') + '</div></div>' +
+      '<div class="th-em-acts">' + emPill(d.status) + ' <button type="button" class="tx-btn tx-btn--sec" data-em="view">Review</button>' +
+      '<button type="button" class="tx-btn tx-btn--pri" data-em="send">' + (open ? 'Try again' : 'Send') + '</button>' +
+      '<button type="button" class="tx-btn tx-btn--sec" data-em="discard">Discard</button></div></div>';
+  }
+  function emActivityRow(i) {
+    var src = i.source === 'sent_items' ? ' · found in Amanda’s Sent Items' : i.source === 'auto_reply' ? ' · automatic reply' : '';
+    return '<div class="th-em-row"><div><div class="th-em-subj">' + esc(i.subject || '(no subject)') + '</div>' +
+      '<div class="th-em-meta">' + esc(fmtWhen(i.at)) + ' · to ' + esc(i.to || '—') + (i.cc ? ' · CC ' + esc(i.cc) : '') + esc(src) + '</div>' +
+      (i.reason ? '<div class="th-em-why">' + esc(i.reason) + '</div>' : '') + '</div><div class="th-em-acts">' + emPill(i.status) + '</div></div>';
+  }
+  var emLast = null;
+  async function loadEmail() {
+    if (user.role !== 'admin') return;
+    var r = await TX.get('/api/amanda/email');
+    var d = r.ok ? r.data : null;
+    if (!d) {
+      var err = '<div class="tx-err">' + icon('alert', { size: 16 }) + '<span>Couldn’t load Amanda’s email. Nothing here is counted as clear.</span></div>';
+      $('th-em-p-outbox').innerHTML = err; $('th-em-p-activity').innerHTML = err; emCount('th-em-n-outbox', null); emCount('th-em-n-activity', null); return;
+    }
+    emLast = d;
+    var se = d.source_errors || {}; var seKeys = Object.keys(se);
+    var warn = seKeys.length ? '<div class="tx-err" style="margin-bottom:8px">' + icon('alert', { size: 16 }) + '<span>Some sources didn’t answer (' + esc(seKeys.join(', ')) + '), so this may be incomplete.</span></div>' : '';
+    var ob = d.outbox || [];
+    var needs = ob.filter(function (x) { return x.status === 'failed' || x.status === 'blocked'; }).length;
+    emCount('th-em-n-outbox', ob.length, needs > 0);
+    $('th-em-p-outbox').innerHTML = (se.outbox ? warn : '') + (ob.length ? ob.map(emOutboxRow).join('')
+      : '<div class="tx-muted" style="font-size:13px;padding:4px 0">Amanda’s outbox is empty. Ask her to email someone, or draft one, and it waits here for review.</div>');
+    var act = d.activity || [];
+    var bad = act.filter(function (x) { return x.status === 'failed' || x.status === 'blocked' || x.unrecorded; }).length;
+    emCount('th-em-n-activity', act.length, bad > 0);
+    // Unrecorded = found in her Sent Items with no trustEd record. An exception to
+    // investigate, never treated as a normal record (outbound_email_drafts is canonical).
+    var unrec = act.filter(function (x) { return x.status === 'unrecorded'; }).length;
+    var exc = unrec ? '<div class="tx-err" style="margin-bottom:8px" data-em-exception="' + unrec + '">' + icon('alert', { size: 16 }) + '<span><b>' + unrec + ' unrecorded send' + (unrec === 1 ? '' : 's') + ' need' + (unrec === 1 ? 's' : '') + ' investigation.</b> ' + (unrec === 1 ? 'It' : 'They') + ' left Amanda’s mailbox without going through trustEd, so there is no outbox or timeline record. Nothing was changed.</span></div>' : '';
+    $('th-em-p-activity').innerHTML = warn + exc + (act.length ? act.map(emActivityRow).join('')
+      : '<div class="tx-muted" style="font-size:13px;padding:4px 0">No email activity in the last 14 days.</div>') +
+      '<div class="tx-muted" style="font-size:12px;margin-top:6px">Last 14 days. The outbox record is the source of truth; her Sent Items are checked only to catch sends that bypassed it.</div>';
+  }
+  $('th-em-p-outbox').addEventListener('click', async function (e) {
+    var b = e.target.closest('[data-em]'); if (!b) return;
+    var row = b.closest('[data-draft]'); var id = row.getAttribute('data-draft');
+    var kind = b.getAttribute('data-em');
+    if (kind === 'view') { var bd = row.querySelector('.th-em-body'); bd.hidden = !bd.hidden; b.textContent = bd.hidden ? 'Review' : 'Hide'; return; }
+    var d = ((emLast && emLast.outbox) || []).find(function (x) { return x.id === id; }) || {};
+    if (kind === 'send' && !confirm('Send this email from Amanda now?\n\nTo: ' + (d.to_email || '') + (d.cc ? '\nCC: ' + d.cc : '') + '\nSubject: ' + (d.subject || ''))) return;
+    if (kind === 'discard' && !confirm('Discard this prepared email? It will not be sent.')) return;
+    b.disabled = true;
+    var r = await TX.post('/api/email-drafts/' + encodeURIComponent(id) + '/' + (kind === 'send' ? 'send' : 'discard'), kind === 'send' ? { approved_by: user.email || 'staff' } : {});
+    if (!r.ok) { b.disabled = false; alert((kind === 'send' ? 'Not sent. ' : 'Not discarded. ') + (r.error || 'Something went wrong.') + (kind === 'send' ? '\n\nIt stays in the outbox with the reason.' : '')); }
+    loadEmail();
+  });
+  $('th-em-p-ask').querySelector('.th-em-ex').addEventListener('click', function (e) { var b = e.target.closest('[data-ex]'); if (b) { $('th-em-ask-text').value = b.getAttribute('data-ex'); $('th-em-ask-text').focus(); } });
+  function emStagedHtml(d) {
+    var dr = d.draft || {};
+    return '<span class="tx-pill tx-pill--info">Prepared</span> <span>' + esc(d.reply || 'Prepared and waiting in Amanda’s outbox for review. Nothing was sent.') + '</span>' +
+      '<div class="th-em-meta" style="margin-top:6px">To ' + esc(dr.to_email || '') + (dr.cc ? ' · CC ' + esc(dr.cc) : '') + ' · ' + esc(dr.subject || '') + '</div>' +
+      (dr.body_text ? '<div class="th-em-body">' + esc(dr.body_text) + '</div>' : '');
+  }
+  function emFail(boxId, d, r) {
+    $(boxId).innerHTML = '<div class="tx-err">' + icon('alert', { size: 16 }) + '<span>' + esc((d && d.detail) || r.error || 'Amanda couldn’t prepare that.') + ' Nothing was staged or sent.</span></div>';
+  }
+  var emBusy = false;
+  $('th-em-p-ask').addEventListener('submit', async function (ev) {
+    ev.preventDefault();
+    var text = $('th-em-ask-text').value.trim(); if (!text || emBusy) return;
+    emBusy = true; $('th-em-ask-go').disabled = true; $('th-em-ask-out').innerHTML = '<span class="tx-muted">Amanda is finding the people and drafting…</span>';
+    var r = await TX.post('/api/amanda/email/ask', { text: text });
+    emBusy = false; $('th-em-ask-go').disabled = false;
+    var d = r.ok ? r.data : (r.body || null);
+    if (!d || d.ok === false) { emFail('th-em-ask-out', d, r); return; }
+    if (!d.staged) {
+      var qs = (d.questions || []).map(function (q) {
+        var opts = (q.options || []).map(function (o) { return o && o.name ? o.name + (o.email ? ' <' + o.email + '>' : '') : String(o); });
+        return '<li>' + esc(q.ask) + (opts.length ? ' <span class="tx-muted">(' + esc(opts.join('; ')) + ')</span>' : '') + '</li>';
+      }).join('');
+      $('th-em-ask-out').innerHTML = '<span class="tx-pill tx-pill--warn">Needs more</span> <span>' + esc(d.reply || '') + '</span>' + (qs ? '<ol>' + qs + '</ol>' : '') + '<div class="th-em-meta">Nothing was staged. Add the detail and ask again, or use Draft an email with the addresses.</div>';
+      return;
+    }
+    $('th-em-ask-out').innerHTML = emStagedHtml(d); $('th-em-ask-text').value = ''; loadEmail();
+  });
+  $('th-em-p-draft').addEventListener('submit', async function (ev) {
+    ev.preventDefault(); if (emBusy) return;
+    var body = { to: $('th-em-to').value, cc: $('th-em-cc').value, recipient_name: $('th-em-name').value.trim() || null, thought: $('th-em-thought').value };
+    if (!body.to.trim() || !body.thought.trim()) { $('th-em-draft-out').innerHTML = '<div class="tx-err">' + icon('alert', { size: 16 }) + '<span>Add a To address and what you want to say.</span></div>'; return; }
+    emBusy = true; $('th-em-draft-go').disabled = true; $('th-em-draft-out').innerHTML = '<span class="tx-muted">Amanda is drafting…</span>';
+    var r = await TX.post('/api/amanda/email/draft', body);
+    emBusy = false; $('th-em-draft-go').disabled = false;
+    var d = r.ok ? r.data : (r.body || null);
+    if (!d || d.ok === false) { emFail('th-em-draft-out', d, r); return; }
+    $('th-em-draft-out').innerHTML = emStagedHtml(d); $('th-em-thought').value = ''; loadEmail();
+  });
+  if (EM_TABS.indexOf(store('tx.em.tab')) >= 0) emTab(store('tx.em.tab'));
+
   var feedSeq = 0;
   async function loadFeed() {
     if (user.role !== 'admin') { renderFeed(null); return; }
@@ -455,6 +631,7 @@
     var r = await TX.get('/api/feed' + q);
     if (mine !== feedSeq) return;
     renderFeed(r);
+    loadEmail();
   }
 
   // ---- load: one round of reads, only when the page opens or you ask -----

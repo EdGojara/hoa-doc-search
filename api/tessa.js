@@ -60,15 +60,25 @@ function contactMatchesHint(c, q) {
   return fields.some((f) => re.test(f));
 }
 
-async function searchContacts(q) {
+// opts (Amanda's email console reuses this search, Ed 2026-10-06):
+//   addressBook  include Ed's private ea_contacts book. Default true (Tessa, owner-only).
+//                Amanda's console is admin-gated, so it passes false.
+//   staff        include active Bedrock staff from user_profiles. Default false.
+async function searchContacts(q, { addressBook = true, staff = false } = {}) {
   q = String(q || '').trim();
   const like = `%${q.replace(/[%,]/g, ' ')}%`;
   const out = []; const seen = new Set();
   const add = (c) => { if (!c.email) return; const k = c.email.toLowerCase(); if (seen.has(k)) return; seen.add(k); out.push(c); };
-  let eaQ = supabase.from('ea_contacts').select('name, organization, email, phone, role, category, title, responsibilities').limit(40);
-  if (q) eaQ = eaQ.or(`name.ilike.${like},organization.ilike.${like},email.ilike.${like},title.ilike.${like}`);
-  const { data: ea } = await eaQ;
-  for (const c of (ea || [])) add({ name: c.name, org: c.organization, email: c.email, phone: c.phone, role: c.title || c.role || c.category, source: 'address_book' });
+  if (staff && q) {
+    const { data: st } = await supabase.from('user_profiles').select('full_name, email, role').neq('is_active', false).or(`full_name.ilike.${like},email.ilike.${like}`).limit(20);
+    for (const u of (st || [])) add({ name: u.full_name || u.email, org: 'Bedrock staff', email: u.email, role: 'staff', source: 'staff' });
+  }
+  if (addressBook) {
+    let eaQ = supabase.from('ea_contacts').select('name, organization, email, phone, role, category, title, responsibilities').limit(40);
+    if (q) eaQ = eaQ.or(`name.ilike.${like},organization.ilike.${like},email.ilike.${like},title.ilike.${like}`);
+    const { data: ea } = await eaQ;
+    for (const c of (ea || [])) add({ name: c.name, org: c.organization, email: c.email, phone: c.phone, role: c.title || c.role || c.category, source: 'address_book' });
+  }
   let vQ = supabase.from('vendors').select('name, contact_name, contact_email, email, phone').neq('is_active', false).limit(30);
   if (q) vQ = vQ.or(`name.ilike.${like},contact_name.ilike.${like},contact_email.ilike.${like}`);
   const { data: vs } = await vQ;
@@ -102,22 +112,22 @@ async function searchContacts(q) {
 // Resolve a spoken recipient like "Melody at New First National Bank" to a real
 // contact. Splits "<name> at <org>", scores name+org matches, returns the best
 // plus a few alternates. { best, matches, hint } — best is null if unsure.
-async function resolveRecipient(hint) {
+async function resolveRecipient(hint, opts) {
   hint = String(hint || '').trim(); if (!hint) return null;
   const m = hint.match(/^(.+?)\s+(?:at|from|with|@)\s+(.+)$/i);
   const norm = (s) => String(s || '').toLowerCase();
   let cands = [];
   if (m) {
     const name = m[1].trim(), org = m[2].trim();
-    const byName = await searchContacts(name);
-    const byOrg = await searchContacts(org);
+    const byName = await searchContacts(name, opts);
+    const byOrg = await searchContacts(org, opts);
     const pool = [...byName, ...byOrg];
     const seen = new Set();
     for (const c of pool) { const k = norm(c.email); if (k && !seen.has(k)) { seen.add(k); cands.push(c); } }
     cands = cands.map((c) => ({ c, s: (c.org && norm(c.org).includes(norm(org)) ? 2 : 0) + (norm(c.name).includes(norm(name)) ? 1 : 0) }))
       .sort((a, b) => b.s - a.s).map((x) => x.c);
   } else {
-    cands = await searchContacts(hint);
+    cands = await searchContacts(hint, opts);
   }
   // Only auto-fill To when there's exactly one strong match; otherwise let Ed pick.
   const best = cands.length === 1 ? cands[0] : (cands.length && m ? cands[0] : null);
@@ -1266,4 +1276,4 @@ router.post('/lunch/menu-capture', express.json({ limit: '512kb' }), async (req,
   } catch (err) { console.error('[tessa] menu capture failed:', err.message); res.status(500).json({ error: safeErrorMessage(err) }); }
 });
 
-module.exports = { router };
+module.exports = { router, searchContacts, resolveRecipient };

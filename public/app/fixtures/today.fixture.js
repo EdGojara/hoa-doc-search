@@ -287,4 +287,21 @@ window.TX_FIXTURE = {
     gl_1300_2400_net_cents: 5870704, gl_accounts_found: 2, diff_cents: 0,
     conversion: { ready: true, batch_code: 'SAMPLE', as_of_date: '2026-07-31' }, ties: true,
   } },
+  // Amanda's email desk (sample addresses only).
+  '/api/amanda/email': { ok: true, data: { ok: true, exceptions: 1, source_errors: {}, since: '2026-09-22T00:00:00Z',
+    outbox: [
+      { id: 'o1', status: 'prepared', reason: null, to_email: 'manager@example.com, assistant@example.com', cc: null,
+        subject: 'Drama Creek: lawn enforcement path', created_at: '2026-10-06T20:40:00Z',
+        body_text: 'Hi both,\n\nPlease use the regular courtesy notice for lawn violations at Drama Creek.\n\nThank you,\nAmanda' },
+      { id: 'o2', status: 'blocked', reason: 'blocked: outbound guard suppressed this send (demo community)', to_email: 'board@example.com', cc: 'manager@example.com',
+        subject: 'Does Tuesday work for the board meeting?', created_at: '2026-10-06T18:10:00Z', body_text: 'Hi everyone,\n\nDoes Tuesday work?\n\nThank you,\nAmanda' },
+    ],
+    activity: [
+      { source: 'outbox', id: 'o1', status: 'prepared', at: '2026-10-06T20:40:00Z', to: 'manager@example.com, assistant@example.com', subject: 'Drama Creek: lawn enforcement path' },
+      { source: 'outbox', id: 'o2', status: 'blocked', at: '2026-10-06T18:10:00Z', to: 'board@example.com', cc: 'manager@example.com', subject: 'Does Tuesday work for the board meeting?', reason: 'blocked: outbound guard suppressed this send (demo community)' },
+      { source: 'sent_items', id: 's1', status: 'unrecorded', at: '2026-10-05T16:00:00Z', to: 'owner@example.com', subject: 'Photo check', unrecorded: true, reason: 'Unrecorded send: found in Amanda’s Sent Items with no trustEd record. Needs investigation (sent outside the normal path).' },
+      { source: 'auto_reply', id: 'a1', status: 'sent', at: '2026-10-05T12:31:00Z', to: 'owner@example.com', subject: 'Re: Drama Creek' },
+      { source: 'auto_reply', id: 'a2', status: 'failed', at: '2026-10-05T00:21:00Z', to: 'owner@example.com', subject: 'Re: Drama Creek', reason: 'Graph list attachments failed (400)' },
+    ],
+  } },
 };
