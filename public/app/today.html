@@ -95,6 +95,13 @@
   .th-em-out ol { margin: 6px 0 0 18px; padding: 0; }
   .th-em-ex { font-size: 12px; color: var(--tx-muted); margin-top: 4px; }
   .th-em-ex button { background: none; border: 0; padding: 0; color: var(--navy); text-decoration: underline; cursor: pointer; font: inherit; }
+  .th-ib-msg { margin-top: 8px; }
+  .th-ib-msg.is-out .th-em-body { background: var(--tx-info-bg); }
+  .th-ib-mode { display: flex; gap: 16px; flex-wrap: wrap; margin-top: 8px; font-size: 13px; color: var(--tx-text); }
+  .th-ib-mode label { display: inline-flex; gap: 6px; align-items: center; margin: 0; font-size: 13px; color: var(--tx-text); }
+  .th-ib-mode input { width: auto; }
+  .th-ib-rcpt { margin-top: 6px; }
+  .th-ib-reply { border-top: 1px solid var(--tx-rule-soft); margin-top: 10px; padding-top: 2px; }
   @media (max-width: 760px) { .th-em-grid { grid-template-columns: 1fr; } .th-em-row { grid-template-columns: 1fr; } .th-em-acts { justify-content: flex-start; } }
   @media (max-width: 1100px) { .th-grid, .th-lower { grid-template-columns: minmax(0, 1fr); } }
   @media (max-width: 760px) { .th-amanda { margin: 18px 16px 0; } .th-grid, .th-lower { padding-left: 16px; padding-right: 16px; } .th-okwrap { margin: 18px 16px 0; } .th-stamp { display: none; } .th-refresh button .th-rl { display: none; } }
@@ -171,12 +178,14 @@
       </div>
       <section class="th-em" id="th-em" aria-label="Amanda's email desk">
         <div class="th-em-tabs" role="tablist">
-          <button type="button" role="tab" id="th-em-t-outbox" aria-selected="true" data-tab="outbox">Outbox<span class="th-em-n" id="th-em-n-outbox">&middot;</span></button>
+          <button type="button" role="tab" id="th-em-t-inbox" aria-selected="true" data-tab="inbox">Inbox<span class="th-em-n" id="th-em-n-inbox">&middot;</span></button>
+          <button type="button" role="tab" id="th-em-t-outbox" aria-selected="false" data-tab="outbox">Outbox<span class="th-em-n" id="th-em-n-outbox">&middot;</span></button>
           <button type="button" role="tab" id="th-em-t-ask" aria-selected="false" data-tab="ask">Ask Amanda to email</button>
           <button type="button" role="tab" id="th-em-t-draft" aria-selected="false" data-tab="draft">Draft an email</button>
           <button type="button" role="tab" id="th-em-t-activity" aria-selected="false" data-tab="activity">Recent email<span class="th-em-n" id="th-em-n-activity">&middot;</span></button>
         </div>
-        <div class="th-em-panel" id="th-em-p-outbox" role="tabpanel"><div class="tx-muted" style="font-size:13px">Loading Amanda&rsquo;s outbox&hellip;</div></div>
+        <div class="th-em-panel" id="th-em-p-inbox" role="tabpanel"><div class="tx-muted" style="font-size:13px">Loading Amanda&rsquo;s inbox&hellip;</div></div>
+        <div class="th-em-panel" id="th-em-p-outbox" role="tabpanel" hidden><div class="tx-muted" style="font-size:13px">Loading Amanda&rsquo;s outbox&hellip;</div></div>
         <form class="th-em-panel" id="th-em-p-ask" role="tabpanel" hidden autocomplete="off">
           <label for="th-em-ask-text">Tell Amanda who to email and what about</label>
           <textarea id="th-em-ask-text" maxlength="2000" placeholder="Email Martha and Alisha about the Quail Ridge self-help restriction"></textarea>
@@ -512,7 +521,7 @@
     unrecorded: ['tx-pill--warn', 'Unrecorded'],
     unchecked: ['tx-pill--mute', 'Not checked'],
   };
-  var EM_TABS = ['outbox', 'ask', 'draft', 'activity'];
+  var EM_TABS = ['inbox', 'outbox', 'ask', 'draft', 'activity'];
   function emPill(st) { var p = EM_STATUS[st] || ['tx-pill--mute', st || '?']; return '<span class="tx-pill ' + p[0] + '">' + esc(p[1]) + '</span>'; }
   function emTab(name) {
     EM_TABS.forEach(function (t) {
@@ -621,6 +630,111 @@
     if (!d || d.ok === false) { emFail('th-em-draft-out', d, r); return; }
     $('th-em-draft-out').innerHTML = emStagedHtml(d); $('th-em-thought').value = ''; loadEmail();
   });
+  // ---- Amanda's inbox (Ed 2026-10-06): mail delivered to HER mailbox, whoever
+  // content routing filed it under. Open the thread, Reply as Amanda -> staged in
+  // her Outbox (threaded, her signature, at send). Nothing sends from here.
+  var IB_STATUS = {
+    needs_reply: ['tx-pill--warn', 'Needs reply'], reply_staged: ['tx-pill--info', 'Reply in outbox'], replied: ['tx-pill--ok', 'Replied'],
+    auto_replied: ['tx-pill--ok', 'Auto-replied'], handled: ['tx-pill--mute', 'Handled'],
+  };
+  function ibPill(st) { var p = IB_STATUS[st] || ['tx-pill--mute', st || '?']; return '<span class="tx-pill ' + p[0] + '">' + esc(p[1]) + '</span>'; }
+  var ibLast = null; var ibOpen = null;
+  function ibRow(i) {
+    var who = esc(i.from_name ? i.from_name + ' <' + (i.from_email || '') + '>' : (i.from_email || ''));
+    var routed = i.routed_to && i.routed_to !== 'amanda' ? ' · filed under ' + esc(i.routed_to.charAt(0).toUpperCase() + i.routed_to.slice(1)) : '';
+    return '<div class="th-em-row" data-ib="' + esc(i.id) + '"><div><div class="th-em-subj">' + esc(i.subject || '(no subject)') + '</div>' +
+      '<div class="th-em-meta">' + who + ' · ' + esc(fmtWhen(i.received_at)) + (i.community ? ' · ' + esc(i.community) : '') + routed + '</div>' +
+      '<div class="th-ib-thread" hidden></div></div>' +
+      '<div class="th-em-acts">' + ibPill(i.reply_status) + ' <button type="button" class="tx-btn tx-btn--sec" data-ibact="open">Open</button></div></div>';
+  }
+  async function loadInbox() {
+    if (user.role !== 'admin') return;
+    var r = await TX.get('/api/amanda/email/inbox');
+    var d = r.ok ? r.data : null;
+    if (!d) { $('th-em-p-inbox').innerHTML = '<div class="tx-err">' + icon('alert', { size: 16 }) + '<span>Couldn’t load Amanda’s inbox. Nothing here is counted as clear.</span></div>'; emCount('th-em-n-inbox', null); return; }
+    ibLast = d;
+    var items = d.items || [];
+    emCount('th-em-n-inbox', d.needs_reply, d.needs_reply > 0);
+    var se = Object.keys(d.source_errors || {});
+    $('th-em-p-inbox').innerHTML = (se.length ? '<div class="tx-err" style="margin-bottom:8px">' + icon('alert', { size: 16 }) + '<span>Some reply statuses couldn’t be checked (' + esc(se.join(', ')) + ').</span></div>' : '') +
+      (items.length ? items.map(ibRow).join('') : '<div class="tx-muted" style="font-size:13px;padding:4px 0">No email to Amanda in the last 30 days.</div>') +
+      '<div class="tx-muted" style="font-size:12px;margin-top:6px">Last 30 days of mail delivered to Amanda’s mailbox, from the same records Communications uses. New mail appears after the inbox is pulled.</div>';
+    if (ibOpen) { var again = $('th-em-p-inbox').querySelector('[data-ib="' + ibOpen + '"]'); if (again) ibToggle(again, true); }
+  }
+  function ibThreadHtml(t) {
+    var msgs = (t.thread || []).map(function (x) {
+      var mine = x.direction === 'outbound';
+      return '<div class="th-ib-msg' + (mine ? ' is-out' : '') + '"><div class="th-em-meta"><b>' + esc(mine ? (x.from || 'Bedrock') : (x.from || x.from_email || '')) + '</b> · ' + esc(fmtWhen(x.at)) + '</div>' +
+        '<div class="th-em-body" style="max-height:220px">' + esc(x.body || '') + '</div></div>';
+    }).join('');
+    var m = t.message || {}; var rp = t.reply || {};
+    var cc = (m.cc || []).length ? ' · CC ' + esc(m.cc.join(', ')) : '';
+    return '<div class="th-em-meta" style="margin-top:8px">To ' + esc((m.to || []).join(', ')) + cc + '</div>' + msgs +
+      '<form class="th-ib-reply" autocomplete="off">' +
+      '<div class="th-em-meta" style="margin-top:10px"><b>Reply as Amanda</b> · to ' + esc(rp.to || '') + ' · ' + esc(rp.subject || '') + '</div>' +
+      // Reply All is Amanda's default for board/community threads; sender-only stays one click away.
+      ((rp.reply_all_cc || []).length
+        ? '<div class="th-ib-mode" role="radiogroup" aria-label="Who gets the reply">' +
+          '<label><input type="radio" name="ibmode-' + esc(m.id) + '" data-ibf="mode" value="all"' + (rp.default_mode !== 'sender' ? ' checked' : '') + '> Reply all</label>' +
+          '<label><input type="radio" name="ibmode-' + esc(m.id) + '" data-ibf="mode" value="sender"' + (rp.default_mode === 'sender' ? ' checked' : '') + '> Reply to sender only</label></div>'
+        : '') +
+      '<label>Add CC (optional)</label><input type="text" data-ibf="cc" placeholder="name@example.com">' +
+      '<div class="th-em-meta th-ib-rcpt" data-ibf="rcpt"></div>' +
+      '<label>Reply</label><textarea data-ibf="text" placeholder="Write the reply, or write a note and choose Have Amanda write it."></textarea>' +
+      '<div class="th-em-bar"><span class="th-em-note">' + (m.threaded_reply_possible ? 'Sends as a reply in the same Outlook thread, with the conversation quoted below.' : 'The original is quoted below the reply.') + ' Staged in her outbox; nothing sends from here.</span>' +
+      '<button type="button" class="tx-btn tx-btn--sec" data-ibact="draft">Have Amanda write it</button><button type="submit" class="tx-btn tx-btn--pri">Stage my reply</button></div>' +
+      '<div class="th-em-out" data-ibf="out" aria-live="polite"></div></form>';
+  }
+  function ibMode(f, t) { var r = f.querySelector('[data-ibf=mode]:checked'); return r ? r.value : ((t.reply || {}).default_mode || 'sender'); }
+  // Live preview of exactly who gets the reply: sender in To; with Reply all, everyone
+  // else on the original in CC; Amanda never; duplicates removed (server applies the same rule).
+  function ibRcpt(f, t) {
+    var rp = t.reply || {}; var to = String(rp.to || '').toLowerCase();
+    var mine = { 'amandaalbright@bedrocktx.com': 1, 'amanda@bedrocktx.com': 1 };
+    var extra = String(f.querySelector('[data-ibf=cc]').value || '').split(/[,;\s]+/).map(function (a) { return a.trim().toLowerCase(); }).filter(function (a) { return /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(a); });
+    var base = ibMode(f, t) === 'all' ? (rp.reply_all_cc || []) : [];
+    var seen = {}; var cc = base.concat(extra).filter(function (a) { a = String(a).toLowerCase(); if (!a || a === to || mine[a] || seen[a]) return false; seen[a] = 1; return true; });
+    f.querySelector('[data-ibf=rcpt]').innerHTML = '<b>To:</b> ' + esc(rp.to || '') + (cc.length ? ' &middot; <b>CC (' + cc.length + '):</b> ' + esc(cc.join(', ')) : ' &middot; no CC');
+  }
+  async function ibToggle(row, forceOpen) {
+    var box = row.querySelector('.th-ib-thread'); var btn = row.querySelector('[data-ibact=open]');
+    if (!box.hidden && !forceOpen) { box.hidden = true; btn.textContent = 'Open'; ibOpen = null; return; }
+    var id = row.getAttribute('data-ib'); ibOpen = id;
+    box.hidden = false; btn.textContent = 'Close'; box.innerHTML = '<div class="tx-muted" style="font-size:12.5px;margin-top:8px">Loading the thread…</div>';
+    var r = await TX.get('/api/amanda/email/inbox/' + encodeURIComponent(id));
+    if (!r.ok) { box.innerHTML = '<div class="tx-err" style="margin-top:8px">' + icon('alert', { size: 16 }) + '<span>Couldn’t load this thread.</span></div>'; return; }
+    box.innerHTML = ibThreadHtml(r.data); box._t = r.data;
+    var fm = box.querySelector('form'); ibRcpt(fm, r.data);
+    fm.addEventListener('change', function () { ibRcpt(fm, r.data); });
+    fm.querySelector('[data-ibf=cc]').addEventListener('input', function () { ibRcpt(fm, r.data); });
+  }
+  async function ibStage(row, mode) {
+    var box = row.querySelector('.th-ib-thread'); var t = box._t || {}; var f = box.querySelector('form');
+    var text = f.querySelector('[data-ibf=text]').value.trim(); var out = f.querySelector('[data-ibf=out]');
+    if (!text) { out.innerHTML = '<div class="tx-err">' + icon('alert', { size: 16 }) + '<span>' + (mode === 'draft' ? 'Tell Amanda what the reply should say.' : 'Write the reply first.') + '</span></div>'; return; }
+    var ibModeVal = ibMode(f, t);
+    var cc = f.querySelector('[data-ibf=cc]').value;
+    f.querySelectorAll('button').forEach(function (b) { b.disabled = true; });
+    out.innerHTML = '<span class="tx-muted">' + (mode === 'draft' ? 'Amanda is writing the reply…' : 'Staging…') + '</span>';
+    var r = await TX.post('/api/amanda/email/inbox/' + encodeURIComponent(row.getAttribute('data-ib')) + '/reply', mode === 'draft' ? { thought: text, cc: cc, reply_mode: ibModeVal } : { body: text, cc: cc, reply_mode: ibModeVal });
+    f.querySelectorAll('button').forEach(function (b) { b.disabled = false; });
+    var d = r.ok ? r.data : (r.body || null);
+    if (!d || d.ok === false) { out.innerHTML = '<div class="tx-err">' + icon('alert', { size: 16 }) + '<span>' + esc((d && d.detail) || r.error || 'Couldn’t stage the reply.') + ' Nothing was sent.</span></div>'; return; }
+    var dr = d.draft || {};
+    out.innerHTML = '<span class="tx-pill tx-pill--info">In outbox</span> <span>' + esc(d.reply || '') + '</span><div class="th-em-meta" style="margin-top:6px">To ' + esc(dr.to_email || '') + (dr.cc ? ' · CC ' + esc(dr.cc) : '') + ' · ' + esc(dr.subject || '') + '</div>' +
+      (dr.body_text ? '<div class="th-em-body">' + esc(dr.body_text) + '</div>' : '') + '<div class="th-em-meta">Review and send it from the Outbox tab.</div>';
+    loadEmail(); loadInbox();
+  }
+  $('th-em-p-inbox').addEventListener('click', function (e) {
+    var b = e.target.closest('[data-ibact]'); if (!b) return;
+    var row = b.closest('.th-em-row'); if (!row) return;
+    if (b.getAttribute('data-ibact') === 'open') ibToggle(row);
+    if (b.getAttribute('data-ibact') === 'draft') ibStage(row, 'draft');
+  });
+  $('th-em-p-inbox').addEventListener('submit', function (e) {
+    e.preventDefault(); var row = e.target.closest('.th-em-row'); if (row) ibStage(row, 'write');
+  });
+
   if (EM_TABS.indexOf(store('tx.em.tab')) >= 0) emTab(store('tx.em.tab'));
 
   var feedSeq = 0;
@@ -633,6 +747,7 @@
     if (mine !== feedSeq) return;
     renderFeed(r);
     loadEmail();
+    loadInbox();
   }
 
   // ---- load: one round of reads, only when the page opens or you ask -----

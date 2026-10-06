@@ -304,4 +304,15 @@ window.TX_FIXTURE = {
       { source: 'auto_reply', id: 'a2', status: 'failed', at: '2026-10-05T00:21:00Z', to: 'owner@example.com', subject: 'Re: Drama Creek', reason: 'Graph list attachments failed (400)' },
     ],
   } },
+  // Amanda's inbox (sample addresses only).
+  '/api/amanda/email/inbox': { ok: true, data: { ok: true, needs_reply: 2, source_errors: {}, items: [
+    { id: 'f1', from_name: 'Board President', from_email: 'president@example.com', subject: 'New team member for Drama Creek', received_at: '2026-10-06T15:51:00Z', community: 'Drama Creek (sample)', routed_to: 'miranda', reply_status: 'needs_reply' },
+    { id: 'f2', from_name: null, from_email: 'treasurer@example.com', subject: 'Budget approval meeting', received_at: '2026-10-05T22:35:00Z', community: 'Drama Creek (sample)', routed_to: 'amanda', reply_status: 'needs_reply' },
+    { id: 'f3', from_name: 'Manager', from_email: 'manager@example.com', subject: 'Re: Lawn enforcement path', received_at: '2026-10-05T21:27:00Z', community: 'Drama Creek (sample)', routed_to: 'amanda', reply_status: 'replied' },
+  ] } },
+  '/api/amanda/email/inbox/f1': { ok: true, data: { ok: true, graph_errors: [],
+    message: { id: 'f1', from_name: 'Board President', from_email: 'president@example.com', to: ['treasurer@example.com', 'amandaalbright@bedrocktx.com'], cc: ['owner@example.com'],
+      subject: 'New team member for Drama Creek', body: 'Hi Amanda,\n\nPlease welcome our new board member. Can you add her to the board list?\n\nThanks', received_at: '2026-10-06T15:51:00Z', community: 'Drama Creek (sample)', threaded_reply_possible: true },
+    thread: [{ id: 'f1', direction: 'inbound', from: 'Board President', from_email: 'president@example.com', body: 'Hi Amanda,\n\nPlease welcome our new board member. Can you add her to the board list?\n\nThanks', at: '2026-10-06T15:51:00Z' }],
+    reply: { to: 'president@example.com', subject: 'Re: New team member for Drama Creek', reply_all_cc: ['treasurer@example.com', 'owner@example.com'] } } },
 };
