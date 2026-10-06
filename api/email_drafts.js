@@ -245,8 +245,54 @@ router.post('/:id/send', async (req, res) => {
 
     const from = personaMailbox(d.persona, d.from_mailbox);
     const subject = d.subject || '(no subject)';
+
+    // Amanda reply drafts (draft_kind 'amanda_reply', staged on her desk against an
+    // inbound email_messages row). Same reply rules as Communications' send:
+    //   * her double-send guard against the automatic reply runs first;
+    //   * the inbound lives in her mailbox, so it goes as a REAL threaded reply
+    //     (Graph createReply carries the actual quoted history + threading headers);
+    //     otherwise a fresh message with the quoted original inline;
+    //   * on success the inbound is marked handled.
+    // (Ed 2026-10-06, Amanda inbox.)
+    let replyTo = null;
+    if (d.draft_kind === 'amanda_reply' && d.source_email_ref) {
+      const { data: src, error: srcErr } = await supabase.from('email_messages')
+        .select('id, mailbox, graph_id, internet_message_id, sender_name, sender_email, subject, body_full, body_preview, received_at, recipients, community:community_id(name)')
+        .eq('id', d.source_email_ref).maybeSingle();
+      if (srcErr) throw srcErr;
+      if (!src) {
+        await supabase.from('outbound_email_drafts').update({ send_error: 'The email this replies to is no longer on file.' }).eq('id', d.id);
+        return res.status(409).json({ error: 'source_email_missing' });
+      }
+      replyTo = src;
+      if (src.internet_message_id) {
+        const autoReply = require('../lib/amanda/auto_reply').getAutoReply();
+        let rcpt = null;
+        try { rcpt = await autoReply.receiptFor(src.internet_message_id); }
+        catch (e) { return res.status(503).json({ error: 'Could not check whether Amanda already replied. Nothing was sent; try again in a moment.' }); }
+        const guard = await require('../lib/amanda/auto_reply').humanSendGuard(rcpt, {
+          confirmed: !!(req.body && req.body.confirm_after_amanda === true),
+          verifyNow: (r) => autoReply.verifyNow(r),
+          releaseToHuman: (r) => autoReply.releaseToHuman(r),
+        });
+        if (!guard.allow) {
+          await supabase.from('outbound_email_drafts').update({ send_error: `blocked: ${guard.message || guard.error || 'Amanda\u2019s automatic reply is in progress for this email'}` }).eq('id', d.id);
+          return res.status(guard.status || 409).json({ error: guard.error, message: guard.message, blocked: true });
+        }
+      }
+    }
+    const threaded = !!(replyTo && replyTo.graph_id && graphSend.sameMailbox(replyTo.mailbox, from));
+    if (replyTo && !threaded && p && p.build && d.body_text) {
+      // Fresh-message fallback: carry the quoted original inline (Graph only adds it on a threaded reply).
+      const { quotedOriginal } = require('../lib/email/quote_original');
+      const q = quotedOriginal({ fromName: replyTo.sender_name, fromEmail: replyTo.sender_email, sentAt: replyTo.received_at, to: replyTo.recipients, subject: replyTo.subject, bodyText: replyTo.body_full || replyTo.body_preview });
+      const built = p.build(d.body_text, d.community_name, q);
+      html = built.html; personaAttachments = built.attachments || [];
+    }
     try {
-      const sent = await graphSend.sendAs({ from, to: d.to_email, cc: d.cc || undefined, subject, html, attachments: [...personaAttachments, ...fileAttachments] });
+      const sent = threaded
+        ? await graphSend.sendReplyAs({ from, sourceMailbox: replyTo.mailbox, sourceGraphId: replyTo.graph_id, cc: d.cc || undefined, html, attachments: [...personaAttachments, ...fileAttachments], communityId: d.community_id || null })
+        : await graphSend.sendAs({ from, to: d.to_email, cc: d.cc || undefined, subject, html, attachments: [...personaAttachments, ...fileAttachments] });
       // sendAs RETURNS (does not throw) when the outbound guard suppresses a send.
       // That used to fall through and mark the draft 'sent' although nothing left.
       // Keep it a draft with the reason, so it stays visible as blocked. (Ed 2026-10-06.)
@@ -264,6 +310,13 @@ router.post('/:id/send', async (req, res) => {
       approved_by: req.body.approved_by || 'staff', send_error: null,
       record_ownership: 'association_record',
     }).eq('id', d.id);
+    if (replyTo) {
+      // The inbound is answered: mark it handled so Communications and Amanda's inbox agree.
+      const { error: hErr } = await supabase.from('email_messages')
+        .update({ triage_status: 'handled', reviewed_by: req.body.approved_by || 'staff', reviewed_at: new Date().toISOString() })
+        .eq('id', replyTo.id);
+      if (hErr) console.warn('[email_drafts] reply sent but inbound not marked handled:', hErr.message);
+    }
     // A staff review only becomes MEMORY once the person actually received it.
     // staff_document_reviews rows are written at draft time with sent_at null;
     // stamping it here is what lets Amanda say "this came back" next month.
@@ -281,7 +334,7 @@ router.post('/:id/send', async (req, res) => {
 
     // Log the sent email onto the homeowner's 360 (resolved). Best-effort.
     const timeline = await logSentDraftToTimeline(d, from, subject);
-    res.json({ ok: true, sent_from: from, to: d.to_email, timeline });
+    res.json({ ok: true, sent_from: from, to: d.to_email, timeline, threaded_reply: threaded || undefined });
   } catch (err) {
     console.error('[email_drafts] send failed:', err.message);
     res.status(500).json({ error: safe(err) });
