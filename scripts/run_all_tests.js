@@ -142,6 +142,7 @@ const CHECKS = [
   'tests/test_signature_headshot_size.js',
   'tests/test_forward_signature.js',
   'tests/test_self_help_config.js',
+  'tests/test_amanda_email_console.js',
   'tests/test_reply_includes_history.js',
   'tests/test_tessa_voice.js',
   'tests/test_tessa_request.js',

@@ -246,7 +246,15 @@ router.post('/:id/send', async (req, res) => {
     const from = personaMailbox(d.persona, d.from_mailbox);
     const subject = d.subject || '(no subject)';
     try {
-      await graphSend.sendAs({ from, to: d.to_email, cc: d.cc || undefined, subject, html, attachments: [...personaAttachments, ...fileAttachments] });
+      const sent = await graphSend.sendAs({ from, to: d.to_email, cc: d.cc || undefined, subject, html, attachments: [...personaAttachments, ...fileAttachments] });
+      // sendAs RETURNS (does not throw) when the outbound guard suppresses a send.
+      // That used to fall through and mark the draft 'sent' although nothing left.
+      // Keep it a draft with the reason, so it stays visible as blocked. (Ed 2026-10-06.)
+      if (sent && sent.suppressed) {
+        const why = `blocked: outbound guard suppressed this send (${sent.reason || 'no reason given'})`;
+        await supabase.from('outbound_email_drafts').update({ send_error: why }).eq('id', d.id);
+        return res.status(409).json({ error: why, blocked: true });
+      }
     } catch (e) {
       await supabase.from('outbound_email_drafts').update({ send_error: e.message }).eq('id', d.id);
       return res.status(502).json({ error: `send failed: ${e.message}` });
