@@ -191,5 +191,23 @@ router.post('/inbox/:id/reply', async (req, res) => {
   }
 });
 
+// POST /api/amanda/email/inbox/:id/handoff-emma — hand this email's receipt to
+// Emma's AP intake (archived, deduped, linked; never pays; the email stays open
+// for Amanda's reply). Idempotent: an existing item for this email is returned.
+router.post('/inbox/:id/handoff-emma', async (req, res) => {
+  const u = await requireAdmin(req, res); if (!u) return;
+  try {
+    const t = await inbox.loadThread(sb(), req.params.id);
+    if (!t) return res.status(404).json({ ok: false, error: 'not_found' });
+    if (t.not_amanda) return res.status(404).json({ ok: false, error: 'not_in_amanda_inbox' });
+    const h = await require('../lib/amanda/emma_handoff').handoffToEmma(sb(), req.params.id, { force: (req.body || {}).force === true });
+    const count = (h.items && ((h.items.invoices || []).length + (h.items.exceptions || []).length)) || 0;
+    res.json({ ok: true, status: h.status, reason: h.reason || null, items: h.items, item_count: count, summary: h.summary ? h.summary.text : null });
+  } catch (e) {
+    console.error('[amanda.email.handoff] failed:', e.message);
+    res.status(500).json({ ok: false, error: safeErrorMessage(e) });
+  }
+});
+
 
 module.exports = router;
