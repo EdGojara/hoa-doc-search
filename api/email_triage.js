@@ -1221,6 +1221,13 @@ router.post('/:id/forward-internal', express.json(), async (req, res) => {
     } catch (_) { /* best-effort — forward still goes without them */ }
 
     const e = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    // Claire's branded signature (+ every inline image it references: headshot
+    // and logo) so the forward is a complete, signed Claire email, not an abrupt
+    // unsigned block. (Ed 2026-08-01.) Built by the ONE signature builder. This
+    // used to call claireSignatureParts(), which no longer exists, inside a
+    // try/catch that swallowed the TypeError, so every forward went out
+    // unsigned. A failure is now logged; the forward still goes. (Ed 2026-10-06.)
+    const fwdSig = require('../lib/email/claire_signature').claireForwardSignature(m.community && m.community.name, fwdAttachments, req.params.id);
 
     // FULL body, not the teaser. body_preview is Microsoft's ~255-char snippet and
     // body_full is often empty at ingest, so a forward could carry a truncated
@@ -1276,14 +1283,11 @@ ${thread.length ? `<div style="margin:14px 0 0;">
   </div>`; }).join('')}
 </div>` : ''}
 ${fwdAttachments.length ? `<p style="margin:12px 0 0;color:#166534;"><strong>Attachments included:</strong> ${e(fwdAttachments.map((a) => a.name).join(', '))}</p>` : ''}
-${(() => { try { return require('../lib/email/claire_signature').claireSignatureParts(m.community && m.community.name).html || ''; } catch (_) { return ''; } })()}
+${fwdSig.html}
 </div>`;
-    // Claire's branded signature (+ its inline logo) so the forward is a complete,
-    // signed Claire email, not an abrupt unsigned block. (Ed 2026-08-01.)
-    try {
-      const { attachment: sigLogo } = require('../lib/email/claire_signature').claireSignatureParts(m.community && m.community.name);
-      if (sigLogo && !fwdAttachments.some((a) => a.contentId === 'bedrocklogo')) fwdAttachments.push(sigLogo);
-    } catch (_) { /* signature logo optional */ }
+    // The signature's inline images go on AFTER the "Attachments included" line
+    // is rendered, so the teammate's list names only the homeowner's files.
+    fwdAttachments.push(...fwdSig.attachments);
     // Send from Claire's (authorized) mailbox, not Ed's personal one — the app's
     // Azure Application Access Policy only covers the bot mailboxes, so sending as
     // egojara@ is blocked (403 RAOP). Claire forwarding to the teammate is also the
