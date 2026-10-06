@@ -669,7 +669,14 @@
     }).join('');
     var m = t.message || {}; var rp = t.reply || {};
     var cc = (m.cc || []).length ? ' · CC ' + esc(m.cc.join(', ')) : '';
-    return '<div class="th-em-meta" style="margin-top:8px">To ' + esc((m.to || []).join(', ')) + cc + '</div>' + msgs +
+    // Emma handoff for routine receipts: show where it stands, or offer it.
+    var eh = m.emma_handoff;
+    var IBK = { card_substantiation: 'card charge to code', reimbursement: 'reimbursement', funding_review: 'question' };
+    var handoff = eh && eh.status === 'handed'
+      ? '<div class="th-em-meta" style="margin-top:6px">' + ibPill('handled').replace('Handled', 'With Emma') + ' Receipt handed to Emma ' + esc(fmtWhen(eh.at)) + (eh.expense_cents != null ? ' (expense $' + (eh.expense_cents / 100).toFixed(2) + ')' : '') + ': ' +
+        esc((eh.items || []).map(function (x) { return (IBK[x.kind] || x.kind) + ' $' + ((x.amount_cents || 0) / 100).toFixed(2); }).join(' · ') || 'item created') + '.</div>'
+      : (m.has_attachments ? '<div class="th-em-meta" style="margin-top:6px"><button type="button" class="tx-btn tx-btn--sec" data-ibact="emma">Hand receipt to Emma</button> <span data-ibf="emma-out"></span></div>' : '');
+    return '<div class="th-em-meta" style="margin-top:8px">To ' + esc((m.to || []).join(', ')) + cc + '</div>' + handoff + msgs +
       '<form class="th-ib-reply" autocomplete="off">' +
       '<div class="th-em-meta" style="margin-top:10px"><b>Reply as Amanda</b> · to ' + esc(rp.to || '') + ' · ' + esc(rp.subject || '') + '</div>' +
       // Reply All is Amanda's default for board/community threads; sender-only stays one click away.
@@ -695,6 +702,16 @@
     var base = ibMode(f, t) === 'all' ? (rp.reply_all_cc || []) : [];
     var seen = {}; var cc = base.concat(extra).filter(function (a) { a = String(a).toLowerCase(); if (!a || a === to || mine[a] || seen[a]) return false; seen[a] = 1; return true; });
     f.querySelector('[data-ibf=rcpt]').innerHTML = '<b>To:</b> ' + esc(rp.to || '') + (cc.length ? ' &middot; <b>CC (' + cc.length + '):</b> ' + esc(cc.join(', ')) : ' &middot; no CC');
+  }
+  async function ibEmma(row, btn) {
+    var out = row.querySelector('[data-ibf="emma-out"]'); btn.disabled = true; out.textContent = 'Handing to Emma…';
+    var r = await TX.post('/api/amanda/email/inbox/' + encodeURIComponent(row.getAttribute('data-ib')) + '/handoff-emma', {});
+    var d = r.ok ? r.data : (r.body || null);
+    if (!d || d.ok === false) { btn.disabled = false; out.textContent = (d && d.error) || r.error || 'Couldn’t hand it to Emma.'; return; }
+    var IBK2 = { card_substantiation: 'card charge to code', reimbursement: 'reimbursement', funding_review: 'question' };
+    var list = (d.package_items || []).map(function (x) { return (IBK2[x.kind] || x.kind) + ' $' + ((x.amount_cents || 0) / 100).toFixed(2); }).join(', ');
+    out.textContent = d.status === 'already_handed' ? 'Already with Emma; no duplicate created.' : d.status === 'handed' ? 'Handed to Emma: ' + (list || (d.item_count + ' item')) + '.' : (d.reason || d.status);
+    if (d.status !== 'handed' && d.status !== 'already_handed') btn.disabled = false;
   }
   async function ibToggle(row, forceOpen) {
     var box = row.querySelector('.th-ib-thread'); var btn = row.querySelector('[data-ibact=open]');
@@ -730,6 +747,7 @@
     var row = b.closest('.th-em-row'); if (!row) return;
     if (b.getAttribute('data-ibact') === 'open') ibToggle(row);
     if (b.getAttribute('data-ibact') === 'draft') ibStage(row, 'draft');
+    if (b.getAttribute('data-ibact') === 'emma') ibEmma(row, b);
   });
   $('th-em-p-inbox').addEventListener('submit', function (e) {
     e.preventDefault(); var row = e.target.closest('.th-em-row'); if (row) ibStage(row, 'write');

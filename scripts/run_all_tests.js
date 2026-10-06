@@ -145,6 +145,7 @@ const CHECKS = [
   'tests/test_amanda_email_console.js',
   'tests/test_amanda_inbox.js',
   'tests/test_reply_judgment.js',
+  'tests/test_amanda_emma_handoff.js',
   'tests/test_reply_includes_history.js',
   'tests/test_tessa_voice.js',
   'tests/test_tessa_request.js',
