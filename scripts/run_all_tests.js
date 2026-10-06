@@ -139,6 +139,7 @@ const CHECKS = [
   'tests/test_contact_mining.js',
   'tests/test_persona_routing.js',
   'tests/test_signature_identity.js',
+  'tests/test_signature_headshot_size.js',
   'tests/test_reply_includes_history.js',
   'tests/test_tessa_voice.js',
   'tests/test_tessa_request.js',
