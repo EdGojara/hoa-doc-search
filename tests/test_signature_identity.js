@@ -121,7 +121,7 @@ check('the soft AI mark is present and never leads', () => {
 check('the inline logo is attached for every signer', () => {
   for (const persona of SIGNERS) {
     const { attachments } = buildPersonaEmail(persona, 'Body.', 'Waterview');
-    assert.ok(attachments.length && attachments[0].contentId === 'bedrocklogo',
+    assert.ok(attachments.some((a) => a.contentId === 'bedrocklogo' && a.isInline),
       persona + ' is missing the inline logo attachment');
   }
 });
