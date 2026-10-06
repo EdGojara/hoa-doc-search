@@ -67,12 +67,12 @@ check('a single-tender receipt is one component for the whole amount', () => {
 
 console.log('\nThe four requested regressions (each component classified separately)');
 check('1) association card + PERSONAL gift card -> card to code, reimbursement only for the $11.14 gift-card portion', () => {
-  const p = pkgFor('Receipt attached. I used my own Amazon gift card for part of it.', { associationLast4s: ['4738'] });
+  const p = pkgFor('Receipt attached. I used my own Amazon gift card for part of it.', { associationCardLast4s: ['4738'] });
   assert.deepStrictEqual(kinds(p), [['card_substantiation', 5105], ['reimbursement', 1114]]);
   assert.strictEqual(p.reimbursement_cents, 1114);
 });
 check('2) association card + ASSOCIATION-owned gift card -> card to code, no reimbursement', () => {
-  const p = pkgFor("Receipt attached. Part of it was on the HOA's gift card.", { associationLast4s: ['4738'] });
+  const p = pkgFor("Receipt attached. Part of it was on the HOA's gift card.", { associationCardLast4s: ['4738'] });
   assert.deepStrictEqual(kinds(p), [['card_substantiation', 5105]]);
   assert.strictEqual(p.reimbursement_cents, 0);
   assert.strictEqual(p.components[1].treatment, 'association_funded');
@@ -97,7 +97,7 @@ check('the Canyon Gate sign today (card not on file, no matching charge, gift ca
   assert.match(p.items[0].why, /card ending 4738 is not on file as an association card/);
 });
 check('a personal claim that conflicts with association card evidence is a question, not a reimbursement', () => {
-  const p = pkgFor('I paid for this personally, please reimburse me.', { associationLast4s: ['4738'] });
+  const p = pkgFor('I paid for this personally, please reimburse me.', { associationCardLast4s: ['4738'] });
   assert.strictEqual(p.components[0].treatment, 'review');
 });
 check('several candidate bank charges for the card amount: question, not a guess', () => {
@@ -107,7 +107,7 @@ check('several candidate bank charges for the card amount: question, not a guess
 
 console.log('\nAmanda’s note: the expense once, funding split underneath');
 check('one $62.19 expense line, coding needs review; each component with its treatment; Emma’s items listed', () => {
-  const p = pkgFor('Receipt attached.', { associationLast4s: ['4738'] });
+  const p = pkgFor('Receipt attached.', { associationCardLast4s: ['4738'] });
   const s = H.handoffSummary({ communityName: 'Canyon Gate at Cinco Ranch', senderName: 'Board President', senderEmail: 'president@example-hoa.com', senderRole: 'board', extracted: RECEIPT, receiptText: RECEIPT_TEXT, pkg: p });
   assert.match(s.text, /Expense: \$62\.19 \(one expense line; coding needs review, none assumed\)/);
   assert.match(s.text, /MasterCard ending 4738 \$51\.05: association card: match to the bank charge, attach the receipt, code it \(not a reimbursement\)/);
@@ -118,7 +118,7 @@ check('one $62.19 expense line, coding needs review; each component with its tre
 });
 
 console.log('\nEnd to end (fakes): one item per component, never duplicated, never paid');
-function world({ email = SIGN, last4s = [], matches = [], existingInv = [] } = {}) {
+function world({ email = SIGN, bankAccountLast4s = ['4738'], cards = [], matches = [], existingInv = [] } = {}) {
   const st = { email: { ...email, extracted: { ...email.extracted } }, exc: [], inv: [...existingInv], recorded: [], notes: [], emailUpdates: [] };
   const q = (table) => {
     let op = 'select'; let row = null;
@@ -131,7 +131,7 @@ function world({ email = SIGN, last4s = [], matches = [], existingInv = [] } = {
       if (op === 'update') { if (table === 'email_messages') { st.email.extracted = row.extracted; st.emailUpdates.push(row); } else st.notes.push(row); return { data: null, error: null }; }
       if (table === 'email_messages') return { data: st.email, error: null };
       if (table === 'board_members') return { data: [{ name: 'Board President', community_id: 'cg', community_name: 'Canyon Gate at Cinco Ranch' }], error: null };
-      if (table === 'bank_accounts') return { data: last4s.map((l) => ({ account_last4: l })), error: null };
+      if (table === 'bank_accounts') { st.bankAccountsRead = true; return { data: bankAccountLast4s.map((l) => ({ account_last4: l })), error: null }; }
       if (table === 'ap_intake_exceptions') return one ? { data: { notes: 'item reason' }, error: null } : { data: st.exc, error: null };
       if (table === 'ap_invoices') return { data: st.inv, error: null };
       return { data: [], error: null };
@@ -143,6 +143,7 @@ function world({ email = SIGN, last4s = [], matches = [], existingInv = [] } = {
     stageInvoice: async () => ({ extracted: RECEIPT, sha256: 'sha-1', storagePath: 'ap_invoices/sha_receipt.pdf' }),
     pdfText: async () => RECEIPT_TEXT,
     findCardMatches: async () => matches,
+    loadAssociationCards: async () => cards,
     // Mirrors recordException's idempotency: same source ref -> the existing row.
     recordException: async (x) => {
       const hit = st.exc.find((e) => e.intake_source_ref === x.sourceRef);
@@ -153,8 +154,8 @@ function world({ email = SIGN, last4s = [], matches = [], existingInv = [] } = {
   };
   return { sb: { from: q }, st, deps };
 }
-check('Canyon Gate with card 4738 confirmed and gift card owner unknown: exactly two Emma items ($51.05 card, $11.14 question), receipt on both', async () => {
-  const w = world({ last4s: ['4738'] });
+check('Canyon Gate with card 4738 confirmed by a dedicated card record and gift card owner unknown: exactly two Emma items ($51.05 card, $11.14 question), receipt on both', async () => {
+  const w = world({ cards: ['4738'] });
   const r = await H.handoffToEmma(w.sb, 'sign1', w.deps);
   assert.strictEqual(r.status, 'handed');
   assert.deepStrictEqual(w.st.recorded.map((x) => [x.extracted.handoff_item.kind, x.extracted.total_cents]), [['card_substantiation', 5105], ['funding_review', 1114]]);
@@ -164,22 +165,30 @@ check('Canyon Gate with card 4738 confirmed and gift card owner unknown: exactly
   assert.ok(!w.st.recorded.some((x) => x.extracted.reimbursement), 'no reimbursement item');
   assert.strictEqual(w.st.recorded[0].extracted.payment_package.expense_cents, 6219);
 });
+check('TODAY: a bank ACCOUNT ending 4738 is not card evidence: expense $62.19, card $51.05 and gift card $11.14 both unresolved, two questions, no reimbursement', async () => {
+  const w = world({ bankAccountLast4s: ['4738'], cards: [] });
+  const r = await H.handoffToEmma(w.sb, 'sign1', w.deps);
+  assert.strictEqual(r.pkg.expense_cents, 6219);
+  assert.deepStrictEqual(w.st.recorded.map((x) => [x.extracted.handoff_item.kind, x.extracted.total_cents]), [['funding_review', 5105], ['funding_review', 1114]]);
+  assert.strictEqual(r.pkg.reimbursement_cents, 0);
+  assert.ok(!w.st.bankAccountsRead, 'bank_accounts is never consulted');
+});
 check('a reimbursement item is shaped for Emma’s promote action (person, community, amount = personal portion)', async () => {
-  const w = world({ last4s: ['4738'], email: { ...SIGN, body_full: 'I ordered a new road sign. I used my own Amazon gift card for part of it. Receipt attached.' } });
+  const w = world({ cards: ['4738'], email: { ...SIGN, body_full: 'I ordered a new road sign. I used my own Amazon gift card for part of it. Receipt attached.' } });
   await H.handoffToEmma(w.sb, 'sign1', w.deps);
   const rb = w.st.recorded.find((x) => x.extracted.reimbursement);
   assert.deepStrictEqual([rb.extracted.reimbursement.reimbursee, rb.extracted.reimbursement.community_id, rb.extracted.reimbursement.requested_cents], ['Board President', 'cg', 1114]);
   assert.match(rb.reason, /^reimbursement: \$11\.14 personally funded portion/);
 });
 check('re-running creates nothing new (one item per component per email)', async () => {
-  const w = world({ last4s: ['4738'] });
+  const w = world({ cards: ['4738'] });
   await H.handoffToEmma(w.sb, 'sign1', w.deps);
   const again = await H.handoffToEmma(w.sb, 'sign1', w.deps);
   assert.strictEqual(again.status, 'already_handed');
   assert.strictEqual(w.st.exc.length, 2);
 });
 check('a partial earlier run is completed without duplicating what already exists', async () => {
-  const w = world({ last4s: ['4738'] });
+  const w = world({ cards: ['4738'] });
   w.st.exc.push({ id: 'exc-0', intake_source_ref: 'email:g1#card0', email_message_id: 'sign1' });
   await H.handoffToEmma(w.sb, 'sign1', w.deps);
   assert.deepStrictEqual(w.st.exc.map((e) => e.intake_source_ref), ['email:g1#card0', 'email:g1#review1']);
@@ -204,6 +213,11 @@ check('Emma’s queue labels these items neutrally (no item is mislabeled "no co
 });
 
 console.log('\nWiring');
+check('the handoff never treats bank_accounts.account_last4 as card ownership (no bank_accounts query)', () => {
+  const code = src('lib/amanda/emma_handoff.js').split('\n').filter((l) => !/^\s*\/\//.test(l)).join('\n');
+  assert.ok(!/from\('bank_accounts'\)/.test(code));
+  assert.match(code, /associationCardLast4s\.includes\(c\.card_last4\)/);
+});
 check('Emma’s shared intake is untouched by this feature; ingest hands off after filing; Inbox route admin-gated', () => {
   assert.ok(!/intentHint/.test(src('lib/ap/intake.js')) && !/keepOpen/.test(src('lib/ap/email_bill_intake.js')));
   const g = src('lib/email/graph_ingest.js');
