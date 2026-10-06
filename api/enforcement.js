@@ -928,6 +928,38 @@ router.post('/violations/manual', upload.array('photos', 6), async (req, res) =>
       return res.status(400).json({ error: 'property does not belong to specified community' });
     }
 
+    // ---- Self-help 10-day categories need the community's self-help authority
+    // BEFORE the case is opened. The letter for them is drafted after the
+    // response, so a missing config used to leave an open case with no letter
+    // and no message to staff (Quail Ridge, 520 Shady Dale, 2026-10-06).
+    {
+      const sh = require('../lib/enforcement/self_help_config');
+      const { data: catRow, error: catErr } = await supabase
+        .from('enforcement_categories').select('slug, label').eq('id', categoryId).maybeSingle();
+      if (catErr) {
+        console.error('[enforcement.manual] category lookup failed:', catErr.message);
+        return res.status(500).json({ error: safeErrorMessage(catErr) });
+      }
+      const remedy = catRow && sh.remedyFor(catRow.slug);
+      if (remedy) {
+        const { data: shComm, error: shErr } = await supabase
+          .from('communities').select(sh.SELECT).eq('id', communityId).maybeSingle();
+        if (shErr) {
+          console.error('[enforcement.manual] self-help config lookup failed:', shErr.message);
+          return res.status(500).json({ error: safeErrorMessage(shErr) });
+        }
+        const missing = sh.missingFields(shComm, remedy);
+        if (missing.length) {
+          console.warn('[enforcement.manual] refused self-help case: config missing', { communityId, propertyId, slug: catRow.slug, missing });
+          return res.status(400).json({
+            error: sh.explainMissing(shComm && shComm.name, catRow.label, missing),
+            code: 'self_help_config_missing',
+            missing,
+          });
+        }
+      }
+    }
+
     // ---- Server-side duplicate guard (race-condition backstop) -----------
     // The frontend modal also checks via GET /duplicate-check before submit,
     // but two operators could pass that check simultaneously and both
@@ -6545,14 +6577,14 @@ async function _draftLetterForBumpedViolation(violation, decision, communityId, 
     // manual entry got a 30-day §209 notice claiming prior notices (Ed 2026-07-31,
     // 19723 Canyon Gate Court). Route self-help categories to the self-help
     // renderer. Third path to get this fix — see /generate-letter + lock-and-batch.
-    const SELF_HELP_REMEDY = { lawn_force_mow_10day: 'lawn', trash_cleanup_10day: 'cleanup', tree_hazard_10day: 'tree' };
-    const remedyMode = catRow && SELF_HELP_REMEDY[catRow.slug];
+    const _sh = require('../lib/enforcement/self_help_config');
+    const remedyMode = catRow && _sh.remedyFor(catRow.slug);
     if (remedyMode) {
       const { data: shComm } = await supabase.from('communities')
-        .select('name, legal_name, declaration_short_name, declaration_doc_number, declaration_county, force_mow_section_full, cleanup_section_full, force_mow_admin_fee_cents')
+        .select(_sh.SELECT)
         .eq('id', communityId).maybeSingle();
-      const authorizingSection = remedyMode === 'cleanup' ? (shComm && shComm.cleanup_section_full) : (shComm && shComm.force_mow_section_full);
-      if (!shComm || !authorizingSection || !shComm.declaration_doc_number || !shComm.declaration_county) {
+      const authorizingSection = shComm && shComm[_sh.sectionField(remedyMode)];
+      if (!shComm || _sh.missingFields(shComm, remedyMode).length) {
         return { error: `self-help ${remedyMode} config missing for this community (declaration_doc_number / county / self-help section) — set in Community Profile before drafting.` };
       }
       const _propAddr = `${pRow.street_address || ''}${pRow.unit ? ' #' + pRow.unit : ''}`;
