@@ -672,7 +672,7 @@
     // Emma handoff for routine receipts: show where it stands, or offer it.
     var eh = m.emma_handoff;
     var handoff = eh && ((eh.exception_ids || []).length || (eh.invoice_ids || []).length)
-      ? '<div class="th-em-meta" style="margin-top:6px">' + ibPill('handled').replace('Handled', 'With Emma') + ' Receipt handed to Emma for processing ' + esc(fmtWhen(eh.at)) + ' (' + ((eh.exception_ids || []).length ? 'review item' : 'payable awaiting approval') + ').</div>'
+      ? '<div class="th-em-meta" style="margin-top:6px">' + ibPill('handled').replace('Handled', 'With Emma') + ' Receipt handed to Emma ' + esc(fmtWhen(eh.at)) + ': ' + esc({ association_card: 'association card charge to match and code (not a reimbursement)', personal: 'reimbursement (paid personally)', unclear: 'payment method needs review (no reimbursement assumed)' }[eh.treatment] || ((eh.exception_ids || []).length ? 'review item' : 'payable awaiting approval')) + '.</div>'
       : (m.has_attachments ? '<div class="th-em-meta" style="margin-top:6px"><button type="button" class="tx-btn tx-btn--sec" data-ibact="emma">Hand receipt to Emma</button> <span data-ibf="emma-out"></span></div>' : '');
     return '<div class="th-em-meta" style="margin-top:8px">To ' + esc((m.to || []).join(', ')) + cc + '</div>' + handoff + msgs +
       '<form class="th-ib-reply" autocomplete="off">' +
@@ -706,7 +706,8 @@
     var r = await TX.post('/api/amanda/email/inbox/' + encodeURIComponent(row.getAttribute('data-ib')) + '/handoff-emma', {});
     var d = r.ok ? r.data : (r.body || null);
     if (!d || d.ok === false) { btn.disabled = false; out.textContent = (d && d.error) || r.error || 'Couldn’t hand it to Emma.'; return; }
-    out.textContent = d.status === 'already_handed' ? 'Already with Emma; no duplicate created.' : d.status === 'handed' ? 'Handed to Emma (' + d.item_count + ' item).' : (d.reason || d.status);
+    var how = { association_card: 'card charge to code, not a reimbursement', personal: 'reimbursement', unclear: 'payment method needs review' }[d.treatment] || '';
+    out.textContent = d.status === 'already_handed' ? 'Already with Emma; no duplicate created.' : d.status === 'handed' ? 'Handed to Emma (' + d.item_count + ' item' + (how ? ', ' + how : '') + ').' : (d.reason || d.status);
     if (d.status !== 'handed' && d.status !== 'already_handed') btn.disabled = false;
   }
   async function ibToggle(row, forceOpen) {

@@ -202,7 +202,7 @@ router.post('/inbox/:id/handoff-emma', async (req, res) => {
     if (t.not_amanda) return res.status(404).json({ ok: false, error: 'not_in_amanda_inbox' });
     const h = await require('../lib/amanda/emma_handoff').handoffToEmma(sb(), req.params.id, { force: (req.body || {}).force === true });
     const count = (h.items && ((h.items.invoices || []).length + (h.items.exceptions || []).length)) || 0;
-    res.json({ ok: true, status: h.status, reason: h.reason || null, items: h.items, item_count: count, summary: h.summary ? h.summary.text : null });
+    res.json({ ok: true, status: h.status, treatment: h.treatment || null, reason: h.reason || null, items: h.items, item_count: count, summary: h.summary ? h.summary.text : null });
   } catch (e) {
     console.error('[amanda.email.handoff] failed:', e.message);
     res.status(500).json({ ok: false, error: safeErrorMessage(e) });
