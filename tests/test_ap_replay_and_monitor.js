@@ -337,7 +337,7 @@ check('fee hold: the vendor convenience fee is NOT added and the bill is forced 
   const s = src('lib/ap/intake.js');
   assert.ok(/if \(cents > 0 && convenienceFeeHold\) \{\s*forceReview = true;/.test(s));
   assert.ok(/Convenience fee NOT applied/.test(s));
-  assert.ok(/convenienceFeeHold = false \}, _deps = \{\}\)/.test(s) && /staffGlSplit, convenienceFeeHold \}\)/.test(s), 'autoIntake passes it to commitInvoice');
+  assert.ok(/convenienceFeeHold = false[,}]/.test(s) && /staffGlSplit, convenienceFeeHold[,}]/.test(s), 'autoIntake passes it to commitInvoice');
   // the held path must run before applyConvenienceFee
   assert.ok(s.indexOf('convenienceFeeHold) {') < s.indexOf("applyConvenienceFee(extracted, { cents, label }, 'line_items')"));
 });

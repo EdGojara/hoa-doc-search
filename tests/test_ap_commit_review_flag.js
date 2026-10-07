@@ -75,7 +75,7 @@ t('forceReview (new reimbursement payee) + successful staff-directed line coding
 
 t('a clean staff-directed vendor invoice may remain needs_review=false (and returned == persisted)', async () => {
   const out = await commitInvoice({ extracted: { invoice_date: '2026-09-01', total_cents: 12050, invoice_number: 'INV-1', vendor_name: 'Water Logic', line_items: [{ description: 'Irrigation repair', amount: 120.5 }] },
-    vendorId: 'v-clean', communityId: 'c-lopf', sha256: 'sha-b', storagePath: 'q.pdf', intakeMethod: 'email', sourceRef: 'email:b', staffGl: GL });
+    vendorId: 'v-clean', communityId: 'c-lopf', sha256: 'sha-b', storagePath: 'q.pdf', intakeMethod: 'email', sourceRef: 'email:b', staffGl: GL, receivedAt: '2026-10-07' });
   const inv = persisted(out.invoice_id);
   assert.strictEqual(inv.needs_review, false);
   assert.strictEqual(out.needs_review, false);

@@ -63,6 +63,9 @@ Module._load = function (request) {
   if (request === '@anthropic-ai/sdk') { const B = function () { this.messages = { create: async () => { throw new Error('network blocked in test'); } }; }; B.default = B; return B; }
   return realLoad.apply(this, arguments);
 };
+// Fixed receipt date: the date check (lib/ap/date_check.js) compares the bill
+// date to it, so the fixture must not age out as the calendar moves.
+const RECEIVED = '2026-10-07';
 const { commitInvoice } = require('../lib/ap/intake');
 
 let pass = 0;
@@ -79,7 +82,7 @@ const invById = (id) => db.ap_invoices.find((r) => r.id === id);
   console.log('test_ap_invoice_document');
 
   await t('manual upload commit creates + links the canonical vendor_invoice document', async () => {
-    const r = await commitInvoice({ extracted: extracted('PS-1'), vendorId: 'V1', communityId: 'C1', sha256: 'sha-aaa', storagePath: 'ap_invoices/sha-aaa_RMWBH.pdf', intakeMethod: 'manual_upload', sourceRef: 'upload:sha-aaa' });
+    const r = await commitInvoice({ extracted: extracted('PS-1'), vendorId: 'V1', communityId: 'C1', sha256: 'sha-aaa', storagePath: 'ap_invoices/sha-aaa_RMWBH.pdf', intakeMethod: 'manual_upload', sourceRef: 'upload:sha-aaa', receivedAt: RECEIVED });
     const inv = invById(r.invoice_id);
     assert.ok(inv, 'invoice inserted');
     const doc = db.library_documents.find((d) => d.id === inv.source_document_id);
@@ -90,7 +93,7 @@ const invById = (id) => db.ap_invoices.find((r) => r.id === id);
   });
 
   await t('email commit does the same', async () => {
-    const r = await commitInvoice({ extracted: extracted('PS-2'), vendorId: 'V1', communityId: 'C1', sha256: 'sha-bbb', storagePath: 'ap_invoices/sha-bbb_RMWBH.pdf', intakeMethod: 'email', sourceRef: 'email:graph-1' });
+    const r = await commitInvoice({ extracted: extracted('PS-2'), vendorId: 'V1', communityId: 'C1', sha256: 'sha-bbb', storagePath: 'ap_invoices/sha-bbb_RMWBH.pdf', intakeMethod: 'email', sourceRef: 'email:graph-1', receivedAt: RECEIVED });
     const inv = invById(r.invoice_id);
     assert.ok(inv.source_document_id);
     assert.strictEqual(db.library_documents.find((d) => d.id === inv.source_document_id).file_hash, 'sha-bbb');
@@ -119,7 +122,7 @@ const invById = (id) => db.ap_invoices.find((r) => r.id === id);
 
   await t('a failed document write loads the bill flagged for review (not on hold) with the reason (never silent)', async () => {
     failDocInsert = true;
-    const r = await commitInvoice({ extracted: extracted('PS-3'), vendorId: 'V1', communityId: 'C1', sha256: 'sha-ccc', storagePath: 'ap_invoices/sha-ccc_RMWBH.pdf', intakeMethod: 'email', sourceRef: 'email:graph-2' });
+    const r = await commitInvoice({ extracted: extracted('PS-3'), vendorId: 'V1', communityId: 'C1', sha256: 'sha-ccc', storagePath: 'ap_invoices/sha-ccc_RMWBH.pdf', intakeMethod: 'email', sourceRef: 'email:graph-2', receivedAt: RECEIVED });
     failDocInsert = false;
     const inv = invById(r.invoice_id);
     assert.ok(inv, 'the bill still loads');
@@ -131,7 +134,7 @@ const invById = (id) => db.ap_invoices.find((r) => r.id === id);
   });
 
   await t('no stored PDF (stash failed) is also loaded and flagged for review, not silently accepted', async () => {
-    const r = await commitInvoice({ extracted: extracted('PS-4'), vendorId: 'V1', communityId: 'C1', sha256: 'sha-ddd', storagePath: null, intakeMethod: 'email', sourceRef: 'email:graph-3' });
+    const r = await commitInvoice({ extracted: extracted('PS-4'), vendorId: 'V1', communityId: 'C1', sha256: 'sha-ddd', storagePath: null, intakeMethod: 'email', sourceRef: 'email:graph-3', receivedAt: RECEIVED });
     const inv = invById(r.invoice_id);
     assert.strictEqual(inv.needs_review, true);
     assert.ok(/source PDF was not stored/.test(inv.notes));

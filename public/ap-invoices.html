@@ -140,7 +140,7 @@ async function mergeDupVendors(primaryId, dupeIds, btn){
 // Emma captured the PDF + the amount but couldn't place the bill (usually no
 // community). Clear each here: pick the community (and vendor if needed) and it
 // loads to Payables, or dismiss it if it isn't a bill. Empties Emma's inbox.
-const REASON_LABEL={no_community:'needs a community',no_vendor:'needs a vendor',vendor_ambiguous:'vendor is ambiguous',no_total:'no amount read',no_date:'no date read',unreadable_attachment:'attachment not readable',other:'needs review'};
+const REASON_LABEL={no_community:'needs a community',no_vendor:'needs a vendor',vendor_ambiguous:'vendor is ambiguous',no_total:'no amount read',no_date:'no date read',date_check:'dates look wrong',unreadable_attachment:'attachment not readable',other:'needs review'};
 // Bills that reached Emma and went nowhere for 24h+ (Issue #14): no payable, no
 // exception, no recorded outcome. Hidden only when there are none; a failed load
 // says so rather than looking like an empty backlog.
@@ -219,10 +219,16 @@ function excRow(x,commOpts){
   // the date prefills from the service date the bill does print; staff confirm
   // or change it. A value staff already entered (staff_entered) stays editable.
   const se = x.staff_entered || {};
-  const needDate = !x.invoice_date || !!se.invoice_date;
+  // A date-check hold (lib/ap/date_check.js): the dates WERE read but look wrong
+  // (e.g. a two-digit year read from a footer). Every date is shown as read and
+  // editable; changed dates are checked again, or the box confirms them as shown.
+  const dateHold = x.reason==='date_check';
+  const needDate = dateHold || !x.invoice_date || !!se.invoice_date;
   const needTotal = !x.total_cents || !!se.total_cents;
-  const dateVal = se.invoice_date || (!x.invoice_date ? (x.suggested_invoice_date||'') : '');
-  const dateHint = se.invoice_date ? `entered by ${escapeHtml(se.by||'staff')}` : (x.suggested_invoice_date ? 'from the service date on the bill; check it' : 'the bill prints none; enter it from the bill');
+  const dateVal = se.invoice_date || (dateHold ? d10iso(x.invoice_date) : (!x.invoice_date ? (x.suggested_invoice_date||'') : ''));
+  const dateHint = dateHold ? 'as read from the bill; check every date against it' : se.invoice_date ? `entered by ${escapeHtml(se.by||'staff')}` : (x.suggested_invoice_date ? 'from the service date on the bill; check it' : 'the bill prints none; enter it from the bill');
+  const dInp=(k,label,v)=>`<label style="font-size:12px;color:#334155;">${label} <input type="date" id="exc-${k}-${x.id}" value="${escapeHtml(d10iso(v))}" style="font-size:12px;padding:3px 6px;border:1px solid #d7dee7;border-radius:5px;"></label>`;
+  const holdDates = dateHold ? `${dInp('due','Due',x.due_date)}${dInp('sps','Service from',x.service_period_start)}${dInp('spe','to',x.service_period_end)}<label style="font-size:12px;color:#334155;"><input type="checkbox" id="exc-dok-${x.id}"> dates are right as shown</label>` : '';
   const sel=(opts,val)=>val?opts.replace(`value="${val}"`,`value="${val}" selected`):opts;
   if (x.community_id) setTimeout(()=>excAccounts(x.id),0);
   return `<div class="exc" data-id="${x.id}" style="border:1px solid #f6d5ad;background:#fffdf7;border-radius:9px;padding:10px 12px;margin-bottom:10px;">
@@ -235,6 +241,7 @@ function excRow(x,commOpts){
     <div class="row" style="gap:8px;flex-wrap:wrap;align-items:center;">
       <select id="exc-comm-${x.id}" onchange="excAccounts('${x.id}')" style="font-size:12px;padding:3px 6px;"><option value="">— community —</option>${sel(commOpts,x.community_id)}</select>
       ${needDate?`<label style="font-size:12px;color:#334155;">Invoice date <input type="date" id="exc-date-${x.id}" value="${escapeHtml(dateVal)}" style="font-size:12px;padding:3px 6px;border:1px solid #d7dee7;border-radius:5px;"></label><span style="font-size:11px;color:#64748b;">${dateHint}</span>`:''}
+      ${holdDates}
       ${needTotal?`<input id="exc-amt-${x.id}" value="${se.total_cents?(se.total_cents/100).toFixed(2):''}" inputmode="decimal" placeholder="amount due" style="font-size:12px;padding:4px 6px;border:1px solid #d7dee7;border-radius:5px;width:90px;">`:''}
       <select id="exc-acct-${x.id}" title="Optional: code the bill to this account" style="font-size:12px;padding:3px 6px;max-width:230px;"><option value="">— account (optional) —</option></select>
       ${needVendor?`<input id="exc-vend-${x.id}" placeholder="vendor name…" style="font-size:12px;padding:4px 6px;border:1px solid #d7dee7;border-radius:5px;width:170px;"><span id="exc-vpick-${x.id}" data-vid=""></span>`:''}
@@ -244,6 +251,7 @@ function excRow(x,commOpts){
     </div>
   </div>`;
 }
+function d10iso(v){ return v?String(v).slice(0,10):''; }
 // A held REIMBURSEMENT (Issue #3): the payee is the person, the amount is what
 // staff requested (never the receipt total), and the account is picked from the
 // community's chart. Loads to approval with the receipt PDF attached.
@@ -325,6 +333,11 @@ window.resolveExc=async function(id,needVendor){
   if(needVendor){ const vn=(document.getElementById('exc-vend-'+id)||{}).value; if(!vn||!vn.trim()){ say('Enter the vendor name.'); return; } body.vendor_name=vn.trim(); }
   const dEl=document.getElementById('exc-date-'+id);
   if(dEl){ if(!dEl.value){ say('Enter the invoice date.'); return; } body.invoice_date=dEl.value; }
+  // Date-check hold fields (present only on that card); the confirm box can also
+  // appear on any card whose typed date the server's date check questioned.
+  const hv=(k)=>{ const el=document.getElementById('exc-'+k+'-'+id); return el?(el.value||null):undefined; };
+  if(document.getElementById('exc-due-'+id)){ body.due_date=hv('due'); body.service_period_start=hv('sps'); body.service_period_end=hv('spe'); }
+  const okEl=document.getElementById('exc-dok-'+id); if(okEl&&okEl.checked) body.dates_confirmed=true;
   const aEl=document.getElementById('exc-amt-'+id);
   if(aEl){ const c=Math.round(parseFloat(String(aEl.value).replace(/[$,]/g,''))*100); if(!(c>0)){ say('Enter the amount due.'); return; } body.total_cents=c; }
   const acct=(document.getElementById('exc-acct-'+id)||{}).value; if(acct) body.account_id=acct;
@@ -333,7 +346,11 @@ window.resolveExc=async function(id,needVendor){
     const r=await af('/api/ap-intake/exceptions/'+id+'/resolve',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     const j=await r.json().catch(()=>({}));
     // The server's own reason, inline: never a silent no-op.
-    if(!r.ok||!j.ok){ if(j.suggested_invoice_date&&dEl&&!dEl.value) dEl.value=j.suggested_invoice_date; say(j.detail||j.error||('Could not send (HTTP '+r.status+').')); return; }
+    if(!r.ok||!j.ok){
+      if(j.suggested_invoice_date&&dEl&&!dEl.value) dEl.value=j.suggested_invoice_date;
+      if(j.error==='date_check'&&!document.getElementById('exc-dok-'+id)&&msg){ msg.insertAdjacentHTML('beforebegin',`<label style="font-size:12px;color:#334155;"><input type="checkbox" id="exc-dok-${id}"> dates are right as shown</label>`); }
+      say(j.detail||j.error||('Could not send (HTTP '+r.status+').')); return;
+    }
     const card=document.querySelector('.exc[data-id="'+id+'"]'); if(card){ card.style.transition='opacity .2s'; card.style.opacity='0'; setTimeout(()=>{card.remove(); loadExceptions(); loadQueue();},220); }
   }catch(e){ say('Could not send: '+(e.message||'network error')+'. Nothing was loaded; try again.'); }
 };
@@ -507,10 +524,10 @@ async function doCommit(){
     if(!j.ok){ btn.disabled=false; btn.textContent='Load to payables'; return alert('Could not load: '+(j.error||'unknown')); }
     const msg = j.outcome==='blocked_duplicate' ? '⛔ Blocked — this is a duplicate of an existing payable. Nothing was created.'
       : j.outcome==='held_suspected_duplicate' ? '⚠️ Loaded ON HOLD as a possible duplicate — confirm it in the queue below.'
-      : j.outcome==='needs_review' ? 'Needs review: '+esc(j.reason||'')
+      : j.outcome==='needs_review' ? 'Needs review: '+esc(j.reason||'')+(j.exception_id?' It is in the Exceptions list to correct or confirm the dates.':'')
       : '✅ Loaded to payables (awaiting approval).';
     document.getElementById('preview').innerHTML='<div class="card"><div style="font-size:14px;">'+msg+'</div></div>';
-    _staged=null; loadQueue();
+    _staged=null; loadQueue(); if(j.exception_id) loadExceptions();
   }catch(e){ btn.disabled=false; btn.textContent='Load to payables'; alert('Could not load.'); }
 }
 
