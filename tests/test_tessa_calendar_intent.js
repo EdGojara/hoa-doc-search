@@ -28,9 +28,19 @@ function check(name, fn) {
 const ED = 'egojara@bedrocktx.com'; const TESSA = 'tessa@bedrocktx.com';
 const SIPRA = "Add my call with Sipra Boyd tomorrow at 4:00 PM for 15 minutes. Phone call regarding Lakes of Pine Forest. Sipra's email is sboyd@rmwbh.com and her direct number is 713-830-2246.";
 
+// Scar 2 (Ed 2026-10-06, live after #70): the words "invite" and "Teams" inside
+// "Do not send Sipra a calendar invite and do not create a Teams meeting" routed
+// this to a Teams invite and an email draft ("Send this first...").
+const SIPRA2 = 'Add my call with Sipra Boyd to my calendar for Wednesday, October 7 at 4:00 PM for 15 minutes. This is a phone call regarding Lakes of Pine Forest. Sipra Boyd, sboyd@rmwbh.com, 713-830-2246. Add it to my calendar only. Do not send Sipra a calendar invite and do not create a Teams meeting.';
+
 console.log('\nRouting from Ed’s words');
 const cases = [
   [SIPRA, 'calendar_only', 'phone'],
+  [SIPRA2, 'calendar_only', 'phone'],
+  ['Put the call with Dan on my calendar only, Friday at 2', 'calendar_only', 'phone'],
+  ['Set up a call with Dan Friday at 2. Do not create a Teams meeting.', 'invite', 'phone'],
+  ['Add my call with Dan Friday at 2 to my calendar. Don’t send him an invite.', 'calendar_only', 'phone'],
+  ['Don’t forget to send Dan an invite for tomorrow at 3', 'invite', null],
   ['Put my meeting with Dan Morton on my calendar for Friday at 2', 'calendar_only', null],
   ['Add the HOA walk to my calendar Thursday 9 to 10', 'calendar_only', null],
   ['Schedule a call with Grant tomorrow at 3 about the gate', 'calendar_only', 'phone'],
@@ -183,9 +193,50 @@ check('Ed, shown the conflict, can book anyway (explicit allowConflict) and only
   assert.strictEqual(g.posts().length, 1);
 });
 
+console.log('\nCalendar-only never drafts an email unless Ed separately asks for one');
+check('an address Ed gave, or a negated "don’t email", is NOT a request for an email', () => {
+  assert.strictEqual(C.asksForEmail(SIPRA), false, '"Sipra’s email is ..." is an address');
+  assert.strictEqual(C.asksForEmail(SIPRA2), false);
+  assert.strictEqual(C.asksForEmail('Add my call tomorrow at 4. Don’t email her.'), false);
+  assert.strictEqual(C.asksForEmail('Add my call with Sipra tomorrow at 4. Sipra Boyd, sboyd@rmwbh.com, 713-830-2246.'), false);
+});
+check('a separate ask for an email IS one', () => {
+  assert.strictEqual(C.asksForEmail('Add my call with Sipra tomorrow at 4 and send her an email confirming'), true);
+  assert.strictEqual(C.asksForEmail('Add my call with Sipra tomorrow at 4 and email Sipra the agenda'), true);
+  assert.strictEqual(C.asksForEmail('Put it on my calendar and draft a note to Dan'), true);
+});
+
+console.log('\nDates as Ed says them (an unreadable one is never "today")');
+process.env.SUPABASE_URL = process.env.SUPABASE_URL || 'http://localhost:54321';
+process.env.SUPABASE_KEY = process.env.SUPABASE_KEY || 'test-key';
+check('"Wednesday, October 7", "Oct 7, 2026", "10/7" -> Oct 7; a weekday that disagrees, or no date at all, -> nothing staged', () => {
+  const { parseMonthDay } = require('../api/tessa');
+  const base = Date.UTC(2026, 9, 6);
+  const iso = (t) => t && t.toISOString().slice(0, 10);
+  assert.strictEqual(iso(parseMonthDay('wednesday, october 7', base)), '2026-10-07');
+  assert.strictEqual(iso(parseMonthDay('oct 7, 2026', base)), '2026-10-07');
+  assert.strictEqual(iso(parseMonthDay('10/7', base)), '2026-10-07');
+  assert.strictEqual(iso(parseMonthDay('october 3', base)), '2027-10-03', 'a passed date with no year is next year');
+  assert.strictEqual(parseMonthDay('thursday, october 7', base), null, 'Oct 7 2026 is a Wednesday');
+  assert.strictEqual(parseMonthDay('sometime next week', base), null);
+});
+
+check('the day comes from Ed’s words, never the model’s year; a past date is never booked', () => {
+  const b = Date.UTC(2026, 9, 6);
+  assert.strictEqual(C.dateFromText(SIPRA2, b), '2026-10-07', 'scar: the model returned 2025-10-07 for this sentence');
+  assert.strictEqual(C.dateFromText(SIPRA, b), 'tomorrow');
+  assert.strictEqual(C.dateFromText('Put lunch on my calendar Friday at noon', b), 'friday');
+  assert.strictEqual(C.dateFromText('Call with Dan on Thursday, October 7 at 3', b), 'unreadable');
+  assert.strictEqual(C.dateFromText('Call at 3 about the gate', b), null);
+  const { resolveMeetingWallTimes } = require('../api/tessa');
+  assert.strictEqual(resolveMeetingWallTimes({ date: '2025-10-07', start_time: '4:00 PM' }), null, 'a past date stages nothing');
+  assert.strictEqual(resolveMeetingWallTimes({ date: 'unreadable', start_time: '4:00 PM' }), null);
+  assert.match(req, /const day = dateFromText\(text\);\n\s+if \(day\) parsed\.meeting\.date = day;/);
+});
+
 console.log('\nWiring');
 const api = fs.readFileSync(path.join(__dirname, '..', 'api', 'tessa.js'), 'utf8').replace(/\r\n/g, '\n');
-const req = fs.readFileSync(path.join(__dirname, '..', 'lib', 'ea', 'tessa_request.js'), 'utf8');
+const req = fs.readFileSync(path.join(__dirname, '..', 'lib', 'ea', 'tessa_request.js'), 'utf8').replace(/\r\n/g, '\n');
 const page = fs.readFileSync(path.join(__dirname, '..', 'public', 'tessa.html'), 'utf8');
 check('release + direct booking: conflict re-check against Ed’s calendar; a conflict is a 409 that leaves the item queued', () => {
   assert.match(api, /conflictMailboxes: \[graphSend\.ED_MAILBOX, item\.organizer \|\| graphSend\.TESSA_MAILBOX\]/);
@@ -196,6 +247,13 @@ check('release + direct booking: conflict re-check against Ed’s calendar; a co
   assert.match(api, /if \(e\.code === 'calendar_read_failed'\) return res\.status\(502\)/);
   assert.match(page, /r\.status===409 && j\.error==='conflict'/);
 });
+check('HARD RULE wiring: calendar-only suppresses the email draft (unless asked) and the staged intro email; staging reuses an identical queued row', () => {
+  assert.match(req, /const pureInvite = \(calendarOnly && !emailAsked\) \|\|/);
+  assert.match(api, /if \(mode !== 'calendar_only' && out\.meeting && out\.meeting\.direct_invite && out\.meeting\.wants_intro/);
+  assert.match(api, /\.eq\('kind', 'meeting'\)\.eq\('status', 'queued'\)\.eq\('meeting_mode', row\.meeting_mode\)/);
+  assert.match(api, /else return null;   \/\/ an unreadable date never silently becomes today/);
+  assert.match(api, /Tessa could not read the date\/time/);
+});
 check('release books by the row’s mode (calendar_only: no attendees; Teams only when online; legacy NULL = online)', () => {
   assert.match(api, /const mmode = item\.meeting_mode \|\| 'online';/);
   assert.match(api, /const attendees = mmode === 'calendar_only' \? \[\] : parseAddrs/);
@@ -203,7 +261,7 @@ check('release books by the row’s mode (calendar_only: no attendees; Teams onl
 });
 check('the request path classifies by rule and never drafts an email for a calendar-only entry', () => {
   assert.match(req, /const intent = classifyCalendarIntent\(text\);/);
-  assert.match(req, /const pureInvite = calendarOnly \|\|/);
+  assert.match(req, /const pureInvite = \(calendarOnly && !emailAsked\) \|\|/);
 });
 check('the page refreshes the outbox after staging, and a failed outbox read is an error, not "Nothing queued"', () => {
   assert.match(page, /if\(j\.staged_meeting \|\| j\.staged_email\) loadOutbox\(\);/);

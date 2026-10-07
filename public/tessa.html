@@ -992,7 +992,7 @@ function renderAsk(j){
   if(j.staged_meeting){
     var sm=j.staged_meeting;
     h += '<div style="margin-bottom:10px;padding:9px 11px;background:#eef4ff;border:1px solid #bcdcff;border-radius:8px;">'
-       + '<div style="font-size:13px;font-weight:600;color:var(--navy);">📅 '+({calendar_only:'Calendar entry staged (your calendar only)',invite:'Invite staged (no Teams link)',online:'Teams invite staged'}[sm.meeting_mode||'online'])+'</div>'
+       + '<div style="font-size:13px;font-weight:600;color:var(--navy);">📅 '+({calendar_only:'Calendar entry staged (your calendar only)',invite:'Invite staged (no Teams link)',online:'Teams invite staged'}[sm.meeting_mode||'online'])+(sm.already_queued?' <span class="note" style="font-weight:400;">(already waiting in the outbox; nothing new staged)</span>':'')+'</div>'
        + '<div class="note"><b>Title</b> '+esc(sm.subject||'')+'</div>'
        + '<div class="note"><b>When</b> '+esc(sm.when_label||'')+'</div>'
        + (sm.meeting_location ? '<div class="note"><b>Where</b> '+esc(sm.meeting_location)+'</div>' : '')

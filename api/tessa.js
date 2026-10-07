@@ -11,7 +11,7 @@ const multer = require('multer');
 const { createClient } = require('@supabase/supabase-js');
 const { requireOwner } = require('./_require_admin');
 const { draftEmail } = require('../lib/ea/tessa');
-const { buildStagedMeetingRow } = require('../lib/ea/tessa_calendar_intent');
+const { buildStagedMeetingRow, parseMonthDay, centralTodayUTC } = require('../lib/ea/tessa_calendar_intent');
 const { pollTessaInbox } = require('../lib/ea/tessa_inbox');
 const { transcribeAudio, routeDictation, sttConfigured } = require('../lib/ea/tessa_voice');
 const graphSend = require('../lib/email/graph_send');
@@ -277,9 +277,7 @@ function resolveMeetingWallTimes(meeting) {
   if (!meeting || !meeting.start_time) return null;
   let DEFAULT_TZ = 'Central Standard Time';
   try { DEFAULT_TZ = require('../lib/ea/tessa_meeting').DEFAULT_TZ || DEFAULT_TZ; } catch (_) {}
-  const parts = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Chicago', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date());
-  const g = (t) => parts.find((p) => p.type === t)?.value;
-  const baseUTC = Date.UTC(+g('year'), +g('month') - 1, +g('day'));
+  const baseUTC = centralTodayUTC();
   const WD = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
   const raw = String(meeting.date || '').trim().toLowerCase();
   let target = new Date(baseUTC);
@@ -287,6 +285,10 @@ function resolveMeetingWallTimes(meeting) {
   else if (raw === 'tomorrow') target = new Date(baseUTC + 86400000);
   else if (raw === 'today' || !raw) target = new Date(baseUTC);
   else if (WD.includes(raw)) { let delta = (WD.indexOf(raw) - new Date(baseUTC).getUTCDay() + 7) % 7; if (delta === 0) delta = 7; target = new Date(baseUTC + delta * 86400000); }
+  else if (parseMonthDay(raw, baseUTC)) target = parseMonthDay(raw, baseUTC);
+  else return null;   // an unreadable date never silently becomes today
+  // A date in the past is never booked (scar 2026-10-06: the model wrote 2025).
+  if (target.getTime() < baseUTC) return null;
   const dateStr = `${target.getUTCFullYear()}-${String(target.getUTCMonth() + 1).padStart(2, '0')}-${String(target.getUTCDate()).padStart(2, '0')}`;
   const toHHMM = (s) => {
     const m = String(s || '').trim().match(/^(\d{1,2})(?::(\d{2}))?\s*(a\.?m\.?|p\.?m\.?)?$/i);
@@ -374,8 +376,17 @@ router.post('/request', express.json({ limit: '16kb' }), async (req, res) => {
           edMailbox: graphSend.ED_MAILBOX, tessaMailbox: graphSend.TESSA_MAILBOX, inviteBody,
         });
         try {
-          const { data, error } = await supabase.from('tessa_outbox').insert({ ...row, created_by: owner.email || 'Ed' })
-            .select('id, subject, meeting_mode, meeting_start, meeting_end, meeting_time_zone, meeting_location, meeting_attendees, organizer, body_text').single();
+          const SEL = 'id, subject, meeting_mode, meeting_start, meeting_end, meeting_time_zone, meeting_location, meeting_attendees, organizer, body_text';
+          // Same request twice = one queued row (Ed 2026-10-06: "no duplicate row on
+          // rerun"). Match on what makes it the same entry, still waiting for release.
+          const { data: same, error: se } = await supabase.from('tessa_outbox').select(SEL)
+            .eq('kind', 'meeting').eq('status', 'queued').eq('meeting_mode', row.meeting_mode)
+            .eq('organizer', row.organizer).eq('meeting_start', row.meeting_start).eq('meeting_end', row.meeting_end)
+            .eq('subject', row.subject).limit(1);
+          if (se) throw se;
+          const { data, error } = (same && same.length)
+            ? { data: { ...same[0], already_queued: true }, error: null }
+            : await supabase.from('tessa_outbox').insert({ ...row, created_by: owner.email || 'Ed' }).select(SEL).single();
           if (!error && data) {
             const hm = (w) => { const [h, m] = String(w).slice(11, 16).split(':').map(Number); return `${((h + 11) % 12) + 1}:${String(m).padStart(2, '0')} ${h < 12 ? 'AM' : 'PM'}`; };
             staged_meeting = { ...data, when_label: `${wt.date_label}, ${hm(wt.start)} to ${hm(wt.end)} Central` };
@@ -384,6 +395,9 @@ router.post('/request', express.json({ limit: '16kb' }), async (req, res) => {
             staged_meeting_error = 'Tessa could not stage the calendar entry: ' + safeErrorMessage(error);
           }
         } catch (e) { console.warn('[tessa] meeting stage skipped:', e.message); staged_meeting_error = 'Tessa could not stage the calendar entry.'; }
+      } else {
+        // Never a silent skip: say which part she could not read.
+        staged_meeting_error = `Tessa could not read the date/time ("${[out.meeting.date, out.meeting.start_time].filter(Boolean).join(' ') || 'none given'}"). Nothing was staged; say the date like "Wednesday, October 7 at 4 PM".`;
       }
     }
 
@@ -393,7 +407,8 @@ router.post('/request', express.json({ limit: '16kb' }), async (req, res) => {
     // (never Ed himself). Staged AFTER the meeting so it sorts on top (release
     // first).
     let staged_email = null;
-    if (out.meeting && out.meeting.direct_invite && out.meeting.wants_intro && out.to.length) {
+    // HARD RULE: a calendar-only entry never stages an email to the other person.
+    if (mode !== 'calendar_only' && out.meeting && out.meeting.direct_invite && out.meeting.wants_intro && out.to.length) {
       const introTo = out.to.map((p) => p.email).filter(Boolean);
       if (introTo.length) {
         const intro = await draftIntroEmail({
@@ -1300,4 +1315,4 @@ router.post('/lunch/menu-capture', express.json({ limit: '512kb' }), async (req,
   } catch (err) { console.error('[tessa] menu capture failed:', err.message); res.status(500).json({ error: safeErrorMessage(err) }); }
 });
 
-module.exports = { router, searchContacts, resolveRecipient, resolveMeetingWallTimes };
+module.exports = { router, searchContacts, resolveRecipient, resolveMeetingWallTimes, parseMonthDay };
