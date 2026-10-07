@@ -1,0 +1,46 @@
+{
+  "migration": "498_onboarding_execute_neutralize_counted.sql",
+  "summary": "onboarding_execute's neutralize precondition accepts every COUNTED entry (posted, or voided with its reversal), the same rule EXECUTE already uses for the trial balance and the post-cutover fingerprint. Fixes the refusal of Canyon Gate's approved conversion on 5 void pairs straddling the cutoff. Body is 488's verbatim except that predicate. No rows change.",
+  "requires": [
+    "488_onboarding_execute.sql"
+  ],
+  "preflight": [
+    {
+      "name": "onboarding_execute exists (488)",
+      "sql": "SELECT count(*)::int FROM pg_proc WHERE proname = 'onboarding_execute'",
+      "expect": 1
+    }
+  ],
+  "expected_changes": [
+    "Replaces onboarding_execute: the neutralize-set check joins journal_entries with (status = 'posted' OR (status = 'voided' AND void_reversal_je_id IS NOT NULL)) instead of status = 'posted'; posting date, total and line-count checks unchanged.",
+    "No journal, batch or onboarding rows change."
+  ],
+  "objects": {
+    "added": [],
+    "changed": [
+      "function:onboarding_execute"
+    ],
+    "removed": []
+  },
+  "row_changes": {
+    "journal_entries": 0,
+    "conversion_batches": 0
+  },
+  "protected": [
+    {
+      "table": "journal_entries",
+      "order_by": "id"
+    },
+    {
+      "table": "conversion_batches",
+      "order_by": "id"
+    }
+  ],
+  "verify": [
+    {
+      "name": "the neutralize precondition accepts voided-with-reversal entries",
+      "sql": "SELECT count(*)::int FROM pg_proc WHERE proname = 'onboarding_execute' AND prosrc LIKE '%498: a neutralize target is any COUNTED entry%'",
+      "expect": 1
+    }
+  ]
+}
