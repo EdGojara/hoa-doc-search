@@ -57,6 +57,9 @@ const HISTORICAL_EXCEPTIONS = {
   '434_acc_async_clarification.sql': '4cb23cacd58624f9499569513856bdd778171b24',
   '460_same_day_sequential_resale.sql': 'ce2298a63d9acc51fe889a8fa78748e87ab7d227',
   'RUN_NOW_karla_drb_consolidate.sql': 'd2a945c5b812321f4ab82f2436e7b73d52495efd',
+  // One-time, sanctioned by Ed 2026-10-06 (LEDGER_NOTES.md): runner refused #71's
+  // version unexecuted; #72 fixed it before apply; applied version = this blob.
+  '492_tessa_outbox_meeting_mode.sql': '668c698c4b11958f3b2a4c1f00b59bbc5b06b153',
 };
 
 function mainRef() {
