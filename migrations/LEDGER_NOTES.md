@@ -97,3 +97,25 @@ byte for byte in the read-only diagnostic. The later edit only changed a guard.
 `RUN_NOW_*.sql` files are one-off paste-and-run scripts that were kept alongside the
 migrations. They are covered by the same immutability rule. New one-off scripts
 should not be added here; write a numbered migration instead.
+
+---
+
+## 2026-10-06: 492 edited on main before it was applied (one-time, sanctioned by Ed)
+
+`492_tessa_outbox_meeting_mode.sql` is pinned in `HISTORICAL_EXCEPTIONS` (category B)
+at blob `668c698c`. Ed approved this single exception; the rule itself is unchanged.
+
+- **#71** (e1439261) landed 492 on `main`.
+- The in-app runner (Approve & Apply) **refused** it: no `migrations/checks/492_*.json`,
+  and a `NOTIFY` after `COMMIT` failed its BEGIN/COMMIT lint. Nothing was executed.
+- **#72** (af5babcc) corrected the file (ends at `COMMIT`; the runner reloads the
+  schema) and added the checks file, before 492 was ever applied.
+- Applied 2026-10-07 01:13Z via Approve & Apply (attempt 939a29b3, commit af5babcc,
+  file sha256 c5603a17…): the applied version is exactly the current repo version.
+- Post-apply verification passed (column text/nullable, CHECK with the three modes,
+  no non-NULL rows); objects added exactly `column:tessa_outbox.meeting_mode` and
+  `constraint:tessa_outbox.tessa_outbox_meeting_mode_check`; the 11 existing
+  `tessa_outbox` rows were unchanged (protected-table fingerprint).
+
+Lesson: run `scripts/check_migration_checks.js` before a migration first lands on
+`main`; it would have refused the #71 version.
