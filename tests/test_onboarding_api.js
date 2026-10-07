@@ -33,7 +33,7 @@ function fakeService() {
   const rec = (name, ret) => async (...args) => { calls.push({ name, args }); if (typeof ret === 'function') return ret(...args); return ret; };
   return { calls, schemaStatus: rec('schemaStatus', { ready: true, needs: [] }), listBatches: rec('listBatches', []), getBatch: rec('getBatch', (id, actor) => ({ id, actor })),
     getSnapshot: rec('getSnapshot', (id, cid) => (id === 'none' ? null : { completion_id: cid || 'latest', lines: [] })),
-    createBatch: rec('createBatch', 'b-new'), registerArtifact: rec('registerArtifact', 'a-1'), runStage: rec('runStage', { status: 'PASS' }),
+    createBatch: rec('createBatch', 'b-new'), registerArtifact: rec('registerArtifact', 'a-1'), attachEvidence: rec('attachEvidence', 'e-1'), listEvidence: rec('listEvidence', [{ sha256: 'f'.repeat(64) }]), runStage: rec('runStage', { status: 'PASS' }),
     sourcePackage: rec('sourcePackage', (sys, cutoff) => require('../lib/onboarding/adapters').get(sys).sourcePackage(cutoff)),
     recognize: rec('recognize', (sys, cutoff, files) => files.map((x) => ({ filename: x.originalname, type: /GL/.test(x.originalname) ? 'gl_trial_balance' : null }))),
     decide: rec('decide', [{ id: 'd-1', event_key: 'je:x', choice: 'record_after_cutoff' }]),
@@ -121,9 +121,46 @@ check('repo guard: nothing writes the onboarding tables directly (only the 482 S
   scan(root);
   assert.deepStrictEqual(hits, []);
 });
+// ---- EVIDENCE-ONLY documents (migration 495, Ed 2026-10-07) ------------------------------
+check('evidence route: admin only; file + purpose go to the service with the actor built from auth; listing is admin only', async () => withServer(async ({ req, service }) => {
+  const fd = () => { const f = new FormData(); f.append('file', new Blob([Buffer.from('%PDF-1.4 coded balance sheet')]), 'Bal Sheet w Code.pdf'); f.append('purpose', 'Prior manager coded balance sheet 10/31/2025 (14010 Previous Owners Rec. PM)'); f.append('actor', 'spoofed'); return f; };
+  assert.strictEqual((await req('POST', '/batches/b1/evidence', { form: fd() })).status, 403);
+  const r = await req('POST', '/batches/b1/evidence', { user: 'admin', form: fd() });
+  assert.deepStrictEqual([r.status, r.json.id], [200, 'e-1']);
+  const call = service.calls.find((c) => c.name === 'attachEvidence');
+  assert.deepStrictEqual([call.args[0].id, call.args[0].role, call.args[1], call.args[2].filename, call.args[2].purpose], ['u-admin', 'admin', 'b1', 'Bal Sheet w Code.pdf', 'Prior manager coded balance sheet 10/31/2025 (14010 Previous Owners Rec. PM)']);
+  assert.ok(Buffer.isBuffer(call.args[2].buffer) && call.args[2].buffer.length > 0);
+  assert.strictEqual((await req('GET', '/batches/b1/evidence')).status, 403);
+  assert.deepStrictEqual((await req('GET', '/batches/b1/evidence', { user: 'admin' })).json, { evidence: [{ sha256: 'f'.repeat(64) }] });
+}));
+check('evidence service: write-once bytes under the batch evidence path, sha256 of the bytes, a stated purpose; only the evidence rpc is called (no source report, no rerun, no cutoff change)', async () => {
+  const { createOnboardingService } = require('../lib/onboarding/service');
+  const crypto = require('crypto');
+  const rpcCalls = []; const puts = [];
+  const svc = createOnboardingService({ rpc: async (name, args) => { rpcCalls.push([name, args]); return name === 'onboarding_evidence_view' ? [] : 'e-9'; },
+    storage: { putOnce: async (p, b) => { puts.push([p, b.length]); }, get: async () => { throw new Error('not used'); } } });
+  const actor = { kind: 'human', id: 'u-admin', email: 'staff@example.test', role: 'admin' };
+  const buf = Buffer.from('%PDF-1.4 March statement');
+  await assert.rejects(svc.attachEvidence(actor, 'b1', { buffer: buf, filename: 'x.pdf', purpose: 'short' }), (e) => e.code === 'PURPOSE_REQUIRED');
+  await assert.rejects(svc.attachEvidence({ kind: 'anonymous' }, 'b1', { buffer: buf, filename: 'x.pdf', purpose: 'a long enough purpose' }), (e) => e.code === 'STAFF_ONLY');
+  assert.strictEqual(await svc.attachEvidence(actor, 'b1', { buffer: buf, filename: '03-2026 Columbia Bank Statement - 3170.pdf', purpose: ' Bank debit 3/9/2026 proving the $24.75 shortfall was debited once ' }), 'e-9');
+  const hash = crypto.createHash('sha256').update(buf).digest('hex');
+  assert.deepStrictEqual(puts, [[`onboarding/b1/evidence/${hash}`, buf.length]]);
+  assert.deepStrictEqual(rpcCalls.map((c) => c[0]), ['onboarding_register_evidence'], 'no artifact registration, no stage run, no completion');
+  assert.deepStrictEqual(rpcCalls[0][1].p_evidence, { filename: '03-2026 Columbia Bank Statement - 3170.pdf', sha256: hash, bytes: buf.length, storage_path: `onboarding/b1/evidence/${hash}`, purpose: 'Bank debit 3/9/2026 proving the $24.75 shortfall was debited once' });
+  assert.deepStrictEqual([rpcCalls[0][1].p_actor_kind, rpcCalls[0][1].p_actor_id], ['human', 'u-admin']);
+});
+check('migration 495: append-only evidence table, refused once execution starts, never touches source reports or the cutoff', () => {
+  const sql = fs.readFileSync(path.join(__dirname, '..', 'migrations', '495_onboarding_evidence.sql'), 'utf8').replace(/--.*$/gm, '');
+  assert.match(sql, /CREATE TRIGGER trg_onboarding_evidence_append_only BEFORE UPDATE OR DELETE ON onboarding_evidence/);
+  assert.match(sql, /onboarding_stage IN \('execute', 'post_proof', 'complete'\)/);
+  assert.match(sql, /CONSTRAINT uq_onboarding_evidence_batch_sha UNIQUE \(batch_id, sha256\)/);
+  assert.ok(!/onboarding_artifacts|UPDATE conversion_batches|as_of_date\s*=|onboarding_stage\s*=\s*'/.test(sql.replace(/bt\.onboarding_stage/g, '')), 'no source report, cutoff or stage change');
+});
 check('service guard: its only database calls are the onboarding_* rpc allowlist and the write-once artifact store', () => {
   const s = fs.readFileSync(path.join(__dirname, '..', 'lib', 'onboarding', 'service.js'), 'utf8').replace(/\/\/.*$/gm, '');
-  assert.ok(RPC.length === 18 && RPC.every((n) => /^onboarding_/.test(n)));
+  assert.ok(RPC.length === 20 && RPC.every((n) => /^onboarding_/.test(n)));
+  for (const n of ['onboarding_register_evidence', 'onboarding_evidence_view']) assert.ok(RPC.includes(n), `evidence rpc ${n}`);
   for (const n of ['onboarding_execute', 'onboarding_record_execution_failure', 'onboarding_execution_view']) assert.ok(RPC.includes(n), `M6 rpc ${n}`);
   assert.strictEqual((s.match(/\.rpc\(/g) || []).length, 1, 'exactly one rpc call site');
   assert.ok(/if \(!RPC\.includes\(name\)\) throw/.test(s));

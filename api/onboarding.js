@@ -155,6 +155,21 @@ function buildRouter({ service, auth, listCommunities }) {
     } catch (e) { fail(res, e, 'artifact'); }
   });
 
+  // Evidence-only documents (migration 495): any stage before execution; never a source report.
+  router.post('/batches/:id/evidence', upload.single('file'), async (req, res) => {
+    try {
+      const a = await admin(req, res); if (!a) return;
+      if (!req.file) return res.status(400).json({ error: 'file_required' });
+      const b = req.body || {};
+      const id = await service.attachEvidence(a, req.params.id, { buffer: req.file.buffer, filename: req.file.originalname, purpose: b.purpose });
+      res.json({ id });
+    } catch (e) { fail(res, e, 'evidence'); }
+  });
+  router.get('/batches/:id/evidence', async (req, res) => {
+    try { const a = await admin(req, res); if (!a) return; res.json({ evidence: await service.listEvidence(req.params.id) }); }
+    catch (e) { fail(res, e, 'evidence list'); }
+  });
+
   router.post('/batches/:id/run', express.json({ limit: '64kb' }), async (req, res) => {
     try { const a = await admin(req, res); if (!a) return; const b = req.body || {}; res.json(await service.runStage(a, req.params.id, { roles: b.roles, authoritative: b.authoritative, ap_account: b.ap_account, fund_by_account: b.fund_by_account })); }
     catch (e) { fail(res, e, 'run'); }

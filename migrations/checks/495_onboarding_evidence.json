@@ -1,0 +1,91 @@
+{
+  "migration": "495_onboarding_evidence.sql",
+  "summary": "Evidence-only documents on an onboarding batch at any stage before execution: append-only onboarding_evidence (uploader, timestamp, filename, sha256, purpose, stage at attach) written only through onboarding_register_evidence (refused in execute/post_proof/complete), read through onboarding_evidence_view. Source reports, cutoff dates, stages and recorded results are untouched.",
+  "requires": [
+    "482_onboarding_service.sql"
+  ],
+  "preflight": [
+    {
+      "name": "onboarding_append_only exists (481)",
+      "sql": "SELECT count(*)::int FROM pg_proc WHERE proname = 'onboarding_append_only'",
+      "expect": 1
+    },
+    {
+      "name": "onboarding_evidence does not exist yet",
+      "sql": "SELECT count(*)::int FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'onboarding_evidence'",
+      "expect": 0
+    }
+  ],
+  "expected_changes": [
+    "Creates append-only table onboarding_evidence (FKs to conversion_batches and communities, RESTRICT; sha256/bytes/purpose/kind CHECKs; UNIQUE (batch_id, sha256)) with an index and the append-only trigger.",
+    "Creates functions onboarding_register_evidence(UUID, JSONB, TEXT, TEXT) (refused in execute/post_proof/complete) and onboarding_evidence_view(UUID); EXECUTE for service_role only.",
+    "No onboarding_artifacts, conversion_batches or stage-event row changes."
+  ],
+  "objects": {
+    "added": [
+      "column:onboarding_evidence.attached_at",
+      "column:onboarding_evidence.attached_by",
+      "column:onboarding_evidence.attached_by_kind",
+      "column:onboarding_evidence.batch_id",
+      "column:onboarding_evidence.batch_stage_at_attach",
+      "column:onboarding_evidence.bytes",
+      "column:onboarding_evidence.community_id",
+      "column:onboarding_evidence.filename",
+      "column:onboarding_evidence.id",
+      "column:onboarding_evidence.purpose",
+      "column:onboarding_evidence.sha256",
+      "column:onboarding_evidence.storage_path",
+      "constraint:onboarding_evidence.onboarding_evidence_batch_fk",
+      "constraint:onboarding_evidence.onboarding_evidence_bytes_check",
+      "constraint:onboarding_evidence.onboarding_evidence_community_fk",
+      "constraint:onboarding_evidence.onboarding_evidence_kind_check",
+      "constraint:onboarding_evidence.onboarding_evidence_pkey",
+      "constraint:onboarding_evidence.onboarding_evidence_purpose_check",
+      "constraint:onboarding_evidence.onboarding_evidence_sha_check",
+      "constraint:onboarding_evidence.uq_onboarding_evidence_batch_sha",
+      "function:onboarding_evidence_view",
+      "function:onboarding_register_evidence",
+      "index:idx_onboarding_evidence_batch",
+      "index:onboarding_evidence_pkey",
+      "index:uq_onboarding_evidence_batch_sha",
+      "table:onboarding_evidence",
+      "trigger:onboarding_evidence.trg_onboarding_evidence_append_only"
+    ],
+    "changed": [],
+    "removed": []
+  },
+  "row_changes": {
+    "onboarding_artifacts": 0,
+    "conversion_batches": 0,
+    "onboarding_stage_events": 0
+  },
+  "protected": [
+    { "table": "onboarding_artifacts", "order_by": "id" },
+    { "table": "conversion_batches", "order_by": "id" },
+    { "table": "onboarding_stage_events", "order_by": "id" }
+  ],
+  "verify": [
+    {
+      "name": "evidence table exists and is empty",
+      "sql": "SELECT count(*)::int FROM onboarding_evidence",
+      "expect": 0
+    },
+    {
+      "name": "evidence is append-only (trigger present)",
+      "sql": "SELECT count(*)::int FROM pg_trigger WHERE tgname = 'trg_onboarding_evidence_append_only'",
+      "expect": 1
+    },
+    {
+      "name": "the register function refuses after execution starts",
+      "sql": "SELECT count(*)::int FROM pg_proc WHERE proname = 'onboarding_register_evidence' AND prosrc LIKE '%''execute'', ''post_proof'', ''complete''%'",
+      "expect": 1
+    },
+    {
+      "name": "service_role can execute both functions, PUBLIC cannot",
+      "sql": "SELECT (CASE WHEN has_function_privilege('service_role', 'onboarding_register_evidence(uuid, jsonb, text, text)', 'EXECUTE') AND has_function_privilege('service_role', 'onboarding_evidence_view(uuid)', 'EXECUTE') AND NOT has_function_privilege('anon', 'onboarding_register_evidence(uuid, jsonb, text, text)', 'EXECUTE') THEN 1 ELSE 0 END)::int",
+      "expect": 1
+    }
+  ],
+  "api_checks": [],
+  "reload_schema": true
+}
