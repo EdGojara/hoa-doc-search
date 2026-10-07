@@ -153,6 +153,7 @@ const CHECKS = [
   'tests/test_tessa_voice.js',
   'tests/test_tessa_interview.js',
   'tests/test_tessa_calendar_intent.js',
+  'tests/test_tessa_confirm_intent.js',
   'tests/test_tessa_request.js',
   'tests/test_tessa_identity.js',
   'tests/test_tessa_groups.js',

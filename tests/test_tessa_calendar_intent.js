@@ -248,7 +248,7 @@ check('release + direct booking: conflict re-check against Ed’s calendar; a co
   assert.match(page, /r\.status===409 && j\.error==='conflict'/);
 });
 check('HARD RULE wiring: calendar-only suppresses the email draft (unless asked) and the staged intro email; staging reuses an identical queued row', () => {
-  assert.match(req, /const pureInvite = \(calendarOnly && !emailAsked\) \|\|/);
+  assert.match(req, /const pureInvite = calendarOnly \? !emailAsked :/);
   assert.match(api, /if \(mode !== 'calendar_only' && out\.meeting && out\.meeting\.direct_invite && out\.meeting\.wants_intro/);
   assert.match(api, /\.eq\('kind', 'meeting'\)\.eq\('status', 'queued'\)\.eq\('meeting_mode', row\.meeting_mode\)/);
   assert.match(api, /else return null;   \/\/ an unreadable date never silently becomes today/);
@@ -261,7 +261,7 @@ check('release books by the row’s mode (calendar_only: no attendees; Teams onl
 });
 check('the request path classifies by rule and never drafts an email for a calendar-only entry', () => {
   assert.match(req, /const intent = classifyCalendarIntent\(text\);/);
-  assert.match(req, /const pureInvite = \(calendarOnly && !emailAsked\) \|\|/);
+  assert.match(req, /const pureInvite = calendarOnly \? !emailAsked :/);
 });
 check('the page refreshes the outbox after staging, and a failed outbox read is an error, not "Nothing queued"', () => {
   assert.match(page, /if\(j\.staged_meeting \|\| j\.staged_email\) loadOutbox\(\);/);
