@@ -6,7 +6,8 @@
 // REVIEW a conflict / outside hours / ambiguity (only an explicit approval lets an
 // out-of-hours slot proceed, never a conflict); BLOCK overwriting a commitment.
 // Idempotent: the same interview can never create a second event. No network:
-// Graph is a fake fetch.
+// Graph is a fake fetch. Ed's working hours are a default for slots Tessa picks;
+// an exact time Ed gives overrides them.
 //
 //   node tests/test_tessa_interview.js
 // ============================================================================
@@ -52,16 +53,22 @@ const wh = { days: WH.daysOfWeek, start: '08:00', end: '17:00' };
 check('EXECUTE: open slot inside working hours', () => {
   assert.strictEqual(I.decideAuthority({ start: '2026-10-08T10:00', end: '2026-10-08T10:30', freeBusy: { [TESSA]: 'free', [ED]: 'free' }, workingHours: wh }).class, 'EXECUTE');
 });
-check('REVIEW: outside working hours (Neha at 5:00 PM); proceeds only with a named approval', () => {
-  const a = I.decideAuthority({ start: '2026-10-08T17:00', end: '2026-10-08T17:30', freeBusy: { [ED]: 'free' }, workingHours: wh });
-  assert.deepStrictEqual([a.class, a.approved], ['REVIEW', false]);
-  assert.match(a.reasons[0], /outside Ed's working hours/);
-  assert.strictEqual(I.decideAuthority({ start: '2026-10-08T17:00', end: '2026-10-08T17:30', freeBusy: { [ED]: 'free' }, workingHours: wh, approvedBy: 'Ed' }).approved, true);
+check('EXPLICIT TIME FROM ED + free -> EXECUTE even past working hours (Neha Thursday 5:00 PM)', () => {
+  const a = I.decideAuthority({ start: '2026-10-08T17:00', end: '2026-10-08T17:30', freeBusy: { [TESSA]: 'free', [ED]: 'free' }, workingHours: wh, explicitTime: true });
+  assert.strictEqual(a.approved_by, 'Ed', 'Ed’s instruction is the named approval');
+  assert.strictEqual(a.class, 'EXECUTE');
+  assert.match(a.reasons[0], /Ed gave this exact time .* overrides the default window/);
 });
-check('REVIEW: a conflict never proceeds, even with approval; weekends are outside working days', () => {
-  const a = I.decideAuthority({ start: '2026-10-08T10:00', end: '2026-10-08T10:30', freeBusy: { [ED]: 'busy' }, workingHours: wh, approvedBy: 'Ed' });
-  assert.deepStrictEqual([a.class, a.approved], ['REVIEW', false]);
+check('a slot TESSA chose outside the default window -> REVIEW (she stays inside 8-5 unless told otherwise)', () => {
+  const a = I.decideAuthority({ start: '2026-10-08T17:00', end: '2026-10-08T17:30', freeBusy: { [ED]: 'free' }, workingHours: wh });
+  assert.strictEqual(a.class, 'REVIEW');
+  assert.match(a.reasons[0], /outside the default window: 5:00 PM to 5:30 PM is outside Ed's working hours/);
   assert.match(I.decideAuthority({ start: '2026-10-10T10:00', end: '2026-10-10T10:30', freeBusy: {}, workingHours: wh }).reasons[0], /saturday is outside/);
+});
+check('a conflict -> REVIEW, even when Ed gave the time', () => {
+  const a = I.decideAuthority({ start: '2026-10-08T17:00', end: '2026-10-08T17:30', freeBusy: { [ED]: 'busy' }, workingHours: wh, explicitTime: true });
+  assert.strictEqual(a.class, 'REVIEW');
+  assert.match(a.reasons[0], /^conflict: egojara@bedrocktx\.com is busy/);
 });
 check('BLOCK: overwriting or moving an existing commitment', () => {
   assert.strictEqual(I.decideAuthority({ start: '2026-10-08T10:00', end: '2026-10-08T10:30', overwrites: true }).class, 'BLOCK');
@@ -85,9 +92,9 @@ function fakeGraph({ calendar = [], busy = {} } = {}) {
   return { fetchImpl, calls, cal };
 }
 const deps = (g) => ({ fetch: g.fetchImpl, token: 't', graphSend: { TESSA_MAILBOX: TESSA, ED_MAILBOX: ED } });
-check('approved out-of-hours interview: creates ONE event on Tessa’s calendar with the transactionId', async () => {
+check('Ed\u2019s explicit 5:00 PM time, calendars free: creates ONE event on Tessa’s calendar with the transactionId', async () => {
   const g = fakeGraph();
-  const r = await I.scheduleInterview({ ...INPUT, approvedBy: 'Ed' }, deps(g));
+  const r = await I.scheduleInterview({ ...INPUT, explicitTime: true }, deps(g));
   assert.strictEqual(r.status, 'created');
   const posts = g.calls.filter((c) => c.method === 'POST' && /\/events$/.test(c.url));
   assert.strictEqual(posts.length, 1);
@@ -96,26 +103,26 @@ check('approved out-of-hours interview: creates ONE event on Tessa’s calendar 
 });
 check('rerun: finds the existing event and creates nothing (zero duplicates)', async () => {
   const g = fakeGraph();
-  await I.scheduleInterview({ ...INPUT, approvedBy: 'Ed' }, deps(g));
-  const again = await I.scheduleInterview({ ...INPUT, approvedBy: 'Ed' }, deps(g));
+  await I.scheduleInterview({ ...INPUT, explicitTime: true }, deps(g));
+  const again = await I.scheduleInterview({ ...INPUT, explicitTime: true }, deps(g));
   assert.strictEqual(again.status, 'exists');
   assert.strictEqual(g.calls.filter((c) => c.method === 'POST' && /\/events$/.test(c.url)).length, 1);
   assert.strictEqual(g.cal.length, 1);
 });
 check('an existing event for the same candidate at that time (made another way) also prevents a duplicate', async () => {
   const g = fakeGraph({ calendar: [{ id: 'manual-1', subject: 'Neha Joseph interview', attendees: [], isCancelled: false }] });
-  assert.strictEqual((await I.scheduleInterview({ ...INPUT, approvedBy: 'Ed' }, deps(g))).status, 'exists');
+  assert.strictEqual((await I.scheduleInterview({ ...INPUT, explicitTime: true }, deps(g))).status, 'exists');
 });
-check('not approved -> needs review, nothing written; conflict -> needs review even when approved', async () => {
+check('Tessa-chosen out-of-hours slot -> needs review, nothing written; conflict -> needs review even with Ed\u2019s explicit time', async () => {
   const g1 = fakeGraph();
   assert.strictEqual((await I.scheduleInterview(INPUT, deps(g1))).status, 'needs_review');
   const g2 = fakeGraph({ busy: { [ED]: true } });
-  assert.strictEqual((await I.scheduleInterview({ ...INPUT, approvedBy: 'Ed' }, deps(g2))).status, 'needs_review');
+  assert.strictEqual((await I.scheduleInterview({ ...INPUT, explicitTime: true }, deps(g2))).status, 'needs_review');
   assert.strictEqual([...g1.calls, ...g2.calls].filter((c) => c.method === 'POST' && /\/events$/.test(c.url)).length, 0);
 });
 check('dry run returns the payload and writes nothing', async () => {
   const g = fakeGraph();
-  const r = await I.scheduleInterview({ ...INPUT, approvedBy: 'Ed', dryRun: true }, deps(g));
+  const r = await I.scheduleInterview({ ...INPUT, explicitTime: true, dryRun: true }, deps(g));
   assert.strictEqual(r.status, 'dry_run');
   assert.strictEqual(g.calls.filter((c) => c.method === 'POST' && /\/events$/.test(c.url)).length, 0);
 });
@@ -124,7 +131,7 @@ check('the booked event id is recorded once on Tessa’s outbox (rerun adds no r
   const sb = { from: () => ({ select() { return this; }, eq() { return this; }, limit: async () => ({ data: rows, error: null }),
     insert(r) { rows.push({ id: 'ob-' + rows.length, ...r }); return { select: () => ({ single: async () => ({ data: { id: rows[rows.length - 1].id }, error: null }) }) }; } }) };
   const g = fakeGraph();
-  const r = await I.scheduleInterview({ ...INPUT, approvedBy: 'Ed' }, deps(g));
+  const r = await I.scheduleInterview({ ...INPUT, explicitTime: true }, deps(g));
   const a = await I.recordOnOutbox(sb, { result: r, input: INPUT, organizer: TESSA, inboxId: 'inbox-1' });
   const b = await I.recordOnOutbox(sb, { result: r, input: INPUT, organizer: TESSA, inboxId: 'inbox-1' });
   assert.deepStrictEqual([a.existing, b.existing, rows.length], [false, true, 1]);
