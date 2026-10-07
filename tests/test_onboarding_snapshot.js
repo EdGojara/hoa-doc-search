@@ -311,9 +311,9 @@ check('former-owner routing without a named approval (or into the AR account its
 });
 check('opening reclasses are owner-only in the service, and the stage route passes them through', () => {
   const svc = fs.readFileSync(path.join(__dirname, '..', 'lib', 'onboarding', 'service.js'), 'utf8');
-  assert.match(svc, /if \(\(openingReclasses\.length \|\| openingCorrections\.length \|\| ledgerDispositions\.length \|\| formerOwnerRouting\) && !\(actor && actor\.role === 'owner'\)\) throw new ServiceError\(403, 'OWNER_ONLY'/);
-  assert.match(svc, /ledger_dispositions: ledgerDispositions, former_owner_routing: formerOwnerRouting,/);
-  assert.match(fs.readFileSync(path.join(__dirname, '..', 'api', 'onboarding.js'), 'utf8'), /opening_reclasses: b\.opening_reclasses, opening_corrections: b\.opening_corrections, ledger_dispositions: b\.ledger_dispositions, former_owner_routing: b\.former_owner_routing/);
+  assert.match(svc, /if \(\(openingReclasses\.length \|\| openingCorrections\.length \|\| ledgerDispositions\.length \|\| formerOwnerRouting \|\| fundAllocations\.length\) && !\(actor && actor\.role === 'owner'\)\) throw new ServiceError\(403, 'OWNER_ONLY'/);
+  assert.match(svc, /ledger_dispositions: ledgerDispositions, former_owner_routing: formerOwnerRouting, fund_allocations: fundAllocations,/);
+  assert.match(fs.readFileSync(path.join(__dirname, '..', 'api', 'onboarding.js'), 'utf8'), /opening_reclasses: b\.opening_reclasses, opening_corrections: b\.opening_corrections, ledger_dispositions: b\.ledger_dispositions, former_owner_routing: b\.former_owner_routing, fund_allocations: b\.fund_allocations/);
   assert.match(svc, /artifact_shas: \[\.\.\.view\.artifacts\.map\(\(a\) => a\.sha256\), \.\.\.\(await listEvidence\(view\.batch\.id\)\)\.map\(\(e\) => e\.sha256\)\]/, 'evidence-only documents (495) are citable');
 });
 // ---- RESTORED OPEN AP (Ed 2026-10-07, Canyon Gate / Star Protection). The source booked a
@@ -362,6 +362,25 @@ check('restored open AP is exact or it restores NOTHING: total != the AP credit,
   }
   const noRole = buildSnapshot(withBookOnlyPayment(), { ...ID, roles: ROLES, opening_corrections: [STAR], artifact_shas: [STAR_SHA] });
   assert.strictEqual(ctl(noRole, 'snapshot.opening_corrections_documented').status, 'FAIL', 'open_ap_items need the AP role');
+});
+// ---- FUND ALLOCATIONS (Ed 2026-10-07, Canyon Gate): the source keeps fund per posting; its
+// balance sheet's fund columns split one account across funds. Exact, sourced, approved.
+const BS_SHA = '7'.repeat(64);
+const ALLOC = { account: '1000', parts: [{ fund_code: 'OPR', amount_cents: 100000 }, { fund_code: 'RES', amount_cents: 43500 }], reason: 'balance sheet fund columns', evidence: { description: 'Balance sheet by fund', artifact_sha256: BS_SHA, locator: 'line 4' }, approved_by: 'Ed Gojara', approved_at: '2026-10-07' };
+check('fund allocation: an account\'s opening is split by the source fund columns exactly; the GL line carries the split; the amount never changes', () => {
+  const s = buildSnapshot(parse(), { ...ID, roles: ROLES, fund_allocations: [ALLOC], artifact_shas: [BS_SHA] });
+  assert.strictEqual(ctl(s, 'snapshot.fund_allocations_documented').status, 'PASS');
+  const l = kind(s, 'gl_opening_balance').find((x) => x.account_code === '1000');
+  assert.deepStrictEqual([l.amount_cents, l.fund_allocation.parts.map((p) => [p.fund_code, p.amount_cents]), l.fund_allocation.approved_by], [143500, [['OPR', 100000], ['RES', 43500]], 'Ed Gojara']);
+});
+check('fund allocation is exact or applies NOTHING: parts not equal to the opening, a repeated fund, no evidence artifact, no approval, unknown account -> FAIL, no split', () => {
+  const bad = [{ ...ALLOC, parts: [{ fund_code: 'OPR', amount_cents: 100000 }, { fund_code: 'RES', amount_cents: 43499 }] }, { ...ALLOC, parts: [{ fund_code: 'OPR', amount_cents: 100000 }, { fund_code: 'OPR', amount_cents: 43500 }] },
+    { ...ALLOC, evidence: { ...ALLOC.evidence, artifact_sha256: '8'.repeat(64) } }, { ...ALLOC, approved_by: '' }, { ...ALLOC, account: '1999' }];
+  for (const a of bad) {
+    const s = buildSnapshot(parse(), { ...ID, roles: ROLES, fund_allocations: [a], artifact_shas: [BS_SHA] });
+    assert.strictEqual(ctl(s, 'snapshot.fund_allocations_documented').status, 'FAIL', JSON.stringify(a.parts));
+    assert.ok(kind(s, 'gl_opening_balance').every((x) => !x.fund_allocation));
+  }
 });
 check('the snapshot module holds no database client and makes no writes', () => {
   const s = fs.readFileSync(path.join(__dirname, '..', 'lib', 'onboarding', 'snapshot.js'), 'utf8').replace(/\/\/.*$/gm, '');

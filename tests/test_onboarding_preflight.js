@@ -107,11 +107,11 @@ check('stale input: Trusted activity changed since the bridge -> BLOCKED; an exi
   const t = trustedBase(); t.journal_entries.push(je('C1', '2026-07-31', 'conversion', [], { reference: 'CONV-EX-20260731-OPEN-OPR' }));
   assert.strictEqual(status(build({ trusted: t }), 'preflight.no_conversion_entries_exist_yet'), 'BLOCKED');
 });
-check('AP: open invoices resolve to one vendor, post by the opening entry, tie to GL AP; an invoice number already in Trusted is BLOCKED', () => {
+check('AP: open invoices resolve to one vendor, post by the opening entry, tie to GL AP; an invoice number already in Trusted is never written twice (it must be carried, and an uncarriable one BLOCKS)', () => {
   const p = build(); const ap = p.writes.ap_opening_invoices;
   assert.deepStrictEqual(ap.map((a) => [a.vendor_id, a.vendor_invoice_number, a.total_cents, a.posting_journal_entry_reference]), [['v1', 'X1', 200, 'CONV-EX-20260731-OPEN-OPR']]);
   const t = trustedBase(); t.ap_invoices.push({ id: 'I0', vendor_id: 'v1', vendor_invoice_number: 'X1', voided_at: null });
-  assert.strictEqual(status(build({ trusted: t }), 'preflight.ap_invoices_resolved'), 'BLOCKED');
+  const p2 = build({ trusted: t }); assert.strictEqual(status(p2, 'preflight.restored_ap_carried_once'), 'BLOCKED'); assert.ok(!p2.writes.ap_opening_invoices.some((a) => a.vendor_invoice_number === 'X1'), 'never a second invoice');
 });
 check('determinism: the same inputs build the same plan', () => {
   assert.strictEqual(JSON.stringify(build()), JSON.stringify(build()));
@@ -239,7 +239,7 @@ const buildRestored = (o = {}) => build({ snapshot: restoredSnapshot(), trusted:
 check('restored AP (Star): the existing Trusted invoice is carried once; its July entry is neutralized (expense once); the August payment is untouched and pays it (cash once); AP ties; every control PASSES', () => {
   const p = buildRestored();
   assert.deepStrictEqual(p.controls.filter((c) => c.status !== 'PASS').map((c) => [c.code, c.failures]), []);
-  assert.deepStrictEqual(p.carried_ap_invoices.map((c) => [c.invoice_id, c.vendor_invoice_number, c.total_cents, c.neutralized_entry.reference, c.paid_after_cutoff.map((a) => a.check_number), c.open_today_cents]), [['R1', 'R1N', 70, 'JE-R1', ['1003'], 0]]);
+  assert.deepStrictEqual(p.carried_ap_invoices.map((c) => [c.invoice_id, c.vendor_invoice_number, c.total_cents, c.entry.reference, c.paid_after_cutoff.map((a) => a.check_number), c.open_today_cents]), [['R1', 'R1N', 70, 'JE-R1', ['1003'], 0]]);
   assert.ok(p.writes.neutralize_journal_entries.some((j) => j.original_je_id === 'R1'), 'July entry neutralized');
   assert.ok(!p.writes.neutralize_journal_entries.some((j) => j.original_je_id === 'P1') && !p.writes.repost_journal_entries.some((j) => ['R1', 'P1'].includes(j.original_je_id)), 'August payment untouched; the July entry is not re-posted');
   assert.ok(!p.writes.ap_opening_invoices.some((a) => a.vendor_invoice_number === 'R1N'), 'never a second invoice');
@@ -259,6 +259,45 @@ check('restored AP is carried once or BLOCKED: entry re-posted after the cutover
   const c = ctxBase(); c.vendors = [{ id: 'v1', name: 'Another Vendor' }];
   assert.strictEqual(status(buildRestored({ ctx: c }), 'preflight.restored_ap_carried_once'), 'BLOCKED');
   assert.strictEqual(status(buildRestored({ apps: [...APPS, { payment_id: 'P1', invoice_id: 'R1', applied_cents: 70 }] }), 'preflight.restored_ap_carried_once'), 'BLOCKED');
+});
+// OPEN AP THE TRUSTED BOOKS ALREADY HOLD (generic; Canyon Gate's A-Beautiful Pools): the source
+// aging's open invoice was re-entered in Trusted (AP-to-AP entry, no expense) and paid after the
+// cutoff. Vendor named differently in the two systems ("ACME, INC." vs "Acme LLC").
+const heldSnapshot = () => { const s = snapshotBase(); s.lines[8] = { ...s.lines[8], detail: { ...s.lines[8].detail, source_vendor_key: 'ACME, INC.' } }; return s; };
+const heldTrusted = () => {
+  const t = trustedBase();
+  t.journal_entries.push(je('A0', '2026-07-20', 'ap_invoice', [{ debit_cents: 200 }]), je('A9', '2026-08-20', 'payment_intake', [{ debit_cents: 200 }]));
+  t.journal_entry_lines.push(ln('A0', 1, 2000, 200, 0), ln('A0', 2, 2000, 0, 200), ln('A9', 1, 2000, 200, 0), ln('A9', 2, 1000, 0, 200));
+  t.ap_invoices.push({ id: 'I0', vendor_id: 'v1', vendor_invoice_number: 'X1', invoice_date: '2026-07-20', total_cents: 200, posting_journal_entry_id: 'A0', voided_at: null });
+  t.ap_payments = [{ id: 'P9', check_number: '1036', payment_date: '2026-08-20', amount_cents: 200, posting_journal_entry_id: 'A9' }];
+  return t;
+};
+const heldBridge = () => { const b = bridgeBase(); b.items.push({ item_no: 7, event_key: 'je:A0', classification: 'ALREADY_IN_SOURCE', method: 'invoice_number_and_amount_in_source', records: ['journal_entries:A0', 'ap_invoices:I0'] },
+  { item_no: 8, event_key: 'je:A9', classification: 'LEGITIMATE_SUBSEQUENT', method: 'after_cutoff_no_source_evidence', records: ['journal_entries:A9', 'ap_payments:P9'] }); return b; };
+check('open AP Trusted already holds: the source open item is the existing Trusted invoice, carried once (vendor matched by the shared normalizer, shown in the notes); AP ties; never a second invoice', () => {
+  const p = build({ snapshot: heldSnapshot(), trusted: heldTrusted(), bridge: heldBridge(), apps: [{ payment_id: 'P9', invoice_id: 'I0', applied_cents: 200 }] });
+  assert.deepStrictEqual(p.controls.filter((c) => c.status !== 'PASS').map((c) => [c.code, c.failures]), []);
+  assert.deepStrictEqual(p.carried_ap_invoices.map((c) => [c.invoice_id, c.origin, c.entry.reference, c.paid_after_cutoff.map((a) => a.check_number)]), [['I0', 'source_open_item', 'JE-A0', ['1036']]]);
+  assert.strictEqual(p.writes.ap_opening_invoices.length, 0);
+  assert.ok(p.notes.some((n) => n.type === 'vendor_matched_by_normalized_name' && /ACME, INC\. -> Acme LLC \(normalized_name\)/.test(n.text)));
+});
+check('vendor normalizer is exactly-one or BLOCK: two active vendors that normalize alike block; an inactive duplicate is ignored', () => {
+  const two = ctxBase(); two.vendors = [...two.vendors, { id: 'v2', name: 'Acme Co' }];
+  assert.strictEqual(status(build({ snapshot: heldSnapshot(), ctx: two }), 'preflight.ap_invoices_resolved'), 'BLOCKED');
+  const inactive = ctxBase(); inactive.vendors = [...inactive.vendors, { id: 'v2', name: 'Acme Co', is_active: false }];
+  assert.strictEqual(status(build({ snapshot: heldSnapshot(), ctx: inactive }), 'preflight.ap_invoices_resolved'), 'PASS');
+});
+check('fund allocation: an account split across funds posts one line per fund (same account, that fund); every fund\'s opening entry balances; the cutoff TB still equals the source', () => {
+  const s = snapshotBase();
+  s.lines[0] = { ...s.lines[0], detail: { fund_allocation: { parts: [{ fund_code: 'OPR', amount_cents: 600 }, { fund_code: 'RES', amount_cents: 400 }] } } };
+  s.lines[4] = { ...s.lines[4], detail: { fund_allocation: { parts: [{ fund_code: 'OPR', amount_cents: -550 }, { fund_code: 'RES', amount_cents: -400 }] } } };
+  const c = ctxBase(); c.funds = [...c.funds, { id: 'f-res', code: 'RES' }];
+  const p = build({ snapshot: s, ctx: c });
+  for (const k of ['preflight.opening_entries_balance', 'preflight.accounts_resolved', 'preflight.projected_cutoff_tb_equals_source']) assert.strictEqual(status(p, k), 'PASS', k);
+  const res = p.writes.opening_journal_entries.find((j) => j.fund_code === 'RES');
+  assert.deepStrictEqual(res.lines.map((l) => [l.account_number, l.fund_id, l.debit_cents, l.credit_cents]), [['1000', 'f-res', 400, 0], ['3000', 'f-res', 0, 400]]);
+  const unknown = snapshotBase(); unknown.lines[0] = { ...unknown.lines[0], detail: { fund_allocation: { parts: [{ fund_code: 'ZZZ', amount_cents: 1000 }] } } };
+  assert.strictEqual(status(build({ snapshot: unknown }), 'preflight.accounts_resolved'), 'BLOCKED', 'an unknown fund blocks');
 });
 check('without restored lines nothing changes: no carried invoices, no extra control, AP ties on opening invoices alone', () => {
   const p = build();
