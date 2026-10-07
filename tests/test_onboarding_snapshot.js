@@ -102,6 +102,61 @@ check('in-memory runner: an agent assigned to snapshot can build it in the snaps
   const r = E.runSnapshot(st, { kind: 'agent', id: 'c', assigned_stage: 'snapshot' }, parse(), { cutoff_date: ID.cutoff_date, roles: ROLES });
   assert.strictEqual(r.state.stage, 'snapshot'); assert.strictEqual(r.result.status, 'PASS'); assert.deepStrictEqual(r.result.open_controls, []);
 });
+// ---- Opening reclassifications (Ed 2026-10-07): Canyon Gate's $1,629.70 "14010 Previous
+// Owners Rec. PM" (prior-management balance sheet 10/31/2025) sits inside source 1300 with no
+// homeowner behind it. Approved treatment: 1300 opens at the source balance less the legacy
+// amount; 1310 Legacy Receivable - Previous Owners opens at it. Preserved, never written off.
+// Synthetic: the fixture's 1300 gets +1,000.00 that no homeowner detail supports (offset in 2400
+// so the TB still balances), and the reclass moves exactly that.
+const LEGACY = 100000;
+const EVIDENCE_SHA = 'e'.repeat(64);
+const withLegacy = () => {
+  const p = parse();
+  const rows = p.gl_trial_balance.rows.map((r) => (r.domain === 'gl_account_balance' && r.account_code === '1300' ? { ...r, ending_cents: r.ending_cents + LEGACY }
+    : r.domain === 'gl_account_balance' && r.account_code === '2400' ? { ...r, ending_cents: r.ending_cents - LEGACY } : r));
+  return { ...p, gl_trial_balance: { ...p.gl_trial_balance, rows } };
+};
+const RECLASS = { from_account: '1300', to_account: '1310', to_account_name: 'Legacy Receivable - Previous Owners', amount_cents: LEGACY,
+  reason: 'Prior-management previous-owner receivable carried in 1300 with no homeowner behind it; preserved, not written off',
+  evidence: { description: 'Coded balance sheet 10/31/2025 (prior management)', artifact_sha256: EVIDENCE_SHA, locator: '14010 Previous Owners Rec. PM' },
+  approved_by: 'Ed Gojara', approved_at: '2026-10-07' };
+check('opening reclass: 1300 opens at source less the legacy amount, 1310 opens at it, total unchanged, and the homeowner detail now supports 1300 exactly', () => {
+  const before = buildSnapshot(withLegacy(), { ...ID, roles: ROLES });
+  assert.strictEqual(comp(before, 'ar_detail').status, 'BLOCKED', 'without the reclass the legacy amount is unsupported AR');
+  assert.strictEqual(comp(before, 'ar_detail').unsupported_cents, LEGACY);
+  const s = buildSnapshot(withLegacy(), { ...ID, roles: ROLES, opening_reclasses: [RECLASS], artifact_shas: [EVIDENCE_SHA] });
+  const gl = kind(s, 'gl_opening_balance');
+  const l1300 = gl.find((l) => l.account_code === '1300'); const l1310 = gl.find((l) => l.account_code === '1310');
+  assert.deepStrictEqual([l1300.amount_cents, l1300.source_ending_cents, l1300.reclassified_cents], [51000, 51000 + LEGACY, -LEGACY]);
+  assert.deepStrictEqual([l1310.amount_cents, l1310.account_name, l1310.reclass[0].from_account, l1310.reclass[0].approved_by], [LEGACY, 'Legacy Receivable - Previous Owners', '1300', 'Ed Gojara']);
+  assert.ok(l1310.provenance.some((p) => p.artifact_sha256 === EVIDENCE_SHA && p.locator === '14010 Previous Owners Rec. PM'), '1310 cites the evidence document');
+  assert.strictEqual(total(gl), 0, 'debits still equal credits');
+  for (const k of ['snapshot.gl_lines_equal_source_ending_tb', 'snapshot.opening_reclasses_documented', 'snapshot.gl_opening_balances_balance', 'snapshot.ar_detail_supports_gl', 'snapshot.every_line_has_provenance']) assert.strictEqual(ctl(s, k).status, 'PASS', k);
+  assert.deepStrictEqual([comp(s, 'ar_detail').status, comp(s, 'ar_detail').unsupported_cents], ['PASS', 0]);
+  assert.notStrictEqual(s.sha256, before.sha256, 'the reclass changes what the reviewer approves');
+});
+check('opening reclass is a sourced decision, never a plug: no evidence artifact, no approval, too large, or flipping the sign -> FAIL and NOTHING moves', () => {
+  const bad = [
+    [{ ...RECLASS }, []],                                                         // evidence not an artifact of the batch
+    [{ ...RECLASS, approved_by: null }, [EVIDENCE_SHA]],
+    [{ ...RECLASS, amount_cents: 51000 + LEGACY + 1 }, [EVIDENCE_SHA]],
+    [{ ...RECLASS, amount_cents: -LEGACY }, [EVIDENCE_SHA]],
+    [{ ...RECLASS, to_account: '1300' }, [EVIDENCE_SHA]],
+    [{ ...RECLASS, evidence: { ...RECLASS.evidence, locator: '' } }, [EVIDENCE_SHA]],
+  ];
+  for (const [r, shas] of bad) {
+    const s = buildSnapshot(withLegacy(), { ...ID, roles: ROLES, opening_reclasses: [r], artifact_shas: shas });
+    assert.strictEqual(ctl(s, 'snapshot.opening_reclasses_documented').status, 'FAIL', JSON.stringify(r).slice(0, 80));
+    assert.strictEqual(kind(s, 'gl_opening_balance').find((l) => l.account_code === '1300').amount_cents, 51000 + LEGACY, 'a defective reclass moves nothing');
+    assert.ok(!kind(s, 'gl_opening_balance').some((l) => l.account_code === '1310'));
+  }
+});
+check('opening reclasses are owner-only in the service, and the stage route passes them through', () => {
+  const svc = fs.readFileSync(path.join(__dirname, '..', 'lib', 'onboarding', 'service.js'), 'utf8');
+  assert.match(svc, /if \(openingReclasses\.length && !\(actor && actor\.role === 'owner'\)\) throw new ServiceError\(403, 'OWNER_ONLY'/);
+  assert.match(svc, /opening_reclasses: openingReclasses, artifact_shas: view\.artifacts\.map\(\(a\) => a\.sha256\)/);
+  assert.match(fs.readFileSync(path.join(__dirname, '..', 'api', 'onboarding.js'), 'utf8'), /opening_reclasses: b\.opening_reclasses/);
+});
 check('the snapshot module holds no database client and makes no writes', () => {
   const s = fs.readFileSync(path.join(__dirname, '..', 'lib', 'onboarding', 'snapshot.js'), 'utf8').replace(/\/\/.*$/gm, '');
   assert.ok(!/supabase|createClient|\.from\(|\.rpc\(|\.insert\(|\.upsert\(|\.delete\(|require\(['"][^'"]*(db|journal|ar_engine|ap_engine)/.test(s));
