@@ -204,7 +204,7 @@ async function loadExceptions(){
     const total=items.reduce((a,x)=>a+(Number(x.total_cents)||0),0);
     wrap.innerHTML=`<div style="border:2px solid #f0b968;background:#fffaf0;border-radius:11px;padding:14px 16px;margin:0 0 16px;">
       <h2 style="color:#92400e;margin:0 0 4px;">🧾 Exceptions · ${items.length} bill${items.length===1?'':'s'} couldn’t auto-file${total?` · ${money(total)} on hold`:''}</h2>
-      <div class="note" style="margin:0 0 10px;color:#7c5a1e;">Emma saved each invoice but couldn’t place it. Pick the community (and vendor if asked) to send it to Payables, or dismiss it if it isn’t a bill. Nothing here has posted yet.</div>
+      <div class="note" style="margin:0 0 10px;color:#7c5a1e;">Emma saved each invoice but couldn’t place it. Pick the community (and the vendor, invoice date or amount when asked) to send it to Payables, or dismiss it if it isn’t a bill. Nothing here has posted yet.</div>
       ${items.map(x=>excRow(x,commOpts)).join('')}</div>`;
     focusExceptionFromUrl();
   }catch(e){
@@ -215,6 +215,16 @@ function excRow(x,commOpts){
   if (x.reimbursement) return excReimbRow(x,commOpts);
   const needVendor = !x.suggested_vendor_id;
   const vend = (x.suggested_vendor&&x.suggested_vendor.name) || x.vendor_name || '(vendor unknown)';
+  // A bill that printed no date / no amount is finished here (Ed 2026-10-07):
+  // the date prefills from the service date the bill does print; staff confirm
+  // or change it. A value staff already entered (staff_entered) stays editable.
+  const se = x.staff_entered || {};
+  const needDate = !x.invoice_date || !!se.invoice_date;
+  const needTotal = !x.total_cents || !!se.total_cents;
+  const dateVal = se.invoice_date || (!x.invoice_date ? (x.suggested_invoice_date||'') : '');
+  const dateHint = se.invoice_date ? `entered by ${escapeHtml(se.by||'staff')}` : (x.suggested_invoice_date ? 'from the service date on the bill; check it' : 'the bill prints none; enter it from the bill');
+  const sel=(opts,val)=>val?opts.replace(`value="${val}"`,`value="${val}" selected`):opts;
+  if (x.community_id) setTimeout(()=>excAccounts(x.id),0);
   return `<div class="exc" data-id="${x.id}" style="border:1px solid #f6d5ad;background:#fffdf7;border-radius:9px;padding:10px 12px;margin-bottom:10px;">
     <div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:baseline;">
       <div><b>${escapeHtml(vend)}</b> · <b>${x.total_cents?money(x.total_cents):'amount ?'}</b>${x.invoice_number?` · inv ${escapeHtml(x.invoice_number)}`:''}${x.invoice_date?` · ${d10(x.invoice_date)}`:''}</div>
@@ -223,7 +233,10 @@ function excRow(x,commOpts){
     ${x.notes?`<div style="font-size:12px;color:#92400e;margin-top:4px;">${escapeHtml(x.notes)}</div>`:''}
     <div class="note" style="font-size:11.5px;color:#64748b;margin:3px 0 8px;">${x.community_hint?('reads as “'+escapeHtml(x.community_hint)+'” · '):''}${x.storage_path?`<a href="javascript:void(0)" onclick="openExcFile('${x.id}')" style="color:#0B1D34;font-weight:600;">📄 view the bill</a>`:'<span style="color:#b91c1c;">no PDF on file</span>'}</div>
     <div class="row" style="gap:8px;flex-wrap:wrap;align-items:center;">
-      <select id="exc-comm-${x.id}" style="font-size:12px;padding:3px 6px;"><option value="">— community —</option>${commOpts}</select>
+      <select id="exc-comm-${x.id}" onchange="excAccounts('${x.id}')" style="font-size:12px;padding:3px 6px;"><option value="">— community —</option>${sel(commOpts,x.community_id)}</select>
+      ${needDate?`<label style="font-size:12px;color:#334155;">Invoice date <input type="date" id="exc-date-${x.id}" value="${escapeHtml(dateVal)}" style="font-size:12px;padding:3px 6px;border:1px solid #d7dee7;border-radius:5px;"></label><span style="font-size:11px;color:#64748b;">${dateHint}</span>`:''}
+      ${needTotal?`<input id="exc-amt-${x.id}" value="${se.total_cents?(se.total_cents/100).toFixed(2):''}" inputmode="decimal" placeholder="amount due" style="font-size:12px;padding:4px 6px;border:1px solid #d7dee7;border-radius:5px;width:90px;">`:''}
+      <select id="exc-acct-${x.id}" title="Optional: code the bill to this account" style="font-size:12px;padding:3px 6px;max-width:230px;"><option value="">— account (optional) —</option></select>
       ${needVendor?`<input id="exc-vend-${x.id}" placeholder="vendor name…" style="font-size:12px;padding:4px 6px;border:1px solid #d7dee7;border-radius:5px;width:170px;"><span id="exc-vpick-${x.id}" data-vid=""></span>`:''}
       <button class="btn" style="padding:4px 11px;font-size:12px;" onclick="resolveExc('${x.id}',${needVendor})">Send to Payables</button>
       <button class="btn ghost" style="padding:4px 10px;font-size:12px;" onclick="dismissExc('${x.id}')">Not a bill</button>
@@ -295,19 +308,34 @@ window.openExcFile=async function(id){
   try{ const r=await af('/api/ap-intake/exceptions/'+id+'/file?json=1'); const j=await r.json(); if(j&&j.url) window.open(j.url,'_blank'); else alert('Could not open the bill.'); }
   catch(e){ alert('Could not open the bill.'); }
 };
+// Optional account override: this community's expense accounts only.
+window.excAccounts=function(id){
+  const cid=(document.getElementById('exc-comm-'+id)||{}).value; const s=document.getElementById('exc-acct-'+id); if(!s) return;
+  if(!cid){ s.innerHTML='<option value="">— account (optional) —</option>'; return; }
+  af('/api/ap/expense-accounts?community_id='+encodeURIComponent(cid)).then(r=>r.json()).then(j=>{
+    s.innerHTML='<option value="">— account (optional) —</option>'+(j.accounts||[]).map(a=>`<option value="${escapeHtml(a.id)}">${escapeHtml(a.account_number)} · ${escapeHtml(a.account_name)}</option>`).join('');
+  }).catch(()=>{ s.innerHTML='<option value="">Could not load accounts (optional)</option>'; });
+};
 window.resolveExc=async function(id,needVendor){
   const msg=document.getElementById('exc-msg-'+id);
+  const say=(t)=>{ if(msg){msg.style.color='#b91c1c';msg.textContent=t;} };
   const cid=(document.getElementById('exc-comm-'+id)||{}).value;
-  if(!cid){ if(msg){msg.style.color='#b91c1c';msg.textContent='Pick the community first.';} return; }
+  if(!cid){ say('Pick the community first.'); return; }
   const body={community_id:cid};
-  if(needVendor){ const vn=(document.getElementById('exc-vend-'+id)||{}).value; if(!vn||!vn.trim()){ if(msg){msg.style.color='#b91c1c';msg.textContent='Enter the vendor name.';} return; } body.vendor_name=vn.trim(); }
+  if(needVendor){ const vn=(document.getElementById('exc-vend-'+id)||{}).value; if(!vn||!vn.trim()){ say('Enter the vendor name.'); return; } body.vendor_name=vn.trim(); }
+  const dEl=document.getElementById('exc-date-'+id);
+  if(dEl){ if(!dEl.value){ say('Enter the invoice date.'); return; } body.invoice_date=dEl.value; }
+  const aEl=document.getElementById('exc-amt-'+id);
+  if(aEl){ const c=Math.round(parseFloat(String(aEl.value).replace(/[$,]/g,''))*100); if(!(c>0)){ say('Enter the amount due.'); return; } body.total_cents=c; }
+  const acct=(document.getElementById('exc-acct-'+id)||{}).value; if(acct) body.account_id=acct;
   if(msg){ msg.style.color='#64748b'; msg.textContent='Sending…'; }
   try{
     const r=await af('/api/ap-intake/exceptions/'+id+'/resolve',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     const j=await r.json().catch(()=>({}));
-    if(!r.ok||!j.ok){ if(msg){msg.style.color='#b91c1c';msg.textContent=(j.detail||j.error||'Could not send.');} return; }
+    // The server's own reason, inline: never a silent no-op.
+    if(!r.ok||!j.ok){ if(j.suggested_invoice_date&&dEl&&!dEl.value) dEl.value=j.suggested_invoice_date; say(j.detail||j.error||('Could not send (HTTP '+r.status+').')); return; }
     const card=document.querySelector('.exc[data-id="'+id+'"]'); if(card){ card.style.transition='opacity .2s'; card.style.opacity='0'; setTimeout(()=>{card.remove(); loadExceptions(); loadQueue();},220); }
-  }catch(e){ if(msg){msg.style.color='#b91c1c';msg.textContent='Could not send.';} }
+  }catch(e){ say('Could not send: '+(e.message||'network error')+'. Nothing was loaded; try again.'); }
 };
 window.dismissExc=async function(id){
   if(!confirm('Dismiss this — it isn’t a bill to pay? It leaves the list and the email is marked handled.')) return;

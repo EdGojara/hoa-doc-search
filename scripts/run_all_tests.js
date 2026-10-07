@@ -246,6 +246,7 @@ const CHECKS = [
   'tests/test_replay_vendor_parity.js',
   'tests/test_1099_reporting_rule.js',
   'tests/test_exception_suggested_vendor.js',
+  'tests/test_ap_exception_no_date.js',
   'tests/test_w9_queue_secure_form.js',
   'tests/test_acc_finalize.js',
   'tests/test_acc_documents.js',
