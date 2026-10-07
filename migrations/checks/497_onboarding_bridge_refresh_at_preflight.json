@@ -1,0 +1,61 @@
+{
+  "migration": "497_onboarding_bridge_refresh_at_preflight.sql",
+  "summary": "Lets a refreshed activity-bridge result be recorded while an onboarding batch is in preflight (only through onboarding_record_bridge, on the current snapshot), so ordinary new Trusted activity no longer strands a batch after a PASS preflight. The stage does not move; the preflight is rebuilt and re-approved. No rows change.",
+  "requires": [
+    "484_onboarding_activity_bridge.sql",
+    "485_onboarding_operator.sql"
+  ],
+  "preflight": [
+    {
+      "name": "onboarding_record_bridge exists (484)",
+      "sql": "SELECT count(*)::int FROM pg_proc WHERE proname = 'onboarding_record_bridge'",
+      "expect": 1
+    },
+    {
+      "name": "onboarding_stage_events_validate exists (481/485)",
+      "sql": "SELECT count(*)::int FROM pg_proc WHERE proname = 'onboarding_stage_events_validate'",
+      "expect": 1
+    }
+  ],
+  "expected_changes": [
+    "Replaces onboarding_record_completion: an activity_bridge result may be recorded while the batch is in preflight only when the bridge writer is on (onboarding_record_bridge); every other stage result still needs its own stage.",
+    "Replaces onboarding_record_bridge: allowed in activity_bridge or preflight; the current-snapshot, sha and fingerprint rules are unchanged.",
+    "Replaces onboarding_stage_events_validate (485 body): the same exception for a stage_completed activity_bridge event under the bridge writer; waivers, advances and approvals still require their own stage.",
+    "No onboarding, batch or accounting rows change."
+  ],
+  "objects": {
+    "added": [],
+    "changed": [
+      "function:onboarding_record_bridge",
+      "function:onboarding_record_completion",
+      "function:onboarding_stage_events_validate"
+    ],
+    "removed": []
+  },
+  "row_changes": {
+    "onboarding_stage_events": 0,
+    "conversion_batches": 0
+  },
+  "protected": [
+    {
+      "table": "onboarding_stage_events",
+      "order_by": "id"
+    },
+    {
+      "table": "conversion_batches",
+      "order_by": "id"
+    }
+  ],
+  "verify": [
+    {
+      "name": "onboarding_record_bridge now admits the preflight stage",
+      "sql": "SELECT count(*)::int FROM pg_proc WHERE proname = 'onboarding_record_bridge' AND prosrc LIKE '%NOT IN (''activity_bridge'', ''preflight'')%'",
+      "expect": 1
+    },
+    {
+      "name": "the validate trigger carries the bridge-writer exception",
+      "sql": "SELECT count(*)::int FROM pg_proc WHERE proname = 'onboarding_stage_events_validate' AND prosrc LIKE '%onboarding.bridge_writer%'",
+      "expect": 1
+    }
+  ]
+}
