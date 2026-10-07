@@ -212,15 +212,15 @@ async function loadOutbox(){
     // Two sources, one box: staged items (email + meeting) from Tessa's outbox,
     // AND her own email drafts from the shared draft table (persona='tessa').
     const [ro, rd] = await Promise.all([
-      af('/api/tessa/outbox?status=queued').then(r=>r.json()).catch(()=>({items:[]})),
-      af('/api/email-drafts?status=draft&persona=tessa').then(r=>r.json()).catch(()=>({drafts:[]})),
+      af('/api/tessa/outbox?status=queued').then(async r=>{ const j=await r.json().catch(()=>({})); if(!r.ok) throw new Error(j.error||('outbox '+r.status)); return j; }),
+      af('/api/email-drafts?status=draft&persona=tessa').then(async r=>{ const j=await r.json().catch(()=>({})); if(!r.ok) throw new Error(j.error||('drafts '+r.status)); return j; }),
     ]);
     if(ro.migration_pending){ el.innerHTML='<div class="note">Outbox isn’t set up yet (migration 405 pending).</div>'; return; }
     const items = ro.items||[];
     const drafts = rd.drafts||[];
     if(!items.length && !drafts.length){ el.innerHTML='<div class="note">Nothing queued. When Tessa prepares an email or a meeting, it waits here for your OK.</div>'; return; }
     el.innerHTML = items.map(renderOutboxItem).join('') + drafts.map(renderTessaDraft).join('');
-  }catch(e){ el.innerHTML='<div class="note err">Couldn’t load the outbox.</div>'; }
+  }catch(e){ el.innerHTML='<div class="note err">Couldn’t load the outbox ('+esc(e.message||'error')+'). Press Refresh; nothing staged is lost.</div>'; }
 }
 // A Tessa email drafted through the normal flow, held in the shared draft table.
 // Sent via the tested Draft-Queue send path (her branded signature applied).
@@ -253,38 +253,50 @@ async function discardTessaDraft(id){
   if(!confirm('Discard this draft?')) return;
   try{ const r=await af('/api/email-drafts/'+id+'/discard',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'}); if(r.ok) loadOutbox(); else alert('Could not discard.'); }catch(e){ alert('Could not discard.'); }
 }
+const MEETING_MODE_LABEL = { calendar_only:'YOUR CALENDAR ONLY', invite:'INVITE', online:'TEAMS INVITE' };
 function renderOutboxItem(it){
   const isEmail = it.kind==='email';
+  const mode = isEmail ? null : (it.meeting_mode||'online');
+  const calOnly = mode==='calendar_only';
   const meta = isEmail
     ? `<div class="note"><b>To</b> ${esc(it.to_emails||'')}${it.cc_emails?` &nbsp; <b>Cc</b> ${esc(it.cc_emails)}`:''}</div>
        <div class="note"><b>Subject</b> ${esc(it.subject||'')}</div>
        ${it.attachment_name?`<div class="note">📎 ${esc(it.attachment_name)} — attached when sent</div>`:''}`
     : `<div class="note"><b>When</b> ${esc((it.meeting_start||'').replace('T',' '))} → ${esc((it.meeting_end||'').replace('T',' '))} ${esc(it.meeting_time_zone||'')}</div>
        <div class="note"><b>Where</b> ${esc(it.meeting_location||'')}</div>
-       <div class="note"><b>Invite</b> ${esc(it.meeting_attendees||'')}</div>
-       <div class="note"><b>Organizer</b> ${esc(it.organizer||'Tessa')}</div>`;
+       ${calOnly?'<div class="note"><b>Invite</b> nobody (no invitation is sent)</div>':`<div class="note"><b>Invite</b> ${esc(it.meeting_attendees||'')}</div>`}
+       <div class="note"><b>${calOnly?'Calendar':'Organizer'}</b> ${esc(it.organizer||'Tessa')}</div>`;
   const body = it.body_text ? `<div style="white-space:pre-wrap;font-size:12.5px;color:#334155;margin-top:8px;border-left:3px solid var(--line);padding-left:10px;">${esc(it.body_text)}</div>` : '';
   return `<div class="fu" id="ob-${it.id}">
-    <div class="t">${esc(it.title)} <span class="pill">${isEmail?'EMAIL':'MEETING'}</span></div>
+    <div class="t">${esc(it.title)} <span class="pill">${isEmail?'EMAIL':(MEETING_MODE_LABEL[mode]||'MEETING')}</span></div>
     ${it.note?`<div class="note" style="margin-top:2px;">${esc(it.note)}</div>`:''}
     ${meta}${body}
     <div class="row" style="margin-top:10px;">
-      <button class="btn gold sm" onclick="releaseOutbox('${it.id}','${isEmail?'send':'book'}')">${isEmail?'Send it':'Book it'}</button>
+      <button class="btn gold sm" onclick="releaseOutbox('${it.id}','${isEmail?'send':(calOnly?'calendar':'book')}')">${isEmail?'Send it':(calOnly?'Add to my calendar':'Book it')}</button>
       <button class="btn ghost sm" onclick="cancelOutbox('${it.id}')">Discard</button>
       <span id="obmsg-${it.id}" class="note"></span>
     </div>
   </div>`;
 }
-async function releaseOutbox(id, verb){
+async function releaseOutbox(id, verb, allowConflict){
   const msg=$('obmsg-'+id);
-  if(!confirm(verb==='send'?'Send this email now, from Tessa?':'Book this meeting and send the invitations now?')) return;
+  if(allowConflict){ if(!confirm('Book it anyway, on top of the conflicting event? Nothing is moved or changed.')) return; }
+  else if(!confirm(verb==='send'?'Send this email now, from Tessa?':(verb==='calendar'?'Add this to your calendar now? No invitation is sent.':'Book this meeting and send the invitations now?'))) return;
   if(msg) msg.textContent='Working…';
   try{
-    const r=await af('/api/tessa/outbox/'+id+'/release',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+    const r=await af('/api/tessa/outbox/'+id+'/release',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(allowConflict?{allow_conflict:true}:{})});
     const j=await r.json();
+    // Re-checked right before writing: the slot now overlaps something. Nothing
+    // was booked; the item stays queued for Ed to decide.
+    if(r.status===409 && j.error==='conflict'){
+      const fmt=(w)=>{ const t=String(w||'').slice(11,16).split(':').map(Number); return isNaN(t[0])?'':(((t[0]+11)%12)+1)+':'+String(t[1]).padStart(2,'0')+(t[0]<12?' AM':' PM'); };
+      if(msg) msg.innerHTML='<span class="err">Not booked: that time now conflicts with '+(j.conflicts||[]).map(c=>'<b>'+esc(c.subject)+'</b> ('+esc(fmt(c.start))+' to '+esc(fmt(c.end))+(c.organizer?', organizer '+esc(c.organizer):'')+')').join('; ')+'. Nothing was written.</span> '
+        +'<button class="btn ghost sm" onclick="releaseOutbox(''+id+'',''+verb+'',true)">Book anyway</button>';
+      return;
+    }
     if(!r.ok) throw new Error(j.error||'failed');
     if(msg) msg.innerHTML = j.kind==='meeting'
-      ? `<span class="ok">✅ Booked${j.join_url?` · <a href="${esc(j.join_url)}" target="_blank">Teams link</a>`:''}${j.warning?' (calendar invite sent; no Teams link)':''}</span>`
+      ? `<span class="ok">✅ ${verb==='calendar'?'On your calendar':'Booked'}${j.join_url?` · <a href="${esc(j.join_url)}" target="_blank">Teams link</a>`:''}${j.warning?' (calendar invite sent; no Teams link)':''}</span>`
       : `<span class="ok">✅ Sent to ${(j.to||[]).join(', ')}</span>`;
     setTimeout(loadOutbox, 1400);
     try{ loadSent(); }catch(_){}
@@ -951,6 +963,7 @@ async function askTessa(extra){
     if(!r.ok) throw new Error(j.detail || j.error || 'request failed');
     _ask = j; $('askMsg').textContent = '';
     renderAsk(j);
+    if(j.staged_meeting || j.staged_email) loadOutbox();
   }catch(e){ $('askMsg').innerHTML = '<span class="err">'+esc(e.message)+'</span>'; }
   finally{ btn.disabled = false; }
 }
@@ -979,15 +992,21 @@ function renderAsk(j){
   if(j.staged_meeting){
     var sm=j.staged_meeting;
     h += '<div style="margin-bottom:10px;padding:9px 11px;background:#eef4ff;border:1px solid #bcdcff;border-radius:8px;">'
-       + '<div style="font-size:13px;font-weight:600;color:var(--navy);">📅 Teams invite staged</div>'
+       + '<div style="font-size:13px;font-weight:600;color:var(--navy);">📅 '+({calendar_only:'Calendar entry staged (your calendar only)',invite:'Invite staged (no Teams link)',online:'Teams invite staged'}[sm.meeting_mode||'online'])+'</div>'
+       + '<div class="note"><b>Title</b> '+esc(sm.subject||'')+'</div>'
        + '<div class="note"><b>When</b> '+esc(sm.when_label||'')+'</div>'
-       + '<div class="note"><b>Invite</b> '+esc(sm.meeting_attendees||'')+'</div>'
-       + '<div class="note" style="margin-top:5px;">It’s waiting in <b>Tessa’s outbox</b> above — review and release to book it and send the invitation. Nothing is booked until you do.</div>'
+       + (sm.meeting_location ? '<div class="note"><b>Where</b> '+esc(sm.meeting_location)+'</div>' : '')
+       + (sm.meeting_mode==='calendar_only' ? '<div class="note"><b>Invite</b> nobody (no invitation is sent)</div>' : '<div class="note"><b>Invite</b> '+esc(sm.meeting_attendees||'')+'</div>')
+       + (sm.meeting_mode==='calendar_only' && sm.body_text ? '<div class="note" style="white-space:pre-wrap;margin-top:4px;color:var(--ink);">'+esc(sm.body_text)+'</div>' : '')
+       + '<div class="note" style="margin-top:5px;">It’s waiting in <b>Tessa’s outbox</b> above. '+(sm.meeting_mode==='calendar_only'?'Release it to put it on your calendar.':'Release it to book it and send the invitation.')+' Nothing is booked until you do.</div>'
        + '</div>';
   }
 
   // Who it's going to. Named, always \u2014 a hidden recipient list is how the
   // wrong people get emailed.
+  if(j.staged_meeting_error){
+    h += '<div style="margin-bottom:10px;" class="note err">'+esc(j.staged_meeting_error)+'</div>';
+  }
   if(to.length && !j.staged_meeting){
     h += '<div style="margin-bottom:10px;"><div class="note" style="font-weight:600;color:var(--ink);">Sending to</div>'
        + to.map(function(p){ return '<div style="font-size:13px;">'+esc(p.name||'')+' <span class="note">&lt;'+esc(p.email||'')+'&gt;</span></div>'; }).join('')
