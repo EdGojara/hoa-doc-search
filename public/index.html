@@ -4263,11 +4263,13 @@
               <div id="billing-preview-invoice-number-fixed" style="padding:6px 10px; background:#f0f4f8; border:1px solid #d0d7de; border-radius:4px; font-family:monospace; font-size:14px; min-width:90px; text-align:center;">—</div>
             </div>
             <div>
+              <button class="secondary-btn" id="billing-save-btn-fixed" onclick="billingSaveDraft('fixed')" title="Save this worksheet (rates, quantities, amounts, removed lines). Does not generate, post or send anything.">💾 Save progress</button>
               <button class="action-btn" onclick="billingGenerateDraft('fixed')">Generate fixed</button>
             </div>
           </div>
         </div>
         <div id="billing-period-hint-fixed" style="font-size:11px; color:#888; margin-bottom:10px;"></div>
+      <div id="billing-draft-saved-fixed" style="font-size:12px; color:#6b7280; margin:-6px 0 10px 0;"></div>
         <div id="billing-draft-preview-fixed" style="margin-bottom:8px;"></div>
         <div id="billing-draft-result-fixed" style="font-size:14px;"></div>
       </div>
@@ -4286,11 +4288,13 @@
               <div id="billing-preview-invoice-number-activity" style="padding:6px 10px; background:#f0f4f8; border:1px solid #d0d7de; border-radius:4px; font-family:monospace; font-size:14px; min-width:90px; text-align:center;">—</div>
             </div>
             <div>
+              <button class="secondary-btn" id="billing-save-btn-activity" onclick="billingSaveDraft('activity')" title="Save this worksheet (rates, quantities, amounts, removed lines). Does not generate, post or send anything.">💾 Save progress</button>
               <button class="action-btn" onclick="billingGenerateDraft('activity')">Generate activity</button>
             </div>
           </div>
         </div>
         <div id="billing-period-hint-activity" style="font-size:11px; color:#888; margin-bottom:10px;"></div>
+      <div id="billing-draft-saved-activity" style="font-size:12px; color:#6b7280; margin:-6px 0 10px 0;"></div>
         <div id="billing-draft-preview-activity" style="margin-bottom:8px;"></div>
         <div id="billing-draft-result-activity" style="font-size:14px;"></div>
         <!-- Duplicate ACC decisions: a second decided decision for the same project
@@ -5266,7 +5270,7 @@
       // Refresh the Activity worksheet so the new one-off charge appears (and,
       // critically, is carried into the invoice when you Generate — the pending
       // charge only bills if it's in the on-screen activity lines).
-      if (typeof billingLoadDraftPreview === 'function') billingLoadDraftPreview('activity');
+      if (typeof billingRefreshWorksheetPending === 'function') billingRefreshWorksheetPending('activity');
     } catch (e) { if (status) { status.style.color = '#b91c1c'; status.textContent = '✗ ' + e.message; } }
   }
   window.billingAddPendingItem = billingAddPendingItem;
@@ -5299,7 +5303,7 @@
       if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
       billingLoadPendingItems(billingCurrentCommunityId);
       // Drop it off the Activity worksheet too.
-      if (typeof billingLoadDraftPreview === 'function') billingLoadDraftPreview('activity');
+      if (typeof billingRefreshWorksheetPending === 'function') billingRefreshWorksheetPending('activity');
     } catch (e) { alert('Dismiss failed: ' + e.message); }
   }
   window.billingDismissPendingItem = billingDismissPendingItem;
@@ -5430,7 +5434,11 @@
   // to the prior, closed month (billed in arrears).
   // ===========================================================================
   const BILLING_AREAS = ['fixed', 'activity'];
-  const billingDraftState = { fixed: { lines: [], note: '' }, activity: { lines: [], note: '' } };
+  // Save progress (Ed 2026-10-07): revision = the saved worksheet this screen shows
+  // (0 = none), removedPending = one-offs removed from this invoice, dirty = edits
+  // not yet saved, period = the month the worksheet belongs to.
+  const billingNewAreaState = () => ({ lines: [], note: '', revision: 0, savedAt: null, savedBy: null, removedPending: [], dirty: false, period: null, generated: null });
+  const billingDraftState = { fixed: billingNewAreaState(), activity: billingNewAreaState() };
 
   // Default service period per area, derived from TODAY.
   //   fixed    → current month (billed in advance)
@@ -5458,6 +5466,12 @@
   }
 
   function billingPeriodChanged(type) {
+    const st = billingDraftState[type];
+    const pEl = document.getElementById(`billing-draft-period-${type}`);
+    if (st.dirty && pEl && st.period && pEl.value !== st.period
+        && !confirm(`You have unsaved changes on the ${st.period} ${type} worksheet. Switch months and lose them? (Cancel, then Save progress, to keep them.)`)) {
+      pEl.value = st.period; return;
+    }
     billingUpdatePeriodHint(type);
     billingUpdateInvoiceNumberPreview(type);
     billingLoadDraftPreview(type);
@@ -5476,10 +5490,19 @@
       if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
       st.lines = (j.line_items || []).map(l => ({ ...l }));
       st.note = '';
-      // Activity invoices bill in arrears from what actually happened — so pull
-      // the quantities straight from the activity report instead of leaving them
-      // at 0 for staff to re-key. Every field stays editable (manual override).
-      if (type === 'activity') {
+      const sd = j.saved_draft || null;
+      Object.assign(st, { period, dirty: false, revision: sd ? sd.revision : 0, savedAt: sd ? sd.saved_at : null, savedBy: sd ? sd.saved_by : null,
+        removedPending: sd ? (sd.removed_pending_item_ids || []) : [], generated: sd && sd.generated_invoice_id ? { number: sd.generated_invoice_number, at: sd.generated_at } : null });
+      if (j.restored) {
+        // A saved worksheet comes back EXACTLY as saved: no activity auto-fill
+        // over it. One-offs staged since the save are added; one-offs billed or
+        // deleted elsewhere since the save are dropped (and said so).
+        const bits = [];
+        if (j.added_pending) bits.push(`${j.added_pending} one-off charge${j.added_pending === 1 ? '' : 's'} staged since the save added`);
+        if ((j.dropped_pending || []).length) bits.push(`${j.dropped_pending.length} saved one-off${j.dropped_pending.length === 1 ? ' is' : 's are'} no longer pending (billed or removed elsewhere) and was dropped: ${j.dropped_pending.map(d => d.description).join(', ')}`);
+        st.note = `💾 Restored your saved progress for ${period}.${bits.length ? ' ' + bits.join('; ') + '.' : ''}`;
+        billingRenderDraftPreview(type);
+      } else if (type === 'activity') {
         await billingAutofillWorksheetFromActivity(type, period);
       } else {
         billingRenderDraftPreview(type);
@@ -5614,6 +5637,7 @@
   function billingRenderDraftPreview(type) {
     const el = document.getElementById(`billing-draft-preview-${type}`);
     if (!el) return;
+    billingRenderSaveStatus(type);
     const st = billingDraftState[type];
     const lines = st.lines;
     if (!lines.length) {
@@ -5665,6 +5689,7 @@
   }
 
   function billingDraftPreviewSubtotal(type) {
+    billingMarkDirty(type);
     const sub = billingDraftState[type].lines.reduce((s, l) => s + Number(l.amount || 0), 0);
     const subEl = document.getElementById(`billing-preview-subtotal-${type}`);
     if (subEl) subEl.textContent = billingMoney(sub);
@@ -5708,9 +5733,78 @@
   }
 
   function billingDraftPreviewRemove(type, i) {
-    billingDraftState[type].lines.splice(i, 1);
+    const st = billingDraftState[type];
+    const gone = st.lines.splice(i, 1)[0];
+    // A removed one-off stays staged; it is only removed from THIS invoice, and
+    // the saved worksheet remembers that so a restore does not bring it back.
+    if (gone && gone.pending_item_id && !st.removedPending.includes(gone.pending_item_id)) st.removedPending.push(gone.pending_item_id);
+    billingMarkDirty(type);
     billingRenderDraftPreview(type);
   }
+
+  // ----- Save progress (Ed 2026-10-07) ----------------------------------------
+  function billingMarkDirty(type) { billingDraftState[type].dirty = true; billingRenderSaveStatus(type); }
+  function billingRenderSaveStatus(type) {
+    const el = document.getElementById(`billing-draft-saved-${type}`);
+    if (!el) return;
+    const st = billingDraftState[type];
+    const when = st.savedAt ? new Date(st.savedAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : null;
+    const parts = [];
+    if (when) parts.push(`💾 Last saved ${escapeHtml(when)}${st.savedBy ? ' by ' + escapeHtml(st.savedBy) : ''}`);
+    else parts.push('Not saved yet');
+    if (st.dirty) parts.push('<span style="color:#b45309; font-weight:600;">unsaved changes</span>');
+    if (st.generated) parts.push(`<span style="color:#166534;">generated as invoice ${escapeHtml(st.generated.number || '')}</span>`);
+    el.innerHTML = parts.join(' · ');
+  }
+  async function billingSaveDraft(type) {
+    if (!billingCurrentCommunityId) return;
+    const st = billingDraftState[type];
+    const period = st.period || document.getElementById(`billing-draft-period-${type}`).value;
+    const el = document.getElementById(`billing-draft-saved-${type}`);
+    if (!period) { if (el) el.innerHTML = '<span style="color:#a00;">Pick a service period first.</span>'; return; }
+    const btn = document.getElementById(`billing-save-btn-${type}`); if (btn) btn.disabled = true;
+    if (el) el.textContent = 'Saving…';
+    try {
+      const af = window._authFetch || ((u, o) => fetch(u, o));
+      const r = await af(`/api/billing/communities/${billingCurrentCommunityId}/worksheet-draft`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type, period, lines: st.lines, removed_pending_item_ids: st.removedPending, base_revision: st.revision }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (r.status === 409) {
+        if (el) el.innerHTML = `<span style="color:#b91c1c;">Not saved: ${escapeHtml(j.error || 'a newer save exists')}.</span> <a href="#" onclick="event.preventDefault(); billingLoadDraftPreview('${type}')">Reload the saved worksheet</a> (your unsaved edits on this screen will be replaced).`;
+        return;
+      }
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      Object.assign(st, { revision: j.draft.revision, savedAt: j.draft.saved_at, savedBy: j.draft.saved_by, dirty: false });
+      billingRenderSaveStatus(type);
+    } catch (e) {
+      if (el) el.innerHTML = `<span style="color:#b91c1c;">Could not save: ${escapeHtml(e.message)}. Your edits are still on screen.</span>`;
+    } finally { if (btn) btn.disabled = false; }
+  }
+  window.billingSaveDraft = billingSaveDraft;
+
+  // A one-off charge was added or dismissed. With no unsaved edits, reload the
+  // worksheet (saved progress included). With unsaved edits, keep them and only
+  // sync the one-off lines: add newly staged ones (unless removed from this
+  // invoice), drop ones no longer pending.
+  async function billingRefreshWorksheetPending(type) {
+    const st = billingDraftState[type];
+    if (!st.dirty || !billingCurrentCommunityId || !st.period) return billingLoadDraftPreview(type);
+    try {
+      const r = await fetch(`/api/billing/communities/${billingCurrentCommunityId}/draft-invoice/preview?type=${type}&period=${st.period}`);
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      const pend = (j.line_items || []).filter((l) => l.pending_item_id);
+      const pendIds = new Set(pend.map((l) => l.pending_item_id));
+      const have = new Set(st.lines.filter((l) => l.pending_item_id).map((l) => l.pending_item_id));
+      st.lines = st.lines.filter((l) => !l.pending_item_id || pendIds.has(l.pending_item_id));
+      pend.forEach((l) => { if (!have.has(l.pending_item_id) && !st.removedPending.includes(l.pending_item_id)) st.lines.push({ ...l }); });
+      billingMarkDirty(type);
+      billingRenderDraftPreview(type);
+    } catch (e) { console.warn('[billing] one-off sync failed; reloading worksheet', e.message); billingLoadDraftPreview(type); }
+  }
+  window.billingRefreshWorksheetPending = billingRefreshWorksheetPending;
 
   // Refresh both areas' invoice-number previews (e.g. after the billing code is saved).
   function billingUpdateAllInvoiceNumbers() {
@@ -6348,12 +6442,16 @@
       const r = await fetch(`/api/billing/communities/${billingCurrentCommunityId}/draft-invoice`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ type, period, line_items: billingDraftState[type].lines })
+        body: JSON.stringify({ type, period, line_items: billingDraftState[type].lines, draft_revision: billingDraftState[type].revision })
       });
       const data = await r.json().catch(() => ({}));
       if (!r.ok) {
         if (r.status === 423) {
           result.innerHTML = `<div style="padding:8px; background:#fee; border-left:3px solid #a00;">Billing module halted: ${data.reason || '(no reason given)'}</div>`;
+          return;
+        }
+        if (r.status === 409 && data.code === 'newer_draft_saved') {
+          result.innerHTML = `<div style="padding:10px; background:#fff3cd; border-left:3px solid #f5a623;"><b>Not generated.</b> ${escapeHtml(data.error || 'A newer saved worksheet exists for this month.')}<br><a href="#" onclick="event.preventDefault(); billingLoadDraftPreview('${type}')">Reload the saved worksheet</a>, review it, then Generate.</div>`;
           return;
         }
         if (r.status === 409) {

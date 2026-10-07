@@ -36,6 +36,7 @@ const multer = require('multer');
 const puppeteer = require('puppeteer');
 const { renderInvoiceHTML } = require('./invoice_template');
 const BRAND = require('../lib/brand');
+const worksheetDrafts = require('../lib/billing/worksheet_drafts');
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -383,7 +384,24 @@ router.get('/communities/:communityId/draft-invoice/preview', async (req, res) =
     // Ad-hoc charges staged for this community (Tessa email intake / manual add)
     // ride on activity invoices, after the standard lines.
     const pending = type === 'activity' ? await pendingItemsAsLines(communityId) : [];
-    res.json({ line_items: [...lineItems, ...pending], pending_count: pending.length });
+    // SAVE PROGRESS (Ed 2026-10-07): a saved worksheet for this community + type +
+    // month is restored exactly, plus one-offs staged after the save.
+    const saved = await worksheetDrafts.getDraft(supabase, { communityId, type, period });
+    if (saved) {
+      const m = worksheetDrafts.mergeRestore({ savedLines: saved.lines || [], removedPendingIds: saved.removed_pending_item_ids || [], pendingLines: pending });
+      let generatedNumber = null;
+      if (saved.generated_invoice_id) {
+        const { data: gi } = await supabase.from('invoices').select('invoice_number, status').eq('id', saved.generated_invoice_id).maybeSingle();
+        generatedNumber = gi ? gi.invoice_number : null;
+      }
+      return res.json({
+        line_items: m.lines, pending_count: pending.length, restored: true,
+        saved_draft: { revision: saved.revision, saved_at: saved.saved_at, saved_by: saved.saved_by, removed_pending_item_ids: saved.removed_pending_item_ids || [],
+          generated_invoice_id: saved.generated_invoice_id, generated_at: saved.generated_at, generated_invoice_number: generatedNumber },
+        added_pending: m.added_pending, dropped_pending: m.dropped_pending,
+      });
+    }
+    res.json({ line_items: [...lineItems, ...pending], pending_count: pending.length, restored: false, saved_draft: null });
   } catch (err) {
     console.error('[billing] draft-invoice preview failed:', err.message);
     res.status(500).json({ error: err.message });
@@ -447,9 +465,31 @@ router.post('/communities/:communityId/recalc-lot-count', async (req, res) => {
 // Rejects with 423 if billing is killed for this community.
 // Records an invoice_events 'created' row with the inputs.
 // ----------------------------------------------------------------------------
+// ----------------------------------------------------------------------------
+// PUT /api/billing/communities/:communityId/worksheet-draft
+//   body: { type, period, lines, removed_pending_item_ids, base_revision }
+// SAVE PROGRESS (Ed 2026-10-07): store the worksheet as the operator left it.
+// Generates, posts, finalizes and sends NOTHING. Saving again updates the same
+// worksheet; a save based on an older revision is refused (409).
+// ----------------------------------------------------------------------------
+router.put('/communities/:communityId/worksheet-draft', express.json({ limit: '512kb' }), async (req, res) => {
+  const { communityId } = req.params;
+  const b = req.body || {};
+  try {
+    let savedBy = null;
+    try { const u = await require('./_require_admin').getAuthedUser(req); savedBy = (u && (u.email || (u.profile && u.profile.email))) || null; } catch (_) {}
+    const row = await worksheetDrafts.saveDraft(supabase, { communityId, type: b.type, period: b.period, lines: b.lines, removedPendingIds: b.removed_pending_item_ids, baseRevision: b.base_revision, savedBy });
+    res.json({ ok: true, draft: { revision: row.revision, saved_at: row.saved_at, saved_by: row.saved_by, generated_invoice_id: row.generated_invoice_id, generated_at: row.generated_at } });
+  } catch (err) {
+    if (err instanceof worksheetDrafts.DraftError) return res.status(err.status).json({ error: err.message, code: err.code, current: err.current || null });
+    console.error('[billing] worksheet save failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.post('/communities/:communityId/draft-invoice', async (req, res) => {
   const { communityId } = req.params;
-  const { type, period, invoice_date: invoiceDateOverride, line_items: clientLines } = req.body || {};
+  const { type, period, invoice_date: invoiceDateOverride, line_items: clientLines, draft_revision: draftRevision } = req.body || {};
 
   if (!['fixed', 'activity'].includes(type)) {
     return res.status(400).json({ error: "type must be 'fixed' or 'activity'" });
@@ -473,6 +513,11 @@ router.post('/communities/:communityId/draft-invoice', async (req, res) => {
         kill_switch_id: halt.id
       });
     }
+
+    // A newer SAVED worksheet than the one on this screen: refuse, never let a
+    // generate click silently override later saved work (Ed 2026-10-07).
+    try { await worksheetDrafts.assertGenerateNotStale(supabase, { communityId, type, period, draftRevision }); }
+    catch (e) { if (e instanceof worksheetDrafts.DraftError) return res.status(e.status).json({ error: e.message, code: e.code, current: e.current || null }); throw e; }
 
     // Resolve community + active contract.
     const { data: comm, error: commErr } = await supabase
@@ -592,7 +637,9 @@ router.post('/communities/:communityId/draft-invoice', async (req, res) => {
         }
       });
     if (evErr) throw evErr;
-
+    // Link the saved worksheet to the invoice it became (never creates one).
+    try { await worksheetDrafts.markGenerated(supabase, { communityId, type, period, draftRevision, invoiceId: invoiceRows.id }); }
+    catch (e) { console.warn('[billing] worksheet mark-generated skipped:', e.message); }
     res.json({
       invoice: invoiceRows,
       line_items_count: lineItems.length,

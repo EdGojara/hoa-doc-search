@@ -1,0 +1,83 @@
+{
+  "migration": "493_billing_worksheet_drafts.sql",
+  "summary": "Bedrock Office Billing Save Progress: creates billing_worksheet_drafts, one saved invoice worksheet per community + invoice type + service month (lines, removed one-offs, revision, saved_at/by, generated invoice link). Workpaper only; no invoice, line item, pending item or accounting row is touched.",
+  "requires": [
+    "296_billing_pending_items.sql"
+  ],
+  "preflight": [
+    {
+      "name": "invoices exists (002)",
+      "sql": "SELECT count(*)::int FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'invoices'",
+      "expect": 1
+    },
+    {
+      "name": "billing_worksheet_drafts does not exist yet",
+      "sql": "SELECT count(*)::int FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'billing_worksheet_drafts'",
+      "expect": 0
+    }
+  ],
+  "expected_changes": [
+    "Creates table billing_worksheet_drafts with UNIQUE (community_id, invoice_type, service_period), FKs to communities (cascade) and invoices (set null), CHECKs on type, period format, revision and jsonb arrays.",
+    "Grants SELECT, INSERT, UPDATE to service_role.",
+    "No existing row in any table is changed."
+  ],
+  "objects": {
+    "added": [
+      "column:billing_worksheet_drafts.community_id",
+      "column:billing_worksheet_drafts.created_at",
+      "column:billing_worksheet_drafts.generated_at",
+      "column:billing_worksheet_drafts.generated_invoice_id",
+      "column:billing_worksheet_drafts.id",
+      "column:billing_worksheet_drafts.invoice_type",
+      "column:billing_worksheet_drafts.lines",
+      "column:billing_worksheet_drafts.removed_pending_item_ids",
+      "column:billing_worksheet_drafts.revision",
+      "column:billing_worksheet_drafts.saved_at",
+      "column:billing_worksheet_drafts.saved_by",
+      "column:billing_worksheet_drafts.service_period",
+      "constraint:billing_worksheet_drafts.billing_worksheet_drafts_community_fk",
+      "constraint:billing_worksheet_drafts.billing_worksheet_drafts_invoice_fk",
+      "constraint:billing_worksheet_drafts.billing_worksheet_drafts_lines_array",
+      "constraint:billing_worksheet_drafts.billing_worksheet_drafts_period_check",
+      "constraint:billing_worksheet_drafts.billing_worksheet_drafts_pkey",
+      "constraint:billing_worksheet_drafts.billing_worksheet_drafts_removed_array",
+      "constraint:billing_worksheet_drafts.billing_worksheet_drafts_revision_check",
+      "constraint:billing_worksheet_drafts.billing_worksheet_drafts_type_check",
+      "constraint:billing_worksheet_drafts.uq_billing_worksheet_draft",
+      "index:billing_worksheet_drafts_pkey",
+      "index:uq_billing_worksheet_draft",
+      "table:billing_worksheet_drafts"
+    ],
+    "changed": [],
+    "removed": []
+  },
+  "row_changes": {
+    "invoices": 0,
+    "invoice_line_items": 0,
+    "billing_pending_items": 0
+  },
+  "protected": [
+    { "table": "invoices", "order_by": "id" },
+    { "table": "invoice_line_items", "order_by": "id" },
+    { "table": "billing_pending_items", "order_by": "id" }
+  ],
+  "verify": [
+    {
+      "name": "table exists and is empty",
+      "sql": "SELECT count(*)::int FROM billing_worksheet_drafts",
+      "expect": 0
+    },
+    {
+      "name": "one saved worksheet per community + type + month (unique constraint present)",
+      "sql": "SELECT count(*)::int FROM pg_constraint WHERE conname = 'uq_billing_worksheet_draft' AND contype = 'u'",
+      "expect": 1
+    },
+    {
+      "name": "service_role can read, insert and update",
+      "sql": "SELECT (CASE WHEN has_table_privilege('service_role', 'billing_worksheet_drafts', 'SELECT') AND has_table_privilege('service_role', 'billing_worksheet_drafts', 'INSERT') AND has_table_privilege('service_role', 'billing_worksheet_drafts', 'UPDATE') THEN 1 ELSE 0 END)::int",
+      "expect": 1
+    }
+  ],
+  "api_checks": [],
+  "reload_schema": true
+}
