@@ -199,6 +199,31 @@ check('restored open AP never matches on amount alone: a different number, a dif
   assert.notStrictEqual(ev(buildBridge(parsed, t, { ...ctx, apApplications: STAR_APPS, restoredAp: RESTORED }), 'je:jeS').method, 'invoice_number_restored_by_opening_correction');
 });
 
+// YEAR-END CLOSE of legacy history (Canyon Gate JE-2025-CLOSE) and VOIDED never-posted documents.
+const withClose = (closeExpense = 61000, nativeExpense = 0) => {
+  const t = trusted();
+  t.journal_entry_lines.push(ln('je1', 'a5200', 61000, 0), ln('je1', 'a1000', 0, 61000));
+  if (nativeExpense) { t.journal_entries.push(je('jeN', '2026-01-20', 'ap_invoice', nativeExpense, { description: 'AP invoice NAT-1 — Vendor' })); t.journal_entry_lines.push(ln('jeN', 'a5200', nativeExpense, 0), ln('jeN', 'a2000', 0, nativeExpense)); }
+  t.journal_entries.push(je('jeC', '2026-02-28', 'closing_entry', closeExpense, { description: 'Year-end close' }));
+  t.journal_entry_lines.push(ln('jeC', 'a5200', 0, closeExpense), ln('jeC', 'a3000', closeExpense, 0));
+  t.ap_invoices.push({ id: 'invV', vendor_invoice_number: 'V-9', invoice_date: '2026-03-02', total_cents: 500, status: 'voided', voided_at: '2026-03-05T00:00:00Z', posting_journal_entry_id: null });
+  return t;
+};
+const ctxC = { ...ctx, accountNumber: (id) => ({ ...ACC, a3000: '3000' }[id] || null) };
+check('a year-end close that closes ONLY legacy-imported history is retired with the legacy imports (provenance); a close that moves Trusted-native activity is not', () => {
+  const b = buildBridge(parsed, withClose(), ctxC);
+  assert.deepStrictEqual([ev(b, 'je:jeC').classification, ev(b, 'je:jeC').method], ['ALREADY_IN_SOURCE', 'provenance_legacy_import_closing_entry']);
+  const leftOpen = buildBridge(parsed, withClose(61000, 7000), ctxC);
+  assert.strictEqual(ev(leftOpen, 'je:jeC').method, 'provenance_legacy_import_closing_entry', 'native activity left open by the close is allowed');
+  assert.deepStrictEqual(ev(leftOpen, 'je:jeC').evidence.native_entries_left_open.map((x) => [x.account, x.native_cents]), [['5200', 7000]]);
+  const movesNative = buildBridge(parsed, withClose(68000, 7000), ctxC);
+  assert.notStrictEqual(ev(movesNative, 'je:jeC').method, 'provenance_legacy_import_closing_entry', 'a close that closes native activity is a question, not provenance');
+});
+check('a document voided without ever posting is OUT_OF_SCOPE (nothing to carry)', () => {
+  const b = buildBridge(parsed, withClose(), ctxC);
+  assert.deepStrictEqual([ev(b, 'loose:ap_invoices:invV').classification, ev(b, 'loose:ap_invoices:invV').method], ['OUT_OF_SCOPE', 'voided_document_never_posted']);
+});
+
 (async () => {
   let pass = 0, fail = 0;
   console.log('Onboarding activity bridge (Issue #15 Milestone 4)');
