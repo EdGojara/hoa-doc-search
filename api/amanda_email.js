@@ -91,7 +91,7 @@ router.post('/ask', async (req, res) => {
       resolveRecipient: (h) => resolveRecipient(h, AMANDA_LOOKUP),
       searchMailbox,
       mailboxes: graphSend.isConfigured() ? [graphSend.AMANDA_MAILBOX] : [],
-      draft: desk.draftAmandaEmail,
+      drafter: desk.draftAmandaEmail,
       onEdsBehalf: false,
     });
     if (out.degraded) return res.status(503).json({ ok: false, error: 'not_understood', detail: 'Amanda could not work that one out. Try saying it a different way.' });

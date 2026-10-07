@@ -211,13 +211,36 @@ check('Tessa keeps her address book by default; Amanda opts out of it', () => {
   assert.match(src('api/amanda_email.js'), /AMANDA_LOOKUP = \{ addressBook: false, staff: true \}/);
 });
 check('the shared request runner defaults to Tessa’s drafter, so Tessa is unchanged', () => {
-  assert.match(src('lib/ea/tessa_request.js'), /draft = draftEmail, onEdsBehalf = true/);
+  assert.match(src('lib/ea/tessa_request.js'), /drafter = draftEmail, onEdsBehalf = true/);
+  assert.match(src('api/amanda_email.js'), /drafter: desk\.draftAmandaEmail/);
 });
 check('the card loads the desk and shows blocked/failed reasons', () => {
   const h = src('public/app/today.html');
   for (const id of ['th-em-p-outbox', 'th-em-p-ask', 'th-em-p-draft', 'th-em-p-activity']) assert.ok(h.includes('id="' + id + '"'), id);
   assert.ok(h.includes("TX.get('/api/amanda/email')"));
   assert.ok(/Blocked: /.test(h) && /Last attempt failed: /.test(h));
+});
+
+console.log('\nThe modules actually compile');
+// A source-text check passed while lib/ea/tessa_request.js could not load
+// ("Identifier 'draft' has already been declared": the injected drafter param
+// shared a name with the result variable), which broke Ask Tessa and Ask Amanda
+// in production on 2026-10-06. Compile every module these features load, the way
+// Node does, without executing it (no database needed).
+check('Ask Tessa / Ask Amanda modules compile (catches duplicate declarations and other SyntaxErrors)', () => {
+  const vm = require('vm');
+  for (const f of ['lib/ea/tessa_request.js', 'lib/ea/tessa.js', 'api/tessa.js', 'api/amanda_email.js', 'api/amanda.js',
+    'lib/amanda/email_console.js', 'lib/amanda/email_inbox.js', 'lib/amanda/emma_handoff.js', 'lib/team/reply_judgment.js']) {
+    const code = fs.readFileSync(path.join(__dirname, '..', f), 'utf8');
+    try { new vm.Script(`(function (exports, require, module, __filename, __dirname) {\n${code}\n})`, { filename: f }); }
+    catch (e) { throw new Error(`${f} does not compile: ${e.message}`); }
+  }
+});
+check('runRequest takes the injected drafter under a name that cannot collide with its result', () => {
+  const s = src('lib/ea/tessa_request.js');
+  assert.match(s, /mailboxes, drafter = draftEmail, onEdsBehalf = true \}/);
+  assert.match(s, /const d = await drafter\(\{/);
+  assert.match(s, /let draft = null;/);
 });
 
 Promise.all(pending).then(() => console.log('\n' + passed + ' checks passed' + (process.exitCode ? ', with failures' : '')));
