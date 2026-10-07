@@ -151,11 +151,60 @@ check('opening reclass is a sourced decision, never a plug: no evidence artifact
     assert.ok(!kind(s, 'gl_opening_balance').some((l) => l.account_code === '1310'));
   }
 });
+// ---- Opening corrections of proven source errors (Ed 2026-10-07): Canyon Gate's $24.75.
+// The bank debited a check shortfall once; Vantaca booked it twice, so the source 1300
+// carries an extra 24.75 and cash 1000 is 24.75 short. Approved in the opening:
+// Dr 1000 24.75 / Cr 1300 24.75. Synthetic: on top of the legacy fixture, 1300 +24.75
+// and 1000 -24.75 (TB still balances).
+const DUP = 2475;
+const withLegacyAndDuplicate = () => {
+  const p = withLegacy();
+  const rows = p.gl_trial_balance.rows.map((r) => (r.domain === 'gl_account_balance' && r.account_code === '1300' ? { ...r, ending_cents: r.ending_cents + DUP }
+    : r.domain === 'gl_account_balance' && r.account_code === '1000' ? { ...r, ending_cents: r.ending_cents - DUP } : r));
+  return { ...p, gl_trial_balance: { ...p.gl_trial_balance, rows } };
+};
+const BANK_SHA = 'b'.repeat(64);
+const CORRECTION = { lines: [{ account: '1000', amount_cents: DUP }, { account: '1300', amount_cents: -DUP }],
+  reason: 'Check shortfall debited once by the bank (3/9/2026) but booked twice in Vantaca (3/9 AP post item and 7/7 owner adjustment); owner paid once',
+  evidence: { description: 'Columbia Bank statement March 2026, account 3170', artifact_sha256: BANK_SHA, locator: '03-09 Deposit Adj Debit 3/6 Ck 12134 La $1425.00 Sb $1400.25 $24.75' },
+  approved_by: 'Ed Gojara', approved_at: '2026-10-07' };
+check('opening correction: Dr 1000 / Cr 1300 24.75 with the 1310 reclass -> 1300 = homeowner detail exactly, cash restored, opening balanced, each line cites its decision', () => {
+  const base = { ...ID, roles: ROLES, opening_reclasses: [RECLASS], artifact_shas: [EVIDENCE_SHA, BANK_SHA] };
+  const before = buildSnapshot(withLegacyAndDuplicate(), base);
+  assert.strictEqual(comp(before, 'ar_detail').unsupported_cents, DUP, 'without the correction the duplicate is unsupported AR');
+  const s = buildSnapshot(withLegacyAndDuplicate(), { ...base, opening_corrections: [CORRECTION] });
+  const gl = kind(s, 'gl_opening_balance');
+  const g = (c) => gl.find((l) => l.account_code === c);
+  assert.deepStrictEqual([g('1300').amount_cents, g('1300').source_ending_cents, g('1300').reclassified_cents], [51000, 51000 + LEGACY + DUP, -(LEGACY + DUP)]);
+  assert.deepStrictEqual([g('1000').amount_cents, g('1000').source_ending_cents], [143500, 143500 - DUP]);
+  assert.strictEqual(g('1310').amount_cents, LEGACY);
+  assert.strictEqual(g('1000').corrections[0].evidence.locator, CORRECTION.evidence.locator);
+  assert.strictEqual(g('1300').corrections[0].amount_cents, -DUP);
+  assert.strictEqual(total(gl), 0);
+  for (const k of ['snapshot.opening_corrections_documented', 'snapshot.opening_reclasses_documented', 'snapshot.gl_lines_equal_source_ending_tb', 'snapshot.gl_opening_balances_balance', 'snapshot.ar_detail_supports_gl']) assert.strictEqual(ctl(s, k).status, 'PASS', k);
+});
+check('a correction is sourced and balanced or it moves NOTHING (and blocks the reclass too): unbalanced, no evidence artifact, no approval, unknown account, or a sign flip -> FAIL', () => {
+  const bad = [
+    { ...CORRECTION, lines: [{ account: '1000', amount_cents: DUP }, { account: '1300', amount_cents: -DUP + 1 }] },
+    { ...CORRECTION, evidence: { ...CORRECTION.evidence, artifact_sha256: 'c'.repeat(64) } },
+    { ...CORRECTION, approved_by: '' },
+    { ...CORRECTION, lines: [{ account: '1999', amount_cents: DUP }, { account: '1300', amount_cents: -DUP }] },
+    { ...CORRECTION, lines: [{ account: '1000', amount_cents: 999999 }, { account: '1300', amount_cents: -999999 }] },   // would flip 1300 negative
+  ];
+  for (const c of bad) {
+    const s = buildSnapshot(withLegacyAndDuplicate(), { ...ID, roles: ROLES, opening_reclasses: [RECLASS], opening_corrections: [c], artifact_shas: [EVIDENCE_SHA, BANK_SHA] });
+    assert.strictEqual(ctl(s, 'snapshot.opening_corrections_documented').status, 'FAIL', JSON.stringify(c.lines));
+    const g = (code) => kind(s, 'gl_opening_balance').find((l) => l.account_code === code);
+    assert.strictEqual(g('1300').amount_cents, 51000 + LEGACY + DUP, 'nothing moves');
+    assert.strictEqual(g('1000').amount_cents, 143500 - DUP);
+    assert.ok(!g('1310'), 'the reclass does not apply alone either');
+  }
+});
 check('opening reclasses are owner-only in the service, and the stage route passes them through', () => {
   const svc = fs.readFileSync(path.join(__dirname, '..', 'lib', 'onboarding', 'service.js'), 'utf8');
-  assert.match(svc, /if \(openingReclasses\.length && !\(actor && actor\.role === 'owner'\)\) throw new ServiceError\(403, 'OWNER_ONLY'/);
-  assert.match(svc, /opening_reclasses: openingReclasses, artifact_shas: view\.artifacts\.map\(\(a\) => a\.sha256\)/);
-  assert.match(fs.readFileSync(path.join(__dirname, '..', 'api', 'onboarding.js'), 'utf8'), /opening_reclasses: b\.opening_reclasses/);
+  assert.match(svc, /if \(\(openingReclasses\.length \|\| openingCorrections\.length\) && !\(actor && actor\.role === 'owner'\)\) throw new ServiceError\(403, 'OWNER_ONLY'/);
+  assert.match(svc, /opening_reclasses: openingReclasses, opening_corrections: openingCorrections, artifact_shas: view\.artifacts\.map\(\(a\) => a\.sha256\)/);
+  assert.match(fs.readFileSync(path.join(__dirname, '..', 'api', 'onboarding.js'), 'utf8'), /opening_reclasses: b\.opening_reclasses, opening_corrections: b\.opening_corrections/);
 });
 check('the snapshot module holds no database client and makes no writes', () => {
   const s = fs.readFileSync(path.join(__dirname, '..', 'lib', 'onboarding', 'snapshot.js'), 'utf8').replace(/\/\/.*$/gm, '');
