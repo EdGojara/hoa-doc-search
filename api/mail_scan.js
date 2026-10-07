@@ -271,6 +271,19 @@ router.post('/log', upload.single('file'), async (req, res) => {
           buffer: req.file.buffer, filename: req.file.originalname || 'scanned_invoice.pdf',
           intakeMethod: 'mail_scan', sourceRef: `library:${doc.id}`, communityId: meta.community_id || null,
         });
+        // A scanned bill that could not file (no vendor/community/total, or the
+        // date check held it) waits in Payables exceptions with its PDF, the same
+        // as email and upload. Never only a field in this response.
+        if (apIntake && apIntake.outcome === 'needs_review') {
+          const { recordException } = require('../lib/ap/intake_exceptions');
+          const ex = await recordException({
+            sourceRef: `library:${doc.id}`, reason: apIntake.reason, extracted: apIntake.extracted || {},
+            storagePath: apIntake.storage_path || null, sha256: apIntake.sha256 || null,
+            communityId: meta.community_id || null, suggestedVendorId: apIntake.suggested_vendor_id || null,
+          });
+          if (!ex.ok) console.warn('[mail-scan] AP exception not recorded:', ex.reason);
+          apIntake.exception_id = ex.ok ? ex.id : null;
+        }
       }
     } catch (e) { console.warn('[mail-scan] AP intake skipped:', e.message); }
 

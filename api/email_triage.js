@@ -1787,7 +1787,7 @@ router.post('/:id/to-payables', express.json(), async (req, res) => {
     }
     let loaded = 0, dup = 0, exceptioned = 0; const held = [];
     for (const pdf of pdfs) {
-      const out = await autoIntake({ buffer: pdf.buffer, filename: pdf.filename, intakeMethod: 'email', sourceRef: `email:${m.graph_id}`, communityId: m.community_id || null, vendorIdHint: m.resolved_vendor_id || null, achHintText: m.subject || '', staffNote: m.body_full || m.body_preview || '', staffSenderEmail: m.sender_email || '', emailSubject: m.subject || '' });
+      const out = await autoIntake({ buffer: pdf.buffer, filename: pdf.filename, intakeMethod: 'email', sourceRef: `email:${m.graph_id}`, communityId: m.community_id || null, vendorIdHint: m.resolved_vendor_id || null, achHintText: m.subject || '', staffNote: m.body_full || m.body_preview || '', staffSenderEmail: m.sender_email || '', emailSubject: m.subject || '', receivedAt: m.received_at || null });
       if (out && out.outcome === 'loaded') loaded += 1;
       else if (out && (out.outcome === 'held_suspected_duplicate' || out.outcome === 'blocked_duplicate')) dup += 1;
       else if (out && out.outcome === 'needs_review') {
@@ -2049,7 +2049,7 @@ router.post('/vendor-process', express.json(), async (req, res) => {
           if (picked.status === 'stale') { results.push({ id: m.id, label, action: 'needs_manual', disposition: cls.disposition, method: cls.method, reason: 'the email was filed since it arrived — click Pull inbox, then try again' }); continue; }
           if (picked.status !== 'ok') { results.push({ id: m.id, label, action: 'needs_manual', disposition: cls.disposition, method: cls.method, reason: 'no invoice PDF found in the attachments (bill may be in the email body)' }); continue; }
           const emailCommunityHint = [m.subject || '', (m.extracted && m.extracted.community_hint) || '', ((m.extracted && m.extracted.addresses) || []).join(' ')].join(' ').trim();
-          const out = await autoIntake({ buffer: picked.buffer, filename: picked.filename, intakeMethod: 'email', sourceRef: `email:${m.graph_id}`, communityId: m.community_id || null, vendorIdHint: m.resolved_vendor_id || null, achHintText: m.subject || '', communityHint: emailCommunityHint, staffNote: m.body_full || m.body_preview || '', staffSenderEmail: m.sender_email || '' });
+          const out = await autoIntake({ buffer: picked.buffer, filename: picked.filename, intakeMethod: 'email', sourceRef: `email:${m.graph_id}`, communityId: m.community_id || null, vendorIdHint: m.resolved_vendor_id || null, achHintText: m.subject || '', communityHint: emailCommunityHint, staffNote: m.body_full || m.body_preview || '', staffSenderEmail: m.sender_email || '', receivedAt: m.received_at || null });
           const oc = out && out.outcome;
           if (oc === 'loaded' || oc === 'held_suspected_duplicate') {
             await supabase.from('email_messages').update({ triage_status: 'handled', reviewed_by: b.reviewed_by || 'emma-bulk', reviewed_at: now }).eq('id', m.id);

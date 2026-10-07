@@ -76,6 +76,19 @@ router.post('/commit', express.json({ limit: '2mb' }), async (req, res) => {
       sha256: b.sha256 || null, storagePath: b.storage_path || null,
       intakeMethod: b.intake_method || 'manual_upload', sourceRef: b.source_ref || null,
     });
+    // A date-check hold is not a dead end on this screen: the bill and its
+    // reason go to the Payables exceptions list, where a person corrects or
+    // confirms the dates.
+    if (result.outcome === 'needs_review' && result.date_check) {
+      const { recordException } = require('../lib/ap/intake_exceptions');
+      const ex = await recordException({
+        sourceRef: b.source_ref || (b.sha256 ? `upload:${String(b.sha256).slice(0, 16)}` : null), reason: result.reason,
+        extracted: b.extracted, storagePath: b.storage_path || null, sha256: b.sha256 || null,
+        communityId: b.community_id, suggestedVendorId: b.vendor_id,
+      });
+      if (!ex.ok) console.warn('[ap_intake] date-check exception not recorded:', ex.reason);
+      result.exception_id = ex.ok ? ex.id : null;
+    }
     res.json({ ok: true, ...result });
   } catch (err) {
     console.error('[ap_intake] commit failed:', err.message);
@@ -203,6 +216,8 @@ router.get('/stragglers', async (req, res) => {
 // invoice_date?, total_cents?, account_id? } -> load to Payables. The date/total
 // finish a bill that printed none (no_date / no_total); account_id codes it to
 // that account on THIS community's chart. Who entered them is the signed-in admin.
+// A date-check hold also takes due_date / service_period_start / service_period_end
+// corrections and dates_confirmed (the dates are right as shown).
 router.post('/exceptions/:id/resolve', express.json({ limit: '8kb' }), async (req, res) => {
   const admin = await requireAdmin(req, res); if (!admin) return;
   try {
@@ -210,6 +225,7 @@ router.post('/exceptions/:id/resolve', express.json({ limit: '8kb' }), async (re
     const { promoteException } = require('../lib/ap/intake_exceptions');
     const out = await promoteException(req.params.id, { communityId: b.community_id || null, vendorId: b.vendor_id || null, vendorName: b.vendor_name || null,
       invoiceDate: b.invoice_date || null, totalCents: b.total_cents != null && b.total_cents !== '' ? Number(b.total_cents) : null, accountId: b.account_id || null,
+      dueDate: b.due_date, servicePeriodStart: b.service_period_start, servicePeriodEnd: b.service_period_end, datesConfirmed: b.dates_confirmed === true,
       resolvedBy: admin.full_name || 'staff' });
     if (!out.ok) return res.status(out.error === 'not_found' ? 404 : 400).json(out);
     res.json(out);
