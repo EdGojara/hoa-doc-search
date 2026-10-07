@@ -203,6 +203,7 @@ const CHECKS = [
   'tests/sql/488_apply_one_e2e.mjs',
   'tests/sql/onboarding_operator_e2e.mjs',
   'tests/sql/onboarding_preflight_e2e.mjs',
+  'tests/sql/onboarding_bridge_refresh_e2e.mjs',
   'tests/sql/onboarding_execute_e2e.mjs',
   'tests/sql/onboarding_service_e2e.mjs',
   'tests/sql/489_apply_one_e2e.mjs',

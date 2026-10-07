@@ -90,7 +90,7 @@ check('create validates fields; run passes only roles + authoritative; upload pa
   assert.strictEqual((await req('POST', '/batches', { user: 'admin', body: { community_id: 'c1' } })).status, 400);
   assert.strictEqual((await req('POST', '/batches', { user: 'admin', body: { community_id: 'c1', batch_code: 'B', as_of_date: '2026-07-31', source_system: 'vantaca' } })).json.id, 'b-new');
   await req('POST', '/batches/b1/run', { user: 'admin', body: { roles: { ar_account: '1300' }, authoritative: {}, stage: 'execute', actor_kind: 'human' } });
-  assert.deepStrictEqual(service.calls.find((c) => c.name === 'runStage').args[2], { roles: { ar_account: '1300' }, authoritative: {}, ap_account: undefined, fund_by_account: undefined, opening_reclasses: undefined, opening_corrections: undefined, ledger_dispositions: undefined, former_owner_routing: undefined, fund_allocations: undefined });
+  assert.deepStrictEqual(service.calls.find((c) => c.name === 'runStage').args[2], { roles: { ar_account: '1300' }, authoritative: {}, ap_account: undefined, fund_by_account: undefined, opening_reclasses: undefined, opening_corrections: undefined, ledger_dispositions: undefined, former_owner_routing: undefined, fund_allocations: undefined, refresh_bridge: false });
   const fd = new FormData(); fd.append('file', new Blob([Buffer.from('report text')]), 'gl.txt'); fd.append('artifact_type', 'gl_trial_balance');
   assert.strictEqual((await req('POST', '/batches/b1/artifacts', { user: 'admin', form: fd })).json.id, 'a-1');
   const up = service.calls.find((c) => c.name === 'registerArtifact').args;
