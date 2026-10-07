@@ -203,7 +203,8 @@ check('a correction is sourced and balanced or it moves NOTHING (and blocks the 
 check('opening reclasses are owner-only in the service, and the stage route passes them through', () => {
   const svc = fs.readFileSync(path.join(__dirname, '..', 'lib', 'onboarding', 'service.js'), 'utf8');
   assert.match(svc, /if \(\(openingReclasses\.length \|\| openingCorrections\.length\) && !\(actor && actor\.role === 'owner'\)\) throw new ServiceError\(403, 'OWNER_ONLY'/);
-  assert.match(svc, /opening_reclasses: openingReclasses, opening_corrections: openingCorrections, artifact_shas: view\.artifacts\.map\(\(a\) => a\.sha256\)/);
+  assert.match(svc, /opening_reclasses: openingReclasses, opening_corrections: openingCorrections,/);
+  assert.match(svc, /artifact_shas: \[\.\.\.view\.artifacts\.map\(\(a\) => a\.sha256\), \.\.\.\(await listEvidence\(view\.batch\.id\)\)\.map\(\(e\) => e\.sha256\)\]/, 'evidence-only documents (495) are citable');
   assert.match(fs.readFileSync(path.join(__dirname, '..', 'api', 'onboarding.js'), 'utf8'), /opening_reclasses: b\.opening_reclasses, opening_corrections: b\.opening_corrections/);
 });
 check('the snapshot module holds no database client and makes no writes', () => {
