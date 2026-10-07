@@ -171,7 +171,7 @@ function buildRouter({ service, auth, listCommunities }) {
   });
 
   router.post('/batches/:id/run', express.json({ limit: '64kb' }), async (req, res) => {
-    try { const a = await admin(req, res); if (!a) return; const b = req.body || {}; res.json(await service.runStage(a, req.params.id, { roles: b.roles, authoritative: b.authoritative, ap_account: b.ap_account, fund_by_account: b.fund_by_account, opening_reclasses: b.opening_reclasses, opening_corrections: b.opening_corrections })); }
+    try { const a = await admin(req, res); if (!a) return; const b = req.body || {}; res.json(await service.runStage(a, req.params.id, { roles: b.roles, authoritative: b.authoritative, ap_account: b.ap_account, fund_by_account: b.fund_by_account, opening_reclasses: b.opening_reclasses, opening_corrections: b.opening_corrections, ledger_dispositions: b.ledger_dispositions })); }
     catch (e) { fail(res, e, 'run'); }
   });
 
