@@ -168,6 +168,37 @@ check('bridge and loader modules hold no DB client and no write calls', () => {
   }
 });
 
+// RESTORED OPEN AP (Ed 2026-10-07, Canyon Gate / Star Protection): an approved opening
+// correction restored invoice ST-1 to AP at the cutoff (the source's payment was book-only).
+const withStar = () => {
+  const t = trusted();
+  t.journal_entries.push(je('jeS', '2026-03-20', 'ap_invoice', 7000, { description: 'AP invoice ST-1 — Star' }), je('jeP', '2026-04-08', 'payment_intake', 7000, { description: 'AP payment check #1003' }),
+    je('jeQ', '2026-04-09', 'payment_intake', 9000, { description: 'AP payment check #1004' }));
+  t.journal_entry_lines.push(ln('jeS', 'a5200', 7000, 0), ln('jeS', 'a2000', 0, 7000), ln('jeP', 'a2000', 7000, 0), ln('jeP', 'a1000', 0, 7000), ln('jeQ', 'a2000', 9000, 0), ln('jeQ', 'a1000', 0, 9000));
+  t.ap_invoices.push({ id: 'invS', vendor_invoice_number: 'ST-1', invoice_date: '2026-03-20', total_cents: 7000, posting_journal_entry_id: 'jeS' });
+  t.ap_payments.push({ id: 'payS', check_number: '1003', payment_date: '2026-04-08', amount_cents: 7000, posting_journal_entry_id: 'jeP' }, { id: 'payQ', check_number: '1004', payment_date: '2026-04-09', amount_cents: 9000, posting_journal_entry_id: 'jeQ' });
+  return t;
+};
+const STAR_APPS = [{ payment_id: 'payS', invoice_id: 'invS', applied_cents: 7000 }, { payment_id: 'payQ', invoice_id: 'invS', applied_cents: 2000 }, { payment_id: 'payQ', invoice_id: 'inv7', applied_cents: 7000 }];
+const RESTORED = [{ line_no: 9, vendor: 'Star', invoice_number: 'ST-1', invoice_date: '2026-03-20', amount_cents: 7000 }];
+check('restored open AP: the Trusted invoice named by an approved correction (number + amount) is ALREADY_IN_SOURCE; a later payment of ONLY such invoices is LEGITIMATE_SUBSEQUENT; a payment that also pays another invoice is not', () => {
+  const plain = buildBridge(parsed, withStar(), { ...ctx, apApplications: STAR_APPS });
+  assert.strictEqual(ev(plain, 'je:jeS').classification, 'AMBIGUOUS', 'without the correction it is an open question');
+  const b = buildBridge(parsed, withStar(), { ...ctx, apApplications: STAR_APPS, restoredAp: RESTORED });
+  assert.deepStrictEqual([ev(b, 'je:jeS').classification, ev(b, 'je:jeS').method, ev(b, 'je:jeS').evidence.identifier, ev(b, 'je:jeS').evidence.snapshot_lines], ['ALREADY_IN_SOURCE', 'invoice_number_restored_by_opening_correction', 'ST-1', [9]]);
+  assert.deepStrictEqual([ev(b, 'je:jeP').classification, ev(b, 'je:jeP').method, ev(b, 'je:jeP').evidence.invoices], ['LEGITIMATE_SUBSEQUENT', 'pays_invoices_restored_by_opening_correction', ['ST-1']]);
+  assert.notStrictEqual(ev(b, 'je:jeQ').method, 'pays_invoices_restored_by_opening_correction', 'a mixed payment is not explained by the correction');
+  assert.strictEqual(b.controls.find((c) => c.code === 'bridge.no_duplicate_on_amount_alone').status, 'PASS');
+  assert.notStrictEqual(b.sha256, plain.sha256, 'the restored items are part of what the bridge result binds');
+});
+check('restored open AP never matches on amount alone: a different number, a different amount, or two Trusted invoices with the number restore nothing', () => {
+  for (const r of [[{ ...RESTORED[0], invoice_number: 'ST-2' }], [{ ...RESTORED[0], amount_cents: 7001 }]]) {
+    assert.notStrictEqual(ev(buildBridge(parsed, withStar(), { ...ctx, apApplications: STAR_APPS, restoredAp: r }), 'je:jeS').method, 'invoice_number_restored_by_opening_correction');
+  }
+  const t = withStar(); t.ap_invoices.push({ id: 'invS2', vendor_invoice_number: 'ST-1', invoice_date: '2026-03-21', total_cents: 7000, posting_journal_entry_id: null });
+  assert.notStrictEqual(ev(buildBridge(parsed, t, { ...ctx, apApplications: STAR_APPS, restoredAp: RESTORED }), 'je:jeS').method, 'invoice_number_restored_by_opening_correction');
+});
+
 (async () => {
   let pass = 0, fail = 0;
   console.log('Onboarding activity bridge (Issue #15 Milestone 4)');

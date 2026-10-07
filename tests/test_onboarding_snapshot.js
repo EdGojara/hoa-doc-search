@@ -316,6 +316,53 @@ check('opening reclasses are owner-only in the service, and the stage route pass
   assert.match(fs.readFileSync(path.join(__dirname, '..', 'api', 'onboarding.js'), 'utf8'), /opening_reclasses: b\.opening_reclasses, opening_corrections: b\.opening_corrections, ledger_dispositions: b\.ledger_dispositions, former_owner_routing: b\.former_owner_routing/);
   assert.match(svc, /artifact_shas: \[\.\.\.view\.artifacts\.map\(\(a\) => a\.sha256\), \.\.\.\(await listEvidence\(view\.batch\.id\)\)\.map\(\(e\) => e\.sha256\)\]/, 'evidence-only documents (495) are citable');
 });
+// ---- RESTORED OPEN AP (Ed 2026-10-07, Canyon Gate / Star Protection). The source booked a
+// payment that never left the bank: its GL AP is short by the invoices it "paid" and cash is
+// short by the same amount. The approved correction (Dr cash / Cr AP) names the invoices it
+// puts back into AP; they become AP detail at the cutoff (never invented, never by amount).
+const OPEN_AGING = 13000; const RESTORED = 7000; const STAR_SHA = '5'.repeat(64);
+const withBookOnlyPayment = () => {
+  const p = parse();
+  const tpl = p.gl_trial_balance.rows.find((r) => r.domain === 'gl_account_balance' && r.account_code === '1000');
+  const rows = p.gl_trial_balance.rows.map((r) => (r.domain === 'gl_account_balance' && r.account_code === '1000' ? { ...r, ending_cents: r.ending_cents + OPEN_AGING } : r));
+  rows.push({ ...tpl, account_code: '2000', account_name: 'Accounts Payable', ending_cents: -OPEN_AGING });
+  const asOf = p.ar_aging.rows.find((r) => r.domain === 'ar_aging_account').as_of;
+  return { ...p, gl_trial_balance: { ...p.gl_trial_balance, rows }, ap_aging: { as_of: asOf, rows: [makeRow('ap_open_item', { as_of: asOf, source_vendor_key: 'POOL CO', invoice_number: 'P-1', invoice_date: '2026-03-01', amount_cents: OPEN_AGING }, SRC('ap 1'))] } };
+};
+const STAR = { lines: [{ account: '1000', amount_cents: RESTORED }, { account: '2000', amount_cents: -RESTORED }], reason: 'Source payment 8680 was book-only; the invoices were paid after the cutoff',
+  evidence: { description: 'Bank statement: no debit', artifact_sha256: STAR_SHA, locator: 'no debit of 70.00' }, approved_by: 'Ed Gojara', approved_at: '2026-10-07',
+  open_ap_items: [{ vendor: 'Star Protection Agency LLC', invoice_number: '28991', invoice_date: '2026-03-13', amount_cents: 4000 }, { vendor: 'Star Protection Agency LLC', invoice_number: '28992', invoice_date: '2026-03-20', amount_cents: 3000 }] };
+const AP_ROLES = { ...ROLES, ap_account: '2000' };
+check('restored open AP: a correction that credits AP names its invoices; they are AP detail at the cutoff (with the correction as provenance) and AP detail = GL AP', () => {
+  const before = buildSnapshot(withBookOnlyPayment(), { ...ID, roles: AP_ROLES, artifact_shas: [STAR_SHA] });
+  assert.strictEqual(ctl(before, 'snapshot.ap_detail_supports_gl').status, 'PASS', 'the source alone ties (aging = GL) before the correction');
+  const s = buildSnapshot(withBookOnlyPayment(), { ...ID, roles: AP_ROLES, opening_corrections: [STAR], artifact_shas: [STAR_SHA] });
+  for (const k of ['snapshot.opening_corrections_documented', 'snapshot.ap_detail_supports_gl', 'snapshot.gl_opening_balances_balance', 'snapshot.every_line_has_provenance']) assert.strictEqual(ctl(s, k).status, 'PASS', k);
+  const r = kind(s, 'ap_detail_restored');
+  assert.deepStrictEqual(r.map((l) => [l.source_vendor_key, l.invoice_number, l.invoice_date, l.amount_cents, l.restored_by.approved_by, l.provenance[0].artifact_sha256]),
+    [['Star Protection Agency LLC', '28991', '2026-03-13', -4000, 'Ed Gojara', STAR_SHA], ['Star Protection Agency LLC', '28992', '2026-03-20', -3000, 'Ed Gojara', STAR_SHA]]);
+  const ap = comp(s, 'ap_detail');
+  assert.deepStrictEqual([ap.status, ap.control_cents, ap.supported_cents, ap.restored_invoices, ap.restored_cents], ['PASS', -(OPEN_AGING + RESTORED), -(OPEN_AGING + RESTORED), 2, RESTORED]);
+  assert.strictEqual(kind(s, 'ap_detail').length, 1, 'the aging item stays an ordinary open item');
+});
+check('restored open AP is exact or it restores NOTHING: total != the AP credit, no invoice number, a date after the cutoff, a duplicate, or a non-positive amount -> correction FAIL, no restored lines, AP not supported', () => {
+  const items = STAR.open_ap_items;
+  const bad = [
+    [{ ...items[0], amount_cents: 3999 }, items[1]],
+    [{ ...items[0], invoice_number: '' }, items[1]],
+    [{ ...items[0], invoice_date: '2026-04-01' }, items[1]],
+    [items[0], { ...items[1], invoice_number: '28991', amount_cents: 3000 }],
+    [{ ...items[0], amount_cents: 8000 }, { ...items[1], amount_cents: -1000 }],
+  ];
+  for (const its of bad) {
+    const s = buildSnapshot(withBookOnlyPayment(), { ...ID, roles: AP_ROLES, opening_corrections: [{ ...STAR, open_ap_items: its }], artifact_shas: [STAR_SHA] });
+    assert.strictEqual(ctl(s, 'snapshot.opening_corrections_documented').status, 'FAIL', JSON.stringify(its));
+    assert.strictEqual(kind(s, 'ap_detail_restored').length, 0);
+    assert.strictEqual(kind(s, 'gl_opening_balance').find((l) => l.account_code === '2000').amount_cents, -OPEN_AGING, 'the correction moves nothing');
+  }
+  const noRole = buildSnapshot(withBookOnlyPayment(), { ...ID, roles: ROLES, opening_corrections: [STAR], artifact_shas: [STAR_SHA] });
+  assert.strictEqual(ctl(noRole, 'snapshot.opening_corrections_documented').status, 'FAIL', 'open_ap_items need the AP role');
+});
 check('the snapshot module holds no database client and makes no writes', () => {
   const s = fs.readFileSync(path.join(__dirname, '..', 'lib', 'onboarding', 'snapshot.js'), 'utf8').replace(/\/\/.*$/gm, '');
   assert.ok(!/supabase|createClient|\.from\(|\.rpc\(|\.insert\(|\.upsert\(|\.delete\(|require\(['"][^'"]*(db|journal|ar_engine|ap_engine)/.test(s));
