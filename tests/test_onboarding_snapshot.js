@@ -297,7 +297,7 @@ check('former-owner routing: 1300 = current owners only; 1310 = legacy + former-
   assert.deepStrictEqual(kind(s, 'former_owner_receivable').map((l) => [l.source_account_key, l.account_code, l.amount_cents]), [['90009003', '1310', FORMER_DEBIT]]);
   assert.deepStrictEqual(kind(s, 'former_owner_refund').map((l) => [l.source_account_key, l.account_code, l.amount_cents]), [['90009001', '2410', FORMER_AR]]);
   assert.ok(!kind(s, 'ar_detail').some((l) => l.former_owner), 'no former owner left in current-owner AR');
-  for (const k of ['snapshot.former_owner_routing', 'snapshot.ar_detail_supports_gl', 'snapshot.gl_opening_balances_balance', 'snapshot.every_line_has_provenance']) assert.strictEqual(ctl(s, k).status, 'PASS', k);
+  for (const k of ['snapshot.former_owner_routing', 'snapshot.ar_detail_supports_gl', 'snapshot.ar_detail_matches_aging_by_account', 'snapshot.gl_opening_balances_balance', 'snapshot.every_line_has_provenance']) assert.strictEqual(ctl(s, k).status, 'PASS', k);
 });
 check('former-owner routing without a named approval (or into the AR account itself) FAILS and moves nothing; without routing, former owners stay in AR as before', () => {
   for (const bad of [{ ...ROUTING, approved_by: '' }, { ...ROUTING, refund_account: '1300' }, { ...ROUTING, refund_account: '2499', refund_account_name: undefined }]) {
