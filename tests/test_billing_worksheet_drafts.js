@@ -2,7 +2,7 @@
 // tests/test_billing_worksheet_drafts.js  (Ed 2026-10-07)
 // ----------------------------------------------------------------------------
 // Bedrock Office Billing: SAVE PROGRESS on the community invoice worksheet, and
-// Still Creek Ranch's "Bank Fees" category.
+// Still Creek Ranch's NSF / Insufficient Funds Fee category.
 //
 //   * Saving stores the worksheet (edited rates, quantities, amounts, removed
 //     categories, one-off choices) and never touches invoices.
@@ -13,8 +13,9 @@
 //     one-offs stay removed, one-offs billed elsewhere are dropped (never twice).
 //   * Generate uses the on-screen values and is refused when a newer save
 //     exists; afterwards the worksheet records the invoice it became.
-//   * Bank Fees is a rate-card row on Still Creek's contract (data, not page
-//     logic), at cost, manual (no activity source).
+//   * The NSF fee ($35.00 per occurrence) is a rate-card row on Still Creek's
+//     contract (data, not page logic), on the Activity invoice by default, no
+//     activity source: qty 0 = $0, 1 = $35, 2 = $70.
 //
 //   node tests/test_billing_worksheet_drafts.js
 // ============================================================================
@@ -164,15 +165,55 @@ check('page: Save progress in both areas, last-saved status, restore skips activ
   assert.match(page, /💾 Last saved/);
 });
 
-console.log('\nStill Creek Ranch: Bank Fees');
-check('Bank Fees is a rate-card row on Still Creek’s active contract: at cost, on the invoice by default, no activity source, idempotent', () => {
-  const sql = fs.readFileSync(path.join(__dirname, '..', 'migrations', '494_still_creek_bank_fees.sql'), 'utf8');
-  assert.match(sql, /'bank_fees', 'Bank Fees', 'at_cost', NULL,/);
+console.log('\nStill Creek Ranch: NSF / Insufficient Funds Fee');
+check('NSF fee is a rate-card row on Still Creek’s active contract: per unit $35.00, on the Activity invoice by default, no activity source, idempotent, not in the defaults', () => {
+  const sql = fs.readFileSync(path.join(__dirname, '..', 'migrations', '494_still_creek_nsf_fee.sql'), 'utf8');
+  assert.match(sql, /'nsf_charge', 'NSF \/ Insufficient Funds Fee', 'per_unit', 35\.00,/);
   assert.match(sql, /c\.community_id = 'a0000000-0000-4000-8000-000000000006'/);
-  assert.match(sql, /AND NOT EXISTS \(SELECT 1 FROM contract_reimbursables r WHERE r\.contract_id = c\.id AND r\.category = 'bank_fees'\)/);
-  assert.match(sql, /, 60, true/);
-  assert.ok(!/bank_fees/.test(page), 'no Still Creek / bank-fee special case in page logic');
-  assert.ok(!/bank_fees/.test(api), 'no bank-fee special case in the API: it flows through the rate card like every category');
+  assert.match(sql, /AND NOT EXISTS \(SELECT 1 FROM contract_reimbursables r WHERE r\.contract_id = c\.id AND r\.category = 'nsf_charge'\)/);
+  assert.match(sql, /, 60, true\s*\n\s*FROM contracts c/, 'sort 60, default_on_invoice true');
+  assert.ok(!/bedrock_contract_defaults/.test(sql.replace(/--.*$/gm, '')), 'not added to the reusable Contract Defaults');
+  assert.ok(!/vantaca_source/.test(sql.replace(/--.*$/gm, '')), 'no activity source');
+  assert.ok(!/nsf_charge|Insufficient Funds/.test(page), 'no NSF special case in page logic');
+  assert.ok(!/'nsf_charge'/.test(api.replace(/\/\/.*$/gm, '')), 'no NSF special case in the API: it flows through the rate card like every category');
+  assert.ok(!fs.existsSync(path.join(__dirname, '..', 'migrations', '494_still_creek_bank_fees.sql')), 'the generic Bank Fees item is gone');
+});
+
+// The worksheet line exactly as the preview builds it from that rate-card row
+// (api/billing.js buildDraftLineItems: qty 0, unit_price from the rate card).
+const NSF_LINE = () => ({ source: 'reimbursable', category: 'nsf_charge', description: 'NSF / Insufficient Funds Fee', qty: 0, unit_price: 35, amount: 0, sort_order: 60 });
+function extractFn(src, name) {
+  const i = src.indexOf(`function ${name}(`); if (i < 0) throw new Error('missing ' + name);
+  let depth = 0; let j = src.indexOf('{', i);
+  for (let k = j; k < src.length; k++) { if (src[k] === '{') depth++; else if (src[k] === '}') { depth--; if (depth === 0) return src.slice(i, k + 1); } }
+  throw new Error('unbalanced ' + name);
+}
+check('NSF in the worksheet is intuitive: type the number of occurrences -> qty 0 = $0.00, qty 1 = $35.00, qty 2 = $70.00 (subtotal follows, marked unsaved)', () => {
+  const vm = require('vm');
+  const els = {};
+  const document = { getElementById: (id) => (els[id] = els[id] || { value: '', textContent: '', innerHTML: '' }) };
+  const ctx = { document, billingDraftState: { activity: { lines: [NSF_LINE()], removedPending: [], dirty: false, revision: 0 } },
+    billingMoney: (n) => '$' + Number(n).toFixed(2), escapeHtml: (s) => String(s), Math, Number, String };
+  vm.createContext(ctx);
+  for (const fn of ['billingDraftPreviewSubtotal', 'billingDraftPreviewQty', 'billingDraftPreviewRate', 'billingDraftPreviewAmount', 'billingMarkDirty', 'billingRenderSaveStatus']) vm.runInContext(extractFn(page, fn), ctx);
+  const line = ctx.billingDraftState.activity.lines[0];
+  assert.deepStrictEqual([line.qty, line.amount], [0, 0], 'qty 0 = $0.00 on load');
+  const seen = [];
+  for (const q of [0, 1, 2]) { vm.runInContext(`billingDraftPreviewQty('activity', 0, '${q}')`, ctx); seen.push([q, line.amount, els['billing-preview-amt-activity-0'].value, els['billing-preview-subtotal-activity'].textContent]); }
+  assert.deepStrictEqual(seen, [[0, 0, 0, '$0.00'], [1, 35, 35, '$35.00'], [2, 70, 70, '$70.00']]);
+  assert.strictEqual(ctx.billingDraftState.activity.dirty, true, 'an edit shows "unsaved changes"');
+  vm.runInContext(`billingDraftPreviewAmount('activity', 0, '105')`, ctx);   // typing an amount back-fills the rate, qty stays 2
+  assert.deepStrictEqual([line.qty, line.unit_price, line.amount], [2, 52.5, 105]);
+});
+check('Generate bills exactly qty x $35.00 (server recomputes amount from qty and rate)', () => {
+  const vm = require('vm');
+  const ctx = { money: (n) => Math.round(Number(n) * 100) / 100, Array, Number, String, Math };
+  vm.createContext(ctx);
+  vm.runInContext(extractFn(api, 'sanitizeDraftLines'), ctx);
+  for (const [q, want] of [[0, 0], [1, 35], [2, 70]]) {
+    const [li] = vm.runInContext(`sanitizeDraftLines([${JSON.stringify({ ...NSF_LINE(), qty: q, amount: 999 })}])`, ctx);
+    assert.deepStrictEqual([li.category, li.qty, li.unit_price, li.amount], ['nsf_charge', q, 35, want]);
+  }
 });
 
 Promise.all(pending).then(() => console.log('\n' + passed + ' checks passed' + (process.exitCode ? ', with failures' : '')));
