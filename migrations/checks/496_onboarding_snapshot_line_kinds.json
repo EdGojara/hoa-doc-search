@@ -1,0 +1,46 @@
+{
+  "migration": "496_onboarding_snapshot_line_kinds.sql",
+  "summary": "Widens the onboarding_snapshot_lines kind CHECK to the three line kinds the snapshot now emits (former_owner_receivable, former_owner_refund, ap_detail_restored). No rows change.",
+  "requires": [
+    "483_onboarding_snapshot.sql"
+  ],
+  "preflight": [
+    {
+      "name": "onboarding_snapshot_lines exists (483)",
+      "sql": "SELECT count(*)::int FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'onboarding_snapshot_lines'",
+      "expect": 1
+    },
+    {
+      "name": "every existing line uses one of the original six kinds",
+      "sql": "SELECT count(*)::int FROM onboarding_snapshot_lines WHERE kind NOT IN ('gl_opening_balance','ar_detail','ar_aging_item','prepaid_detail','ap_detail','unsupported_detail')",
+      "expect": 0
+    }
+  ],
+  "expected_changes": [
+    "Replaces CHECK onboarding_snapshot_lines_kind_check with the original six kinds plus former_owner_receivable, former_owner_refund and ap_detail_restored.",
+    "No onboarding_snapshot_lines, stage-event or batch rows change."
+  ],
+  "objects": {
+    "added": [],
+    "changed": [
+      "constraint:onboarding_snapshot_lines.onboarding_snapshot_lines_kind_check"
+    ],
+    "removed": []
+  },
+  "row_changes": {
+    "onboarding_snapshot_lines": 0
+  },
+  "protected": [
+    {
+      "table": "onboarding_snapshot_lines",
+      "order_by": "id"
+    }
+  ],
+  "verify": [
+    {
+      "name": "the CHECK now admits ap_detail_restored and both former-owner kinds",
+      "sql": "SELECT count(*)::int FROM pg_constraint WHERE conname = 'onboarding_snapshot_lines_kind_check' AND pg_get_constraintdef(oid) LIKE '%ap_detail_restored%' AND pg_get_constraintdef(oid) LIKE '%former_owner_receivable%' AND pg_get_constraintdef(oid) LIKE '%former_owner_refund%'",
+      "expect": 1
+    }
+  ]
+}

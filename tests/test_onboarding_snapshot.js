@@ -382,6 +382,20 @@ check('fund allocation is exact or applies NOTHING: parts not equal to the openi
     assert.ok(kind(s, 'gl_opening_balance').every((x) => !x.fund_allocation));
   }
 });
+// SCAR (2026-10-07): #78 / #80 added snapshot line kinds the 483 CHECK never listed, and the
+// first official snapshot was refused by the database. Every kind the snapshot can emit must
+// be in the LATEST migration that defines onboarding_snapshot_lines_kind_check.
+check('every snapshot line kind the code can emit is allowed by the database CHECK (latest migration)', () => {
+  const dir = path.join(__dirname, '..', 'migrations');
+  const files = fs.readdirSync(dir).filter((f) => /^\d+_.*\.sql$/.test(f)).sort();
+  let allowed = null;
+  for (const f of files) { const sql = fs.readFileSync(path.join(dir, f), 'utf8'); const m = /onboarding_snapshot_lines_kind_check\s+CHECK\s*\(\s*kind IN \(([^)]*)\)/i.exec(sql) || (/CREATE TABLE IF NOT EXISTS onboarding_snapshot_lines[\s\S]*?kind\s+TEXT NOT NULL CHECK \(kind IN \(([^)]*)\)/i.exec(sql)); if (m) allowed = new Set(m[1].match(/'([^']+)'/g).map((x) => x.slice(1, -1))); }
+  const src = fs.readFileSync(path.join(__dirname, '..', 'lib', 'onboarding', 'snapshot.js'), 'utf8');
+  const emitted = new Set([...src.matchAll(/kind: '([a-z_]+)'/g)].map((m) => m[1]));
+  for (const [k] of [['former_owner_receivable'], ['former_owner_refund']]) emitted.add(k);   // pushed through a variable (routing loop)
+  const missing = [...emitted].filter((k) => !allowed.has(k));
+  assert.deepStrictEqual(missing, [], `snapshot kinds the database would refuse: ${missing.join(', ')}`);
+});
 check('the snapshot module holds no database client and makes no writes', () => {
   const s = fs.readFileSync(path.join(__dirname, '..', 'lib', 'onboarding', 'snapshot.js'), 'utf8').replace(/\/\/.*$/gm, '');
   assert.ok(!/supabase|createClient|\.from\(|\.rpc\(|\.insert\(|\.upsert\(|\.delete\(|require\(['"][^'"]*(db|journal|ar_engine|ap_engine)/.test(s));
