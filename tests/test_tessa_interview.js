@@ -74,6 +74,12 @@ check('BLOCK: overwriting or moving an existing commitment', () => {
   assert.strictEqual(I.decideAuthority({ start: '2026-10-08T10:00', end: '2026-10-08T10:30', overwrites: true }).class, 'BLOCK');
 });
 
+check('a Central wall time carries its offset (CDT in October, CST in December) so calendarView searches the right hours', () => {
+  assert.strictEqual(I.withOffset('2026-10-08T17:00'), '2026-10-08T17:00:00-05:00');
+  assert.strictEqual(I.withOffset('2026-12-08T17:00'), '2026-12-08T17:00:00-06:00');
+  assert.strictEqual(I.withOffset('2026-03-09T09:00'), '2026-03-09T09:00:00-05:00');
+});
+
 console.log('\nScheduling against a fake Graph');
 function fakeGraph({ calendar = [], busy = {} } = {}) {
   const calls = []; const cal = [...calendar];
@@ -81,10 +87,15 @@ function fakeGraph({ calendar = [], busy = {} } = {}) {
     calls.push({ url, method: opts.method || 'GET', body: opts.body ? JSON.parse(opts.body) : null });
     const json = (j, status = 200) => ({ ok: status < 400, status, json: async () => j });
     if (/getSchedule/.test(url)) return json({ value: JSON.parse(opts.body).schedules.map((m) => ({ scheduleId: m, availabilityView: busy[m] ? '22' : '00', workingHours: m === ED ? WH : undefined })) });
-    if (/calendarView/.test(url)) return json({ value: cal });
+    // Like Graph: an offset-less startDateTime is UTC; only events overlapping the window return.
+    if (/calendarView/.test(url)) {
+      const q = new URL(url).searchParams; const ms = (v) => Date.parse(/([+-]\d\d:\d\d|Z)$/.test(v) ? v : v + 'Z');
+      const lo = ms(q.get('startDateTime')); const hi = ms(q.get('endDateTime'));
+      return json({ value: cal.filter((e) => Date.parse(e.start.dateTime + '-05:00') < hi && Date.parse(e.end.dateTime + '-05:00') > lo) });
+    }
     if (/\/events$/.test(url) && opts.method === 'POST') {
       const b = JSON.parse(opts.body);
-      const ev = { id: 'evt-' + (cal.length + 1), iCalUId: 'ical-1', subject: b.subject, webLink: 'https://outlook/x', transactionId: b.transactionId, attendees: b.attendees, isCancelled: false };
+      const ev = { start: b.start, end: b.end, id: 'evt-' + (cal.length + 1), iCalUId: 'ical-1', subject: b.subject, webLink: 'https://outlook/x', transactionId: b.transactionId, attendees: b.attendees, isCancelled: false };
       cal.push(ev); return json(ev, 201);
     }
     return json({ error: { code: 'unexpected' } }, 500);
@@ -110,7 +121,7 @@ check('rerun: finds the existing event and creates nothing (zero duplicates)', a
   assert.strictEqual(g.cal.length, 1);
 });
 check('an existing event for the same candidate at that time (made another way) also prevents a duplicate', async () => {
-  const g = fakeGraph({ calendar: [{ id: 'manual-1', subject: 'Neha Joseph interview', attendees: [], isCancelled: false }] });
+  const g = fakeGraph({ calendar: [{ id: 'manual-1', start: { dateTime: '2026-10-08T17:00:00' }, end: { dateTime: '2026-10-08T17:30:00' }, subject: 'Neha Joseph interview', attendees: [], isCancelled: false }] });
   assert.strictEqual((await I.scheduleInterview({ ...INPUT, explicitTime: true }, deps(g))).status, 'exists');
 });
 check('Tessa-chosen out-of-hours slot -> needs review, nothing written; conflict -> needs review even with Ed\u2019s explicit time', async () => {
