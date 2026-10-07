@@ -309,6 +309,17 @@ check('a void pair that straddles the cutoff (entry before, reversal after) move
   assert.ok(p.writes.neutralize_journal_entries.some((j) => j.original_je_id === 'V1') && p.writes.repost_journal_entries.some((j) => j.original_je_id === 'V1' && j.posting_date === '2026-08-01'));
   assert.ok(!p.writes.neutralize_journal_entries.some((j) => j.original_je_id === 'V2'), 'the reversal after the cutover is untouched');
 });
+check('accrued in the legacy books: the Trusted entry is neutralized (expense once) and the accrual moves to AP on the cutover date (Dr accrual / Cr AP) in the entries EXECUTE writes; the cutoff TB still equals the source', () => {
+  const b = bridgeBase(); b.items[2] = { ...b.items[2], evidence: { decision: { type: 'recording_period', accrual: { account: '2400', amount_cents: 20 }, recorded: { choice_key: 'accrued_in_legacy_books', decision_id: 'decA' } } } };
+  const p = build({ bridge: b });
+  for (const k of ['preflight.every_item_has_a_treatment', 'preflight.accrual_reclasses_resolved', 'preflight.projected_cutoff_tb_equals_source', 'preflight.posting_periods_open']) assert.strictEqual(status(p, k), 'PASS', k);
+  assert.ok(p.writes.neutralize_journal_entries.some((j) => j.original_je_id === 'D1'), 'the duplicate expense entry is neutralized');
+  const r = p.writes.repost_journal_entries.find((j) => j.kind === 'accrual_to_ap_reclass');
+  assert.deepStrictEqual([r.reference, r.posting_date, r.lines.map((l) => [l.account_number, l.debit_cents, l.credit_cents])], ['CONV-EX-20260731-RECLASS-JE-D1', '2026-08-01', [['2400', 20, 0], ['2000', 0, 20]]]);
+  assert.ok(!p.writes.repost_journal_entries.some((j) => j.original_je_id === 'D1'), 'the original is not re-posted');
+  const bad = bridgeBase(); bad.items[2] = { ...bad.items[2], evidence: { decision: { type: 'recording_period', accrual: { account: '9999', amount_cents: 20 }, recorded: { choice_key: 'accrued_in_legacy_books' } } } };
+  assert.strictEqual(status(build({ bridge: bad }), 'preflight.accrual_reclasses_resolved'), 'BLOCKED', 'an unresolved accrual account blocks');
+});
 check('without restored lines nothing changes: no carried invoices, no extra control, AP ties on opening invoices alone', () => {
   const p = build();
   assert.strictEqual(p.carried_ap_invoices, undefined); assert.strictEqual(p.controls.find((c) => c.code === 'preflight.restored_ap_carried_once'), undefined);

@@ -224,6 +224,29 @@ check('a document voided without ever posting is OUT_OF_SCOPE (nothing to carry)
   assert.deepStrictEqual([ev(b, 'loose:ap_invoices:invV').classification, ev(b, 'loose:ap_invoices:invV').method], ['OUT_OF_SCOPE', 'voided_document_never_posted']);
 });
 
+// ACCRUED IN THE SOURCE (Canyon Gate Earthcare 117311): the source never entered the bill but a GL
+// Entry accrued it (same expense account + cents, credited to a non-AP liability). Proven by lines.
+const { makeRow } = require('../lib/onboarding/canonical');
+const withAccrual = (cents = 7000) => {
+  const p = JSON.parse(JSON.stringify(parsed));
+  const src = { artifact_sha256: 'f'.repeat(64), locator: 'synthetic accrual', raw: 'x' };
+  p.gl_trial_balance.rows.push(makeRow('gl_transaction', { date: '2026-03-01', account_code: '2300', source_type: 'GL Entry', description: 'Monthly Landscape Maintenance', debit_cents: 0, credit_cents: cents }, src),
+    makeRow('gl_transaction', { date: '2026-03-01', account_code: '5200', source_type: 'GL Entry', description: 'Monthly Landscape Maintenance', debit_cents: cents, credit_cents: 0 }, src));
+  p.ap_aging = { as_of: '2026-03-31', rows: [] };
+  return p;
+};
+const accrualTrusted = () => { const t = trusted(); t.journal_entries.push(je('jeA', '2026-03-01', 'ap_invoice', 7000, { description: 'AP invoice LS-1 — Landscaper' })); t.journal_entry_lines.push(ln('jeA', 'a5200', 7000, 0), ln('jeA', 'a2000', 0, 7000));
+  t.ap_invoices.push({ id: 'invA', vendor_invoice_number: 'LS-1', invoice_date: '2026-03-01', total_cents: 7000, status: 'paid', posting_journal_entry_id: 'jeA' }); return t; };
+const ctxA = { ...ctx, roles: { ...ctx.roles, ap_account: '2000' } };
+check('an invoice the source ACCRUED (same expense lines, credited to one non-AP liability) is offered "accrued in the legacy books" with the proven accrual; amount alone never qualifies', () => {
+  const b = buildBridge(withAccrual(), accrualTrusted(), ctxA);
+  const d = ev(b, 'je:jeA').evidence.decision;
+  assert.deepStrictEqual([d.recommended, d.choices[0].key, d.accrual.account, d.accrual.amount_cents, d.accrual.source_lines.length], ['accrued_in_legacy_books', 'accrued_in_legacy_books', '2300', 7000, 2]);
+  const other = buildBridge(withAccrual(7001), accrualTrusted(), ctxA);
+  const d2 = ev(other, 'je:jeA').evidence.decision;
+  assert.ok(!d2.accrual && !d2.choices.some((c) => c.key === 'accrued_in_legacy_books'), 'a different amount is not the accrual');
+});
+
 (async () => {
   let pass = 0, fail = 0;
   console.log('Onboarding activity bridge (Issue #15 Milestone 4)');
