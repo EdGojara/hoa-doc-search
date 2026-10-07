@@ -299,6 +299,16 @@ check('fund allocation: an account split across funds posts one line per fund (s
   const unknown = snapshotBase(); unknown.lines[0] = { ...unknown.lines[0], detail: { fund_allocation: { parts: [{ fund_code: 'ZZZ', amount_cents: 1000 }] } } };
   assert.strictEqual(status(build({ snapshot: unknown }), 'preflight.accounts_resolved'), 'BLOCKED', 'an unknown fund blocks');
 });
+check('a void pair that straddles the cutoff (entry before, reversal after) moves across the cutover: entry neutralized on its date and re-posted on the cutover; the cutoff TB equals the source; the reversal is untouched', () => {
+  const t = trustedBase();
+  t.journal_entries.push(je('V1', '2026-07-22', 'ap_invoice', [{ debit_cents: 30 }], { status: 'voided', void_reversal_je_id: 'V2' }), je('V2', '2026-08-28', 'reversal', [{ debit_cents: 30 }], { reverses_je_id: 'V1' }));
+  t.journal_entry_lines.push(ln('V1', 1, 4000, 30, 0), ln('V1', 2, 2000, 0, 30), ln('V2', 1, 2000, 30, 0), ln('V2', 2, 4000, 0, 30));
+  const b = bridgeBase(); b.items.push({ item_no: 9, event_key: 'je:V1', classification: 'OUT_OF_SCOPE', method: 'void_pair_nets_to_zero', records: ['journal_entries:V1'] }, { item_no: 10, event_key: 'je:V2', classification: 'OUT_OF_SCOPE', method: 'void_pair_nets_to_zero', records: ['journal_entries:V2'] });
+  const p = build({ trusted: t, bridge: b });
+  for (const k of ['preflight.no_unhandled_pre_cutover_entries', 'preflight.projected_cutoff_tb_equals_source', 'preflight.post_cutover_activity_untouched']) assert.strictEqual(status(p, k), 'PASS', k);
+  assert.ok(p.writes.neutralize_journal_entries.some((j) => j.original_je_id === 'V1') && p.writes.repost_journal_entries.some((j) => j.original_je_id === 'V1' && j.posting_date === '2026-08-01'));
+  assert.ok(!p.writes.neutralize_journal_entries.some((j) => j.original_je_id === 'V2'), 'the reversal after the cutover is untouched');
+});
 check('without restored lines nothing changes: no carried invoices, no extra control, AP ties on opening invoices alone', () => {
   const p = build();
   assert.strictEqual(p.carried_ap_invoices, undefined); assert.strictEqual(p.controls.find((c) => c.code === 'preflight.restored_ap_carried_once'), undefined);
