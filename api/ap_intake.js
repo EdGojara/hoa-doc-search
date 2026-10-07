@@ -199,13 +199,18 @@ router.get('/stragglers', async (req, res) => {
   } catch (err) { console.error('[ap_intake] stragglers failed:', err.message); res.status(500).json({ error: safeErrorMessage(err) }); }
 });
 
-// POST /exceptions/:id/resolve — { community_id?, vendor_id? } -> load to Payables.
-router.post('/exceptions/:id/resolve', express.json(), async (req, res) => {
+// POST /exceptions/:id/resolve — { community_id?, vendor_id?, vendor_name?,
+// invoice_date?, total_cents?, account_id? } -> load to Payables. The date/total
+// finish a bill that printed none (no_date / no_total); account_id codes it to
+// that account on THIS community's chart. Who entered them is the signed-in admin.
+router.post('/exceptions/:id/resolve', express.json({ limit: '8kb' }), async (req, res) => {
   const admin = await requireAdmin(req, res); if (!admin) return;
   try {
     const b = req.body || {};
     const { promoteException } = require('../lib/ap/intake_exceptions');
-    const out = await promoteException(req.params.id, { communityId: b.community_id || null, vendorId: b.vendor_id || null, vendorName: b.vendor_name || null, resolvedBy: admin.full_name || 'staff' });
+    const out = await promoteException(req.params.id, { communityId: b.community_id || null, vendorId: b.vendor_id || null, vendorName: b.vendor_name || null,
+      invoiceDate: b.invoice_date || null, totalCents: b.total_cents != null && b.total_cents !== '' ? Number(b.total_cents) : null, accountId: b.account_id || null,
+      resolvedBy: admin.full_name || 'staff' });
     if (!out.ok) return res.status(out.error === 'not_found' ? 404 : 400).json(out);
     res.json(out);
   } catch (err) { console.error('[ap_intake] resolve exception failed:', err.message); res.status(500).json({ error: safeErrorMessage(err) }); }
