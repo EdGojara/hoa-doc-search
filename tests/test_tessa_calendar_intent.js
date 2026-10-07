@@ -184,7 +184,7 @@ check('Ed, shown the conflict, can book anyway (explicit allowConflict) and only
 });
 
 console.log('\nWiring');
-const api = fs.readFileSync(path.join(__dirname, '..', 'api', 'tessa.js'), 'utf8');
+const api = fs.readFileSync(path.join(__dirname, '..', 'api', 'tessa.js'), 'utf8').replace(/\r\n/g, '\n');
 const req = fs.readFileSync(path.join(__dirname, '..', 'lib', 'ea', 'tessa_request.js'), 'utf8');
 const page = fs.readFileSync(path.join(__dirname, '..', 'public', 'tessa.html'), 'utf8');
 check('release + direct booking: conflict re-check against Ed’s calendar; a conflict is a 409 that leaves the item queued', () => {
