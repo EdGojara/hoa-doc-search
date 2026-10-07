@@ -1,0 +1,60 @@
+{
+  "migration": "492_tessa_outbox_meeting_mode.sql",
+  "summary": "Tessa outbox meeting mode. Adds nullable tessa_outbox.meeting_mode (calendar_only | invite | online, CHECK-constrained) so a staged meeting releases as the kind of calendar entry Ed asked for. NULL keeps the legacy Teams-invite behavior for rows staged earlier. Additive only: no row, grant, trigger or function changes.",
+  "requires": [
+    "405_tessa_outbox.sql"
+  ],
+  "preflight": [
+    {
+      "name": "tessa_outbox exists (405)",
+      "sql": "SELECT count(*)::int FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'tessa_outbox'",
+      "expect": 1
+    },
+    {
+      "name": "meeting_mode not present yet",
+      "sql": "SELECT count(*)::int FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'tessa_outbox' AND column_name = 'meeting_mode'",
+      "expect": 0
+    }
+  ],
+  "expected_changes": [
+    "Adds column tessa_outbox.meeting_mode text, nullable, no default.",
+    "Adds CHECK constraint tessa_outbox_meeting_mode_check: NULL or one of calendar_only, invite, online.",
+    "No row changes; existing rows read NULL (legacy Teams invite). Grants unchanged."
+  ],
+  "objects": {
+    "added": [
+      "column:tessa_outbox.meeting_mode",
+      "constraint:tessa_outbox.tessa_outbox_meeting_mode_check"
+    ],
+    "changed": [],
+    "removed": []
+  },
+  "row_changes": {
+    "tessa_outbox": 0
+  },
+  "protected": [
+    {
+      "table": "tessa_outbox",
+      "order_by": "id"
+    }
+  ],
+  "verify": [
+    {
+      "name": "meeting_mode exists, text, nullable",
+      "sql": "SELECT count(*)::int FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'tessa_outbox' AND column_name = 'meeting_mode' AND data_type = 'text' AND is_nullable = 'YES'",
+      "expect": 1
+    },
+    {
+      "name": "the CHECK names exactly the three modes",
+      "sql": "SELECT count(*)::int FROM pg_constraint WHERE conname = 'tessa_outbox_meeting_mode_check' AND pg_get_constraintdef(oid) LIKE '%calendar_only%' AND pg_get_constraintdef(oid) LIKE '%invite%' AND pg_get_constraintdef(oid) LIKE '%online%'",
+      "expect": 1
+    },
+    {
+      "name": "existing rows untouched (all NULL)",
+      "sql": "SELECT count(*)::int FROM tessa_outbox WHERE meeting_mode IS NOT NULL",
+      "expect": 0
+    }
+  ],
+  "api_checks": [],
+  "reload_schema": true
+}
