@@ -291,7 +291,7 @@ async function releaseOutbox(id, verb, allowConflict){
     if(r.status===409 && j.error==='conflict'){
       const fmt=(w)=>{ const t=String(w||'').slice(11,16).split(':').map(Number); return isNaN(t[0])?'':(((t[0]+11)%12)+1)+':'+String(t[1]).padStart(2,'0')+(t[0]<12?' AM':' PM'); };
       if(msg) msg.innerHTML='<span class="err">Not booked: that time now conflicts with '+(j.conflicts||[]).map(c=>'<b>'+esc(c.subject)+'</b> ('+esc(fmt(c.start))+' to '+esc(fmt(c.end))+(c.organizer?', organizer '+esc(c.organizer):'')+')').join('; ')+'. Nothing was written.</span> '
-        +'<button class="btn ghost sm" onclick="releaseOutbox(''+id+'',''+verb+'',true)">Book anyway</button>';
+        +'<button class="btn ghost sm" onclick="releaseOutbox(\''+id+'\',\''+verb+'\',true)">Book anyway</button>';
       return;
     }
     if(!r.ok) throw new Error(j.error||'failed');
