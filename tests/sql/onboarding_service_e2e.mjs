@@ -146,7 +146,7 @@ const tv = await svc.getBatch(B2, OWNER);
 check('tampered artifact: intake FAILS on the re-hash check (the stored bytes no longer match the record)', t0.status === 'FAIL' && tv.current.controls.find((c) => c.code === 'intake.artifacts_match_recorded_hashes').status === 'FAIL');
 
 // Only allowlisted guarded functions were ever called; the service holds no table writes.
-check('service used only the allowlisted onboarding_* functions', rpcCalls.every((n) => /^onboarding_(batches|batch_view|create_batch|register_artifact|record_completion|waive|approve|advance|record_snapshot|snapshot_view|record_bridge|bridge_view|bridge_decisions_view|record_bridge_decisions)$/.test(n)));
+check('service used only the allowlisted onboarding_* functions', rpcCalls.every((n) => /^onboarding_(batches|batch_view|create_batch|register_artifact|record_completion|waive|approve|advance|record_snapshot|snapshot_view|record_bridge|bridge_view|bridge_decisions_view|record_bridge_decisions|register_evidence|evidence_view)$/.test(n)));
 const forged = await code(() => svc.waive({ kind: 'human', id: 'ed', role: 'admin' }, B, { completion_id: r2b.completion_id, code: 'x', reason: 'pretending to be the owner' }));
 check('identity: an actor without the owner role cannot waive even with the owner id', forged === 'OWNER_ONLY');
 console.log(`\n${pass} passed, ${fail} failed`);
