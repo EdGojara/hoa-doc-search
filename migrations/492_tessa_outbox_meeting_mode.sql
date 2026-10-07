@@ -13,19 +13,12 @@
 --
 -- Record ownership: workpaper (Tessa's internal staging), unchanged from 405.
 -- Additive, nullable; existing grants on tessa_outbox (405) cover the column.
+-- The runner reloads the PostgREST schema after apply (checks: reload_schema).
 -- ============================================================================
 BEGIN;
 
-ALTER TABLE tessa_outbox ADD COLUMN IF NOT EXISTS meeting_mode text;
-
-DO $$
-BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'tessa_outbox_meeting_mode_check') THEN
-    ALTER TABLE tessa_outbox ADD CONSTRAINT tessa_outbox_meeting_mode_check
-      CHECK (meeting_mode IS NULL OR meeting_mode IN ('calendar_only', 'invite', 'online'));
-  END IF;
-END $$;
+ALTER TABLE tessa_outbox ADD COLUMN IF NOT EXISTS meeting_mode text
+  CONSTRAINT tessa_outbox_meeting_mode_check
+  CHECK (meeting_mode IS NULL OR meeting_mode IN ('calendar_only', 'invite', 'online'));
 
 COMMIT;
-
-NOTIFY pgrst, 'reload schema';
