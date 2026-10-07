@@ -535,6 +535,8 @@ router.post('/meeting', express.json({ limit: '32kb' }), async (req, res) => {
       body: String(b.body || b.agenda || ''),
       optionalAttendees: !!b.optional,
       location: b.location || null,
+      conflictMailboxes: [graphSend.ED_MAILBOX, b.organizer || graphSend.ED_MAILBOX],
+      allowConflict: b.allow_conflict === true,
     });
 
     // A booking with no join link is a calendar block whose invitation says
@@ -543,6 +545,7 @@ router.post('/meeting', express.json({ limit: '32kb' }), async (req, res) => {
     console.log('[tessa] booked "' + meeting.subject + '" for ' + attendees.length + ' attendee(s)');
     res.json({ booked: true, ...meeting });
   } catch (err) {
+    if (err.code === 'calendar_conflict') return res.status(409).json({ error: 'conflict', message: err.message, conflicts: err.conflicts });
     console.error('[tessa] meeting failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
   }
@@ -1177,8 +1180,16 @@ router.post('/outbox/:id/release', express.json({ limit: '4kb' }), async (req, r
         attendees, body: String(item.body_text || ''),
         location: item.meeting_location || null,
         online: mmode === 'online',
+        // Ed's calendar is always checked (he is in every meeting Tessa sets up),
+        // plus the organizer's.
+        conflictMailboxes: [graphSend.ED_MAILBOX, item.organizer || graphSend.TESSA_MAILBOX],
+        allowConflict: (req.body || {}).allow_conflict === true,
       });
     } catch (e) {
+      // A conflict is Ed's call, not an error: the item stays queued, nothing written.
+      if (e.code === 'calendar_conflict') return res.status(409).json({ error: 'conflict', message: e.message, conflicts: e.conflicts });
+      // Could not re-read the calendar: refuse, and leave the item queued to retry.
+      if (e.code === 'calendar_read_failed') return res.status(502).json({ error: e.message });
       await supabase.from('tessa_outbox').update({ status: 'error', send_error: e.message }).eq('id', item.id);
       return res.status(502).json({ error: `booking failed: ${e.message}` });
     }

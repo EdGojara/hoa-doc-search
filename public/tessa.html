@@ -278,13 +278,22 @@ function renderOutboxItem(it){
     </div>
   </div>`;
 }
-async function releaseOutbox(id, verb){
+async function releaseOutbox(id, verb, allowConflict){
   const msg=$('obmsg-'+id);
-  if(!confirm(verb==='send'?'Send this email now, from Tessa?':(verb==='calendar'?'Add this to your calendar now? No invitation is sent.':'Book this meeting and send the invitations now?'))) return;
+  if(allowConflict){ if(!confirm('Book it anyway, on top of the conflicting event? Nothing is moved or changed.')) return; }
+  else if(!confirm(verb==='send'?'Send this email now, from Tessa?':(verb==='calendar'?'Add this to your calendar now? No invitation is sent.':'Book this meeting and send the invitations now?'))) return;
   if(msg) msg.textContent='Working…';
   try{
-    const r=await af('/api/tessa/outbox/'+id+'/release',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+    const r=await af('/api/tessa/outbox/'+id+'/release',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(allowConflict?{allow_conflict:true}:{})});
     const j=await r.json();
+    // Re-checked right before writing: the slot now overlaps something. Nothing
+    // was booked; the item stays queued for Ed to decide.
+    if(r.status===409 && j.error==='conflict'){
+      const fmt=(w)=>{ const t=String(w||'').slice(11,16).split(':').map(Number); return isNaN(t[0])?'':(((t[0]+11)%12)+1)+':'+String(t[1]).padStart(2,'0')+(t[0]<12?' AM':' PM'); };
+      if(msg) msg.innerHTML='<span class="err">Not booked: that time now conflicts with '+(j.conflicts||[]).map(c=>'<b>'+esc(c.subject)+'</b> ('+esc(fmt(c.start))+' to '+esc(fmt(c.end))+(c.organizer?', organizer '+esc(c.organizer):'')+')').join('; ')+'. Nothing was written.</span> '
+        +'<button class="btn ghost sm" onclick="releaseOutbox(''+id+'',''+verb+'',true)">Book anyway</button>';
+      return;
+    }
     if(!r.ok) throw new Error(j.error||'failed');
     if(msg) msg.innerHTML = j.kind==='meeting'
       ? `<span class="ok">✅ ${verb==='calendar'?'On your calendar':'Booked'}${j.join_url?` · <a href="${esc(j.join_url)}" target="_blank">Teams link</a>`:''}${j.warning?' (calendar invite sent; no Teams link)':''}</span>`

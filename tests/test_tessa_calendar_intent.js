@@ -39,6 +39,7 @@ const cases = [
   ['Add my call with Sipra tomorrow at 4 and send her an invite', 'invite', 'phone'],
   ['Phone call with Martha Thursday at 10, add her to the invite', 'invite', 'phone'],
   ['Set up a Teams meeting with Dan Morton tomorrow 3 to 5', 'online', 'teams'],
+  ['Create a Teams meeting with Dan tomorrow at 3', 'online', 'teams'],
   ['Send the Canyon Gate board an invite for a video meeting Monday at 6', 'online', 'teams'],
   ['Set up a Zoom with the auditor Friday at 11', 'invite', 'zoom'],
   ['Set up a phone call with Grant tomorrow at 3', 'invite', 'phone'],
@@ -89,32 +90,112 @@ check('online: Teams location, Tessa organizes, never invites Tessa herself', ()
   assert.deepStrictEqual([row.meeting_location, row.meeting_attendees], ['Microsoft Teams', 'dan@x.com, egojara@bedrocktx.com']);
 });
 
-console.log('\nThe calendar write (fake Graph)');
-check('online:false + no attendees -> a plain event on the organizer’s calendar: no Teams, no invitation fields', async () => {
+console.log('\n"Add my Teams call" reuses a link, never makes one');
+const LINK = 'https://teams.microsoft.com/l/meetup-join/19%3ameeting_abc%40thread.v2/0?context=x';
+check('a link in a thread FROM the person (or naming them) is reused; a link in an unrelated thread is not', () => {
+  const threads = [
+    { subject: 'Budget review', from_email: 'other@x.com', preview: 'Join: ' + LINK + 'OTHER' },
+    { subject: 'Re: gate', from_email: 'dan@x.com', preview: 'Here is the link ' + LINK + ' see you then' },
+  ];
+  assert.strictEqual(C.teamsLinkFor(threads, [{ name: 'Dan Morton', email: 'dan@x.com' }]).url, LINK);
+  assert.strictEqual(C.teamsLinkFor([threads[0]], [{ name: 'Dan Morton', email: 'dan@x.com' }]), null);
+});
+check('calendar-only Teams entry: location Microsoft Teams, the link in the notes if found, no attendees, no new meeting', () => {
+  const base = { mode: 'calendar_only', method: 'teams', people: [{ name: 'Dan Morton', email: 'dan@x.com' }], wt: WT, edMailbox: ED, tessaMailbox: TESSA };
+  const withLink = C.buildStagedMeetingRow({ ...base, meeting: { topic: 'gate', teams_link: { url: LINK, subject: 'Re: gate' } } });
+  assert.deepStrictEqual([withLink.meeting_mode, withLink.meeting_location, withLink.meeting_attendees, withLink.organizer], ['calendar_only', 'Microsoft Teams', '', ED]);
+  assert.ok(withLink.body_text.includes('Teams link: ' + LINK));
+  const noLink = C.buildStagedMeetingRow({ ...base, meeting: { topic: 'gate' } });
+  assert.match(noLink.body_text, /No Teams link on file/);
+});
+
+console.log('\nThe calendar write: conflict re-check right before writing (fake Graph)');
+function fakeGraph({ events = {}, failRead = false } = {}) {
+  const calls = [];
+  const fetchImpl = async (url, opts = {}) => {
+    calls.push({ url, method: opts.method || 'GET', body: opts.body ? JSON.parse(opts.body) : null });
+    if (/calendarView/.test(url)) {
+      if (failRead) return { ok: false, status: 503, json: async () => ({ error: { code: 'ServiceUnavailable' } }) };
+      const mb = decodeURIComponent(url.match(/users\/([^/]+)\//)[1]);
+      const q = new URL(url).searchParams;
+      assert.match(q.get('startDateTime'), /[+-]\d\d:\d\d$/, 'the window carries its offset (Graph reads a bare time as UTC)');
+      const lo = Date.parse(q.get('startDateTime')); const hi = Date.parse(q.get('endDateTime'));
+      return { ok: true, status: 200, json: async () => ({ value: (events[mb] || []).filter((e) => Date.parse(e.start.dateTime + '-05:00') < hi && Date.parse(e.end.dateTime + '-05:00') > lo) }) };
+    }
+    return { ok: true, status: 201, text: async () => JSON.stringify({ id: 'e1', subject: 'x', start: {}, end: {} }) };
+  };
+  return { fetchImpl, calls, posts: () => calls.filter((c) => c.method === 'POST') };
+}
+function loadMeeting() {
   const gsPath = require.resolve('../lib/email/graph_send');
   require.cache[gsPath] = { id: gsPath, filename: gsPath, loaded: true, exports: { getToken: async () => 't' } };
   delete require.cache[require.resolve('../lib/ea/tessa_meeting')];
-  const M = require('../lib/ea/tessa_meeting');
-  const calls = []; const realFetch = global.fetch;
-  global.fetch = async (url, opts) => { calls.push({ url, body: JSON.parse(opts.body) }); return { ok: true, status: 201, text: async () => JSON.stringify({ id: 'e1', subject: 'x', start: {}, end: {} }) }; };
-  try {
-    const r = await M.createTeamsMeeting({ organizer: ED, subject: 'Sipra Boyd - Lakes of Pine Forest call', start: WT.start, end: WT.end, attendees: [], body: 'notes', location: 'Phone call', online: false });
-    const b = calls[0].body;
-    assert.match(calls[0].url, /\/users\/egojara%40bedrocktx\.com\/events$/);
-    assert.strictEqual(b.isOnlineMeeting, false);
-    assert.ok(!('onlineMeetingProvider' in b));
-    assert.deepStrictEqual(b.attendees, []);
-    assert.ok(!('responseRequested' in b));
-    assert.strictEqual(r.warning, null, 'a plain event is not a failed Teams meeting');
-    await M.createTeamsMeeting({ organizer: TESSA, subject: 'T', start: WT.start, end: WT.end, attendees: ['dan@x.com'] });
-    assert.strictEqual(calls[1].body.onlineMeetingProvider, 'teamsForBusiness', 'the default is still a Teams meeting');
-  } finally { global.fetch = realFetch; delete require.cache[gsPath]; }
+  return require('../lib/ea/tessa_meeting');
+}
+// Serialize the fetch-swapping tests: they share global.fetch.
+let fetchLock = Promise.resolve();
+function withFetch(g, fn) {
+  const run = fetchLock.then(async () => { const real = global.fetch; global.fetch = g.fetchImpl; try { return await fn(); } finally { global.fetch = real; } });
+  fetchLock = run.catch(() => {});
+  return run;
+}
+const SIPRA_ARGS = { organizer: ED, subject: 'Sipra Boyd - Lakes of Pine Forest call', start: WT.start, end: WT.end, attendees: [], body: 'notes', location: 'Phone call', online: false, conflictMailboxes: [ED] };
+const ev = (subject, s, e, extra = {}) => ({ id: subject, iCalUId: subject, subject, start: { dateTime: s }, end: { dateTime: e }, showAs: 'busy', isCancelled: false, organizer: { emailAddress: { address: 'x@y.com' } }, ...extra });
+
+check('free slot: a plain event on the organizer\u2019s calendar, no Teams, no invitation fields', async () => {
+  const M = loadMeeting(); const g = fakeGraph({ events: { [ED]: [ev('Earlier', '2026-10-07T15:00:00', '2026-10-07T16:00:00')] } });
+  const r = await withFetch(g, () => M.createTeamsMeeting(SIPRA_ARGS));
+  const b = g.posts()[0].body;
+  assert.match(g.posts()[0].url, /\/users\/egojara%40bedrocktx\.com\/events$/);
+  assert.strictEqual(b.isOnlineMeeting, false);
+  assert.ok(!('onlineMeetingProvider' in b));
+  assert.deepStrictEqual(b.attendees, []);
+  assert.ok(!('responseRequested' in b));
+  assert.strictEqual(r.warning, null, 'a plain event is not a failed Teams meeting');
+});
+check('the default is still a Teams meeting', async () => {
+  const M = loadMeeting(); const g = fakeGraph();
+  await withFetch(g, () => M.createTeamsMeeting({ organizer: TESSA, subject: 'T', start: WT.start, end: WT.end, attendees: ['dan@x.com'] }));
+  assert.strictEqual(g.posts()[0].body.onlineMeetingProvider, 'teamsForBusiness');
+});
+check('CONFLICT: an overlapping busy event -> nothing written, the conflicting event comes back', async () => {
+  const M = loadMeeting(); const g = fakeGraph({ events: { [ED]: [ev('Board call', '2026-10-07T16:00:00', '2026-10-07T16:30:00')] } });
+  await assert.rejects(withFetch(g, () => M.createTeamsMeeting(SIPRA_ARGS)), (e) => e.code === 'calendar_conflict' && e.conflicts[0].subject === 'Board call' && e.conflicts[0].start === '2026-10-07T16:00:00');
+  assert.strictEqual(g.posts().length, 0, 'no write');
+});
+check('free and cancelled events are not conflicts; a conflict on Tessa\u2019s calendar counts when checked', async () => {
+  const M = loadMeeting();
+  const g1 = fakeGraph({ events: { [ED]: [ev('FYI hold', '2026-10-07T16:00:00', '2026-10-07T17:00:00', { showAs: 'free' }), ev('Cancelled', '2026-10-07T16:00:00', '2026-10-07T17:00:00', { isCancelled: true })] } });
+  await withFetch(g1, () => M.createTeamsMeeting(SIPRA_ARGS));
+  assert.strictEqual(g1.posts().length, 1);
+  const g2 = fakeGraph({ events: { [TESSA]: [ev('Interview', '2026-10-07T16:10:00', '2026-10-07T16:40:00')] } });
+  await assert.rejects(withFetch(g2, () => M.createTeamsMeeting({ ...SIPRA_ARGS, organizer: TESSA, attendees: ['dan@x.com'], conflictMailboxes: [ED, TESSA] })), (e) => e.code === 'calendar_conflict');
+  assert.strictEqual(g2.posts().length, 0);
+});
+check('the calendar could not be read -> refuse (fail closed), nothing written', async () => {
+  const M = loadMeeting(); const g = fakeGraph({ failRead: true });
+  await assert.rejects(withFetch(g, () => M.createTeamsMeeting(SIPRA_ARGS)), (e) => e.code === 'calendar_read_failed');
+  assert.strictEqual(g.posts().length, 0);
+});
+check('Ed, shown the conflict, can book anyway (explicit allowConflict) and only then is it written', async () => {
+  const M = loadMeeting(); const g = fakeGraph({ events: { [ED]: [ev('Board call', '2026-10-07T16:00:00', '2026-10-07T16:30:00')] } });
+  await withFetch(g, () => M.createTeamsMeeting({ ...SIPRA_ARGS, allowConflict: true }));
+  assert.strictEqual(g.posts().length, 1);
 });
 
 console.log('\nWiring');
 const api = fs.readFileSync(path.join(__dirname, '..', 'api', 'tessa.js'), 'utf8');
 const req = fs.readFileSync(path.join(__dirname, '..', 'lib', 'ea', 'tessa_request.js'), 'utf8');
 const page = fs.readFileSync(path.join(__dirname, '..', 'public', 'tessa.html'), 'utf8');
+check('release + direct booking: conflict re-check against Ed’s calendar; a conflict is a 409 that leaves the item queued', () => {
+  assert.match(api, /conflictMailboxes: \[graphSend\.ED_MAILBOX, item\.organizer \|\| graphSend\.TESSA_MAILBOX\]/);
+  assert.match(api, /conflictMailboxes: \[graphSend\.ED_MAILBOX, b\.organizer \|\| graphSend\.ED_MAILBOX\]/);
+  const i = api.indexOf("if (e.code === 'calendar_conflict') return res.status(409)");
+  const mark = api.indexOf("await supabase.from('tessa_outbox').update({ status: 'error', send_error: e.message }).eq('id', item.id);\n      return res.status(502).json({ error: `booking failed");
+  assert.ok(i > 0 && mark > i, 'the conflict returns before the item is marked error');
+  assert.match(api, /if \(e\.code === 'calendar_read_failed'\) return res\.status\(502\)/);
+  assert.match(page, /r\.status===409 && j\.error==='conflict'/);
+});
 check('release books by the row’s mode (calendar_only: no attendees; Teams only when online; legacy NULL = online)', () => {
   assert.match(api, /const mmode = item\.meeting_mode \|\| 'online';/);
   assert.match(api, /const attendees = mmode === 'calendar_only' \? \[\] : parseAddrs/);
