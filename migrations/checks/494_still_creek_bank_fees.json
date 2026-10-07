@@ -1,0 +1,51 @@
+{
+  "migration": "494_still_creek_bank_fees.sql",
+  "summary": "Adds a 'Bank Fees' billable category (bank_fees, at cost, default on the invoice, no activity source) to Still Creek Ranch's active contract rate card for Bedrock-to-community billing. One contract_reimbursables row; nothing else changes.",
+  "requires": [
+    "271_invoice_default_lines_and_evoting.sql"
+  ],
+  "preflight": [
+    {
+      "name": "Still Creek Ranch has exactly one active contract",
+      "sql": "SELECT count(*)::int FROM contracts WHERE community_id = 'a0000000-0000-4000-8000-000000000006' AND status = 'active'",
+      "expect": 1
+    },
+    {
+      "name": "that contract has no bank_fees category yet",
+      "sql": "SELECT count(*)::int FROM contract_reimbursables r JOIN contracts c ON c.id = r.contract_id WHERE c.community_id = 'a0000000-0000-4000-8000-000000000006' AND r.category = 'bank_fees'",
+      "expect": 0
+    }
+  ],
+  "expected_changes": [
+    "Inserts one contract_reimbursables row on Still Creek Ranch's active contract: category bank_fees, description 'Bank Fees', billing_method at_cost, unit_price NULL, sort_order 60, default_on_invoice true.",
+    "No other contract, invoice or accounting row changes."
+  ],
+  "objects": {
+    "added": [],
+    "changed": [],
+    "removed": []
+  },
+  "row_changes": {
+    "contract_reimbursables": 1,
+    "invoices": 0,
+    "invoice_line_items": 0
+  },
+  "protected": [
+    { "table": "invoices", "order_by": "id" },
+    { "table": "invoice_line_items", "order_by": "id" }
+  ],
+  "verify": [
+    {
+      "name": "Still Creek's active contract has exactly one Bank Fees category, at cost, on the invoice by default",
+      "sql": "SELECT count(*)::int FROM contract_reimbursables r JOIN contracts c ON c.id = r.contract_id WHERE c.community_id = 'a0000000-0000-4000-8000-000000000006' AND c.status = 'active' AND r.category = 'bank_fees' AND r.description = 'Bank Fees' AND r.billing_method = 'at_cost' AND r.unit_price IS NULL AND r.default_on_invoice",
+      "expect": 1
+    },
+    {
+      "name": "no other community gained a bank_fees category",
+      "sql": "SELECT count(*)::int FROM contract_reimbursables r JOIN contracts c ON c.id = r.contract_id WHERE r.category = 'bank_fees' AND c.community_id <> 'a0000000-0000-4000-8000-000000000006'",
+      "expect": 0
+    }
+  ],
+  "api_checks": [],
+  "reload_schema": false
+}
