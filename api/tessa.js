@@ -11,6 +11,7 @@ const multer = require('multer');
 const { createClient } = require('@supabase/supabase-js');
 const { requireOwner } = require('./_require_admin');
 const { draftEmail } = require('../lib/ea/tessa');
+const { buildStagedMeetingRow } = require('../lib/ea/tessa_calendar_intent');
 const { pollTessaInbox } = require('../lib/ea/tessa_inbox');
 const { transcribeAudio, routeDictation, sttConfigured } = require('../lib/ea/tessa_voice');
 const graphSend = require('../lib/email/graph_send');
@@ -297,6 +298,10 @@ function resolveMeetingWallTimes(meeting) {
   };
   const start = toHHMM(meeting.start_time); if (!start) return null;
   let end = toHHMM(meeting.end_time);
+  if (meeting.duration_minutes > 0) {
+    const [h, mi] = start.split(':').map(Number); const t = h * 60 + mi + Number(meeting.duration_minutes);
+    end = t < 24 * 60 ? `${String(Math.floor(t / 60)).padStart(2, '0')}:${String(t % 60).padStart(2, '0')}:00` : end;
+  }
   if (!end) { const [h, mi] = start.split(':').map(Number); end = `${String((h + 1) % 24).padStart(2, '0')}:${String(mi).padStart(2, '0')}:00`; }
   const dateLabel = new Date(target).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' });
   return { start: `${dateStr}T${start}`, end: `${dateStr}T${end}`, tz: DEFAULT_TZ, date_label: dateLabel };
@@ -334,47 +339,51 @@ router.post('/request', express.json({ limit: '16kb' }), async (req, res) => {
       } catch (e) { console.warn('[tessa] contact create skipped:', e.message); }
     }
 
-    // Stage a direct Teams invite — NOTHING is booked here; it waits in her outbox
-    // for Ed to release (same rule as every meeting). Only for a direct, timed
-    // invite to people we resolved to real addresses.
-    let staged_meeting = null;
-    if (out.meeting && out.meeting.direct_invite && out.to.length) {
+    // Stage the calendar entry Ed asked for. NOTHING is booked here; it waits in
+    // her outbox for Ed to release. The KIND comes from his words by rule
+    // (lib/ea/tessa_calendar_intent.js, Ed 2026-10-06):
+    //   calendar_only  his own calendar, no attendees, no invitation, no Teams
+    //   invite         Tessa organizes, Ed + the named people, no Teams link
+    //   online         Tessa organizes a Teams meeting (the legacy default)
+    // Tessa is the ORGANIZER on meetings she sets up (Ed 2026-09-10), and Ed is
+    // always in the room; never invite Tessa herself.
+    let staged_meeting = null; let staged_meeting_error = null;
+    const mode = (out.meeting && out.meeting.mode) || 'online';
+    const canStage = out.meeting && out.meeting.direct_invite
+      && (mode === 'calendar_only' ? (out.to.length || (out.parsed.to_hints || []).length || out.meeting.topic) : out.to.length);
+    if (canStage) {
       const wt = resolveMeetingWallTimes(out.meeting);
-      // Tessa is the ORGANIZER on meetings she sets up (Ed 2026-09-10). Because
-      // she organizes on Ed's behalf, Ed is added as a required attendee — a
-      // meeting she books "for Ed to meet X" has to actually put Ed in the room.
-      // Dedup, case-insensitive, and never invite Tessa herself as a guest.
-      const tessaMbx = graphSend.TESSA_MAILBOX;
-      const seen = new Set();
-      const attendees = [...out.to.map((p) => p.email), graphSend.ED_MAILBOX]
-        .map((e) => String(e || '').trim())
-        .filter((e) => e && e.toLowerCase() !== String(tessaMbx || '').toLowerCase())
-        .filter((e) => { const k = e.toLowerCase(); if (seen.has(k)) return false; seen.add(k); return true; });
-      if (wt && attendees.length) {
-        const subject = out.meeting.title || `Meeting with ${out.to.map((p) => p.name).filter(Boolean).join(', ') || 'you'}`;
-        // Write a REAL invitation body, in Tessa's voice on Ed's behalf — never the
-        // raw parsed instruction, which reads as meta-noise in the invite.
-        let inviteBody = await draftMeetingInvite({
-          title: out.meeting.title, message: out.meeting.message,
-          attendeeNames: out.to.map((p) => p.name).filter(Boolean),
-        });
-        if (!inviteBody) {
-          const who = out.to.map((p) => (p.name || '').split(/\s+/)[0]).filter(Boolean).join(' and ') || 'there';
-          inviteBody = `Hi ${who}, I'm setting up this meeting on Ed's behalf${out.meeting.message ? ', ' + out.meeting.message : (out.meeting.title ? ' to ' + out.meeting.title.toLowerCase() : '')}. The Teams join link is on this invite.`;
+      if (wt) {
+        let inviteBody = '';
+        if (mode !== 'calendar_only') {
+          // A REAL invitation body, in Tessa's voice on Ed's behalf — never the
+          // raw parsed instruction, which reads as meta-noise in the invite.
+          inviteBody = await draftMeetingInvite({
+            title: out.meeting.title, message: out.meeting.message,
+            attendeeNames: out.to.map((p) => p.name).filter(Boolean),
+          });
+          if (!inviteBody) {
+            const who = out.to.map((p) => (p.name || '').split(/s+/)[0]).filter(Boolean).join(' and ') || 'there';
+            inviteBody = `Hi ${who}, I'm setting up this meeting on Ed's behalf${out.meeting.message ? ', ' + out.meeting.message : (out.meeting.title ? ' to ' + out.meeting.title.toLowerCase() : '')}.${mode === 'online' ? ' The Teams join link is on this invite.' : ''}`;
+          }
         }
+        const row = buildStagedMeetingRow({
+          mode, method: out.meeting.method, meeting: out.meeting, people: out.to,
+          names: out.to.length ? [] : (out.parsed.to_hints || []),
+          phones: out.meeting.phones || [], wt,
+          edMailbox: graphSend.ED_MAILBOX, tessaMailbox: graphSend.TESSA_MAILBOX, inviteBody,
+        });
         try {
-          const { data, error } = await supabase.from('tessa_outbox').insert({
-            kind: 'meeting', status: 'queued', title: subject, subject,
-            organizer: graphSend.TESSA_MAILBOX || graphSend.ED_MAILBOX,
-            meeting_start: wt.start, meeting_end: wt.end, meeting_time_zone: wt.tz,
-            meeting_location: out.meeting.location || 'Microsoft Teams',
-            meeting_attendees: attendees.join(', '),
-            body_text: inviteBody,
-            note: 'Set up on Ed’s behalf',
-          }).select('id, subject, meeting_start, meeting_end, meeting_time_zone, meeting_attendees').single();
-          if (!error && data) staged_meeting = { ...data, when_label: `${wt.date_label}, ${out.meeting.start_time}${out.meeting.end_time ? ' to ' + out.meeting.end_time : ''}` };
-          else if (error) console.warn('[tessa] meeting stage failed:', error.message);
-        } catch (e) { console.warn('[tessa] meeting stage skipped:', e.message); }
+          const { data, error } = await supabase.from('tessa_outbox').insert({ ...row, created_by: owner.email || 'Ed' })
+            .select('id, subject, meeting_mode, meeting_start, meeting_end, meeting_time_zone, meeting_location, meeting_attendees, organizer, body_text').single();
+          if (!error && data) {
+            const hm = (w) => { const [h, m] = String(w).slice(11, 16).split(':').map(Number); return `${((h + 11) % 12) + 1}:${String(m).padStart(2, '0')} ${h < 12 ? 'AM' : 'PM'}`; };
+            staged_meeting = { ...data, when_label: `${wt.date_label}, ${hm(wt.start)} to ${hm(wt.end)} Central` };
+          } else if (error) {
+            console.warn('[tessa] meeting stage failed:', error.message);
+            staged_meeting_error = 'Tessa could not stage the calendar entry: ' + safeErrorMessage(error);
+          }
+        } catch (e) { console.warn('[tessa] meeting stage skipped:', e.message); staged_meeting_error = 'Tessa could not stage the calendar entry.'; }
       }
     }
 
@@ -422,6 +431,7 @@ router.post('/request', express.json({ limit: '16kb' }), async (req, res) => {
       created_contacts,
       staged_email,
       staged_meeting,
+      staged_meeting_error,
       resolved: out.resolved,
     });
   } catch (err) {
@@ -1047,7 +1057,7 @@ router.post('/standing/:id/run-now', express.json(), async (req, res) => {
 // North star (Ed 2026-09-03): the AI team does the work like real people in
 // their roles; the human supervises and releases. A queued email or meeting
 // sits here until Ed hits release. Nothing leaves on its own. (Migration 405.)
-const OUTBOX_COLS = 'id, kind, status, title, note, to_emails, cc_emails, subject, body_text, attachment_name, attachment_mime, attachment_path, attachment_bucket, organizer, meeting_start, meeting_end, meeting_time_zone, meeting_location, meeting_attendees, result, send_error, created_at, sent_at';
+const OUTBOX_COLS = 'id, kind, status, meeting_mode, title, note, to_emails, cc_emails, subject, body_text, attachment_name, attachment_mime, attachment_path, attachment_bucket, organizer, meeting_start, meeting_end, meeting_time_zone, meeting_location, meeting_attendees, result, send_error, created_at, sent_at';
 
 // GET /outbox?status=queued — Tessa's prepared items (default: still queued).
 router.get('/outbox', async (req, res) => {
@@ -1151,8 +1161,10 @@ router.post('/outbox/:id/release', express.json({ limit: '4kb' }), async (req, r
     }
 
     // kind === 'meeting'
-    const attendees = parseAddrs(item.meeting_attendees);
-    if (!attendees.length) return res.status(400).json({ error: 'no valid attendees on this meeting' });
+    // Mode: null on rows staged before 2026-10-06 = the legacy Teams invite.
+    const mmode = item.meeting_mode || 'online';
+    const attendees = mmode === 'calendar_only' ? [] : parseAddrs(item.meeting_attendees);
+    if (mmode !== 'calendar_only' && !attendees.length) return res.status(400).json({ error: 'no valid attendees on this meeting' });
     if (!item.meeting_start || !item.meeting_end) return res.status(400).json({ error: 'the meeting is missing a start/end time' });
     const { createTeamsMeeting } = require('../lib/ea/tessa_meeting');
     let meeting;
@@ -1164,6 +1176,7 @@ router.post('/outbox/:id/release', express.json({ limit: '4kb' }), async (req, r
         timeZone: item.meeting_time_zone || undefined,
         attendees, body: String(item.body_text || ''),
         location: item.meeting_location || null,
+        online: mmode === 'online',
       });
     } catch (e) {
       await supabase.from('tessa_outbox').update({ status: 'error', send_error: e.message }).eq('id', item.id);
@@ -1276,4 +1289,4 @@ router.post('/lunch/menu-capture', express.json({ limit: '512kb' }), async (req,
   } catch (err) { console.error('[tessa] menu capture failed:', err.message); res.status(500).json({ error: safeErrorMessage(err) }); }
 });
 
-module.exports = { router, searchContacts, resolveRecipient };
+module.exports = { router, searchContacts, resolveRecipient, resolveMeetingWallTimes };
