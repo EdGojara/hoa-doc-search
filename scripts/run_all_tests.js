@@ -149,6 +149,7 @@ const CHECKS = [
   'tests/test_tessa_mailbox_fallback.js',
   'tests/test_reply_includes_history.js',
   'tests/test_tessa_voice.js',
+  'tests/test_tessa_interview.js',
   'tests/test_tessa_request.js',
   'tests/test_tessa_identity.js',
   'tests/test_tessa_groups.js',
