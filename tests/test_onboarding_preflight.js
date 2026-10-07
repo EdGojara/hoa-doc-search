@@ -174,6 +174,44 @@ check('no preflight module can write: the plan builder and report have no databa
   }
 });
 
+// FORMER OWNERS IN THE AR AGING (Ed 2026-10-07): routed by the snapshot to a prior-owner
+// receivable (1310) and a refund liability (2410); the plan carries each as PRIOR-OWNER rows on
+// the former owner's own source account (no tenure), and current-owner AR still ties to 1300.
+const routedSnapshot = () => {
+  const s = snapshotBase();
+  s.lines = s.lines.map((l) => (l.account_code === '3000' && l.kind === 'gl_opening_balance' ? { ...l, amount_cents: -930 } : l));
+  s.lines.push(
+    { line_no: 20, kind: 'gl_opening_balance', account_code: '1310', amount_cents: 40 },
+    { line_no: 21, kind: 'gl_opening_balance', account_code: '2410', amount_cents: -60 },
+    { line_no: 22, kind: 'former_owner_receivable', account_code: '1310', source_account_key: '90011', amount_cents: 40, detail: { former_owner: true } },
+    { line_no: 23, kind: 'former_owner_refund', account_code: '2410', source_account_key: '90012', amount_cents: -60, detail: { former_owner: true } },
+    { line_no: 24, kind: 'ar_aging_item', account_code: '1300', source_account_key: '90011', amount_cents: 40, detail: { charge_type: 'Balance Forward - Legal Fee' } },
+    { line_no: 25, kind: 'ar_aging_item', account_code: '1300', source_account_key: '90012', amount_cents: -60, detail: { charge_type: 'Annual Assessment' } });
+  return s;
+};
+const routedSource = () => ({ ...source(), aging_rows: [
+  { source_account_key: '90011', previous_owner: true, balance_cents: 40, provenance: { artifact_sha256: 'd'.repeat(64), locator: { line: 987 }, raw: '      90011 - *** 2 Example Lane - Zaghmouth' } },
+  { source_account_key: '90012', previous_owner: true, balance_cents: -60, provenance: { artifact_sha256: 'd'.repeat(64), locator: { line: 1566 }, raw: '      90012 - *** 9 Nowhere Road - Johnson' } }] });
+const routedCtx = () => { const c = ctxBase(); c.accounts = [...c.accounts, A(1310), A(2410)]; return c; };
+check('former owners in the aging: debits -> prior-owner receivable rows, credits -> named refund-liability rows, each on its own source account (no tenure, never a current owner); current-owner AR still ties to 1300', () => {
+  const p = build({ snapshot: routedSnapshot(), source: routedSource(), ctx: routedCtx() });
+  for (const k of ['preflight.ar_rows_resolved', 'preflight.ar_subledger_ties_to_gl', 'preflight.prepaid_subledger_ties_to_gl', 'preflight.former_owner_aging_rows_routed']) assert.strictEqual(status(p, k), 'PASS', k);
+  const rows = p.writes.ar_opening_batch.rows;
+  const recv = rows.find((r) => r.vantaca_account_id === '90011'); const refund = rows.find((r) => r.vantaca_account_id === '90012');
+  assert.deepStrictEqual([recv.prior_owner, recv.tenure_id, recv.txn_type, recv.amount_cents, recv.raw_row.prior_owner.route, recv.raw_row.prior_owner.gl_account, recv.raw_row.prior_owner.name], [true, null, 'balance_brought_forward', 40, 'prior_owner_receivable', '1310', 'Zaghmouth']);
+  assert.strictEqual(recv.property_id, 'p2', 'the exact printed lot is kept as the lot only (no tenure)');
+  assert.deepStrictEqual([refund.prior_owner, refund.tenure_id, refund.txn_type, refund.charge_category, refund.amount_cents, refund.raw_row.prior_owner.route, refund.property_id, refund.raw_row.prior_owner.name], [true, null, 'credit', 'credit', -60, 'refund_liability', null, 'Johnson']);
+  assert.match(refund.description, /Former-owner refund payable/);
+  // execute-time totals: all receivables (current 300 + former 40); all prior-owner credits (prepaid former -100 + refund -60)
+  assert.deepStrictEqual([p.writes.ar_opening_batch.receivable_cents, p.writes.ar_opening_batch.current_owner_prepaid_cents, p.writes.ar_opening_batch.prior_owner_credit_cents], [340, -50, -160]);
+});
+check('a routed former-owner row whose account is a CURRENT property account, or with no source row, is a problem (blocked), never a current owner’s balance', () => {
+  const s = routedSource(); s.aging_rows = s.aging_rows.filter((r) => r.source_account_key !== '90012');
+  assert.strictEqual(status(build({ snapshot: routedSnapshot(), source: s, ctx: routedCtx() }), 'preflight.ar_rows_resolved'), 'BLOCKED');
+  const c = routedCtx(); c.properties = [...c.properties, { id: 'p9', vantaca_account_id: '90011', street_address: '2 Example Lane' }];
+  assert.strictEqual(status(build({ snapshot: routedSnapshot(), source: routedSource(), ctx: c }), 'preflight.ar_rows_resolved'), 'BLOCKED');
+});
+
 (async () => {
   let pass = 0, fail = 0;
   console.log('Onboarding M5: conversion preflight (Issue #15)');

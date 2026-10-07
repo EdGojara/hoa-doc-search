@@ -54,13 +54,15 @@ check('AP: when the source chart has no AP account the component is NOT_APPLICAB
   assert.deepStrictEqual([ap.status, ap.control_cents, ap.supported_cents, ap.unsupported_cents], ['BLOCKED', -8500, 0, -8500]);
   assert.ok(kind(s2, 'unsupported_detail').some((l) => l.component === 'ap_detail' && l.amount_cents === -8500));
 });
-check('missing subsidiary detail: no homeowner ledger -> AR and prepaid BLOCKED with the whole control unsupported; GL still proposed exactly as the source', () => {
+check('no homeowner ledger: AR still opens from the AR aging (the source of authority); prepaid with neither a prepaid report nor a ledger is BLOCKED with the control unsupported; the ledger cross-check is BLOCKED, not skipped', () => {
   const s = buildSnapshot(parse(['gl_trial_balance', 'balance_sheet', 'ar_aging']), { ...ID, roles: ROLES });
   assert.strictEqual(ctl(s, 'snapshot.gl_lines_equal_source_ending_tb').status, 'PASS');
   assert.strictEqual(kind(s, 'gl_opening_balance').find((l) => l.account_code === '1300').amount_cents, 51000);
-  assert.deepStrictEqual([comp(s, 'ar_detail').status, comp(s, 'ar_detail').unsupported_cents], ['BLOCKED', 51000]);
+  assert.deepStrictEqual([comp(s, 'ar_detail').status, comp(s, 'ar_detail').source, comp(s, 'ar_detail').unsupported_cents], ['PASS', 'ar_aging', 0]);
   assert.deepStrictEqual([comp(s, 'prepaid_detail').status, comp(s, 'prepaid_detail').unsupported_cents], ['BLOCKED', -8500]);
-  assert.strictEqual(kind(s, 'ar_detail').length + kind(s, 'prepaid_detail').length, 0, 'no owner detail invented');
+  assert.strictEqual(kind(s, 'prepaid_detail').length, 0, 'no owner credit invented');
+  assert.strictEqual(ctl(s, 'snapshot.ledger_cross_check').status, 'BLOCKED');
+  assert.strictEqual(comp(s, 'ledger_cross_check').status, 'BLOCKED');
 });
 check('short prepaid detail (the Quail Ridge shape): supported part kept per account, remainder is ONE unsupported line naming nobody; no plug, no assignment', () => {
   const parsed = parse();
@@ -200,12 +202,119 @@ check('a correction is sourced and balanced or it moves NOTHING (and blocks the 
     assert.ok(!g('1310'), 'the reclass does not apply alone either');
   }
 });
+// ---- SOURCE AUTHORITY (Ed 2026-10-07): homeowner AR opens from the AR AGING, prepaid from
+// the PREPAID report; the homeowner ledger is a cross-check only. Canyon Gate shape, synthetic:
+//   - GL 1300 carries a legacy previous-owner receivable (reclassed to 1310) and a $24.75
+//     duplicate (corrected Dr 1000 / Cr 1300) on top of what the aging supports;
+//   - the aging prints a PREVIOUS-OWNER credit row (former owner, kept in 1300 by the source);
+//   - the prepaid report carries the current owner's credit AND a former owner's credit (2400);
+//   - one owner's ledger carries a duplicate conversion opening the aging and GL do not.
+const { makeRow } = require('../lib/onboarding/canonical');
+const SRC = (n) => ({ artifact_sha256: 'f'.repeat(64), locator: `synthetic:${n}`, raw: `synthetic ${n}` });
+const FORMER_AR = -14700;           // aging "***" previous-owner credit, kept in 1300 by the source
+const FORMER_PP = 50000;            // prepaid report "***" former-owner credit, kept in 2400
+const LEDGER_DUP = 101080;          // duplicate opening in ONE owner's ledger only
+const canyonShape = ({ ledgerDuplicate = true } = {}) => {
+  const p = withLegacyAndDuplicate();               // 1300 +legacy +24.75, 1000 -24.75
+  const tb = p.gl_trial_balance.rows.map((r) => {
+    if (r.domain !== 'gl_account_balance') return r;
+    if (r.account_code === '1300') return { ...r, ending_cents: r.ending_cents + FORMER_AR };      // former-owner credit sits in AR
+    // withLegacy parked the legacy amount's offset in 2400; here it sits in cash so 2400 is purely homeowner credits
+    if (r.account_code === '2400') return { ...r, ending_cents: r.ending_cents + LEGACY - FORMER_PP };   // former-owner credit sits in prepaid
+    if (r.account_code === '1000') return { ...r, ending_cents: r.ending_cents - LEGACY - FORMER_AR + FORMER_PP };   // keep the TB balanced
+    return r;
+  });
+  const agingAsOf = p.ar_aging.rows.find((r) => r.domain === 'ar_aging_account').as_of;
+  const aging = [...p.ar_aging.rows, makeRow('ar_aging_account', { source_account_key: '90009001', as_of: agingAsOf, balance_cents: FORMER_AR, previous_owner: true }, SRC('aging 90009001'))];
+  const prepaid = [
+    makeRow('prepaid_credit', { source_account_key: '90000003', as_of: agingAsOf, amount_cents: 8500 }, SRC('prepaid 90000003')),
+    makeRow('prepaid_credit', { source_account_key: '90009002', as_of: agingAsOf, amount_cents: FORMER_PP, previous_owner: true }, SRC('prepaid 90009002')),
+  ];
+  const ho = p.homeowner_transactions.rows.map((r) => (ledgerDuplicate && r.domain === 'homeowner_account' && r.source_account_key === '90000002' ? { ...r, ending_cents: r.ending_cents + LEDGER_DUP } : r));
+  return { ...p, gl_trial_balance: { ...p.gl_trial_balance, rows: tb }, ar_aging: { ...p.ar_aging, rows: aging },
+    prepaid_homeowners: { as_of: agingAsOf, rows: prepaid }, homeowner_transactions: { ...p.homeowner_transactions, rows: ho } };
+};
+const APPROVED = { ...ID, roles: ROLES, opening_reclasses: [RECLASS], opening_corrections: [CORRECTION], artifact_shas: [EVIDENCE_SHA, BANK_SHA] };
+check('AR opens from the AR aging (previous-owner row included, keyed to its own account) and ties to 1300 after the approved 1310 reclass and the $24.75 correction', () => {
+  const s = buildSnapshot(canyonShape(), APPROVED);
+  const ar = comp(s, 'ar_detail');
+  assert.deepStrictEqual([ar.status, ar.source, ar.control_cents, ar.supported_cents, ar.unsupported_cents], ['PASS', 'ar_aging', 51000 + FORMER_AR, 51000 + FORMER_AR, 0], JSON.stringify([ar.status, ar.source, ar.control_cents, ar.supported_cents, ar.unsupported_cents]));
+  assert.strictEqual(kind(s, 'gl_opening_balance').find((l) => l.account_code === '1300').amount_cents, 51000 + FORMER_AR);
+  const former = kind(s, 'ar_detail').find((l) => l.source_account_key === '90009001');
+  assert.deepStrictEqual([former.amount_cents, former.former_owner], [FORMER_AR, true], 'previous-owner credit kept, on its own account, never written off');
+  assert.strictEqual(ctl(s, 'snapshot.ar_detail_supports_gl').status, 'PASS');
+});
+check('prepaid opens from the prepaid report (current and former owners) and ties to 2400 exactly', () => {
+  const s = buildSnapshot(canyonShape(), APPROVED);
+  const pp = comp(s, 'prepaid_detail');
+  assert.deepStrictEqual([pp.status, pp.source, pp.control_cents, pp.supported_cents, pp.former_owner_accounts], ['PASS', 'prepaid_report', -8500 - FORMER_PP, -8500 - FORMER_PP, 1], JSON.stringify([pp.status, pp.source, pp.control_cents, pp.supported_cents, pp.former_owner_accounts]));
+  assert.deepStrictEqual(kind(s, 'prepaid_detail').map((l) => [l.source_account_key, l.amount_cents, !!l.former_owner]), [['90000003', -8500, false], ['90009002', -FORMER_PP, true]]);
+});
+check('a ledger difference is an EXCEPTION, never a change to the opening: same opening with or without the ledger duplicate; the cross-check FAILS naming the account', () => {
+  const clean = buildSnapshot(canyonShape({ ledgerDuplicate: false }), APPROVED);
+  const dup = buildSnapshot(canyonShape(), APPROVED);
+  const opening = (s) => s.lines.filter((l) => ['gl_opening_balance', 'ar_detail', 'prepaid_detail'].includes(l.kind)).map((l) => [l.kind, l.account_code, l.source_account_key, l.amount_cents]);
+  assert.deepStrictEqual(opening(dup), opening(clean), 'the ledger never changes the opening position');
+  assert.strictEqual(ctl(clean, 'snapshot.ledger_cross_check').status, 'PASS');
+  const x = ctl(dup, 'snapshot.ledger_cross_check');
+  assert.strictEqual(x.status, 'FAIL');
+  assert.deepStrictEqual(x.failures.map((f) => [f.account, f.difference_cents]), [['90000002', LEDGER_DUP]]);
+  assert.notStrictEqual(dup.sha256, clean.sha256, 'the exception is part of what the reviewer approves');
+});
+check('an approved, evidenced disposition ("aging governs") resolves the exception; without evidence or approval it does not', () => {
+  const disp = { account: '90000002', disposition: 'aging_governs', reason: 'Duplicate / transposed conversion opening row in the ledger only; aging and GL carry the true balance',
+    evidence: { description: 'Prior-manager aging 10/31/2025', artifact_sha256: EVIDENCE_SHA, locator: 'account 90000002 total' }, approved_by: 'Ed Gojara', approved_at: '2026-10-07' };
+  const ok = buildSnapshot(canyonShape(), { ...APPROVED, ledger_dispositions: [disp] });
+  const c = ctl(ok, 'snapshot.ledger_cross_check');
+  assert.strictEqual(c.status, 'PASS');
+  assert.deepStrictEqual(c.resolved.map((r) => [r.account, r.difference_cents, r.approved_by]), [['90000002', LEDGER_DUP, 'Ed Gojara']]);
+  assert.strictEqual(comp(ok, 'ar_detail').supported_cents, 51000 + FORMER_AR, 'still the aging balance');
+  for (const bad of [{ ...disp, approved_by: '' }, { ...disp, evidence: { ...disp.evidence, artifact_sha256: 'd'.repeat(64) } }, { ...disp, disposition: 'ledger_governs' }]) {
+    assert.strictEqual(ctl(buildSnapshot(canyonShape(), { ...APPROVED, ledger_dispositions: [bad] }), 'snapshot.ledger_cross_check').status, 'FAIL', JSON.stringify(bad).slice(0, 60));
+  }
+});
+// ---- FORMER-OWNER ROUTING (Ed 2026-10-07): previous-owner rows in the aging leave AR in the
+// opening, by the aging's own amounts: debits to the prior-owner receivable (1310, which also
+// holds the legacy reclass), credits to a named refund liability (2410). AR = current owners.
+const FORMER_DEBIT = 8687;
+const canyonShapeWithFormerDebit = () => {
+  const p = canyonShape();
+  const asOf = p.ar_aging.rows.find((r) => r.domain === 'ar_aging_account').as_of;
+  const aging = [...p.ar_aging.rows, makeRow('ar_aging_account', { source_account_key: '90009003', as_of: asOf, balance_cents: FORMER_DEBIT, previous_owner: true }, SRC('aging 90009003'))];
+  const tb = p.gl_trial_balance.rows.map((r) => (r.domain !== 'gl_account_balance' ? r : r.account_code === '1300' ? { ...r, ending_cents: r.ending_cents + FORMER_DEBIT } : r.account_code === '1000' ? { ...r, ending_cents: r.ending_cents - FORMER_DEBIT } : r));
+  return { ...p, ar_aging: { ...p.ar_aging, rows: aging }, gl_trial_balance: { ...p.gl_trial_balance, rows: tb } };
+};
+const ROUTING = { receivable_account: '1310', receivable_account_name: 'Legacy Receivable - Previous Owners', refund_account: '2410', refund_account_name: 'Former Owner Refunds Payable',
+  reason: 'Previous owners in the AR aging are not current homeowners: debits are prior-owner receivables, credits are refunds payable', approved_by: 'Ed Gojara', approved_at: '2026-10-07' };
+check('former-owner routing: 1300 = current owners only; 1310 = legacy + former-owner debits; 2410 = former-owner credits (one line each, own accounts); opening balanced; AR ties', () => {
+  const s = buildSnapshot(canyonShapeWithFormerDebit(), { ...APPROVED, former_owner_routing: ROUTING });
+  const g = (c) => kind(s, 'gl_opening_balance').find((l) => l.account_code === c);
+  assert.strictEqual(g('1300').amount_cents, 51000, 'current owners only');
+  assert.deepStrictEqual([g('1310').amount_cents, g('1310').account_name], [LEGACY + FORMER_DEBIT, 'Legacy Receivable - Previous Owners']);
+  assert.deepStrictEqual([g('2410').amount_cents, g('2410').account_name], [FORMER_AR, 'Former Owner Refunds Payable']);
+  assert.deepStrictEqual(g('2410').former_owner_routing.accounts, ['90009001']);
+  assert.strictEqual(total(kind(s, 'gl_opening_balance')), 0);
+  assert.deepStrictEqual(kind(s, 'former_owner_receivable').map((l) => [l.source_account_key, l.account_code, l.amount_cents]), [['90009003', '1310', FORMER_DEBIT]]);
+  assert.deepStrictEqual(kind(s, 'former_owner_refund').map((l) => [l.source_account_key, l.account_code, l.amount_cents]), [['90009001', '2410', FORMER_AR]]);
+  assert.ok(!kind(s, 'ar_detail').some((l) => l.former_owner), 'no former owner left in current-owner AR');
+  for (const k of ['snapshot.former_owner_routing', 'snapshot.ar_detail_supports_gl', 'snapshot.ar_detail_matches_aging_by_account', 'snapshot.gl_opening_balances_balance', 'snapshot.every_line_has_provenance']) assert.strictEqual(ctl(s, k).status, 'PASS', k);
+});
+check('former-owner routing without a named approval (or into the AR account itself) FAILS and moves nothing; without routing, former owners stay in AR as before', () => {
+  for (const bad of [{ ...ROUTING, approved_by: '' }, { ...ROUTING, refund_account: '1300' }, { ...ROUTING, refund_account: '2499', refund_account_name: undefined }]) {
+    const s = buildSnapshot(canyonShapeWithFormerDebit(), { ...APPROVED, former_owner_routing: bad });
+    assert.strictEqual(ctl(s, 'snapshot.former_owner_routing').status, 'FAIL');
+    assert.ok(!kind(s, 'gl_opening_balance').some((l) => l.account_code === '2410' || l.account_code === '2499'));
+  }
+  const plain = buildSnapshot(canyonShapeWithFormerDebit(), APPROVED);
+  assert.strictEqual(kind(plain, 'gl_opening_balance').find((l) => l.account_code === '1300').amount_cents, 51000 + FORMER_AR + FORMER_DEBIT);
+  assert.strictEqual(comp(plain, 'ar_detail').status, 'PASS');
+});
 check('opening reclasses are owner-only in the service, and the stage route passes them through', () => {
   const svc = fs.readFileSync(path.join(__dirname, '..', 'lib', 'onboarding', 'service.js'), 'utf8');
-  assert.match(svc, /if \(\(openingReclasses\.length \|\| openingCorrections\.length\) && !\(actor && actor\.role === 'owner'\)\) throw new ServiceError\(403, 'OWNER_ONLY'/);
-  assert.match(svc, /opening_reclasses: openingReclasses, opening_corrections: openingCorrections,/);
+  assert.match(svc, /if \(\(openingReclasses\.length \|\| openingCorrections\.length \|\| ledgerDispositions\.length \|\| formerOwnerRouting\) && !\(actor && actor\.role === 'owner'\)\) throw new ServiceError\(403, 'OWNER_ONLY'/);
+  assert.match(svc, /ledger_dispositions: ledgerDispositions, former_owner_routing: formerOwnerRouting,/);
+  assert.match(fs.readFileSync(path.join(__dirname, '..', 'api', 'onboarding.js'), 'utf8'), /opening_reclasses: b\.opening_reclasses, opening_corrections: b\.opening_corrections, ledger_dispositions: b\.ledger_dispositions, former_owner_routing: b\.former_owner_routing/);
   assert.match(svc, /artifact_shas: \[\.\.\.view\.artifacts\.map\(\(a\) => a\.sha256\), \.\.\.\(await listEvidence\(view\.batch\.id\)\)\.map\(\(e\) => e\.sha256\)\]/, 'evidence-only documents (495) are citable');
-  assert.match(fs.readFileSync(path.join(__dirname, '..', 'api', 'onboarding.js'), 'utf8'), /opening_reclasses: b\.opening_reclasses, opening_corrections: b\.opening_corrections/);
 });
 check('the snapshot module holds no database client and makes no writes', () => {
   const s = fs.readFileSync(path.join(__dirname, '..', 'lib', 'onboarding', 'snapshot.js'), 'utf8').replace(/\/\/.*$/gm, '');
