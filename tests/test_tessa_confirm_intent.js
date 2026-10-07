@@ -144,6 +144,41 @@ check('Sipra end to end: calendar-only, NO email; a model title saying "Teams me
   assert.ok(!/teams/i.test(`${row.subject} ${row.body_text} ${row.meeting_location}`), row.subject);
 });
 
+// --------------------- CONTEXT: an existing interview thread keeps it an interview (Ed 2026-10-07)
+const juanitaR = { name: 'Juanita Ramsey', email: 'jramsey@example.com' };
+async function runWithThreads(text, threads) {
+  const thoughts = [];
+  const out = await runRequest(text, {
+    parser: async () => ({ ...parsed('juanita', { date: 'friday', start_time: '3:00 PM' }), search_terms: ['Juanita'] }),
+    resolveRecipient: async () => ({ best: { ...juanitaR, source: 'contacts' } }),
+    searchMailbox: async () => ({ messages: threads.map((t, i) => ({ id: 'm' + i, conversation_id: 'c' + i, subject: t.subject, from: { name: t.from_name || null, email: t.from_email || null }, received_at: '2026-10-01T15:00:00Z', preview: t.preview || '' })) }),
+    mailboxes: [ED],
+    drafter: async ({ thought }) => { thoughts.push(thought); return { subject: 'Confirming', body: 'Hi' }; },
+  });
+  return { out, thought: thoughts[0] || null };
+}
+const row = (out) => C.buildStagedMeetingRow({ mode: out.meeting.mode, method: out.meeting.method, meeting: out.meeting, people: out.to, phones: [], wt: WT('15:00', out.meeting.duration_minutes || 30), edMailbox: ED, tessaMailbox: TESSA });
+check('CONTEXT: Juanita is an interview candidate (her scheduling thread) -> "In-Person Interview - Juanita Ramsey", Ed’s calendar at the address, 30 min, confirmation email names the interview', async () => {
+  const { out, thought } = await runWithThreads(P.juanita, [{ subject: 'Re: Interview - Community Operations Assistant', from_email: juanitaR.email, from_name: 'Juanita Ramsey', preview: 'Friday at 3 works for me.' }]);
+  const r = row(out);
+  assert.deepStrictEqual([out.meeting.mode, out.meeting.interview, r.subject, r.meeting_location, r.meeting_attendees, r.organizer, out.meeting.duration_minutes, !!out.draft],
+    ['calendar_only', true, 'In-Person Interview - Juanita Ramsey', '12808 W Airport Blvd, Suite 253', '', ED, 30, true]);
+  assert.ok(/Ed is the one interviewing them, not Tessa/.test(thought) && /in-person interview/.test(thought), thought);
+});
+check('CONTEXT: the same confirmation with NO hiring thread stays a meeting ("In-Person Meeting - Juanita Ramsey")', async () => {
+  const { out } = await runWithThreads(P.juanita, [{ subject: 'Pool party volunteers', from_email: juanitaR.email, preview: 'Happy to help Friday.' }]);
+  assert.deepStrictEqual([out.meeting.interview, row(out).subject], [false, 'In-Person Meeting - Juanita Ramsey']);
+});
+check('CONTEXT: an interview thread about SOMEONE ELSE never makes Juanita’s meeting an interview', async () => {
+  const { out } = await runWithThreads(P.juanita, [{ subject: 'Interview - Maintenance Tech', from_email: 'other@example.com', preview: 'Marcus confirmed Thursday.' }]);
+  assert.deepStrictEqual([out.meeting.interview, row(out).subject], [false, 'In-Person Meeting - Juanita Ramsey']);
+});
+check('CONTEXT never changes the routing: an interview from context is still calendar-only, no attendees, no Teams', async () => {
+  const { out } = await runWithThreads(P.juanita, [{ subject: 'Your application - Community Operations Assistant', from_email: juanitaR.email }]);
+  const r = row(out);
+  assert.deepStrictEqual([out.meeting.mode, r.meeting_attendees, /teams/i.test(`${r.subject} ${r.body_text} ${r.meeting_location}`)], ['calendar_only', '', false]);
+});
+
 (async () => {
   let pass = 0, fail = 0;
   console.log('Tessa: confirmations and interviews route by rule (Ed 2026-10-07)');
