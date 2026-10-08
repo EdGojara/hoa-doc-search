@@ -162,7 +162,12 @@
     try {
       const r = await fetch('/api/assessment-proration/transfer/queue?community_id=' + encodeURIComponent(CID));
       const j = await r.json(); if (!r.ok || j.error) throw new Error(j.error || ('HTTP ' + r.status));
-      host.innerHTML = TransferProration.queueHtml(j.queue || []);
+      // Builder assessment coverage status (issue #96) sits above the queue; its failure never hides the queue.
+      let cov = '';
+      const covErr = (m) => '<div class="card" style="color:var(--err)">Could not load builder assessment coverage: ' + esc(m) + '</div>';
+      try { const cr = await fetch('/api/assessment-proration/builder-coverage?community_id=' + encodeURIComponent(CID)); const cj = await cr.json(); cov = cr.ok && !cj.error ? TransferProration.coverageHtml(cj.status) : covErr(cj.error || ('HTTP ' + cr.status)); }
+      catch (ce) { cov = covErr(ce.message); }
+      host.innerHTML = cov + TransferProration.queueHtml(j.queue || []);
       TransferProration.wireQueue(host, loadList);
     } catch (e) { host.innerHTML = '<div class="card" style="color:var(--err)">Couldn\'t load builder transfer prorations: ' + esc(e.message) + '</div>'; }
   }

@@ -1,0 +1,142 @@
+{
+  "migration": "501_conversion_builder_coverage.sql",
+  "summary": "Issue #96: the conversion carries builder assessments at the builder rate and the deferred annual assessments correctly, and every month after it the builder's lots are billed forward without overlap or gap. Adds conversion_reconciling_items (append-only; open -> resolved with who/when/why) and builder_accrual_runs; extends onboarding_execute (the 498 body plus the builder coverage batch, the deferred-assessment release schedule and the reconciling items, each verified before commit); adds the builder accrual functions (plan / stage / finish) and builder_coverage_status for the AR email, Home Sales and the operations warning. Changes no existing row.",
+  "requires": [
+    "498_onboarding_execute_neutralize_counted.sql",
+    "500_transfer_assessment_proration.sql",
+    "466_recognition_schedules_controls.sql"
+  ],
+  "preflight": [
+    {
+      "name": "builder_assessment_coverage exists (500) and is empty",
+      "sql": "SELECT count(*)::int FROM builder_assessment_coverage",
+      "expect": 0
+    },
+    {
+      "name": "conversion_reconciling_items does not exist yet",
+      "sql": "SELECT count(*)::int FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'conversion_reconciling_items'",
+      "expect": 0
+    },
+    {
+      "name": "no onboarding batch is mid-execute (onboarding_execute is replaced)",
+      "sql": "SELECT count(*)::int FROM conversion_batches WHERE onboarding_stage = 'execute' AND status <> 'posted'",
+      "expect": 0
+    }
+  ],
+  "expected_changes": [
+    "Creates conversion_reconciling_items (batch, community, execution, kind deferral_residue / builder_position_unresolved, item key, account, lot, amount, detail, status open/resolved, resolution who/when/note/entry). FKs RESTRICT; UNIQUE (batch_id, kind, item_key); a resolution needs who, when and a 10+ character note; a guard trigger refuses DELETE and any change except open -> resolved. Grants SELECT, INSERT, UPDATE to service_role.",
+    "Creates builder_accrual_runs (community, through date, staged/posted, batch, plan, who/when); one staged run per community; a guard refuses DELETE and edits. builder_assessment_coverage.accrual_run_id now references it (RESTRICT).",
+    "onboarding_execution_writes: the table_name and write_kind CHECKs also allow builder_assessment_coverage / recognition_schedules / conversion_reconciling_items and builder_batch / builder_row / builder_coverage / deferral_schedule / reconciling_item.",
+    "Replaces onboarding_execute: the 498 body unchanged, plus (only when the approved plan carries them) the {code}-BUILDER ledger batch and coverage, the deferral release schedule and the reconciling items, all verified before commit (builder ledger = plan = the entry's AR lines; coverage posted per lot; schedule total; item count; write counts). A plan without a builder section executes exactly as before.",
+    "Functions builder_tenure_match, builder_accrual_plan (read-only), builder_accrual_stage, builder_accrual_run_view, builder_accrual_finish and builder_coverage_status: service_role only. No row in any existing table changes."
+  ],
+  "objects": {
+    "added": [
+      "column:builder_accrual_runs.batch_id",
+      "column:builder_accrual_runs.community_id",
+      "column:builder_accrual_runs.created_at",
+      "column:builder_accrual_runs.created_by",
+      "column:builder_accrual_runs.id",
+      "column:builder_accrual_runs.plan",
+      "column:builder_accrual_runs.posted_at",
+      "column:builder_accrual_runs.status",
+      "column:builder_accrual_runs.through_date",
+      "column:conversion_reconciling_items.account_number",
+      "column:conversion_reconciling_items.amount_cents",
+      "column:conversion_reconciling_items.batch_id",
+      "column:conversion_reconciling_items.community_id",
+      "column:conversion_reconciling_items.created_at",
+      "column:conversion_reconciling_items.created_by",
+      "column:conversion_reconciling_items.detail",
+      "column:conversion_reconciling_items.execution_id",
+      "column:conversion_reconciling_items.id",
+      "column:conversion_reconciling_items.item_key",
+      "column:conversion_reconciling_items.kind",
+      "column:conversion_reconciling_items.property_id",
+      "column:conversion_reconciling_items.resolution_journal_entry_id",
+      "column:conversion_reconciling_items.resolution_note",
+      "column:conversion_reconciling_items.resolved_at",
+      "column:conversion_reconciling_items.resolved_by",
+      "column:conversion_reconciling_items.status",
+      "constraint:builder_accrual_runs.builder_accrual_runs_batch_fk",
+      "constraint:builder_accrual_runs.builder_accrual_runs_community_fk",
+      "constraint:builder_accrual_runs.builder_accrual_runs_pkey",
+      "constraint:builder_accrual_runs.builder_accrual_runs_posted_check",
+      "constraint:builder_accrual_runs.builder_accrual_runs_status_check",
+      "constraint:builder_assessment_coverage.builder_assessment_coverage_accrual_run_fk",
+      "constraint:conversion_reconciling_items.conversion_reconciling_items_batch_fk",
+      "constraint:conversion_reconciling_items.conversion_reconciling_items_community_fk",
+      "constraint:conversion_reconciling_items.conversion_reconciling_items_je_fk",
+      "constraint:conversion_reconciling_items.conversion_reconciling_items_kind_check",
+      "constraint:conversion_reconciling_items.conversion_reconciling_items_pkey",
+      "constraint:conversion_reconciling_items.conversion_reconciling_items_property_fk",
+      "constraint:conversion_reconciling_items.conversion_reconciling_items_resolution_check",
+      "constraint:conversion_reconciling_items.conversion_reconciling_items_status_check",
+      "constraint:conversion_reconciling_items.conversion_reconciling_items_unique",
+      "function:builder_accrual_finish",
+      "function:builder_accrual_plan",
+      "function:builder_accrual_run_view",
+      "function:builder_accrual_runs_guard",
+      "function:builder_accrual_stage",
+      "function:builder_coverage_status",
+      "function:builder_tenure_match",
+      "function:conversion_reconciling_items_guard",
+      "index:builder_accrual_runs_pkey",
+      "index:conversion_reconciling_items_pkey",
+      "index:conversion_reconciling_items_unique",
+      "index:idx_conversion_reconciling_items_open",
+      "index:uq_builder_accrual_runs_staged",
+      "table:builder_accrual_runs",
+      "table:conversion_reconciling_items",
+      "trigger:builder_accrual_runs.trg_builder_accrual_runs_guard",
+      "trigger:conversion_reconciling_items.trg_conversion_reconciling_items_guard"
+    ],
+    "changed": [
+      "constraint:onboarding_execution_writes.onboarding_execution_writes_table_name_check",
+      "constraint:onboarding_execution_writes.onboarding_execution_writes_write_kind_check",
+      "function:onboarding_execute"
+    ],
+    "removed": []
+  },
+  "row_changes": {
+    "builder_assessment_coverage": 0,
+    "homeowner_transactions": 0,
+    "journal_entries": 0,
+    "recognition_schedules": 0
+  },
+  "protected": [
+    {
+      "table": "homeowner_transactions",
+      "order_by": "id"
+    },
+    {
+      "table": "journal_entries",
+      "order_by": "id"
+    },
+    {
+      "table": "recognition_schedules",
+      "order_by": "id"
+    },
+    {
+      "table": "builder_assessment_coverage",
+      "order_by": "id"
+    }
+  ],
+  "verify": [
+    {
+      "name": "reconciling items are append-only (guard trigger present)",
+      "sql": "SELECT count(*)::int FROM pg_trigger WHERE tgname = 'trg_conversion_reconciling_items_guard'",
+      "expect": 1
+    },
+    {
+      "name": "one reconciling item per batch, kind and key",
+      "sql": "SELECT count(*)::int FROM pg_constraint WHERE conname = 'conversion_reconciling_items_unique'",
+      "expect": 1
+    },
+    {
+      "name": "accrual and status functions are service_role only",
+      "sql": "SELECT (CASE WHEN has_function_privilege('service_role', 'builder_accrual_stage(uuid,date,text)', 'EXECUTE') AND NOT has_function_privilege('anon', 'builder_accrual_stage(uuid,date,text)', 'EXECUTE') AND NOT has_function_privilege('authenticated', 'builder_coverage_status(uuid,date)', 'EXECUTE') THEN 1 ELSE 0 END)::int",
+      "expect": 1
+    }
+  ]
+}
