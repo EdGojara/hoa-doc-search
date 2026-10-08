@@ -238,7 +238,7 @@ check('Ask Tessa / Ask Amanda modules compile (catches duplicate declarations an
 });
 check('runRequest takes the injected drafter under a name that cannot collide with its result', () => {
   const s = src('lib/ea/tessa_request.js');
-  assert.match(s, /mailboxes, drafter = draftEmail, onEdsBehalf = true(?:, [a-zA-Z]+ = [a-zA-Z]+)* \}/);
+  assert.match(s, /mailboxes, drafter = draftEmail, onEdsBehalf = true(?:, parser = parseRequest)?(?:, \w+ = [^,}]+)* \}/);
   assert.match(s, /const d = await drafter\(\{/);
   assert.match(s, /let draft = null;/);
 });

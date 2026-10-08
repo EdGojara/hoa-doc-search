@@ -75,10 +75,26 @@ async function searchContacts(q, { addressBook = true, staff = false } = {}) {
     for (const u of (st || [])) add({ name: u.full_name || u.email, org: 'Bedrock staff', email: u.email, role: 'staff', source: 'staff' });
   }
   if (addressBook) {
-    let eaQ = supabase.from('ea_contacts').select('name, organization, email, phone, role, category, title, responsibilities').limit(40);
+    let eaQ = supabase.from('ea_contacts').select('id, name, organization, email, phone, role, category, title, responsibilities, superseded_by_contact_id').limit(40);
     if (q) eaQ = eaQ.or(`name.ilike.${like},organization.ilike.${like},email.ilike.${like},title.ilike.${like}`);
-    const { data: ea } = await eaQ;
+    let { data: ea, error: eaErr } = await eaQ;
+    if (eaErr && /superseded_by_contact_id/.test(eaErr.message || '')) {
+      // Before migration 499: the same lookup without the new column.
+      let q2 = supabase.from('ea_contacts').select('id, name, organization, email, phone, role, category, title, responsibilities').limit(40);
+      if (q) q2 = q2.or(`name.ilike.${like},organization.ilike.${like},email.ilike.${like},title.ilike.${like}`);
+      ({ data: ea, error: eaErr } = await q2);
+    }
+    if (eaErr) console.warn('[tessa] address book search failed:', eaErr.message);
     for (const c of (ea || [])) add({ name: c.name, org: c.organization, email: c.email, phone: c.phone, role: c.title || c.role || c.category, source: 'address_book' });
+    // A row whose address bounced and was superseded by an address another row
+    // already holds points at that row (migration 499). "Nicole Hill" then
+    // resolves to the address Nicole actually replied from.
+    const merged = [...new Set((ea || []).filter((c) => !c.email && c.superseded_by_contact_id).map((c) => c.superseded_by_contact_id))];
+    if (merged.length) {
+      const { data: tgt, error: tErr } = await supabase.from('ea_contacts').select('id, name, organization, email, phone, role, category, title').in('id', merged);
+      if (tErr) console.warn('[tessa] superseded contact lookup failed:', tErr.message);
+      for (const c of (tgt || [])) add({ name: c.name, org: c.organization, email: c.email, phone: c.phone, role: c.title || c.role || c.category, source: 'address_book' });
+    }
   }
   let vQ = supabase.from('vendors').select('name, contact_name, contact_email, email, phone').neq('is_active', false).limit(30);
   if (q) vQ = vQ.or(`name.ilike.${like},contact_name.ilike.${like},contact_email.ilike.${like}`);
@@ -130,10 +146,80 @@ async function resolveRecipient(hint, opts) {
   } else {
     cands = await searchContacts(hint, opts);
   }
+  // Delivery evidence (Ed 2026-10-07, Nicole Hill): a bounced address is swapped
+  // for the verified one that replaced it, or dropped; recent two-way
+  // correspondence ranks first. Unknown addresses keep their order.
+  let bounced = [];
+  try {
+    const AS = require('../lib/ea/address_status');
+    const store = AS.supabaseStore(supabase);
+    const emails = cands.map((c) => c.email).filter(Boolean);
+    const evs = await store.events(emails);
+    const sup = [...new Set(evs.filter((e) => e.kind === 'supersede').map((e) => e.related_email))];
+    const all = [...emails, ...sup];
+    const { kept, dropped } = AS.applyStatus(cands, AS.statusMap(all, sup.length ? await store.events(all) : evs));
+    cands = kept; bounced = dropped;
+  } catch (e) { console.warn('[tessa] address status unavailable:', e.message); }
   // Only auto-fill To when there's exactly one strong match; otherwise let Ed pick.
   const best = cands.length === 1 ? cands[0] : (cands.length && m ? cands[0] : null);
-  return { best, matches: cands.slice(0, 5), hint };
+  return { best, matches: cands.slice(0, 5), hint, bounced };
 }
+
+// Our own mailboxes are never a person's address.
+function ownAddresses() {
+  return Object.entries(graphSend).filter(([k, v]) => /_MAILBOX$/.test(k) && typeof v === 'string').map(([, v]) => v);
+}
+
+// Refuse to send to a bounced address (Ed 2026-10-07). Returns true when it
+// answered the request. Only a human restore un-bounces an address.
+async function refuseBounced(res, emails) {
+  try {
+    const AS = require('../lib/ea/address_status');
+    const { searchMailbox } = require('../lib/email/graph_search');
+    const live = graphSend.isConfigured();
+    const list = await AS.bouncedAmong(emails, {
+      store: AS.supabaseStore(supabase),
+      searchMailbox: live ? searchMailbox : null,
+      mailboxes: live ? [graphSend.TESSA_MAILBOX, graphSend.ED_MAILBOX].filter(Boolean) : [],
+      ownAddresses: ownAddresses(),
+    });
+    if (!list.length) return false;
+    res.status(409).json({ error: AS.bouncedMessage(list), code: 'bounced_recipient', bounced: list });
+    return true;
+  } catch (e) {
+    // Delivery evidence unavailable (e.g. before migration 499): logged, and the
+    // send proceeds exactly as it did before this check existed.
+    console.warn('[tessa] bounce check unavailable:', e.message);
+    return false;
+  }
+}
+
+// Saving a bounced address into the book needs restore_bounced: true, which
+// records the owner's restore. Returns true when it answered the request.
+async function bouncedGate(res, email, body, owner) {
+  try {
+    const AS = require('../lib/ea/address_status');
+    const store = AS.supabaseStore(supabase);
+    const list = await AS.bouncedAmong([email], { store });
+    if (!list.length) return false;
+    if (body && body.restore_bounced === true) { await store.restore(email, owner.email || owner.full_name || 'owner'); return false; }
+    res.status(409).json({ error: AS.bouncedMessage(list).replace('Nothing was sent.', 'Not saved.'), code: 'bounced_recipient', bounced: list });
+    return true;
+  } catch (e) { console.warn('[tessa] bounce check unavailable:', e.message); return false; }
+}
+
+// POST /addresses/restore { email } — a human says a bounced address works
+// again. The only way a bounced address is ever used again. Owner only.
+router.post('/addresses/restore', express.json(), async (req, res) => {
+  const owner = await requireOwner(req, res); if (!owner) return;
+  try {
+    const email = String((req.body || {}).email || '').trim().toLowerCase();
+    if (!EMAIL_RE.test(email)) return res.status(400).json({ error: 'bad_email' });
+    const AS = require('../lib/ea/address_status');
+    await AS.supabaseStore(supabase).restore(email, owner.email || owner.full_name || 'owner');
+    res.json({ ok: true, email, restored_by: owner.email || owner.full_name });
+  } catch (err) { console.error('[tessa] restore address failed:', err.message); res.status(500).json({ error: safeErrorMessage(err) }); }
+});
 
 // GET /mail-search?q= — Tessa searches ED'S OWN mailbox, live. (Ed 2026-08-18.)
 //
@@ -190,6 +276,7 @@ router.post('/contacts', express.json(), async (req, res) => {
     const email = String(b.email || '').trim();
     if (!name) return res.status(400).json({ error: 'name_required', detail: 'A name is required.' });
     if (email && !EMAIL_RE.test(email)) return res.status(400).json({ error: 'bad_email', detail: 'That email doesn\'t look valid.' });
+    if (email && await bouncedGate(res, email, b, owner)) return;
     const row = { name, organization: b.organization || null, email: email || null, phone: b.phone || null, title: b.title || null, category: b.category || null, responsibilities: b.responsibilities || null, notes: b.notes || null, created_by: owner.email || owner.full_name || 'Ed' };
     if (email) {
       const { data: ex } = await supabase.from('ea_contacts').select('id').ilike('email', email).limit(1);
@@ -222,6 +309,7 @@ router.patch('/contacts/:id', express.json(), async (req, res) => {
     const b = req.body || {}; const upd = {};
     for (const f of ['name', 'organization', 'title', 'email', 'phone', 'category', 'responsibilities', 'notes']) if (f in b) upd[f] = (b[f] === '' ? null : b[f]);
     if (upd.email && !EMAIL_RE.test(String(upd.email))) return res.status(400).json({ error: 'bad_email', detail: 'That email doesn\'t look valid.' });
+    if (upd.email && await bouncedGate(res, upd.email, b, owner)) return;
     if (!Object.keys(upd).length) return res.status(400).json({ error: 'nothing_to_update' });
     const { data, error } = await supabase.from('ea_contacts').update(upd).eq('id', req.params.id).select().single();
     if (error) throw error;
@@ -332,8 +420,12 @@ router.post('/request', express.json({ limit: '16kb' }), async (req, res) => {
       ? async (args) => { graphToken = graphToken || await graphSend.getToken(); return chooseSlot(args, { token: graphToken, supabase, edMailbox: graphSend.ED_MAILBOX }); }
       : null;
     let out;
-    try { out = await runRequest(text, { resolveRecipient, searchMailbox, mailboxes, schedule }); }
-    catch (e) {
+    try {
+      out = await runRequest(text, {
+        resolveRecipient, searchMailbox, mailboxes, schedule,
+        addressStore: require('../lib/ea/address_status').supabaseStore(supabase), ownAddresses: ownAddresses(),
+      });
+    } catch (e) {
       if (e && (e.code === 'calendar_read_failed' || e.code === 'holds_read_failed')) return res.status(503).json({ error: e.message });
       throw e;
     }
@@ -496,6 +588,7 @@ router.post('/send', express.json({ limit: '64kb' }), async (req, res) => {
     const asEd = false;  // Tessa sends as herself, always.
     if (!to.length) return res.status(400).json({ error: 'Add at least one valid recipient.' });
     if (!body) return res.status(400).json({ error: 'The email body is empty.' });
+    if (await refuseBounced(res, [...to, ...cc])) return;
 
     const from = asEd ? graphSend.ED_MAILBOX : graphSend.TESSA_MAILBOX;
     // As Ed = his own email, no signature block. As Tessa = light branded sign-off.
@@ -568,6 +661,7 @@ router.post('/meeting', express.json({ limit: '32kb' }), async (req, res) => {
     const attendees = parseAddrs([].concat(b.attendees || [], b.to || []).join(','));
     if (!b.subject || !String(b.subject).trim()) return res.status(400).json({ error: 'Give the meeting a subject.' });
     if (!b.start || !b.end) return res.status(400).json({ error: 'Give the meeting a start and end time.' });
+    if (await refuseBounced(res, attendees)) return;
 
     const { createTeamsMeeting } = require('../lib/ea/tessa_meeting');
     const meeting = await createTeamsMeeting({
@@ -910,6 +1004,7 @@ router.post('/inbox/:id/send', express.json({ limit: '64kb' }), async (req, res)
     const asEd = false;  // Tessa sends as herself, always.
     if (!to.length) return res.status(400).json({ error: 'No recipient to reply to.' });
     if (!body) return res.status(400).json({ error: 'The reply body is empty.' });
+    if (await refuseBounced(res, [...to, ...cc])) return;
 
     const from = asEd ? graphSend.ED_MAILBOX : graphSend.TESSA_MAILBOX;
     // As Ed = his own email, no signature block. As Tessa = light branded sign-off.
@@ -1167,6 +1262,7 @@ router.post('/outbox/:id/release', express.json({ limit: '4kb' }), async (req, r
       const subject = String(item.subject || '').trim() || '(no subject)';
       const body = String(item.body_text || '').trim();
       if (!body) return res.status(400).json({ error: 'the email body is empty' });
+      if (await refuseBounced(res, [...to, ...cc])) return;
 
       // Tessa's branded wrapper: signature + headshot + logo (Ed's directive that
       // every AI-team email carries the block + picture).
@@ -1212,6 +1308,7 @@ router.post('/outbox/:id/release', express.json({ limit: '4kb' }), async (req, r
     const mmode = item.meeting_mode || 'online';
     const attendees = mmode === 'calendar_only' ? [] : parseAddrs(item.meeting_attendees);
     if (mmode !== 'calendar_only' && !attendees.length) return res.status(400).json({ error: 'no valid attendees on this meeting' });
+    if (attendees.length && await refuseBounced(res, attendees)) return;
     if (!item.meeting_start || !item.meeting_end) return res.status(400).json({ error: 'the meeting is missing a start/end time' });
     const { createTeamsMeeting } = require('../lib/ea/tessa_meeting');
     let meeting;
