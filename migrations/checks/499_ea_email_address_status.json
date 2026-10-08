@@ -1,0 +1,117 @@
+{
+  "migration": "499_ea_email_address_status.sql",
+  "summary": "Tessa delivery evidence (Nicole Hill): creates ea_email_events (append-only bounce / inbound / supersede / restore evidence per address), ea_contact_email_history (every address-book email change with the old address and evidence), ea_contacts.superseded_by_contact_id, and ea_supersede_email() which atomically moves a contact off a hard-bounced address onto the verified address that replaced it. Workpaper only; no existing row changes.",
+  "requires": [
+    "344_ea_contacts.sql",
+    "372_ea_contacts_from_email.sql"
+  ],
+  "preflight": [
+    {
+      "name": "ea_contacts exists (344)",
+      "sql": "SELECT count(*)::int FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'ea_contacts'",
+      "expect": 1
+    },
+    {
+      "name": "ea_email_events does not exist yet",
+      "sql": "SELECT count(*)::int FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'ea_email_events'",
+      "expect": 0
+    },
+    {
+      "name": "ea_contacts.superseded_by_contact_id does not exist yet",
+      "sql": "SELECT count(*)::int FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'ea_contacts' AND column_name = 'superseded_by_contact_id'",
+      "expect": 0
+    }
+  ],
+  "expected_changes": [
+    "Creates table ea_email_events (email lowercased CHECK, kind IN bounce/inbound/supersede/restore, UNIQUE (email, kind, message_ref), restore must name a human, supersede must name a different lowercased address) with an append-only trigger (no UPDATE or DELETE).",
+    "Creates table ea_contact_email_history (contact + merged-into FKs ON DELETE SET NULL, reason IN bounced_superseded).",
+    "Adds nullable ea_contacts.superseded_by_contact_id (self FK ON DELETE SET NULL, never itself). Every existing contact keeps NULL.",
+    "Creates ea_supersede_email(text, text, text, timestamptz, jsonb, text): refuses unless the old address has an unrestored bounce and the new one does not; records the supersede event; moves the contact row onto the new address, or points it at the row that already holds it; writes history.",
+    "Grants SELECT, INSERT on both new tables and EXECUTE on the function to service_role only.",
+    "No existing row in any table is changed."
+  ],
+  "objects": {
+    "added": [
+      "column:ea_contact_email_history.changed_at",
+      "column:ea_contact_email_history.changed_by",
+      "column:ea_contact_email_history.contact_id",
+      "column:ea_contact_email_history.contact_name",
+      "column:ea_contact_email_history.evidence",
+      "column:ea_contact_email_history.id",
+      "column:ea_contact_email_history.merged_into_contact_id",
+      "column:ea_contact_email_history.new_email",
+      "column:ea_contact_email_history.old_email",
+      "column:ea_contact_email_history.reason",
+      "column:ea_contacts.superseded_by_contact_id",
+      "column:ea_email_events.actor",
+      "column:ea_email_events.created_at",
+      "column:ea_email_events.detail",
+      "column:ea_email_events.email",
+      "column:ea_email_events.id",
+      "column:ea_email_events.kind",
+      "column:ea_email_events.message_ref",
+      "column:ea_email_events.occurred_at",
+      "column:ea_email_events.related_email",
+      "constraint:ea_contact_email_history.ea_contact_email_history_contact_fk",
+      "constraint:ea_contact_email_history.ea_contact_email_history_merged_fk",
+      "constraint:ea_contact_email_history.ea_contact_email_history_pkey",
+      "constraint:ea_contact_email_history.ea_contact_email_history_reason_check",
+      "constraint:ea_contacts.ea_contacts_superseded_by_check",
+      "constraint:ea_contacts.ea_contacts_superseded_by_fk",
+      "constraint:ea_email_events.ea_email_events_email_check",
+      "constraint:ea_email_events.ea_email_events_kind_check",
+      "constraint:ea_email_events.ea_email_events_pkey",
+      "constraint:ea_email_events.ea_email_events_restore_actor_check",
+      "constraint:ea_email_events.ea_email_events_supersede_check",
+      "constraint:ea_email_events.uq_ea_email_events",
+      "function:ea_email_events_immutable",
+      "function:ea_supersede_email",
+      "index:ea_contact_email_history_pkey",
+      "index:ea_email_events_pkey",
+      "index:idx_ea_contact_email_history_contact",
+      "index:idx_ea_email_events_email",
+      "index:uq_ea_email_events",
+      "table:ea_contact_email_history",
+      "table:ea_email_events",
+      "trigger:ea_email_events.trg_ea_email_events_immutable"
+    ],
+    "changed": [],
+    "removed": []
+  },
+  "row_changes": {
+    "ea_contacts": 0
+  },
+  "protected": [
+    {
+      "table": "ea_contacts",
+      "order_by": "id"
+    }
+  ],
+  "verify": [
+    {
+      "name": "both tables exist and are empty",
+      "sql": "SELECT ((SELECT count(*) FROM ea_email_events) + (SELECT count(*) FROM ea_contact_email_history))::int",
+      "expect": 0
+    },
+    {
+      "name": "no contact points anywhere yet",
+      "sql": "SELECT count(*)::int FROM ea_contacts WHERE superseded_by_contact_id IS NOT NULL",
+      "expect": 0
+    },
+    {
+      "name": "one event per address + kind + message (unique constraint present)",
+      "sql": "SELECT count(*)::int FROM pg_constraint WHERE conname = 'uq_ea_email_events' AND contype = 'u'",
+      "expect": 1
+    },
+    {
+      "name": "evidence is append-only (trigger present)",
+      "sql": "SELECT count(*)::int FROM pg_trigger WHERE tgname = 'trg_ea_email_events_immutable'",
+      "expect": 1
+    },
+    {
+      "name": "service_role can read and insert evidence and history, and run the supersede; anon cannot run it",
+      "sql": "SELECT (CASE WHEN has_table_privilege('service_role', 'ea_email_events', 'SELECT') AND has_table_privilege('service_role', 'ea_email_events', 'INSERT') AND has_table_privilege('service_role', 'ea_contact_email_history', 'INSERT') AND has_function_privilege('service_role', 'ea_supersede_email(text,text,text,timestamptz,jsonb,text)', 'EXECUTE') AND NOT has_function_privilege('anon', 'ea_supersede_email(text,text,text,timestamptz,jsonb,text)', 'EXECUTE') THEN 1 ELSE 0 END)::int",
+      "expect": 1
+    }
+  ]
+}
