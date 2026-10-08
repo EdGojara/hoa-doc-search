@@ -85,7 +85,7 @@ for (const m of ['235_recognition_engine.sql', '253_recognition_basis_daily.sql'
 const m457 = lf(`${REPO}/migrations/457_current_tenure_reader_views.sql`);
 await db.exec(m457.slice(m457.indexOf('CREATE OR REPLACE VIEW v_current_owner_ledger'), m457.indexOf('CREATE OR REPLACE VIEW v_current_owner_balance AS')));
 await db.exec(`INSERT INTO schema_migrations (filename, sha256) VALUES ('360_assessment_proration.sql', 'recorded'), ('459_ownership_transfer_single_path.sql', 'recorded'),
-  ('461_payment_applications.sql', 'recorded'), ('466_recognition_schedules_controls.sql', 'recorded');
+  ('461_homeowner_payment_applications.sql', 'recorded'), ('466_recognition_schedules_controls.sql', 'recorded');
   INSERT INTO management_companies VALUES ('${MC}');
   INSERT INTO communities (id, name, management_company_id, gl_cutover_date, books_of_record) VALUES ('${SCR}', 'Still Creek Ranch', '${MC}', '2026-07-01', 'trusted');
   INSERT INTO builder_companies VALUES ('${LENNAR}', '${MC}', 'Lennar'), (gen_random_uuid(), '${MC}', 'Perry Homes');`);
@@ -98,6 +98,8 @@ for (const F of ['500_transfer_assessment_proration.sql', '501_conversion_builde
 }
 const ctxA = { client: world.client, user: { id: 'o', email: 'owner@example.test' }, deployedCommit: 'deadbeefcafe', migrationsDir: dir, secret: 'e2e' };
 for (const F of ['500_transfer_assessment_proration.sql', '501_conversion_builder_coverage.sql']) {
+  { const req = JSON.parse(lf(`${REPO}/migrations/checks/${F.replace('.sql', '.json')}`)).requires || []; const missing = req.filter((x) => !fs.existsSync(`${REPO}/migrations/${x}`));
+    check(`every prerequisite named by the ${F.slice(0, 3)} checks file is a real migration file`, missing.length === 0, JSON.stringify(missing)); }
   const plan = await A.planMigration({ ...ctxA, filename: F });
   const r = await A.applyMigration({ ...ctxA, planToken: plan.plan_token, log: { error() {} }, apiCheck: async () => ({ ok: true, count: 0 }) });
   if (PRINT && F.startsWith('501')) { console.log(JSON.stringify((r.detail || {}).objects || r, null, 2)); process.exit(0); }
