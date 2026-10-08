@@ -204,7 +204,10 @@ async function report(stage) {
     const ht = await q(`SELECT CASE WHEN h.tenure_id = $2 THEN 'Lennar (seller)' ELSE 'new owner (buyer)' END AS account, h.transaction_date::text AS date, h.txn_type, h.amount_cents, h.description, b.status AS batch
                          FROM homeowner_transactions h JOIN transaction_upload_batches b ON b.id = h.source_batch_id
                         WHERE h.raw_row_jsonb->>'proposal_id' = $1 ORDER BY h.source_row_index`, [T.proposal, T.seller]);
+    const cov = await q(`SELECT source_type, covered_from::text AS "from", covered_through::text AS through, days, amount_cents, rounding_true_up_cents AS true_up, annual_billed_cents, status FROM builder_assessment_coverage WHERE tenure_id = $1 ORDER BY covered_from`, [T.seller]);
     console.log(`\n-- ${label}`);
+    console.log('   builder coverage:', cov.length ? '' : 'none');
+    for (const c of cov) console.log(`     ${c.from} .. ${c.through}  ${c.days}d  $${(c.amount_cents / 100).toFixed(2)}  ${c.source_type}${c.annual_billed_cents ? ' (normalizes $' + (c.annual_billed_cents / 100).toFixed(2) + ' billed)' : ''}  [${c.status}]`);
     console.log('   proration record:', ap.length ? JSON.stringify(ap) : 'none');
     console.log('   owner-ledger rows:', ht.length ? '' : 'none');
     for (const h of ht) console.log(`     ${h.account}  ${h.date}  ${h.txn_type}  $${(h.amount_cents / 100).toFixed(2)}  "${h.description}"  [batch ${h.batch}]`);
@@ -217,86 +220,151 @@ async function report(stage) {
       console.log('   GL entry: none' + (p.blocked ? '  [BLOCKED: ' + p.blocked_reasons.join(', ') + ']' : ''));
       if (p.normalization_required) console.log(`   waiting for: the conversion to normalize the $${(p.normalization_required.annual_cents / 100).toFixed(2)} annual assessment (${p.normalization_required.annual_date}) to the ${Number(p.normalization_required.builder_rate_pct)}% builder rate`);
     }
-    const nrow = await q(`SELECT h.transaction_date::text AS date, h.amount_cents, h.description FROM homeowner_transactions h WHERE h.tenure_id = $1 AND h.raw_row_jsonb->>'source' = 'conversion_builder_normalization'`, [T.seller]);
-    for (const n of nrow) console.log(`   conversion normalization on Lennar's account: ${n.date}  $${(n.amount_cents / 100).toFixed(2)}  "${n.description}"`);
-    {
-    }
   }
 }
 await report('BEFORE STILL CREEK CONVERSION (no posted conversion_batches row)');
 
-// ================================================================ CONVERSION POSTED
-await db.query(`INSERT INTO conversion_batches (community_id, batch_code, as_of_date, status) VALUES ($1, 'CONV-SCR-20260630', '2026-06-30', 'posted')`, [SCR]);
-const s1dry = await post(TB0, true);
-check('after conversion: a dry run of the staged proration shows the recomputed numbers for confirmation, writes nothing',
-  s1dry.dry_run === true && s1dry.posting_ready === true && s1dry.staged === true && s1dry.conversion_batch === 'CONV-SCR-20260630' && s1dry.builder_due_cents === 12273 && await htCount() === 0,
-  JSON.stringify(pick(s1dry, ['dry_run', 'posting_ready', 'staged', 'conversion_batch'])));
-const s1 = await post(TB0);
-const st1 = await q(`SELECT role, status, prorated_amount_cents, homeowner_txn_id IS NOT NULL AS has_txn, batch_id IS NOT NULL AS has_batch, staged_plan IS NOT NULL AS kept_plan FROM assessment_prorations WHERE proposal_id = $1 ORDER BY role`, [TB0.proposal]);
-check('after conversion, posting the staged proration: the same two rows become DRAFT with ledger rows and a batch (no second set); the staged calculation is kept for audit',
-  s1.written === true && s1.from_staged === true && JSON.stringify(st1) === JSON.stringify([
-    { role: 'builder_adjustment', status: 'draft', prorated_amount_cents: 12273, has_txn: true, has_batch: true, kept_plan: true },
-    { role: 'homeowner_charge', status: 'draft', prorated_amount_cents: 24953, has_txn: true, has_batch: true, kept_plan: true }]) && await htCount() === 2,
-  JSON.stringify({ s1: pick(s1, ['written', 'from_staged']), st1 }));
-check('after conversion, the new owner\u2019s share is billed to the deferral account and released monthly (2205 -> 4000, Jul-Dec, $41.59/month)',
-  s1.deferral_account === '2205' && s1.income_account === '4000' && JSON.stringify(s1.homeowner_recognition) === JSON.stringify({ method: 'straight_line_monthly', start_month: '2026-07-01', term_months: 6, monthly_cents: 4159 }),
-  JSON.stringify(pick(s1, ['deferral_account', 'income_account', 'homeowner_recognition'])));
-const ss1 = await post(TS0);
-check('after conversion, BEFORE the conversion records 5302\u2019s normalization: still BLOCKED (awaiting_conversion_normalization), nothing written',
-  ss1.blocked === true && ss1.blocked_reasons.includes('awaiting_conversion_normalization') && !ss1.written
-    && ss1.normalization_required.annual_cents === 49500 && ss1.normalization_required.annual_date === '2026-01-01'
-    && (await one(`SELECT count(*)::int AS n FROM homeowner_transactions WHERE raw_row_jsonb->>'proposal_id' = $1`, [TS0.proposal])).n === 0,
-  JSON.stringify(pick(ss1, ['blocked', 'blocked_reasons', 'normalization_required', 'written'])));
-check('after conversion, 5450 Still Meadow is still BLOCKED (conversion does not resolve an ambiguous charge)', (await post(TA0)).blocked === true);
-await report('AFTER STILL CREEK CONVERSION (CONV-SCR-20260630 posted; normalization of 5302 not yet recorded)');
-
-// The Still Creek conversion records 5302's normalization (the contract in migration 500):
-// Lennar's $495.00 annual assessment -> the 50% builder rate through the 6/30 baseline
-// (181/365 x $247.50 = $122.73), i.e. a -$372.27 correcting adjustment on Lennar's tenure.
-async function normalize(T, { amount = -37227, covered = '2026-06-30', annualDesc = 'Annual Assessment' } = {}) {
-  const annual = await one(`SELECT id FROM homeowner_transactions WHERE tenure_id = $1 AND description = $2 AND transaction_date = '2026-01-01'`, [T.seller, annualDesc]);
-  const b = await one(`INSERT INTO transaction_upload_batches (management_company_id, community_id, period_label, as_of_date, status, uploaded_by) VALUES ($1, $2, 'Conversion CONV-SCR-20260630', $3, 'committed', 'conversion') RETURNING id`, [MC, SCR, covered]);
-  await db.query(`INSERT INTO homeowner_transactions (source_batch_id, source_row_index, community_id, property_id, tenure_id, transaction_date, description, txn_type, charge_category, amount_cents, reduction_source, raw_row_jsonb)
-    VALUES ($1, 1, $2, $3, $4, $5, 'Builder-rate normalization 2026: 181/365 days at 50% of $495.00 (Jan 01 to Jun 30), conversion CONV-SCR-20260630', 'adjustment', 'assessment', $6, 'correcting_adjustment',
-      jsonb_build_object('source', 'conversion_builder_normalization', 'fiscal_year', 2026, 'normalizes_txn_id', $7::text, 'covered_through', $8::text, 'builder_rate_pct', 50, 'conversion_batch', 'CONV-SCR-20260630'))`,
-    [b.id, SCR, T.property, T.seller, covered, amount, annual.id, covered]);
+// ================================================================ CONVERSION POSTED (as-of 6/30/2026)
+const CONV = (await one(`INSERT INTO conversion_batches (community_id, batch_code, as_of_date, status) VALUES ($1, 'CONV-SCR-20260630', '2026-06-30', 'posted') RETURNING id`, [SCR])).id;
+// Stand-ins for the accounting a coverage period ties to (the conversion / accrual journal entry and batch).
+const JE_STUB = (await one(`INSERT INTO journal_entries DEFAULT VALUES RETURNING id`)).id;
+const BATCH_STUB = (await one(`INSERT INTO transaction_upload_batches (management_company_id, community_id, period_label, as_of_date, status, uploaded_by) VALUES ($1, $2, 'coverage stand-in', '2026-07-01', 'committed', 'test') RETURNING id`, [MC, SCR])).id;
+// Write one coverage period the way #96's conversion / accrual does: pending, then posted with its entry.
+async function cover(T, { from, through, source = 'scheduled_accrual', annual = 49500, pct = 50, trueUp = 0, annualBilled = null, post = true, year = Number(String(from).slice(0, 4)) }) {
+  const c = await one(`INSERT INTO builder_assessment_coverage (community_id, property_id, tenure_id, builder_company_id, fiscal_year, covered_from, covered_through, days, days_in_year,
+      annual_assessment_cents, builder_rate_pct, base_amount_cents, rounding_true_up_cents, amount_cents, annual_billed_cents, source_type, conversion_batch_id, accrual_run_id, created_by)
+    SELECT $1, $2, $3, $4, $5, $6::date, $7::date, $7::date - $6::date + 1, make_date($5, 12, 31) - make_date($5, 1, 1) + 1,
+      $8::bigint, $9::numeric, round($8::numeric * $9::numeric * ($7::date - $6::date + 1) / (100 * (make_date($5, 12, 31) - make_date($5, 1, 1) + 1))),
+      $10::bigint, round($8::numeric * $9::numeric * ($7::date - $6::date + 1) / (100 * (make_date($5, 12, 31) - make_date($5, 1, 1) + 1))) + $10::bigint,
+      $11::bigint, $12, CASE WHEN $12 = 'conversion' THEN $13::uuid END, CASE WHEN $12 = 'scheduled_accrual' THEN gen_random_uuid() END, 'test'
+    RETURNING id, amount_cents`, [T.community || SCR, T.property, T.seller, LENNAR, year, from, through, annual, pct, trueUp, annualBilled, source, CONV]);
+  if (post) await db.query(`UPDATE builder_assessment_coverage SET status = 'posted', journal_entry_id = $2, batch_id = $3 WHERE id = $1`, [c.id, JE_STUB, BATCH_STUB]);
+  return c;
 }
-await normalize(TS0);
+const convCover = (T, extra = {}) => cover(T, { from: '2026-01-01', through: '2026-06-30', source: 'conversion', ...extra });
+
+// --- converted, but no coverage recorded for a lot: never guess
+check('after conversion with NO coverage for the lot: BLOCKED (builder_coverage_missing), nothing written',
+  (await post(TB0, true)).blocked_reasons.includes('builder_coverage_missing') && (await post(TS0, true)).blocked_reasons.includes('builder_coverage_missing') && await htCount() === 0);
+
+// --- what #96's conversion writes: 5302 normalized, the unbilled lot baselined; 5450 gets nothing
+await convCover(TB0);
+await convCover(TS0, { annualBilled: 49500 });
+const s1dry = await post(TB0, true);
+check('after conversion: the staged proration recomputes from the coverage record (covered through 6/30, $122.73), so a 7/1 sale bills Lennar NOTHING more; dry run writes nothing',
+  s1dry.dry_run === true && s1dry.posting_ready === true && s1dry.staged === true && !s1dry.blocked && s1dry.builder_prior_billed_cents === 12273
+    && s1dry.builder_adjustment_cents === 0 && s1dry.homeowner_due_cents === 24953 && s1dry.builder_coverage.covered_through === '2026-06-30' && await htCount() === 0,
+  JSON.stringify(pick(s1dry, ['blocked_reasons', 'builder_prior_billed_cents', 'builder_adjustment_cents', 'builder_unbilled_period'])));
+const s1 = await post(TB0);
+const st1 = await q(`SELECT role, status, prorated_amount_cents, homeowner_txn_id IS NOT NULL AS has_txn, staged_plan IS NOT NULL AS kept_plan FROM assessment_prorations WHERE proposal_id = $1 ORDER BY role`, [TB0.proposal]);
+check('posting it: the staged pair becomes the posted pair (no second set); only the new owner’s $249.53 is a ledger row; no transfer coverage (no uncovered days)',
+  s1.written === true && s1.from_staged === true && JSON.stringify(st1) === JSON.stringify([
+    { role: 'builder_adjustment', status: 'posted', prorated_amount_cents: 0, has_txn: false, kept_plan: true },
+    { role: 'homeowner_charge', status: 'draft', prorated_amount_cents: 24953, has_txn: true, kept_plan: true }])
+    && (await one(`SELECT count(*)::int AS n FROM builder_assessment_coverage WHERE proposal_id = $1`, [TB0.proposal])).n === 0,
+  JSON.stringify({ st1 }));
+check('the new owner’s share is billed to the deferral account and released monthly (2205 -> 4000, Jul-Dec, $41.59/month)',
+  s1.deferral_account === '2205' && s1.income_account === '4000' && JSON.stringify(s1.homeowner_recognition) === JSON.stringify({ method: 'straight_line_monthly', start_month: '2026-07-01', term_months: 6, monthly_cents: 4159 }));
 const lennarBefore = await q(`SELECT description, amount_cents FROM homeowner_transactions WHERE tenure_id = $1 ORDER BY transaction_date, source_row_index`, [TS0.seller]);
 const sn = await post(TS0);
 const lennarAfter = await q(`SELECT description, amount_cents FROM homeowner_transactions WHERE tenure_id = $1 ORDER BY transaction_date, source_row_index`, [TS0.seller]);
-const sAp = await q(`SELECT role, status, prorated_amount_cents, prior_billed_cents, homeowner_txn_id IS NOT NULL AS has_txn FROM assessment_prorations WHERE proposal_id = $1 ORDER BY role`, [TS0.proposal]);
-check('after the normalization: #95 recognizes 5302 as normalized ($495.00 - $372.27 = $122.73 through 6/30) and posts NO second Lennar adjustment (7/1: $0.00), only the new owner\u2019s $249.53',
-  sn.written === true && sn.builder_normalized && sn.builder_normalized.normalized_cents === 12273 && sn.builder_normalized.covered_through === '2026-06-30'
-    && sn.builder_prior_billed_cents === 12273 && sn.builder_adjustment_cents === 0
-    && JSON.stringify(sAp) === JSON.stringify([
-      { role: 'builder_adjustment', status: 'posted', prorated_amount_cents: 0, prior_billed_cents: 12273, has_txn: false },
-      { role: 'homeowner_charge', status: 'draft', prorated_amount_cents: 24953, prior_billed_cents: 0, has_txn: true }])
-    && JSON.stringify(lennarAfter) === JSON.stringify(lennarBefore),
-  JSON.stringify({ n: sn.builder_normalized, adj: sn.builder_adjustment_cents, sAp }));
-check('Lennar\u2019s 2026 annual assessment on 5302 nets to exactly $122.73; prior balance, late interest and fees untouched',
-  Number((await one(`SELECT sum(amount_cents)::bigint AS s FROM homeowner_transactions WHERE tenure_id = $1 AND (description = 'Annual Assessment' OR raw_row_jsonb->>'source' = 'conversion_builder_normalization')`, [TS0.seller])).s) === 12273
-    && lennarAfter.filter((x) => /Prior Balance|Late/.test(x.description)).map((x) => x.amount_cents).join(',') === '57128,413,825,1000');
-check('re-running after it posted: already prorated, never a second adjustment', (await post(TS0)).already_prorated === true
-  && (await one(`SELECT count(*)::int AS n FROM homeowner_transactions WHERE tenure_id = $1 AND (raw_row_jsonb->>'source' IN ('transfer_proration', 'conversion_builder_normalization'))`, [TS0.seller])).n === 1);
-// A normalized lot that sells LATER: only the elapsed builder months after the baseline are charged.
-const sleepyN = [{ date: '2026-01-01', cents: 49500, desc: 'Annual Assessment' }];
-const LN = await lot({ prior: sleepyN });
-const TN = await approve(LN, '2026-09-15');
-await normalize(TN);
-const pN = await post(TN, true);
-check('normalized lot selling 9/15: builder owes Jan 1-Sep 14 at 50% ($174.27); $122.73 is already normalized, so only $51.54 (Jul 1-Sep 14, elapsed) is charged',
-  !pN.blocked && pN.builder_due_cents === 17427 && pN.builder_prior_billed_cents === 12273 && pN.builder_adjustment_cents === 5154,
-  JSON.stringify(pick(pN, ['blocked', 'blocked_reasons', 'builder_due_cents', 'builder_prior_billed_cents', 'builder_adjustment_cents'])));
-const TBad = await approve(await lot({ prior: sleepyN }), '2026-07-01');
-await normalize(TBad, { amount: -37000 });
-const pBad = await post(TBad, true);
-check('a normalization that does not equal the builder rate through its baseline: BLOCKED (normalization_mismatch), never netted',
-  pBad.blocked && pBad.blocked_reasons.includes('normalization_mismatch'), JSON.stringify(pick(pBad, ['blocked_reasons'])));
-await report('AFTER THE CONVERSION RECORDS 5302\u2019s NORMALIZATION');
+check('5302 after the conversion: #95 reads coverage (normalized $495.00 -> $122.73 through 6/30), needs no legacy $495 row, posts NO second Lennar adjustment, and leaves Lennar’s ledger as it was',
+  sn.written === true && sn.builder_normalized && sn.builder_normalized.normalized_cents === 12273 && Number(sn.builder_normalized.annual_billed_cents) === 49500
+    && sn.builder_adjustment_cents === 0 && JSON.stringify(lennarAfter) === JSON.stringify(lennarBefore),
+  JSON.stringify(pick(sn, ['blocked_reasons', 'builder_normalized', 'builder_adjustment_cents'])));
+check('5450 Still Meadow: the conversion wrote no coverage (the $90.18 is unexplained), so it stays BLOCKED (builder_coverage_missing); nothing is fabricated',
+  (await post(TA0)).blocked_reasons.includes('builder_coverage_missing')
+    && (await one(`SELECT count(*)::int AS n FROM builder_assessment_coverage WHERE tenure_id = $1`, [TA0.seller])).n === 0);
+await report('AFTER STILL CREEK CONVERSION (CONV-SCR-20260630: coverage through 6/30 for the unbilled lot and 5302; none for 5450)');
 if (REPORT) process.exit(0);
 
+// --- transfer after accrual periods: only the uncovered days are billed
+const LA = await lot();
+await convCover(LA); await cover(LA, { from: '2026-07-01', through: '2026-07-31' }); await cover(LA, { from: '2026-08-01', through: '2026-08-31' });
+const TA2 = await approve(LA, '2026-09-15');
+const pA2 = await post(TA2, true);
+check('transfer 9/15 after the July and August accruals: coverage runs through 8/31, so Lennar is billed only 9/1-9/14 (14 days) = $9.49',
+  !pA2.blocked && pA2.builder_coverage.covered_through === '2026-08-31' && pA2.builder_unbilled_period.days === 14 && pA2.builder_adjustment_cents === 949
+    && pA2.builder_prior_billed_cents === 12273 + 2102 + 2102,
+  JSON.stringify(pick(pA2, ['blocked_reasons', 'builder_unbilled_period', 'builder_adjustment_cents', 'builder_prior_billed_cents'])));
+await post(TA2);
+const tc = await one(`SELECT source_type, covered_from::text AS f, covered_through::text AS t, amount_cents, status, homeowner_txn_id IS NOT NULL AS has_txn FROM builder_assessment_coverage WHERE proposal_id = $1`, [TA2.proposal]);
+check('...and the transfer’s days become a transfer_true_up coverage period (9/1-9/14, $9.49) tied to its ledger row, pending until the GL posts',
+  JSON.stringify(tc) === JSON.stringify({ source_type: 'transfer_true_up', f: '2026-09-01', t: '2026-09-14', amount_cents: 949, status: 'pending', has_txn: true }), JSON.stringify(tc));
+check('...after it the builder tenure is fully covered through settlement - 1: no gap, no overlap',
+  (await rpc('builder_coverage', { p_tenure_id: TA2.seller, p_fiscal_year: 2026 })).covered_through === '2026-09-14');
+// --- no accruals since the conversion
+const TNo = await approve(await lot(), '2026-09-15');
+await convCover({ ...TNo });
+const pNo = await post(TNo, true);
+check('transfer 9/15 with no accruals since the conversion: Lennar billed 7/1-9/14 (76 days) = $51.53 (each period rounded on its own days, not $51.54)',
+  !pNo.blocked && pNo.builder_unbilled_period.days === 76 && pNo.builder_adjustment_cents === 5153, JSON.stringify(pick(pNo, ['blocked_reasons', 'builder_unbilled_period', 'builder_adjustment_cents'])));
+
+// --- an unsold lot through year end: exactly $247.50
+const LY = await lot();
+await convCover(LY);
+for (const [f, t] of [['07-01', '07-31'], ['08-01', '08-31'], ['09-01', '09-30'], ['10-01', '10-31'], ['11-01', '11-30']]) await cover(LY, { from: `2026-${f}`, through: `2026-${t}` });
+check('December without its year-end true-up is refused (the year would total $247.49)',
+  /rounding true-up of 1 cents/.test(await err(`INSERT INTO builder_assessment_coverage (community_id, property_id, tenure_id, builder_company_id, fiscal_year, covered_from, covered_through, days, days_in_year, annual_assessment_cents, builder_rate_pct, base_amount_cents, rounding_true_up_cents, amount_cents, source_type, accrual_run_id, created_by)
+    VALUES ($1, $2, $3, $4, 2026, '2026-12-01', '2026-12-31', 31, 365, 49500, 50, 2102, 0, 2102, 'scheduled_accrual', gen_random_uuid(), 'test')`, [SCR, LY.property, LY.seller, LENNAR]) || ''));
+await cover(LY, { from: '2026-12-01', through: '2026-12-31', trueUp: 1 });
+const yrs = await q(`SELECT covered_from::text AS f, amount_cents, rounding_true_up_cents AS tu FROM builder_assessment_coverage WHERE tenure_id = $1 ORDER BY covered_from`, [LY.seller]);
+check('an unsold Lennar lot through 12/31: $122.73 + Jul $21.02 + Aug $21.02 + Sep $20.34 + Oct $21.02 + Nov $20.34 + Dec $21.03 (true-up +$0.01) = exactly $247.50',
+  yrs.map((x) => x.amount_cents).join(',') === '12273,2102,2102,2034,2102,2034,2103' && yrs.reduce((s, x) => s + Number(x.amount_cents), 0) === 24750 && Number(yrs[6].tu) === 1,
+  JSON.stringify(yrs));
+check('a true-up on a period that does not end Dec 31 is refused', /builder_assessment_coverage_amount_check/.test(await err(`INSERT INTO builder_assessment_coverage (community_id, property_id, tenure_id, builder_company_id, fiscal_year, covered_from, covered_through, days, days_in_year, annual_assessment_cents, builder_rate_pct, base_amount_cents, rounding_true_up_cents, amount_cents, source_type, accrual_run_id, created_by)
+    VALUES ($1, $2, $3, $4, 2027, '2027-01-01', '2027-01-31', 31, 365, 49500, 50, 2102, 1, 2103, 'scheduled_accrual', gen_random_uuid(), 'test')`, [SCR, LY.property, LY.seller, LENNAR]) || ''));
+
+// --- the coverage guard: no gap, no overlap, right amount, last-only void, pending blocks
+const LG = await lot();
+await convCover(LG);
+check('a GAP is refused (August written before July)', /would leave a gap/.test(await err(`INSERT INTO builder_assessment_coverage (community_id, property_id, tenure_id, builder_company_id, fiscal_year, covered_from, covered_through, days, days_in_year, annual_assessment_cents, builder_rate_pct, base_amount_cents, amount_cents, source_type, accrual_run_id, created_by)
+    VALUES ($1, $2, $3, $4, 2026, '2026-08-01', '2026-08-31', 31, 365, 49500, 50, 2102, 2102, 'scheduled_accrual', gen_random_uuid(), 'test')`, [SCR, LG.property, LG.seller, LENNAR]) || ''));
+await cover(LG, { from: '2026-07-01', through: '2026-07-31' });
+check('an OVERLAP is refused (July written again)', /would leave a overlap|uq_builder_assessment_coverage_period/.test(await err(`INSERT INTO builder_assessment_coverage (community_id, property_id, tenure_id, builder_company_id, fiscal_year, covered_from, covered_through, days, days_in_year, annual_assessment_cents, builder_rate_pct, base_amount_cents, amount_cents, source_type, accrual_run_id, created_by)
+    VALUES ($1, $2, $3, $4, 2026, '2026-07-15', '2026-08-15', 32, 365, 49500, 50, 2170, 2170, 'scheduled_accrual', gen_random_uuid(), 'test')`, [SCR, LG.property, LG.seller, LENNAR]) || ''));
+check('a wrong amount is refused (not the builder rate over its days)', /builder_assessment_coverage_amount_check/.test(await err(`INSERT INTO builder_assessment_coverage (community_id, property_id, tenure_id, builder_company_id, fiscal_year, covered_from, covered_through, days, days_in_year, annual_assessment_cents, builder_rate_pct, base_amount_cents, amount_cents, source_type, accrual_run_id, created_by)
+    VALUES ($1, $2, $3, $4, 2026, '2026-08-01', '2026-08-31', 31, 365, 49500, 50, 2000, 2000, 'scheduled_accrual', gen_random_uuid(), 'test')`, [SCR, LG.property, LG.seller, LENNAR]) || ''));
+const firstId = (await one(`SELECT id FROM builder_assessment_coverage WHERE tenure_id = $1 ORDER BY covered_from LIMIT 1`, [LG.seller])).id;
+check('voiding a MIDDLE period is refused (it would open a gap)', /only the LAST covered period/.test(await err(`UPDATE builder_assessment_coverage SET status = 'voided', voided_by = 'ed', voided_at = now(), void_reason = 'test' WHERE id = $1`, [firstId]) || ''));
+check('a covered period is never deleted, and its days and amount are fixed', /never deleted/.test(await err(`DELETE FROM builder_assessment_coverage WHERE id = $1`, [firstId]) || '')
+  && /fixed once written/.test(await err(`UPDATE builder_assessment_coverage SET amount_cents = amount_cents + 1, base_amount_cents = base_amount_cents + 1 WHERE id = $1`, [firstId]) || ''));
+const julId = (await one(`SELECT id FROM builder_assessment_coverage WHERE tenure_id = $1 AND covered_from = '2026-07-01'`, [LG.seller])).id;
+await db.query(`UPDATE builder_assessment_coverage SET status = 'voided', voided_by = 'ed', voided_at = now(), void_reason = 'rerun' WHERE id = $1`, [julId]);
+await cover(LG, { from: '2026-07-01', through: '2026-07-31' });
+check('rerun / idempotency: the last period can be voided (with a reason) and written again; the same period can never be live twice',
+  (await one(`SELECT count(*)::int AS n FROM builder_assessment_coverage WHERE tenure_id = $1 AND covered_from = '2026-07-01' AND status <> 'voided'`, [LG.seller])).n === 1
+    && /uq_builder_assessment_coverage_period|would leave a overlap/.test(await err(`INSERT INTO builder_assessment_coverage (community_id, property_id, tenure_id, builder_company_id, fiscal_year, covered_from, covered_through, days, days_in_year, annual_assessment_cents, builder_rate_pct, base_amount_cents, amount_cents, source_type, accrual_run_id, created_by)
+      VALUES ($1, $2, $3, $4, 2026, '2026-07-01', '2026-07-31', 31, 365, 49500, 50, 2102, 2102, 'scheduled_accrual', gen_random_uuid(), 'test')`, [SCR, LG.property, LG.seller, LENNAR]) || ''));
+await cover(LG, { from: '2026-08-01', through: '2026-08-31', post: false });
+const TG = await approve(LG, '2026-09-15');
+check('a coverage period still pending (its GL not posted) BLOCKS the transfer (builder_coverage_pending)', (await post(TG, true)).blocked_reasons.includes('builder_coverage_pending'));
+const LP = await lot();
+await convCover(LP);
+for (const [f, t] of [['07-01', '07-31'], ['08-01', '08-31'], ['09-01', '09-30']]) await cover(LP, { from: `2026-${f}`, through: `2026-${t}` });
+const TP2 = await approve(LP, '2026-09-15');
+check('accrued past the settlement (September accrued before a 9/15 closing was recorded): BLOCKED (builder_billed_past_settlement), never credited by guess',
+  (await post(TP2, true)).blocked_reasons.includes('builder_billed_past_settlement'));
+check('coverage past the end of the builder’s ownership is refused at write time', /runs past the end of the builder/.test(await err(`INSERT INTO builder_assessment_coverage (community_id, property_id, tenure_id, builder_company_id, fiscal_year, covered_from, covered_through, days, days_in_year, annual_assessment_cents, builder_rate_pct, base_amount_cents, amount_cents, source_type, accrual_run_id, created_by)
+    VALUES ($1, $2, $3, $4, 2026, '2026-10-01', '2026-10-31', 31, 365, 49500, 50, 2102, 2102, 'scheduled_accrual', gen_random_uuid(), 'test')`, [SCR, LP.property, LP.seller, LENNAR]) || ''));
+
+// --- leap year, and a rate that changes mid-year
+const LL = await lot();
+await db.query(`INSERT INTO builder_assessment_coverage (community_id, property_id, tenure_id, builder_company_id, fiscal_year, covered_from, covered_through, days, days_in_year, annual_assessment_cents, builder_rate_pct, base_amount_cents, amount_cents, source_type, accrual_run_id, created_by)
+  VALUES ($1, $2, $3, $4, 2028, '2028-01-01', '2028-06-30', 182, 366, 49500, 50, 12307, 12307, 'scheduled_accrual', gen_random_uuid(), 'test')`, [SCR, LL.property, LL.seller, LENNAR]);
+check('leap year 2028: Jan 1-Jun 30 is 182 of 366 days = $123.07; 365 is refused', /builder_assessment_coverage_period_check/.test(await err(`INSERT INTO builder_assessment_coverage (community_id, property_id, tenure_id, builder_company_id, fiscal_year, covered_from, covered_through, days, days_in_year, annual_assessment_cents, builder_rate_pct, base_amount_cents, amount_cents, source_type, accrual_run_id, created_by)
+  VALUES ($1, $2, $3, $4, 2028, '2028-07-01', '2028-07-31', 31, 365, 49500, 50, 2102, 2102, 'scheduled_accrual', gen_random_uuid(), 'test')`, [SCR, LL.property, LL.seller, LENNAR]) || ''));
+const LR = await lot();
+await convCover(LR);
+for (const [f, t] of [['07-01', '07-31'], ['08-01', '08-31'], ['09-01', '09-30'], ['10-01', '10-31'], ['11-01', '11-30']]) await cover(LR, { from: `2026-${f}`, through: `2026-${t}` });
+await cover(LR, { from: '2026-12-01', through: '2026-12-31', annual: 60000 });
+check('a rate changed mid-year: the December period carries NO true-up (annual x rate is not one number for that year)',
+  (await one(`SELECT rounding_true_up_cents AS tu, amount_cents FROM builder_assessment_coverage WHERE tenure_id = $1 AND covered_from = '2026-12-01'`, [LR.seller])).tu == 0);
+
 // ---------------------------------------------------------------- mid-year (the issue's example)
+// Posting mechanics on a community converted in an EARLIER year: no conversion-year coverage is
+// required, so the transfer bills every uncovered builder day (Jan 1 - Jun 30) itself.
+await db.query("UPDATE conversion_batches SET as_of_date = '2025-12-31' WHERE id = $1", [CONV]);
 const L1 = await lot();
 const pv = await preview(L1, '2026-07-01');
 check('mid-year 7/1/2026 preview: Lennar 181 days at 50% = $122.73; homeowner 184 days = $249.53; total $372.26',
@@ -330,6 +398,9 @@ await db.query(`UPDATE transaction_upload_batches SET status = 'committed' WHERE
 await db.query(`UPDATE assessment_prorations SET status = 'posted' WHERE proposal_id = $1`, [T1.proposal]);
 check('after commit the re-run says all posted', (await post(T1)).all_posted === true);
 const cur = await q(`SELECT amount_cents FROM v_current_owner_ledger WHERE property_id = $1`, [T1.property]);
+check('the transfer billed Lennar\u2019s uncovered days, so they become a transfer_true_up coverage period (Jan 1 - Jun 30, $122.73)',
+  JSON.stringify(await one(`SELECT source_type, covered_from::text AS f, covered_through::text AS t, amount_cents FROM builder_assessment_coverage WHERE proposal_id = $1`, [T1.proposal]))
+    === JSON.stringify({ source_type: 'transfer_true_up', f: '2026-01-01', t: '2026-06-30', amount_cents: 12273 }));
 check('current-owner ledger shows ONLY the homeowner charge (the builder adjustment stays with the seller)', cur.length === 1 && Number(cur[0].amount_cents) === 24953, JSON.stringify(cur));
 
 // ---------------------------------------------------------------- edge dates
@@ -373,16 +444,12 @@ check('Lennar’s second contact form ("Attn: Lennar Homes of Texas ... LTD") is
 // The netting MECHANICS, on a community that recognizes assessments directly
 // (no deferral account): Still Creek's rate row with its deferral cleared for
 // this block, restored after.
+// These previews are the NOT-CONVERTED staging preview (after a conversion only the coverage record counts).
+await db.query(`UPDATE conversion_batches SET status = 'approved' WHERE id = $1`, [CONV]);
 await db.query(`UPDATE community_assessment_rates SET deferral_account_number = NULL WHERE community_id = $1 AND owner_class = 'homeowner'`, [SCR]);
 const pFull = await preview(await lot({ prior: [{ date: '2026-01-01', cents: 49500 }] }), '2026-07-01');
 check('Lennar billed the full $495.00 on Jan 1: adjustment credits $372.27 so its net is its $122.73 share',
   !pFull.blocked && pFull.builder_prior_billed_cents === 49500 && pFull.builder_adjustment_cents === -37227 && pFull.builder_due_cents === 12273, JSON.stringify(pick(pFull, ['blocked', 'blocked_reasons', 'builder_prior_billed_cents', 'builder_adjustment_cents'])));
-const TFull = await approve(await lot({ prior: [{ date: '2026-01-01', cents: 49500 }] }), '2026-07-01');
-await post(TFull);
-const fr = await one(`SELECT amount_cents, txn_type, reduction_source, tenure_id FROM homeowner_transactions WHERE raw_row_jsonb->>'proposal_id' = $1 AND raw_row_jsonb->>'role' = 'builder_adjustment'`, [TFull.proposal]);
-const net = await one(`SELECT sum(h.amount_cents)::bigint AS s FROM homeowner_transactions h WHERE h.tenure_id = $1 AND (h.charge_category = 'assessment' OR h.description ILIKE '%assessment%')`, [TFull.seller]);
-check('...posted as a negative correcting adjustment on the seller tenure; Lennar’s 2026 assessment nets to $122.73',
-  Number(fr.amount_cents) === -37227 && fr.txn_type === 'adjustment' && fr.reduction_source === 'correcting_adjustment' && fr.tenure_id === TFull.seller && Number(net.s) === 12273, JSON.stringify({ fr, net }));
 const pB = await preview(await lot({ prior: [{ date: '2026-01-01', cents: 24750 }] }), '2026-07-01');
 check('Lennar billed the full builder rate $247.50 on Jan 1: adjustment -$124.77 (net $122.73)', !pB.blocked && pB.builder_adjustment_cents === -12477, JSON.stringify(pick(pB, ['blocked', 'builder_adjustment_cents'])));
 const pUnstamped = await preview(await lot({ prior: [{ date: '2026-01-01', cents: 49500, stamped: false }] }), '2026-07-01');
@@ -400,8 +467,6 @@ check('...and posting writes nothing financial (the calculation is recorded for 
   && (await one(`SELECT count(*)::int AS n FROM homeowner_transactions WHERE raw_row_jsonb->>'proposal_id' = $1`, [TAmb.proposal])).n === 0);
 const pTwo = await preview(await lot({ prior: [{ date: '2026-01-01', cents: 49500 }, { date: '2026-03-01', cents: -10000, type: 'credit', desc: 'Assessment credit' }] }), '2026-07-01');
 check('two assessment rows (charge + credit): BLOCKED', pTwo.blocked && pTwo.blocked_reasons.includes('ambiguous_builder_assessment'));
-const pCut = await preview(await lot(), '2026-06-15');
-check('settlement on/before the conversion baseline (6/15 vs 6/30): BLOCKED (Vantaca-era activity)', pCut.blocked && pCut.blocked_reasons.includes('settlement_before_conversion_baseline'), JSON.stringify(pCut.blocked_reasons));
 const pMix = await preview(await lot({ sellers: ['Lennar Homes LLC', 'John Doe'] }), '2026-07-01');
 check('mixed owners on the seller account (Lennar + a person): BLOCKED', pMix.blocked && pMix.blocked_reasons.includes('seller_mixed_owners'));
 const pSpec = await preview(await lot({ prior: [{ date: '2026-01-01', cents: 49500, desc: 'Special Assessment' }] }), '2026-07-01');
@@ -414,17 +479,15 @@ const sleepy = [
   { date: '2026-03-01', cents: 825, desc: 'Late Interest' }, { date: '2026-04-01', cents: 825, desc: 'Late Interest' }, { date: '2026-05-01', cents: 825, desc: 'Late Interest' }, { date: '2026-06-01', cents: 825, desc: 'Late Interest' }];
 const TS = await approve(await lot({ prior: sleepy }), '2026-07-01');
 const pS = await rpc('transfer_proration_plan', { p_property_id: TS.property, p_seller_tenure_id: TS.seller, p_settlement_date: '2026-07-01', p_buyer_name: 'Pat Homeowner', p_buyer_tenure_id: TS.buyer });
-const balBefore = Number((await one(`SELECT sum(amount_cents)::bigint AS s FROM homeowner_transactions WHERE tenure_id = $1`, [TS.seller])).s);
-await post(TS);
-const sRows = await q(`SELECT description, amount_cents FROM homeowner_transactions WHERE tenure_id = $1 ORDER BY source_row_index, transaction_date`, [TS.seller]);
-const balAfter = Number((await one(`SELECT sum(amount_cents)::bigint AS s FROM homeowner_transactions WHERE tenure_id = $1`, [TS.seller])).s);
-await db.query(`UPDATE community_assessment_rates SET deferral_account_number = '2205' WHERE community_id = $1 AND owner_class = 'homeowner'`, [SCR]);
-check('5302 Sleepy Fox shape (direct-recognition mechanics): only the $495.00 annual assessment is netted (adjustment -$372.27); prior balance, late interest and late fees untouched',
-  !pS.blocked && pS.builder_prior_rows.length === 1 && pS.builder_prior_rows[0].description === 'Annual Assessment' && pS.builder_adjustment_cents === -37227
-    && balAfter - balBefore === -37227 && sRows.filter((x) => !/proration/i.test(x.description)).length === sleepy.length,
-  JSON.stringify({ blocked: pS.blocked_reasons, prior: pS.builder_prior_rows, adj: pS.builder_adjustment_cents, balBefore, balAfter }));
+check('5302 Sleepy Fox shape (staging preview): only the $495.00 annual assessment counts (adjustment -$372.27); prior balance, late interest and late fees are not assessment activity',
+  !pS.blocked && pS.builder_prior_rows.length === 1 && pS.builder_prior_rows[0].description === 'Annual Assessment' && pS.builder_adjustment_cents === -37227,
+  JSON.stringify({ blocked: pS.blocked_reasons, prior: pS.builder_prior_rows, adj: pS.builder_adjustment_cents }));
 const pLate = await preview(await lot({ prior: [{ date: '2026-02-01', cents: 825, desc: 'Late Interest' }] }), '2026-07-01');
 check('late interest is not assessment activity (not counted, not blocking)', !pLate.blocked && pLate.builder_prior_billed_cents === 0);
+await db.query(`UPDATE community_assessment_rates SET deferral_account_number = '2205' WHERE community_id = $1 AND owner_class = 'homeowner'`, [SCR]);
+await db.query(`UPDATE conversion_batches SET status = 'posted' WHERE id = $1`, [CONV]);
+const pCut = await preview(await lot(), '2026-06-15');
+check('settlement on/before the conversion baseline (6/15 vs 6/30): BLOCKED (Vantaca-era activity)', pCut.blocked && pCut.blocked_reasons.includes('settlement_before_conversion_baseline'), JSON.stringify(pCut.blocked_reasons));
 
 // ---------------------------------------------------------------- engine convention + guards
 const LT = await lot({ origin: 'transfer', start: '2026-03-01' });

@@ -155,6 +155,14 @@ check('post: one GL entry keyed to the batch (source assessment_billing, dated t
   assert.strictEqual(db.t.transaction_upload_batches[0].status, 'committed');
   assert.deepStrictEqual(db.t.assessment_prorations.map((x) => [x.status, x.journal_entry_id]), [['posted', 'je-1'], ['posted', 'je-1']]);
 });
+check('post: the transfer’s builder days (a transfer_true_up coverage period) are marked posted with the journal entry, only after the GL posts', async () => {
+  posted.length = 0;
+  const db = fakeDb({ rpc: { post_transfer_assessment_proration: { data: WRITTEN, error: null } },
+    tables: { ...BASE_TABLES, builder_assessment_coverage: [{ id: 'cov-1', proposal_id: 'prop-x', status: 'pending' }, { id: 'cov-other', proposal_id: 'prop-y', status: 'pending' }] } });
+  await TP.postTransferProration(db, { proposalId: 'prop-x' });
+  assert.deepStrictEqual(db.t.builder_assessment_coverage.map((c) => [c.id, c.status, c.journal_entry_id || null, c.journal_entry_reference || null]),
+    [['cov-1', 'posted', 'je-1', 'JE-2026-901'], ['cov-other', 'pending', null, null]]);
+});
 check('retry after the GL posted but the commit failed: no second GL entry, finishes the commit', async () => {
   posted.length = 0;
   const db = fakeDb({ rpc: { post_transfer_assessment_proration: { data: WRITTEN, error: null } }, tables: BASE_TABLES, failUpdate: 'transaction_upload_batches' });
