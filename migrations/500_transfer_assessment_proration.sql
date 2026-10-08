@@ -1,27 +1,36 @@
 -- ============================================================================
 -- 500_transfer_assessment_proration.sql  (Ed 2026-10-08, GitHub issue #94)
 -- ----------------------------------------------------------------------------
--- Builder-to-homeowner assessment proration INSIDE the ownership transfer.
+-- Builder-to-homeowner assessment proration INSIDE the ownership transfer, and
+-- the durable builder assessment coverage record that the conversion and the
+-- periodic accrual (migration 501) extend.
 --
--- Still Creek Ranch: Lennar pays 50% of the annual assessment while it owns a
--- lot; the original homeowner pays 100% from the day they own it. When a lot
--- transfers Lennar -> homeowner, the year splits by actual calendar days on the
--- transfer engine's own convention (approve_ownership_proposal, mig 459/460):
--- the seller owns through settlement - 1, the buyer from the settlement date.
+-- GENERIC ENGINE. Every community-specific fact is configuration; nothing in a
+-- table, function or check here names a community, a builder, an amount or an
+-- account. The first configured community is seeded at the end (section 7).
 --
---   builder_due   = annual x builder% x builder_days / days_in_year
---   homeowner_due = annual x homeowner_days / days_in_year
---   builder adjustment = builder_due - what the builder was already billed for
---                        the year (so the builder's NET is its prorated share)
+-- While a configured builder owns a lot it pays builder_rate_pct of the annual
+-- assessment; the incoming owner pays homeowner_rate_pct from the day they own
+-- it. A transfer splits the ASSESSMENT YEAR (the community's own, from its year
+-- end) by actual days on the transfer engine's convention
+-- (approve_ownership_proposal, mig 459/460): the seller owns through
+-- settlement - 1, the buyer from the settlement date.
+--
+--   builder share   = round(annual x builder% x days / (100 x days_in_year))
+--   homeowner share = round(annual x homeowner% x days / (100 x days_in_year))
+--   builder adjustment = what the builder still owes for its days
 --
 -- Configuration, not code:
---   community_assessment_rates (mig 360) keeps the annual rates. A builder rate
---     may now be a PERCENT of the homeowner rate (pct_of_homeowner_rate), so a
---     change to the homeowner rate flows through. Still Creek is seeded with
---     its current $495.00 homeowner rate and a 50% builder rate.
---   transfer_proration_builders: which builder companies trigger the proration
---     at which community. Only Still Creek / Lennar is seeded. A community with
---     no row here is untouched: its transfers behave exactly as before.
+--   community_assessment_rates (mig 360, homeowner row): the annual assessment
+--     and the assessment year end (fiscal_year_end_mmdd). The one canonical
+--     rate; nothing copies it.
+--   builder_assessment_programs (one row per configured community): builder
+--     rate %, homeowner rate %, the AR / income / deferral accounts, how a
+--     deferred annual billing is released, the accrual cadence, and the
+--     post-conversion activation of the periodic accrual.
+--   transfer_proration_builders: which builder companies the program covers.
+--   A community with no active program is untouched: its transfers behave
+--   exactly as before.
 --
 -- Functions (service_role only):
 --   transfer_proration_plan(...)          read-only: the calculation, the
@@ -49,27 +58,26 @@
 -- A settlement on or before the conversion baseline is Vantaca-era activity
 -- and blocks.
 --
--- REVENUE TREATMENT (Ed 2026-10-08) is configuration, from the community's own
--- books. Still Creek's Vantaca-era GL bills each owner's $495 on Jan 1, then
--- "Reclass 4000 to 2205" moves the full annual billing ($158,895.00 = 321 x
--- $495) to 2205 Unearned Income, and "Current Month Income" releases exactly
--- 1/12 ($13,241.25) from 2205 to 4000 on the 1st of each month (2025 the same:
--- elapsed months straight to 4000 at the 4/30 billing, the rest to 2205, then
--- monthly). So Still Creek DEFERS and recognizes straight-line by month:
---   community_assessment_rates.deferral_account_number = '2205' (homeowner row)
---   community_assessment_rates.income_account_number   = '4000'
--- A new owner's prorated charge is billed to the deferral account and released
--- monthly by the recognition engine (lib/accounting/transfer_proration.js
--- creates the schedule); a builder's share is wholly elapsed at settlement and
--- is recognized directly.
+-- REVENUE TREATMENT is configuration taken from the community's own books
+-- (builder_assessment_programs; the seeded community's evidence is recorded on
+-- its row):
+--   deferral_account_number NULL  every charge is credited to income directly.
+--   deferral_account_number set   the annual billing is deferred and released
+--     by month (deferral_release 'monthly_in_advance': each month's 1/12 on its
+--     1st; 'monthly_in_arrears': at its end). A new owner's prorated charge is
+--     billed to the deferral account and released to income month by month by
+--     the DAYS IT COVERS in each month (a full month: its whole share; the
+--     settlement month: its covered days only), the charge's own day basis.
+--     lib/accounting/transfer_proration.js creates that schedule. A builder's
+--     share is wholly elapsed at settlement and is recognized directly.
 --
 -- BUILDER COVERAGE (GitHub #96, Ed 2026-10-08). After a community's accounting
 -- conversion, what a builder has been billed for a year is read ONLY from the
 -- durable builder_assessment_coverage record (below): the conversion's baseline
 -- through its as-of date, then the scheduled accrual, then a transfer's true-up.
 -- Never from legacy transactions (EXECUTE reverts the legacy ledger batches and
--- carries opening balances dated the cutoff), so #95 never needs 5302's
--- original 1/1/2026 $495 row. A transfer bills only covered_through+1 ..
+-- carries opening balances dated the cutoff), so a transfer never needs a
+-- legacy annual charge row. A transfer bills only covered_through+1 ..
 -- settlement-1; missing, pending, overlapping, malformed or discontinuous
 -- coverage BLOCKS. The transfer workflow never cancels or replaces a
 -- community-wide revenue schedule.
@@ -77,32 +85,87 @@
 -- Record ownership: rates + builder rules are association configuration
 -- (association_record); assessment_prorations is the audit trail of charges on
 -- the association's books (association_record).
--- No existing ledger, GL, tenure or ownership row is changed. Seeds: 2 rate
--- rows + 1 builder rule for Still Creek Ranch (only if that community and the
--- Lennar builder company exist).
+-- No existing ledger, GL, tenure or ownership row is changed. Seeds the first
+-- configured community (section 7): its homeowner rate row, its program row
+-- and its builder rule, only if that community and builder company exist.
 -- ============================================================================
 BEGIN;
 
 -- ---------------------------------------------------------------------------
--- 1) A builder rate can be a percent of the homeowner rate.
+-- 1) The program: one configured community's builder assessment rules.
+--    The annual assessment and the assessment year end stay on the community's
+--    homeowner rate row (community_assessment_rates); nothing copies them.
+--    The periodic accrual is ACTIVATED explicitly, only after the community's
+--    accounting conversion is posted (guard below); until then it never runs.
 -- ---------------------------------------------------------------------------
-ALTER TABLE community_assessment_rates ADD COLUMN IF NOT EXISTS pct_of_homeowner_rate numeric(5,2);
--- Revenue treatment (homeowner row): where the annual assessment is recognized,
--- and (when set) the unearned account it is deferred through, released monthly.
-ALTER TABLE community_assessment_rates ADD COLUMN IF NOT EXISTS income_account_number text NOT NULL DEFAULT '4000';
-ALTER TABLE community_assessment_rates ADD COLUMN IF NOT EXISTS deferral_account_number text;
-ALTER TABLE community_assessment_rates DROP CONSTRAINT IF EXISTS community_assessment_rates_deferral_homeowner;
-ALTER TABLE community_assessment_rates ADD CONSTRAINT community_assessment_rates_deferral_homeowner
-  CHECK (deferral_account_number IS NULL OR owner_class = 'homeowner');
-ALTER TABLE community_assessment_rates ALTER COLUMN annual_amount_cents DROP NOT NULL;
-ALTER TABLE community_assessment_rates DROP CONSTRAINT IF EXISTS community_assessment_rates_amount_or_pct;
-ALTER TABLE community_assessment_rates ADD CONSTRAINT community_assessment_rates_amount_or_pct CHECK (
-  (owner_class = 'homeowner' AND annual_amount_cents IS NOT NULL AND pct_of_homeowner_rate IS NULL)
-  OR (owner_class = 'builder' AND ((annual_amount_cents IS NOT NULL) <> (pct_of_homeowner_rate IS NOT NULL)))
+CREATE TABLE IF NOT EXISTS builder_assessment_programs (
+  community_id             uuid PRIMARY KEY,
+  active                   boolean NOT NULL DEFAULT true,
+  builder_rate_pct         numeric(5,2) NOT NULL,          -- % of the annual assessment a builder owner pays
+  homeowner_rate_pct       numeric(5,2) NOT NULL DEFAULT 100,
+  ar_account_number        text NOT NULL,
+  income_account_number    text NOT NULL,
+  deferral_account_number  text,                           -- NULL: charges are credited to income directly
+  deferral_release         text,                           -- how the deferred annual billing is released
+  accrual_cadence_months   int  NOT NULL DEFAULT 1,        -- periodic builder billing: every 1, 3, 6 or 12 months of the assessment year
+  accrual_activated_at     timestamptz,
+  accrual_activated_by     text,
+  evidence                 text,                           -- where these rules come from (the community's books / documents)
+  created_by               text NOT NULL DEFAULT 'migration',
+  created_at               timestamptz NOT NULL DEFAULT now(),
+  updated_at               timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT builder_assessment_programs_community_fk FOREIGN KEY (community_id) REFERENCES communities(id) ON DELETE RESTRICT,
+  CONSTRAINT builder_assessment_programs_rates_check CHECK (builder_rate_pct > 0 AND builder_rate_pct <= 100 AND homeowner_rate_pct > 0 AND homeowner_rate_pct <= 100),
+  CONSTRAINT builder_assessment_programs_deferral_check CHECK ((deferral_account_number IS NULL) = (deferral_release IS NULL)
+    AND (deferral_release IS NULL OR deferral_release IN ('monthly_in_advance', 'monthly_in_arrears'))),
+  CONSTRAINT builder_assessment_programs_cadence_check CHECK (accrual_cadence_months IN (1, 3, 6, 12)),
+  CONSTRAINT builder_assessment_programs_activation_check CHECK ((accrual_activated_at IS NULL) = (accrual_activated_by IS NULL))
 );
-ALTER TABLE community_assessment_rates DROP CONSTRAINT IF EXISTS community_assessment_rates_pct_range;
-ALTER TABLE community_assessment_rates ADD CONSTRAINT community_assessment_rates_pct_range
-  CHECK (pct_of_homeowner_rate IS NULL OR (pct_of_homeowner_rate > 0 AND pct_of_homeowner_rate <= 100));
+COMMENT ON TABLE builder_assessment_programs IS 'association_record: a configured community''s builder assessment rules (rates %, accounts, deferral release, accrual cadence, accrual activation).';
+DROP TRIGGER IF EXISTS trg_builder_assessment_programs_updated_at ON builder_assessment_programs;
+CREATE TRIGGER trg_builder_assessment_programs_updated_at BEFORE UPDATE ON builder_assessment_programs FOR EACH ROW EXECUTE FUNCTION trusted_set_updated_at();
+-- The accrual can only be activated once the community's conversion is POSTED,
+-- and an activation is never quietly rewritten.
+CREATE OR REPLACE FUNCTION builder_assessment_programs_guard() RETURNS trigger
+LANGUAGE plpgsql AS $fn$
+BEGIN
+  IF TG_OP = 'DELETE' THEN RAISE EXCEPTION 'a builder assessment program is deactivated (active = false), never deleted'; END IF;
+  IF NEW.accrual_activated_at IS NOT NULL AND (TG_OP = 'INSERT' OR OLD.accrual_activated_at IS NULL) THEN
+    IF NOT EXISTS (SELECT 1 FROM conversion_batches WHERE community_id = NEW.community_id AND status = 'posted') THEN
+      RAISE EXCEPTION 'the builder accrual is activated only after the community''s accounting conversion is posted';
+    END IF;
+  END IF;
+  IF TG_OP = 'UPDATE' AND OLD.accrual_activated_at IS NOT NULL
+     AND (NEW.accrual_activated_at, NEW.accrual_activated_by) IS DISTINCT FROM (OLD.accrual_activated_at, OLD.accrual_activated_by) THEN
+    RAISE EXCEPTION 'an accrual activation is recorded once (deactivate the program instead)';
+  END IF;
+  RETURN NEW;
+END;
+$fn$;
+DROP TRIGGER IF EXISTS trg_builder_assessment_programs_guard ON builder_assessment_programs;
+CREATE TRIGGER trg_builder_assessment_programs_guard BEFORE INSERT OR UPDATE OR DELETE ON builder_assessment_programs FOR EACH ROW EXECUTE FUNCTION builder_assessment_programs_guard();
+GRANT SELECT, INSERT, UPDATE ON builder_assessment_programs TO service_role;
+
+-- The assessment year containing p_date, from the community's year end (MM-DD).
+-- '12-31' is the calendar year; '06-30' runs Jul 1 - Jun 30 (fiscal_year = the
+-- year it ends in).
+CREATE OR REPLACE FUNCTION assessment_year_bounds(p_year_end_mmdd text, p_date date)
+RETURNS TABLE (year_start date, year_end date, fiscal_year int, days_in_year int)
+LANGUAGE plpgsql IMMUTABLE AS $fn$
+DECLARE mm int; dd int; ye date;
+BEGIN
+  IF p_date IS NULL THEN RAISE EXCEPTION 'assessment_year_bounds needs a date'; END IF;
+  IF coalesce(p_year_end_mmdd, '') !~ '^[0-9]{2}-[0-9]{2}$' OR p_year_end_mmdd = '02-29' THEN
+    RAISE EXCEPTION 'assessment year end % is not a valid MM-DD (02-29 is not allowed)', p_year_end_mmdd;
+  END IF;
+  mm := split_part(p_year_end_mmdd, '-', 1)::int; dd := split_part(p_year_end_mmdd, '-', 2)::int;
+  ye := make_date(extract(year FROM p_date)::int, mm, dd);
+  IF ye < p_date THEN ye := make_date(extract(year FROM p_date)::int + 1, mm, dd); END IF;
+  year_end := ye; year_start := (ye - interval '1 year')::date + 1;
+  fiscal_year := extract(year FROM ye)::int; days_in_year := ye - year_start + 1;
+  RETURN NEXT;
+END;
+$fn$;
 
 -- ---------------------------------------------------------------------------
 -- 2) Which builders trigger the transfer proration, per community.
@@ -178,15 +241,16 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_homeowner_txn_transfer_proration
 --       conversion         baseline through the conversion as-of date (a lot the
 --                          legacy books never billed: a charge; a legacy annual
 --                          charge: normalized to the builder rate)
---       scheduled_accrual  the periodic run after the baseline (month by month)
+--       scheduled_accrual  the periodic run after the baseline (the program's cadence)
 --       transfer_true_up   a builder-to-homeowner transfer: the uncovered days
 --                          through settlement - 1
 --     amount_cents = round(annual x pct x days / (100 x days_in_year)) +
 --     rounding_true_up_cents. Each period is rounded on its own days; only a
---     period that ends Dec 31, on a year covered from Jan 1 at one base and
---     rate, carries rounding_true_up_cents so the year totals exactly
---     round(annual x pct / 100) (a full 2026 Lennar lot: $247.50). Earlier
---     periods are never re-rounded.
+--     period that ends on the assessment year's last day, on a year covered
+--     from its first day at one base and rate, carries rounding_true_up_cents
+--     so the year totals exactly round(annual x pct / 100). Earlier periods are
+--     never re-rounded. The assessment year is the community's own
+--     (year_start .. year_end, from its fiscal_year_end_mmdd).
 --     A trigger refuses a gap, an overlap, a wrong amount, a period outside the
 --     year or past the tenure's end, and any edit except the status moving
 --     forward (pending -> posted, or a person voiding the LAST period with a
@@ -201,7 +265,9 @@ CREATE TABLE IF NOT EXISTS builder_assessment_coverage (
   vantaca_account_id       text,                 -- reference only
   tenure_id                uuid NOT NULL,
   builder_company_id       uuid NOT NULL,
-  fiscal_year              int  NOT NULL,
+  fiscal_year              int  NOT NULL,      -- the year the assessment year ends in
+  year_start               date NOT NULL,      -- the assessment year this period belongs to
+  year_end                 date NOT NULL,
   covered_from             date NOT NULL,
   covered_through          date NOT NULL,
   days                     int  NOT NULL,
@@ -240,14 +306,15 @@ CREATE TABLE IF NOT EXISTS builder_assessment_coverage (
   CONSTRAINT builder_assessment_coverage_source_check CHECK (source_type IN ('conversion', 'scheduled_accrual', 'transfer_true_up')),
   CONSTRAINT builder_assessment_coverage_status_check CHECK (status IN ('pending', 'posted', 'voided')),
   CONSTRAINT builder_assessment_coverage_period_check CHECK (
-    covered_from <= covered_through
-    AND extract(year FROM covered_from)::int = fiscal_year AND extract(year FROM covered_through)::int = fiscal_year
+    covered_from <= covered_through AND covered_from >= year_start AND covered_through <= year_end
+    AND year_start = (year_end - interval '1 year')::date + 1
+    AND fiscal_year = extract(year FROM year_end)::int
     AND days = covered_through - covered_from + 1
-    AND days_in_year = make_date(fiscal_year, 12, 31) - make_date(fiscal_year, 1, 1) + 1),
+    AND days_in_year = year_end - year_start + 1),
   CONSTRAINT builder_assessment_coverage_amount_check CHECK (
     base_amount_cents = round(annual_assessment_cents::numeric * builder_rate_pct * days / (100 * days_in_year))
     AND amount_cents = base_amount_cents + rounding_true_up_cents
-    AND (rounding_true_up_cents = 0 OR covered_through = make_date(fiscal_year, 12, 31))),
+    AND (rounding_true_up_cents = 0 OR covered_through = year_end)),
   CONSTRAINT builder_assessment_coverage_rate_check CHECK (builder_rate_pct > 0 AND builder_rate_pct <= 100 AND annual_assessment_cents >= 0),
   CONSTRAINT builder_assessment_coverage_origin_check CHECK (
     (source_type = 'conversion' AND conversion_batch_id IS NOT NULL)
@@ -262,11 +329,12 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_builder_assessment_coverage_period
 CREATE INDEX IF NOT EXISTS idx_builder_assessment_coverage_community ON builder_assessment_coverage (community_id, fiscal_year);
 GRANT SELECT, INSERT, UPDATE ON builder_assessment_coverage TO service_role;
 
--- Where a builder's assessment year starts on this tenure: Jan 1, or the date a
--- recorded transfer gave it the lot (never the onboarding load date).
-CREATE OR REPLACE FUNCTION builder_coverage_start(p_tenure_id uuid, p_fiscal_year int)
+-- Where a builder's assessment year starts on this tenure: the year's first
+-- day, or the date a recorded transfer gave it the lot (never the onboarding
+-- load date).
+CREATE OR REPLACE FUNCTION builder_coverage_start(p_tenure_id uuid, p_year_start date)
 RETURNS date LANGUAGE sql STABLE SET search_path = public AS $fn$
-  SELECT CASE WHEN t.origin = 'transfer' AND t.start_date > make_date(p_fiscal_year, 1, 1) THEN t.start_date ELSE make_date(p_fiscal_year, 1, 1) END
+  SELECT CASE WHEN t.origin = 'transfer' AND t.start_date > p_year_start THEN t.start_date ELSE p_year_start END
     FROM ownership_tenures t WHERE t.id = p_tenure_id
 $fn$;
 
@@ -278,11 +346,11 @@ DECLARE
 BEGIN
   IF TG_OP = 'DELETE' THEN RAISE EXCEPTION 'builder coverage is never deleted; void the last period instead (coverage %)', OLD.id; END IF;
   IF TG_OP = 'UPDATE' THEN
-    IF (NEW.community_id, NEW.property_id, NEW.tenure_id, NEW.builder_company_id, NEW.fiscal_year, NEW.covered_from, NEW.covered_through,
+    IF (NEW.community_id, NEW.property_id, NEW.tenure_id, NEW.builder_company_id, NEW.fiscal_year, NEW.year_start, NEW.year_end, NEW.covered_from, NEW.covered_through,
         NEW.days, NEW.days_in_year, NEW.annual_assessment_cents, NEW.builder_rate_pct, NEW.base_amount_cents, NEW.rounding_true_up_cents,
         NEW.amount_cents, NEW.source_type, NEW.created_by, NEW.created_at)
        IS DISTINCT FROM
-       (OLD.community_id, OLD.property_id, OLD.tenure_id, OLD.builder_company_id, OLD.fiscal_year, OLD.covered_from, OLD.covered_through,
+       (OLD.community_id, OLD.property_id, OLD.tenure_id, OLD.builder_company_id, OLD.fiscal_year, OLD.year_start, OLD.year_end, OLD.covered_from, OLD.covered_through,
         OLD.days, OLD.days_in_year, OLD.annual_assessment_cents, OLD.builder_rate_pct, OLD.base_amount_cents, OLD.rounding_true_up_cents,
         OLD.amount_cents, OLD.source_type, OLD.created_by, OLD.created_at) THEN
       RAISE EXCEPTION 'a builder coverage period is fixed once written; void it (if it is the last) and write a new one';
@@ -301,7 +369,15 @@ BEGIN
     RETURN NEW;
   END IF;
 
-  -- INSERT: one writer per tenure at a time.
+  -- INSERT: the assessment year comes from the community's configuration when
+  -- the writer does not name it (the CHECK then proves the period sits inside it).
+  IF NEW.year_start IS NULL OR NEW.year_end IS NULL THEN
+    SELECT b.year_start, b.year_end INTO NEW.year_start, NEW.year_end
+      FROM community_assessment_rates r, assessment_year_bounds(r.fiscal_year_end_mmdd, NEW.covered_from) b
+     WHERE r.community_id = NEW.community_id AND r.owner_class = 'homeowner';
+    IF NEW.year_start IS NULL THEN RAISE EXCEPTION 'no assessment year is configured for this community (homeowner rate row)'; END IF;
+  END IF;
+  -- One writer per tenure at a time.
   SELECT * INTO t FROM ownership_tenures WHERE id = NEW.tenure_id FOR UPDATE;
   IF NOT FOUND OR t.property_id IS DISTINCT FROM NEW.property_id OR t.community_id IS DISTINCT FROM NEW.community_id THEN
     RAISE EXCEPTION 'coverage tenure % does not belong to this lot / community', NEW.tenure_id;
@@ -310,21 +386,26 @@ BEGIN
   IF t.end_date IS NOT NULL AND NEW.covered_through > t.end_date THEN
     RAISE EXCEPTION 'coverage through % runs past the end of the builder''s ownership (%)', NEW.covered_through, t.end_date;
   END IF;
+  IF EXISTS (SELECT 1 FROM builder_assessment_coverage WHERE tenure_id = NEW.tenure_id AND fiscal_year = NEW.fiscal_year AND status <> 'voided'
+              AND (year_start, year_end) IS DISTINCT FROM (NEW.year_start, NEW.year_end)) THEN
+    RAISE EXCEPTION 'coverage for this year already uses assessment year % to %', NEW.year_start, NEW.year_end;
+  END IF;
   SELECT max(covered_through) INTO last_through FROM builder_assessment_coverage
    WHERE tenure_id = NEW.tenure_id AND fiscal_year = NEW.fiscal_year AND status <> 'voided';
-  expect := coalesce(last_through + 1, builder_coverage_start(NEW.tenure_id, NEW.fiscal_year));
+  expect := coalesce(last_through + 1, builder_coverage_start(NEW.tenure_id, NEW.year_start));
   IF NEW.covered_from <> expect THEN
     RAISE EXCEPTION 'coverage must start % (the day after the last covered day, or the builder''s start); % would leave a % ',
       expect, NEW.covered_from, CASE WHEN NEW.covered_from > expect THEN 'gap' ELSE 'overlap' END;
   END IF;
-  -- Year-end true-up: only on the period ending Dec 31 of a year covered from
-  -- Jan 1 at one base and rate; it makes the year total exactly annual x rate.
-  IF NEW.covered_through = make_date(NEW.fiscal_year, 12, 31) THEN
+  -- Year-end true-up: only on the period ending the assessment year's last day,
+  -- on a year covered from its first day at one base and rate; it makes the
+  -- year total exactly annual x rate.
+  IF NEW.covered_through = NEW.year_end THEN
     SELECT coalesce(sum(amount_cents), 0), min(covered_from),
            bool_or(annual_assessment_cents <> NEW.annual_assessment_cents OR builder_rate_pct <> NEW.builder_rate_pct)
       INTO prior_sum, prior_from, mixed
       FROM builder_assessment_coverage WHERE tenure_id = NEW.tenure_id AND fiscal_year = NEW.fiscal_year AND status <> 'voided';
-    IF coalesce(prior_from, NEW.covered_from) = make_date(NEW.fiscal_year, 1, 1) AND NOT coalesce(mixed, false) THEN
+    IF coalesce(prior_from, NEW.covered_from) = NEW.year_start AND NOT coalesce(mixed, false) THEN
       target := round(NEW.annual_assessment_cents::numeric * NEW.builder_rate_pct / 100);
       want_true_up := target - prior_sum - NEW.base_amount_cents;
     ELSE
@@ -343,12 +424,12 @@ CREATE TRIGGER trg_builder_assessment_coverage_guard BEFORE INSERT OR UPDATE OR 
 
 -- What a builder tenure's year is covered through, from the durable record.
 -- { count, pending, valid, problems[], covered_through, amount_cents, rows[] }
-CREATE OR REPLACE FUNCTION builder_coverage(p_tenure_id uuid, p_fiscal_year int)
+CREATE OR REPLACE FUNCTION builder_coverage(p_tenure_id uuid, p_year_start date)
 RETURNS jsonb LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public AS $fn$
 DECLARE r record; expect date; probs jsonb := '[]'::jsonb; rws jsonb := '[]'::jsonb; total bigint := 0; n int := 0; pend int := 0;
 BEGIN
-  expect := builder_coverage_start(p_tenure_id, p_fiscal_year);
-  FOR r IN SELECT * FROM builder_assessment_coverage WHERE tenure_id = p_tenure_id AND fiscal_year = p_fiscal_year AND status <> 'voided' ORDER BY covered_from LOOP
+  expect := builder_coverage_start(p_tenure_id, p_year_start);
+  FOR r IN SELECT * FROM builder_assessment_coverage WHERE tenure_id = p_tenure_id AND year_start = p_year_start AND status <> 'voided' ORDER BY covered_from LOOP
     n := n + 1;
     IF r.status = 'pending' THEN pend := pend + 1; END IF;
     IF r.covered_from <> expect THEN probs := probs || jsonb_build_object('id', r.id, 'problem', format('starts %s; expected %s', r.covered_from, expect)); END IF;
@@ -363,15 +444,15 @@ BEGIN
     expect := r.covered_through + 1;
   END LOOP;
   RETURN jsonb_build_object('count', n, 'pending', pend, 'valid', jsonb_array_length(probs) = 0, 'problems', probs,
-    'covered_through', CASE WHEN n > 0 THEN expect - 1 END, 'amount_cents', total, 'rows', rws, 'fiscal_year', p_fiscal_year);
+    'covered_through', CASE WHEN n > 0 THEN expect - 1 END, 'amount_cents', total, 'rows', rws, 'year_start', p_year_start);
 END;
 $fn$;
-REVOKE ALL ON FUNCTION builder_coverage(uuid, int) FROM PUBLIC, anon, authenticated;
-GRANT EXECUTE ON FUNCTION builder_coverage(uuid, int) TO service_role;
+REVOKE ALL ON FUNCTION builder_coverage(uuid, date) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION builder_coverage(uuid, date) TO service_role;
 
 -- ---------------------------------------------------------------------------
 -- 4) Name match: does an owner name carry the builder's name as whole words?
---    "Lennar Homes LLC" and "Attn: Lennar Homes of Texas ... LTD" carry "Lennar".
+--    "Acme Homes LLC" and "Attn: Acme Homes of Texas ... LTD" carry "Acme".
 -- ---------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION transfer_proration_name_has(p_name text, p_word text)
 RETURNS boolean LANGUAGE sql IMMUTABLE AS $fn$
@@ -397,15 +478,17 @@ DECLARE
   comm    communities%ROWTYPE;
   st      ownership_tenures%ROWTYPE;
   ho      community_assessment_rates%ROWTYPE;
-  bl      community_assessment_rates%ROWTYPE;
-  y int; jan1 date; dec31 date; diy int;
+  prog    builder_assessment_programs%ROWTYPE;
+  yb      record;
+  y int; ys date; ye date; diy int; ho_pct numeric; ho_full bigint;
+  rm date; rme date; rcum bigint; rprev bigint := 0; rmonths jsonb := '[]'::jsonb;
   seller_names jsonb; n_owners int; n_matched int; builder_ids uuid[]; builder_label text;
   buyer_names text[];
   b_start date; b_days int; h_days int;
   pct numeric; b_due bigint; h_due bigint; b_full bigint;
   prior jsonb := '[]'::jsonb; prior_n int := 0; prior_billed bigint := 0; one record;
   conv_code text; conv_asof date;
-  rec_months int; annual jsonb; annual_n int := 0; identified boolean := false;
+  annual jsonb; annual_n int := 0; identified boolean := false;
   normalized jsonb; norm_required jsonb;
   cov jsonb; unb_start date; unb_days int; b_charge bigint;
   buyer_prior jsonb := '[]'::jsonb;
@@ -417,8 +500,10 @@ BEGIN
   IF NOT FOUND THEN RAISE EXCEPTION 'property % not found', p_property_id; END IF;
   SELECT * INTO comm FROM communities WHERE id = prop.community_id;
 
-  -- Only configured communities. Everyone else keeps today's transfer exactly.
-  IF NOT EXISTS (SELECT 1 FROM transfer_proration_builders WHERE community_id = comm.id AND active) THEN
+  -- Only configured communities (an active program with a builder rule).
+  -- Everyone else keeps today's transfer exactly.
+  SELECT * INTO prog FROM builder_assessment_programs WHERE community_id = comm.id AND active;
+  IF NOT FOUND OR NOT EXISTS (SELECT 1 FROM transfer_proration_builders WHERE community_id = comm.id AND active) THEN
     RETURN jsonb_build_object('applies', false, 'reason', 'community_not_configured');
   END IF;
 
@@ -458,37 +543,41 @@ BEGIN
     RETURN jsonb_build_object('applies', false, 'reason', 'buyer_is_builder', 'seller_names', seller_names, 'builder', builder_label);
   END IF;
 
-  -- Rates (configuration, never constants).
+  -- The annual assessment and the assessment year: the community's homeowner rate row.
   SELECT * INTO ho FROM community_assessment_rates WHERE community_id = comm.id AND owner_class = 'homeowner';
-  SELECT * INTO bl FROM community_assessment_rates WHERE community_id = comm.id AND owner_class = 'builder';
-  IF ho.id IS NULL OR bl.id IS NULL THEN
+  IF ho.id IS NULL OR ho.annual_amount_cents IS NULL THEN
     RETURN jsonb_build_object('applies', true, 'blocked', true, 'blocked_reasons', to_jsonb(blocked || 'rates_missing'::text),
       'seller_names', seller_names, 'builder', builder_label);
   END IF;
-  IF ho.fiscal_year_end_mmdd <> '12-31' OR bl.fiscal_year_end_mmdd <> '12-31' THEN blocked := blocked || 'fiscal_year_not_calendar'::text; END IF;
 
-  -- Days, on the transfer engine's convention.
-  y := extract(year FROM p_settlement_date)::int;
-  jan1 := make_date(y, 1, 1); dec31 := make_date(y, 12, 31);
-  diy := dec31 - jan1 + 1;
-  b_start := jan1;
+  -- Days, on the transfer engine's convention, within the community's assessment year.
+  SELECT * INTO yb FROM assessment_year_bounds(ho.fiscal_year_end_mmdd, p_settlement_date);
+  y := yb.fiscal_year; ys := yb.year_start; ye := yb.year_end; diy := yb.days_in_year;
+  b_start := ys;
   -- A builder that took the lot through a recorded transfer this year owned it from that date.
-  IF st.origin = 'transfer' AND st.start_date > jan1 AND st.start_date <= p_settlement_date THEN b_start := st.start_date; END IF;
+  IF st.origin = 'transfer' AND st.start_date > ys AND st.start_date <= p_settlement_date THEN b_start := st.start_date; END IF;
   b_days := greatest(p_settlement_date - b_start, 0);
-  h_days := dec31 - p_settlement_date + 1;
-  IF bl.pct_of_homeowner_rate IS NOT NULL THEN
-    pct := bl.pct_of_homeowner_rate;
-    b_due := round(ho.annual_amount_cents::numeric * pct * b_days / (100 * diy));
-    b_full := round(ho.annual_amount_cents::numeric * pct / 100);
-  ELSE
-    pct := round(bl.annual_amount_cents::numeric * 100 / nullif(ho.annual_amount_cents, 0), 2);
-    b_due := round(bl.annual_amount_cents::numeric * b_days / diy);
-    b_full := bl.annual_amount_cents;
+  h_days := ye - p_settlement_date + 1;
+  pct := prog.builder_rate_pct; ho_pct := prog.homeowner_rate_pct;
+  b_due := round(ho.annual_amount_cents::numeric * pct * b_days / (100 * diy));
+  b_full := round(ho.annual_amount_cents::numeric * pct / 100);
+  ho_full := round(ho.annual_amount_cents::numeric * ho_pct / 100);
+  h_due := round(ho.annual_amount_cents::numeric * ho_pct * h_days / (100 * diy));
+  -- A deferring community releases the new owner's share to income month by
+  -- month by the DAYS it covers in each month: cumulative days / total days of
+  -- the charge, rounded, so the months sum exactly to the charge. (A full month
+  -- carries its whole share; the settlement month only its covered days.) The
+  -- recognition engine's 'daily' method computes the identical months.
+  IF prog.deferral_account_number IS NOT NULL AND h_due > 0 THEN
+    rm := date_trunc('month', p_settlement_date)::date;
+    WHILE rm <= ye LOOP
+      rme := least((rm + interval '1 month' - interval '1 day')::date, ye);
+      rcum := round(h_due::numeric * (rme - p_settlement_date + 1) / h_days);
+      rmonths := rmonths || jsonb_build_object('month', rm, 'from', greatest(rm, p_settlement_date), 'through', rme,
+        'days', rme - greatest(rm, p_settlement_date) + 1, 'cents', rcum - rprev);
+      rprev := rcum; rm := (rm + interval '1 month')::date;
+    END LOOP;
   END IF;
-  h_due := round(ho.annual_amount_cents::numeric * h_days / diy);
-  -- The new owner's share is released from the deferral account straight-line by
-  -- month, from the settlement month through year end (the community's convention).
-  rec_months := 12 - extract(month FROM p_settlement_date)::int + 1;
 
   -- Accounting readiness: the community's converted books (a POSTED conversion).
   SELECT batch_code, as_of_date INTO conv_code, conv_asof FROM conversion_batches
@@ -499,14 +588,14 @@ BEGIN
 
   IF conv_code IS NOT NULL THEN
     -- CONVERTED: the builder's year comes ONLY from builder_assessment_coverage.
-    cov := builder_coverage(st.id, y);
+    cov := builder_coverage(st.id, ys);
     IF (cov->>'count')::int = 0 THEN
       -- A builder that owned the lot at the conversion baseline must have the
       -- conversion's coverage; only a builder that took the lot by a transfer
       -- recorded after the baseline starts without any.
       -- Only the CONVERSION'S year needs it (its pre-baseline days were billed in the
       -- legacy books); in a later year missing coverage is simply unbilled days.
-      IF extract(year FROM conv_asof)::int = y AND NOT (st.origin = 'transfer' AND st.start_date > conv_asof) THEN
+      IF conv_asof BETWEEN ys AND ye AND NOT (st.origin = 'transfer' AND st.start_date > conv_asof) THEN
         blocked := blocked || 'builder_coverage_missing'::text;
       END IF;
       unb_start := b_start;
@@ -514,7 +603,7 @@ BEGIN
       unb_start := (cov->>'covered_through')::date + 1;
       IF NOT (cov->>'valid')::boolean THEN blocked := blocked || 'builder_coverage_invalid'::text; END IF;
       IF (cov->>'pending')::int > 0 THEN blocked := blocked || 'builder_coverage_pending'::text; END IF;
-      IF extract(year FROM conv_asof)::int = y AND NOT (st.origin = 'transfer' AND st.start_date > conv_asof) AND (cov->>'covered_through')::date < conv_asof THEN
+      IF conv_asof BETWEEN ys AND ye AND NOT (st.origin = 'transfer' AND st.start_date > conv_asof) AND (cov->>'covered_through')::date < conv_asof THEN
         blocked := blocked || 'builder_coverage_invalid'::text;
       END IF;
       IF (cov->>'covered_through')::date > p_settlement_date - 1 THEN
@@ -534,7 +623,7 @@ BEGIN
       SELECT coalesce(jsonb_agg(jsonb_build_object('id', h.id, 'date', h.transaction_date, 'description', h.description, 'amount_cents', h.amount_cents)), '[]'::jsonb)
         INTO buyer_prior
         FROM homeowner_transactions h JOIN transaction_upload_batches b ON b.id = h.source_batch_id AND b.status = 'committed'
-       WHERE h.tenure_id = p_buyer_tenure_id AND h.transaction_date BETWEEN jan1 AND dec31
+       WHERE h.tenure_id = p_buyer_tenure_id AND h.transaction_date BETWEEN ys AND ye
          AND coalesce(h.raw_row_jsonb->>'source', '') <> 'transfer_proration'
          AND (h.charge_category = 'assessment' OR (h.charge_category IS NULL AND h.description ILIKE '%assessment%'));
       IF jsonb_array_length(buyer_prior) > 0 THEN blocked := blocked || 'buyer_already_billed'::text; END IF;
@@ -546,7 +635,7 @@ BEGIN
     SELECT h.id, h.transaction_date, h.description, h.txn_type, h.charge_category, h.amount_cents, h.raw_row_jsonb AS raw
       FROM homeowner_transactions h
       JOIN transaction_upload_batches b ON b.id = h.source_batch_id AND b.status = 'committed'
-     WHERE h.transaction_date BETWEEN jan1 AND dec31
+     WHERE h.transaction_date BETWEEN ys AND ye
        AND coalesce(h.raw_row_jsonb->>'source', '') <> 'transfer_proration'
        AND (h.charge_category = 'assessment' OR (h.charge_category IS NULL AND h.description ILIKE '%assessment%'))
        AND (h.tenure_id = st.id
@@ -562,17 +651,17 @@ BEGIN
   END LOOP;
   -- Unambiguous only when the builder has nothing for the year, or exactly one
   -- positively identified ANNUAL assessment charge: a charge, described as the
-  -- annual assessment (or categorized 'assessment'), dated Jan 1, at the full
-  -- homeowner rate or the full builder rate. Anything else (a special
-  -- assessment, a partial amount like $90.18, a credit, two rows) stops for a
-  -- person. Only that one charge is netted; prior balances, late fees,
+  -- annual assessment (or categorized 'assessment'), dated the assessment
+  -- year's first day, at the full homeowner rate or the full builder rate.
+  -- Anything else (a special assessment, a partial amount, a credit, two rows)
+  -- stops for a person. Only that one charge is netted; prior balances, late fees,
   -- interest and payments are never part of the adjustment.
   identified := annual_n = 1
-       AND (annual->>'date')::date = jan1
+       AND (annual->>'date')::date = ys
        AND annual->>'txn_type' = 'charge'
        AND (annual->>'category' = 'assessment' OR annual->>'description' ILIKE '%annual%assessment%')
        AND annual->>'description' NOT ILIKE '%special%'
-       AND (annual->>'amount_cents')::bigint IN (ho.annual_amount_cents::bigint, b_full);
+       AND (annual->>'amount_cents')::bigint IN (ho_full, b_full);
   IF annual_n > 1 OR (annual_n = 1 AND NOT identified) THEN
     blocked := blocked || 'ambiguous_builder_assessment'::text;
   END IF;
@@ -582,19 +671,19 @@ BEGIN
     SELECT coalesce(jsonb_agg(jsonb_build_object('id', h.id, 'date', h.transaction_date, 'description', h.description, 'amount_cents', h.amount_cents)), '[]'::jsonb)
       INTO buyer_prior
       FROM homeowner_transactions h JOIN transaction_upload_batches b ON b.id = h.source_batch_id AND b.status = 'committed'
-     WHERE h.tenure_id = p_buyer_tenure_id AND h.transaction_date BETWEEN jan1 AND dec31
+     WHERE h.tenure_id = p_buyer_tenure_id AND h.transaction_date BETWEEN ys AND ye
        AND coalesce(h.raw_row_jsonb->>'source', '') <> 'transfer_proration'
        AND (h.charge_category = 'assessment' OR (h.charge_category IS NULL AND h.description ILIKE '%assessment%'));
     IF jsonb_array_length(buyer_prior) > 0 THEN blocked := blocked || 'buyer_already_billed'::text; END IF;
   END IF;
 
   -- A builder's identified annual assessment in a DEFERRING community, not yet
-  -- normalized: the community's conversion must normalize it (and carry 2205 and
-  -- the release schedule without the lot's share). This workflow never touches
+  -- normalized: the community's conversion must normalize it (and carry the
+  -- deferral account and its release schedule without the lot's share). This workflow never touches
   -- community-wide revenue schedules, so it waits.
-  IF ho.deferral_account_number IS NOT NULL AND identified THEN
+  IF prog.deferral_account_number IS NOT NULL AND identified THEN
     norm_required := jsonb_build_object('annual_txn_id', annual->>'id', 'annual_cents', (annual->>'amount_cents')::bigint,
-      'annual_date', annual->>'date', 'builder_rate_pct', pct, 'deferral_account', ho.deferral_account_number, 'income_account', ho.income_account_number);
+      'annual_date', annual->>'date', 'builder_rate_pct', pct, 'deferral_account', prog.deferral_account_number, 'income_account', prog.income_account_number);
     blocked := blocked || 'awaiting_conversion_normalization'::text;
   END IF;
   END IF;   -- converted / not converted
@@ -602,19 +691,19 @@ BEGIN
   base := jsonb_build_object(
     'applies', true, 'blocked', coalesce(array_length(blocked, 1), 0) > 0, 'blocked_reasons', to_jsonb(blocked),
     'builder', builder_label, 'seller_names', seller_names, 'buyer_name', p_buyer_name,
-    'settlement_date', p_settlement_date, 'fiscal_year', y, 'days_in_year', diy,
-    'annual_assessment_cents', ho.annual_amount_cents, 'builder_rate_pct', pct, 'homeowner_rate_pct', 100,
+    'settlement_date', p_settlement_date, 'fiscal_year', y, 'year_start', ys, 'year_end', ye, 'days_in_year', diy,
+    'annual_assessment_cents', ho.annual_amount_cents, 'builder_rate_pct', pct, 'homeowner_rate_pct', ho_pct,
     'builder_period_start', b_start, 'builder_period_end', p_settlement_date - 1, 'builder_days', b_days,
-    'homeowner_period_start', p_settlement_date, 'homeowner_period_end', dec31, 'homeowner_days', h_days,
+    'homeowner_period_start', p_settlement_date, 'homeowner_period_end', ye, 'homeowner_days', h_days,
     'builder_due_cents', b_due, 'homeowner_due_cents', h_due, 'total_recognized_cents', b_due + h_due,
     'builder_prior_billed_cents', prior_billed, 'builder_prior_rows', prior,
     'builder_adjustment_cents', b_due - prior_billed, 'buyer_prior_rows', buyer_prior,
     'builder_coverage', cov,
     'builder_unbilled_period', CASE WHEN cov IS NULL THEN NULL ELSE jsonb_build_object('start', unb_start, 'end', p_settlement_date - 1, 'days', unb_days) END,
-    'income_account', ho.income_account_number, 'deferral_account', ho.deferral_account_number,
-    'homeowner_recognition', CASE WHEN ho.deferral_account_number IS NULL THEN NULL ELSE jsonb_build_object(
-      'start_month', date_trunc('month', p_settlement_date)::date, 'term_months', rec_months,
-      'monthly_cents', round(h_due::numeric / rec_months), 'method', 'straight_line_monthly') END,
+    'ar_account', prog.ar_account_number, 'income_account', prog.income_account_number, 'deferral_account', prog.deferral_account_number,
+    'homeowner_recognition', CASE WHEN prog.deferral_account_number IS NULL OR h_due <= 0 THEN NULL ELSE jsonb_build_object(
+      'method', 'covered_days', 'start_month', date_trunc('month', p_settlement_date)::date, 'term_months', jsonb_array_length(rmonths),
+      'period_start', p_settlement_date, 'period_end', ye, 'months', rmonths) END,
     'normalization_required', norm_required, 'builder_normalized', normalized,
     'posting_ready', conv_code IS NOT NULL,
     'not_ready_reason', CASE WHEN conv_code IS NULL THEN 'accounting_not_converted' END,
@@ -696,7 +785,7 @@ BEGIN
         (plan->>'homeowner_days')::int, (plan->>'days_in_year')::int, (plan->>'annual_assessment_cents')::int, (plan->>'homeowner_due_cents')::int,
         p_posted_by, 'Staged: not posted until the community''s accounting conversion is posted',
         p_proposal_id, 'homeowner_charge', pr.buyer_tenure_id, (plan->>'homeowner_period_start')::date, (plan->>'homeowner_period_end')::date,
-        100, (plan->>'homeowner_due_cents')::bigint, 0, 'staged', plan);
+        (plan->>'homeowner_rate_pct')::numeric, (plan->>'homeowner_due_cents')::bigint, 0, 'staged', plan);
     RETURN plan || jsonb_build_object('proposal_id', p_proposal_id, 'dry_run', false, 'posted', false, 'staged', true, 'staged_plan', plan);
   END IF;
 
@@ -763,7 +852,7 @@ BEGIN
     (prop.community_id, prop.id, 'builder_to_homeowner', 'homeowner', pr.effective_start_date, (plan->>'homeowner_period_end')::date,
       (plan->>'homeowner_days')::int, (plan->>'days_in_year')::int, (plan->>'annual_assessment_cents')::int, h_due, h_txn, p_posted_by, h_desc,
       p_proposal_id, 'homeowner_charge', bt.id, (plan->>'homeowner_period_start')::date, (plan->>'homeowner_period_end')::date,
-      100, h_due, 0, h_txn, batch_id, CASE WHEN h_due > 0 THEN 'draft' ELSE 'posted' END, s_plan)
+      (plan->>'homeowner_rate_pct')::numeric, h_due, 0, h_txn, batch_id, CASE WHEN h_due > 0 THEN 'draft' ELSE 'posted' END, s_plan)
   ON CONFLICT (proposal_id, role) WHERE proposal_id IS NOT NULL DO UPDATE SET
     days_prorated = EXCLUDED.days_prorated, days_in_year = EXCLUDED.days_in_year, annual_amount_cents = EXCLUDED.annual_amount_cents,
     prorated_amount_cents = EXCLUDED.prorated_amount_cents, ar_charge_id = EXCLUDED.ar_charge_id, notes = EXCLUDED.notes,
@@ -776,14 +865,14 @@ BEGIN
   -- After a conversion the builder's days become a durable coverage period.
   IF plan->'builder_unbilled_period' IS NOT NULL AND adj > 0 THEN
     INSERT INTO builder_assessment_coverage (community_id, property_id, account_number, vantaca_account_id, tenure_id, builder_company_id,
-        fiscal_year, covered_from, covered_through, days, days_in_year, annual_assessment_cents, builder_rate_pct, rate_source,
+        fiscal_year, year_start, year_end, covered_from, covered_through, days, days_in_year, annual_assessment_cents, builder_rate_pct, rate_source,
         base_amount_cents, amount_cents, source_type, proposal_id, batch_id, homeowner_txn_id, status, created_by)
     SELECT prop.community_id, prop.id, prop.trusted_account_number, coalesce(st.vantaca_account_id, prop.vantaca_account_id), st.id,
         (SELECT tb.builder_company_id FROM transfer_proration_builders tb JOIN builder_companies bc ON bc.id = tb.builder_company_id
           WHERE tb.community_id = prop.community_id AND tb.active AND bc.company_name = plan->>'builder' LIMIT 1),
-        (plan->>'fiscal_year')::int, (plan->'builder_unbilled_period'->>'start')::date, (plan->'builder_unbilled_period'->>'end')::date,
+        (plan->>'fiscal_year')::int, (plan->>'year_start')::date, (plan->>'year_end')::date, (plan->'builder_unbilled_period'->>'start')::date, (plan->'builder_unbilled_period'->>'end')::date,
         (plan->'builder_unbilled_period'->>'days')::int, (plan->>'days_in_year')::int, (plan->>'annual_assessment_cents')::bigint,
-        (plan->>'builder_rate_pct')::numeric, jsonb_build_object('rates', 'community_assessment_rates', 'annual_cents', (plan->>'annual_assessment_cents')::bigint, 'builder_rate_pct', (plan->>'builder_rate_pct')::numeric),
+        (plan->>'builder_rate_pct')::numeric, jsonb_build_object('annual', 'community_assessment_rates', 'rate', 'builder_assessment_programs', 'annual_cents', (plan->>'annual_assessment_cents')::bigint, 'builder_rate_pct', (plan->>'builder_rate_pct')::numeric),
         adj, adj, 'transfer_true_up', p_proposal_id, batch_id, b_txn, 'pending', p_posted_by;
   END IF;
 
@@ -799,17 +888,24 @@ REVOKE ALL ON FUNCTION post_transfer_assessment_proration(uuid, text, boolean) F
 GRANT EXECUTE ON FUNCTION post_transfer_assessment_proration(uuid, text, boolean) TO service_role;
 
 -- ---------------------------------------------------------------------------
--- 7) Still Creek Ranch: the current rates and the Lennar rule (configuration).
+-- 7) The first configured community (configuration only; the engine above
+--    never refers to it). Still Creek Ranch, from its own books: the annual
+--    assessment is billed on Jan 1 for the calendar year; its Vantaca GL moves
+--    the full billing to 2205 Unearned Income ("Reclass 4000 to 2205",
+--    $158,895.00 on 1/1/2026) and releases 1/12 to 4000 on the 1st of each
+--    month ("Current Month Income", $13,241.25). The builder (Lennar) pays 50%.
 -- ---------------------------------------------------------------------------
-INSERT INTO community_assessment_rates (community_id, owner_class, annual_amount_cents, fiscal_year_end_mmdd, income_account_number, deferral_account_number, notes)
-SELECT 'a0000000-0000-4000-8000-000000000006', 'homeowner', 49500, '12-31', '4000', '2205',
-  'Annual assessment (issue #94). Deferred through 2205, released 1/12 monthly to 4000: Still Creek''s own GL (1/1/2026 Reclass 4000 to 2205 $158,895.00; Current Month Income $13,241.25 monthly)'
+INSERT INTO community_assessment_rates (community_id, owner_class, annual_amount_cents, fiscal_year_end_mmdd, notes)
+SELECT 'a0000000-0000-4000-8000-000000000006', 'homeowner', 49500, '12-31', 'Annual assessment (calendar year), issue #94'
  WHERE EXISTS (SELECT 1 FROM communities WHERE id = 'a0000000-0000-4000-8000-000000000006')
 ON CONFLICT (community_id, owner_class) DO NOTHING;
-INSERT INTO community_assessment_rates (community_id, owner_class, annual_amount_cents, pct_of_homeowner_rate, fiscal_year_end_mmdd, notes)
-SELECT 'a0000000-0000-4000-8000-000000000006', 'builder', NULL, 50, '12-31', 'Builder (Lennar) rate: 50% of the homeowner rate (issue #94)'
+INSERT INTO builder_assessment_programs (community_id, builder_rate_pct, homeowner_rate_pct, ar_account_number, income_account_number,
+    deferral_account_number, deferral_release, accrual_cadence_months, evidence, created_by)
+SELECT 'a0000000-0000-4000-8000-000000000006', 50, 100, '1300', '4000', '2205', 'monthly_in_advance', 1,
+  'Builder (Lennar) 50% of the annual assessment; homeowner 100%. Still Creek Vantaca GL: 1/1/2026 Reclass 4000 to 2205 $158,895.00, Current Month Income $13,241.25 on the 1st of each month (2025: billed 4/30, released monthly May-Dec). Accrual monthly; activated only after the conversion posts.',
+  'migration 500'
  WHERE EXISTS (SELECT 1 FROM communities WHERE id = 'a0000000-0000-4000-8000-000000000006')
-ON CONFLICT (community_id, owner_class) DO NOTHING;
+ON CONFLICT (community_id) DO NOTHING;
 INSERT INTO transfer_proration_builders (community_id, builder_company_id, notes, created_by)
 SELECT 'a0000000-0000-4000-8000-000000000006', '0eda1b79-0526-4e5d-8a4b-5488a0938ed1', 'Lennar to original homeowner (issue #94)', 'migration 500'
  WHERE EXISTS (SELECT 1 FROM communities WHERE id = 'a0000000-0000-4000-8000-000000000006')

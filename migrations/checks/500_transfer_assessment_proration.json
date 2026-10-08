@@ -1,6 +1,6 @@
 {
   "migration": "500_transfer_assessment_proration.sql",
-  "summary": "Issue #94: builder-to-homeowner assessment proration inside the ownership transfer (Still Creek Ranch / Lennar only). Builder rates may be a percent of the homeowner rate; transfer_proration_builders says which builders trigger it; assessment_prorations ties each charge to the transfer, tenure, ledger row, batch and GL entry; transfer_proration_plan (read-only) and post_transfer_assessment_proration (writes a draft batch) implement the calendar-day rule and block on ambiguous builder activity; before the community has a POSTED conversion the proration is only STAGED (calculation recorded against the transfer; no ledger, batch or GL). Seeds Still Creek's $495.00 homeowner rate, 50% builder rate and the Lennar rule. No ledger, GL, tenure or ownership row changes.",
+  "summary": "Issues #94/#96: builder-to-homeowner assessment proration inside the ownership transfer, and the durable builder assessment coverage record, as a GENERIC engine driven by per-community configuration. builder_assessment_programs (builder %, homeowner %, AR / income / deferral accounts, deferral release rule, accrual cadence, post-conversion accrual activation) + the community's homeowner rate row (annual assessment, assessment year end) + transfer_proration_builders. assessment_prorations ties each charge to the transfer, tenure, ledger row, batch and GL entry; transfer_proration_plan (read-only) and post_transfer_assessment_proration implement the day-based rule within the community's assessment year, read builder coverage after a posted conversion, block on ambiguous activity and only STAGE before it. Seeds the first configured community (Still Creek Ranch: its $495.00 calendar-year rate row, its program row and its builder rule). No ledger, GL, tenure or ownership row changes.",
   "requires": [
     "452_conversion_staging.sql",
     "360_assessment_proration.sql",
@@ -25,19 +25,35 @@
       "expect": 0
     },
     {
-      "name": "Still Creek has no assessment rates yet (the seed adds them)",
-      "sql": "SELECT count(*)::int FROM community_assessment_rates WHERE community_id = 'a0000000-0000-4000-8000-000000000006'",
+      "name": "the first configured community has no homeowner assessment rate yet (the seed adds it)",
+      "sql": "SELECT count(*)::int FROM community_assessment_rates WHERE community_id = 'a0000000-0000-4000-8000-000000000006' AND owner_class = 'homeowner'",
+      "expect": 0
+    },
+    {
+      "name": "builder_assessment_programs does not exist yet",
+      "sql": "SELECT count(*)::int FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'builder_assessment_programs'",
+      "expect": 0
+    },
+    {
+      "name": "the first configured community has no homeowner assessment rate yet (the seed adds it)",
+      "sql": "SELECT count(*)::int FROM community_assessment_rates WHERE community_id = 'a0000000-0000-4000-8000-000000000006' AND owner_class = 'homeowner'",
+      "expect": 0
+    },
+    {
+      "name": "builder_assessment_programs does not exist yet",
+      "sql": "SELECT count(*)::int FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'builder_assessment_programs'",
       "expect": 0
     }
   ],
   "expected_changes": [
-    "community_assessment_rates: annual_amount_cents becomes nullable; adds pct_of_homeowner_rate (builder only, 0 < pct <= 100); a builder rate is an amount OR a percent, a homeowner rate is an amount. Adds income_account_number (default 4000) and deferral_account_number (homeowner row only): the community's revenue treatment.",
+    "Creates builder_assessment_programs (one row per configured community: builder_rate_pct, homeowner_rate_pct, ar/income/deferral account numbers, deferral_release monthly_in_advance|monthly_in_arrears, accrual_cadence_months 1|3|6|12, accrual_activated_at/by, evidence). CHECKs on rates, deferral account <-> release rule, cadence, activation who+when; a guard refuses DELETE, refuses activation until the community has a POSTED conversion, and never rewrites an activation. Grants SELECT, INSERT, UPDATE to service_role. community_assessment_rates is NOT altered (it stays the one annual rate + assessment year end).",
+    "Function assessment_year_bounds(year_end_mmdd, date): the assessment year containing a date (immutable).",
     "Creates transfer_proration_builders (community, builder company, active), PK (community_id, builder_company_id), FKs RESTRICT. Grants SELECT, INSERT, UPDATE to service_role.",
     "assessment_prorations: adds proposal_id, role, tenure_id, period_start/end, rate_pct, net_responsibility_cents, prior_billed_cents, homeowner_txn_id, batch_id, journal_entry_id, status, staged_plan, recognition_schedule_id (FK recognition_schedules), with FKs (RESTRICT), role/status CHECKs, a completeness CHECK when tied to a transfer, and UNIQUE (proposal_id, role).",
     "homeowner_transactions: unique index so one transfer can never carry two proration rows of the same role. No row changes.",
-    "Functions transfer_proration_name_has (immutable), transfer_proration_plan (read-only plan), post_transfer_assessment_proration (writes a draft batch + ledger rows + audit rows after an approved transfer); the two plan/post functions are service_role only.",
-    "Seeds Still Creek Ranch: homeowner rate $495.00 (12-31 year) deferred through 2205 into 4000 (its own GL: 1/1/2026 reclass of $158,895.00 to 2205, $13,241.25 released monthly), builder rate 50% of the homeowner rate, and the Lennar rule (3 rows). No other row in any table changes.",
-    "Creates builder_assessment_coverage: the durable record of each builder tenure's billed assessment periods (community, lot, account, tenure, builder, year, covered_from/through, days, base, rate, rate source, base amount, year-end rounding true-up, amount, normalized legacy charge, source type conversion/scheduled_accrual/transfer_true_up, its conversion/accrual/transfer, journal entry, batch, ledger row, status). CHECKs on period, amount = round(annual x pct x days / (100 x days_in_year)) + true-up (only on a period ending Dec 31), origin and status; UNIQUE live period per tenure/year/start; a guard trigger refuses gaps, overlaps, a period past the tenure's end, a wrong year-end true-up, edits, deletes, and voiding anything but the last period. Functions builder_coverage_start / builder_coverage (read) are service_role only."
+    "Creates builder_assessment_coverage: the durable record of each builder tenure's billed assessment periods within the community's assessment year (year_start/year_end; filled from configuration when a writer omits them). CHECKs on period (inside its assessment year), amount = round(annual x pct x days / (100 x days_in_year)) + true-up (only on the period ending the year), origin and status; UNIQUE live period per tenure/year/start; a guard trigger refuses gaps, overlaps, mixed assessment years, a period past the tenure's end, a wrong year-end true-up, edits, deletes, and voiding anything but the last period. Functions builder_coverage_start / builder_coverage (read) are service_role only.",
+    "Functions transfer_proration_name_has (immutable), transfer_proration_plan (read-only plan, incl. the new owner's release months by covered days), post_transfer_assessment_proration (writes a draft batch + ledger rows + audit rows + the builder's transfer coverage after an approved transfer); plan/post are service_role only.",
+    "Seeds the first configured community, Still Creek Ranch: homeowner rate row $495.00 (12-31 year); program row (builder 50%, homeowner 100%, AR 1300, income 4000, deferral 2205 released monthly in advance, monthly cadence, accrual NOT activated; evidence: its own GL); the Lennar builder rule. Only if the community and builder company exist. No other row in any table changes."
   ],
   "objects": {
     "added": [
@@ -89,9 +105,23 @@
       "column:builder_assessment_coverage.void_reason",
       "column:builder_assessment_coverage.voided_at",
       "column:builder_assessment_coverage.voided_by",
-      "column:community_assessment_rates.deferral_account_number",
-      "column:community_assessment_rates.income_account_number",
-      "column:community_assessment_rates.pct_of_homeowner_rate",
+      "column:builder_assessment_coverage.year_end",
+      "column:builder_assessment_coverage.year_start",
+      "column:builder_assessment_programs.accrual_activated_at",
+      "column:builder_assessment_programs.accrual_activated_by",
+      "column:builder_assessment_programs.accrual_cadence_months",
+      "column:builder_assessment_programs.active",
+      "column:builder_assessment_programs.ar_account_number",
+      "column:builder_assessment_programs.builder_rate_pct",
+      "column:builder_assessment_programs.community_id",
+      "column:builder_assessment_programs.created_at",
+      "column:builder_assessment_programs.created_by",
+      "column:builder_assessment_programs.deferral_account_number",
+      "column:builder_assessment_programs.deferral_release",
+      "column:builder_assessment_programs.evidence",
+      "column:builder_assessment_programs.homeowner_rate_pct",
+      "column:builder_assessment_programs.income_account_number",
+      "column:builder_assessment_programs.updated_at",
       "column:transfer_proration_builders.active",
       "column:transfer_proration_builders.builder_company_id",
       "column:transfer_proration_builders.community_id",
@@ -126,35 +156,43 @@
       "constraint:builder_assessment_coverage.builder_assessment_coverage_tenure_fk",
       "constraint:builder_assessment_coverage.builder_assessment_coverage_txn_fk",
       "constraint:builder_assessment_coverage.builder_assessment_coverage_void_check",
-      "constraint:community_assessment_rates.community_assessment_rates_amount_or_pct",
-      "constraint:community_assessment_rates.community_assessment_rates_deferral_homeowner",
-      "constraint:community_assessment_rates.community_assessment_rates_pct_range",
+      "constraint:builder_assessment_programs.builder_assessment_programs_activation_check",
+      "constraint:builder_assessment_programs.builder_assessment_programs_cadence_check",
+      "constraint:builder_assessment_programs.builder_assessment_programs_community_fk",
+      "constraint:builder_assessment_programs.builder_assessment_programs_deferral_check",
+      "constraint:builder_assessment_programs.builder_assessment_programs_pkey",
+      "constraint:builder_assessment_programs.builder_assessment_programs_rates_check",
       "constraint:transfer_proration_builders.transfer_proration_builders_builder_fk",
       "constraint:transfer_proration_builders.transfer_proration_builders_community_fk",
       "constraint:transfer_proration_builders.transfer_proration_builders_pkey",
+      "function:assessment_year_bounds",
       "function:builder_assessment_coverage_guard",
+      "function:builder_assessment_programs_guard",
       "function:builder_coverage",
       "function:builder_coverage_start",
       "function:post_transfer_assessment_proration",
       "function:transfer_proration_name_has",
       "function:transfer_proration_plan",
       "index:builder_assessment_coverage_pkey",
+      "index:builder_assessment_programs_pkey",
       "index:idx_builder_assessment_coverage_community",
       "index:transfer_proration_builders_pkey",
       "index:uq_assessment_prorations_transfer_role",
       "index:uq_builder_assessment_coverage_period",
       "index:uq_homeowner_txn_transfer_proration",
       "table:builder_assessment_coverage",
+      "table:builder_assessment_programs",
       "table:transfer_proration_builders",
-      "trigger:builder_assessment_coverage.trg_builder_assessment_coverage_guard"
+      "trigger:builder_assessment_coverage.trg_builder_assessment_coverage_guard",
+      "trigger:builder_assessment_programs.trg_builder_assessment_programs_guard",
+      "trigger:builder_assessment_programs.trg_builder_assessment_programs_updated_at"
     ],
-    "changed": [
-      "column:community_assessment_rates.annual_amount_cents"
-    ],
+    "changed": [],
     "removed": []
   },
   "row_changes": {
-    "community_assessment_rates": 2,
+    "community_assessment_rates": 1,
+    "builder_assessment_programs": 1,
     "transfer_proration_builders": 1,
     "homeowner_transactions": 0,
     "assessment_prorations": 0
@@ -175,12 +213,12 @@
   ],
   "verify": [
     {
-      "name": "Still Creek rates seeded as configuration (deferred through 2205 into 4000)",
-      "sql": "SELECT count(*)::int FROM community_assessment_rates WHERE community_id = 'a0000000-0000-4000-8000-000000000006' AND ((owner_class = 'homeowner' AND annual_amount_cents = 49500 AND income_account_number = '4000' AND deferral_account_number = '2205') OR (owner_class = 'builder' AND pct_of_homeowner_rate = 50 AND annual_amount_cents IS NULL AND deferral_account_number IS NULL))",
+      "name": "the first community is configured (rate row + program + builder rule), its accrual not activated",
+      "sql": "SELECT ((SELECT count(*) FROM community_assessment_rates WHERE community_id = 'a0000000-0000-4000-8000-000000000006' AND owner_class = 'homeowner' AND annual_amount_cents = 49500 AND fiscal_year_end_mmdd = '12-31') + (SELECT count(*) FROM builder_assessment_programs WHERE community_id = 'a0000000-0000-4000-8000-000000000006' AND builder_rate_pct = 50 AND homeowner_rate_pct = 100 AND ar_account_number = '1300' AND income_account_number = '4000' AND deferral_account_number = '2205' AND deferral_release = 'monthly_in_advance' AND accrual_cadence_months = 1 AND accrual_activated_at IS NULL))::int",
       "expect": 2
     },
     {
-      "name": "exactly one builder rule (Still Creek / Lennar)",
+      "name": "exactly one builder rule",
       "sql": "SELECT count(*)::int FROM transfer_proration_builders",
       "expect": 1
     },

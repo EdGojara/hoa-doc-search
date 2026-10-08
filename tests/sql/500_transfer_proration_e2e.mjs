@@ -106,9 +106,11 @@ const r = await A.applyMigration({ ...ctx, planToken: plan.plan_token, log: { er
 check('apply: 500 applied and verified through the tool (objects + seeded rows as declared)', r.status === 'applied', JSON.stringify({ status: r.status, error: r.error, detail: r.detail }).slice(0, 1200));
 if (r.status !== 'applied') { console.log(`\n${pass} passed, ${fail} failed`); process.exit(1); }
 
-const rates = await q(`SELECT owner_class, annual_amount_cents, pct_of_homeowner_rate::text AS pct, income_account_number AS income, deferral_account_number AS deferral FROM community_assessment_rates WHERE community_id = $1 ORDER BY owner_class`, [SCR]);
-check('seed: Still Creek homeowner $495.00 deferred through 2205 into 4000, builder 50% of the homeowner rate (configuration from its own GL, not code)',
-  JSON.stringify(rates) === JSON.stringify([{ owner_class: 'builder', annual_amount_cents: null, pct: '50.00', income: '4000', deferral: null }, { owner_class: 'homeowner', annual_amount_cents: 49500, pct: null, income: '4000', deferral: '2205' }]), JSON.stringify(rates));
+const rates = await q(`SELECT owner_class, annual_amount_cents, fiscal_year_end_mmdd AS ye FROM community_assessment_rates WHERE community_id = $1 ORDER BY owner_class`, [SCR]);
+const program = await one(`SELECT builder_rate_pct::text AS b, homeowner_rate_pct::text AS h, ar_account_number AS ar, income_account_number AS inc, deferral_account_number AS dfr, deferral_release AS rel, accrual_cadence_months AS cad, accrual_activated_at AS act FROM builder_assessment_programs WHERE community_id = $1`, [SCR]);
+check('seed (configuration, not code): the first community\u2019s annual assessment $495.00 on a calendar year (its rate row) and its program: builder 50%, homeowner 100%, AR 1300, income 4000, deferred through 2205 released monthly in advance, monthly cadence, accrual NOT activated',
+  JSON.stringify(rates) === JSON.stringify([{ owner_class: 'homeowner', annual_amount_cents: 49500, ye: '12-31' }])
+    && JSON.stringify(program) === JSON.stringify({ b: '50.00', h: '100.00', ar: '1300', inc: '4000', dfr: '2205', rel: 'monthly_in_advance', cad: 1, act: null }), JSON.stringify({ rates, program }));
 
 // ---------------------------------------------------------------- the world
 let lotN = 0;
@@ -263,8 +265,11 @@ check('posting it: the staged pair becomes the posted pair (no second set); only
     { role: 'homeowner_charge', status: 'draft', prorated_amount_cents: 24953, has_txn: true, kept_plan: true }])
     && (await one(`SELECT count(*)::int AS n FROM builder_assessment_coverage WHERE proposal_id = $1`, [TB0.proposal])).n === 0,
   JSON.stringify({ st1 }));
-check('the new owner’s share is billed to the deferral account and released monthly (2205 -> 4000, Jul-Dec, $41.59/month)',
-  s1.deferral_account === '2205' && s1.income_account === '4000' && JSON.stringify(s1.homeowner_recognition) === JSON.stringify({ method: 'straight_line_monthly', start_month: '2026-07-01', term_months: 6, monthly_cents: 4159 }));
+const relMonths = (s1.homeowner_recognition || {}).months || [];
+check('the new owner’s share is billed to the deferral account and released by the days it covers each month (2205 -> 4000: Jul 31d $42.04, Aug 31d $42.04, Sep 30d $40.69, Oct 31d $42.04, Nov 30d $40.68, Dec 31d $42.04 = $249.53)',
+  s1.deferral_account === '2205' && s1.income_account === '4000' && s1.ar_account === '1300' && s1.homeowner_recognition.method === 'covered_days' && s1.homeowner_recognition.period_end === '2026-12-31'
+    && JSON.stringify(relMonths.map((m) => [m.month, m.days, m.cents])) === JSON.stringify([['2026-07-01', 31, 4204], ['2026-08-01', 31, 4204], ['2026-09-01', 30, 4069], ['2026-10-01', 31, 4204], ['2026-11-01', 30, 4068], ['2026-12-01', 31, 4204]])
+    && relMonths.reduce((a, m) => a + m.cents, 0) === 24953, JSON.stringify(s1.homeowner_recognition));
 const lennarBefore = await q(`SELECT description, amount_cents FROM homeowner_transactions WHERE tenure_id = $1 ORDER BY transaction_date, source_row_index`, [TS0.seller]);
 const sn = await post(TS0);
 const lennarAfter = await q(`SELECT description, amount_cents FROM homeowner_transactions WHERE tenure_id = $1 ORDER BY transaction_date, source_row_index`, [TS0.seller]);
@@ -292,7 +297,7 @@ const tc = await one(`SELECT source_type, covered_from::text AS f, covered_throu
 check('...and the transfer’s days become a transfer_true_up coverage period (9/1-9/14, $9.49) tied to its ledger row, pending until the GL posts',
   JSON.stringify(tc) === JSON.stringify({ source_type: 'transfer_true_up', f: '2026-09-01', t: '2026-09-14', amount_cents: 949, status: 'pending', has_txn: true }), JSON.stringify(tc));
 check('...after it the builder tenure is fully covered through settlement - 1: no gap, no overlap',
-  (await rpc('builder_coverage', { p_tenure_id: TA2.seller, p_fiscal_year: 2026 })).covered_through === '2026-09-14');
+  (await rpc('builder_coverage', { p_tenure_id: TA2.seller, p_year_start: '2026-01-01' })).covered_through === '2026-09-14');
 // --- no accruals since the conversion
 const TNo = await approve(await lot(), '2026-09-15');
 await convCover({ ...TNo });
@@ -483,11 +488,10 @@ check('Lennar’s second contact form ("Attn: Lennar Homes of Texas ... LTD") is
 
 // ---------------------------------------------------------------- builder already has activity
 // The netting MECHANICS, on a community that recognizes assessments directly
-// (no deferral account): Still Creek's rate row with its deferral cleared for
-// this block, restored after.
+// (no deferral account): the program's deferral cleared for this block, restored after.
 // These previews are the NOT-CONVERTED staging preview (after a conversion only the coverage record counts).
 await db.query(`UPDATE conversion_batches SET status = 'approved' WHERE id = $1`, [CONV]);
-await db.query(`UPDATE community_assessment_rates SET deferral_account_number = NULL WHERE community_id = $1 AND owner_class = 'homeowner'`, [SCR]);
+await db.query(`UPDATE builder_assessment_programs SET deferral_account_number = NULL, deferral_release = NULL WHERE community_id = $1`, [SCR]);
 const pFull = await preview(await lot({ prior: [{ date: '2026-01-01', cents: 49500 }] }), '2026-07-01');
 check('Lennar billed the full $495.00 on Jan 1: adjustment credits $372.27 so its net is its $122.73 share',
   !pFull.blocked && pFull.builder_prior_billed_cents === 49500 && pFull.builder_adjustment_cents === -37227 && pFull.builder_due_cents === 12273, JSON.stringify(pick(pFull, ['blocked', 'blocked_reasons', 'builder_prior_billed_cents', 'builder_adjustment_cents'])));
@@ -525,7 +529,7 @@ check('5302 Sleepy Fox shape (staging preview): only the $495.00 annual assessme
   JSON.stringify({ blocked: pS.blocked_reasons, prior: pS.builder_prior_rows, adj: pS.builder_adjustment_cents }));
 const pLate = await preview(await lot({ prior: [{ date: '2026-02-01', cents: 825, desc: 'Late Interest' }] }), '2026-07-01');
 check('late interest is not assessment activity (not counted, not blocking)', !pLate.blocked && pLate.builder_prior_billed_cents === 0);
-await db.query(`UPDATE community_assessment_rates SET deferral_account_number = '2205' WHERE community_id = $1 AND owner_class = 'homeowner'`, [SCR]);
+await db.query(`UPDATE builder_assessment_programs SET deferral_account_number = '2205', deferral_release = 'monthly_in_advance' WHERE community_id = $1`, [SCR]);
 await db.query(`UPDATE conversion_batches SET status = 'posted' WHERE id = $1`, [CONV]);
 const pCut = await preview(await lot(), '2026-06-15');
 check('settlement on/before the conversion baseline (6/15 vs 6/30): BLOCKED (Vantaca-era activity)', pCut.blocked && pCut.blocked_reasons.includes('settlement_before_conversion_baseline'), JSON.stringify(pCut.blocked_reasons));
@@ -539,7 +543,16 @@ check('a future settlement is refused at post time', /is in the future/.test(awa
 check('a pending transfer is refused', /not an approved transfer/.test(await err(`SELECT post_transfer_assessment_proration($1, 'tester', false)`, [pend.id]) || ''));
 check('the audit row is refused without its tenure/period/status when tied to a transfer',
   /assessment_prorations_transfer_complete/.test(await err(`INSERT INTO assessment_prorations (community_id, property_id, transfer_type, effective_date, fiscal_year_end, days_prorated, days_in_year, proposal_id, role) VALUES ($1, $2, 'builder_to_homeowner', '2026-07-01', '2026-12-31', 1, 365, $3, 'homeowner_charge')`, [SCR, L1.property, pend.id]) || ''));
-check('a builder rate must be an amount OR a percent, not both', /community_assessment_rates_amount_or_pct/.test(await err(`UPDATE community_assessment_rates SET annual_amount_cents = 100 WHERE community_id = $1 AND owner_class = 'builder'`, [SCR]) || ''));
+check('a deferral account needs its release rule (and a rule needs an account); the cadence is 1, 3, 6 or 12 months; rates are 0-100%',
+  /builder_assessment_programs_deferral_check/.test(await err(`UPDATE builder_assessment_programs SET deferral_release = NULL WHERE community_id = $1`, [SCR]) || '')
+    && /builder_assessment_programs_cadence_check/.test(await err(`UPDATE builder_assessment_programs SET accrual_cadence_months = 2 WHERE community_id = $1`, [SCR]) || '')
+    && /builder_assessment_programs_rates_check/.test(await err(`UPDATE builder_assessment_programs SET builder_rate_pct = 0 WHERE community_id = $1`, [SCR]) || ''));
+check('the accrual cannot be activated before the community\u2019s conversion is posted; a program is never deleted',
+  /activated only after the community''?s accounting conversion is posted|activated only after/.test(await err(`INSERT INTO builder_assessment_programs (community_id, builder_rate_pct, ar_account_number, income_account_number, accrual_activated_at, accrual_activated_by) VALUES ($1, 25, '1310', '4010', now(), 'x')`, [OTHER]) || '')
+    && /never deleted/.test(await err(`DELETE FROM builder_assessment_programs WHERE community_id = $1`, [SCR]) || ''));
+const yb = await q(`SELECT year_start::text AS year_start, fiscal_year, days_in_year FROM assessment_year_bounds('06-30', '2026-09-15') UNION ALL SELECT year_start::text, fiscal_year, days_in_year FROM assessment_year_bounds('12-31', '2028-02-29')`);
+check('assessment years from configuration: 06-30 puts 9/15/2026 in Jul 1 2026 - Jun 30 2027 (FY2027); 12-31 puts 2/29/2028 in 2028 (366 days)',
+  JSON.stringify(yb.map((r) => [String(r.year_start instanceof Date ? r.year_start.toISOString().slice(0, 10) : r.year_start), r.fiscal_year, r.days_in_year])) === JSON.stringify([['2026-07-01', 2027, 365], ['2028-01-01', 2028, 366]]), JSON.stringify(yb));
 const priv = await one(`SELECT has_function_privilege('anon', 'post_transfer_assessment_proration(uuid,text,boolean)', 'EXECUTE') AS anon,
   has_function_privilege('authenticated', 'transfer_proration_plan(uuid,uuid,date,text,uuid)', 'EXECUTE') AS auth,
   has_function_privilege('service_role', 'post_transfer_assessment_proration(uuid,text,boolean)', 'EXECUTE') AS svc`);
