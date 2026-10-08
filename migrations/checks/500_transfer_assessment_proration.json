@@ -5,7 +5,7 @@
     "452_conversion_staging.sql",
     "360_assessment_proration.sql",
     "459_ownership_transfer_single_path.sql",
-    "461_payment_applications.sql",
+    "461_homeowner_payment_applications.sql",
     "466_recognition_schedules_controls.sql"
   ],
   "preflight": [

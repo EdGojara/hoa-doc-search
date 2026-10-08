@@ -83,7 +83,7 @@ const m457 = lf(`${REPO}/migrations/457_current_tenure_reader_views.sql`);
 const viewSql = m457.slice(m457.indexOf('CREATE OR REPLACE VIEW v_current_owner_ledger'), m457.indexOf('CREATE OR REPLACE VIEW v_current_owner_balance AS'));
 await db.exec(viewSql);
 await db.exec(lf(`${REPO}/migrations/360_assessment_proration.sql`));
-await db.exec(`INSERT INTO schema_migrations (filename, sha256) VALUES ('360_assessment_proration.sql', 'recorded'), ('452_conversion_staging.sql', 'recorded'), ('459_ownership_transfer_single_path.sql', 'recorded'), ('461_payment_applications.sql', 'recorded'), ('466_recognition_schedules_controls.sql', 'recorded')`);
+await db.exec(`INSERT INTO schema_migrations (filename, sha256) VALUES ('360_assessment_proration.sql', 'recorded'), ('452_conversion_staging.sql', 'recorded'), ('459_ownership_transfer_single_path.sql', 'recorded'), ('461_homeowner_payment_applications.sql', 'recorded'), ('466_recognition_schedules_controls.sql', 'recorded')`);
 
 const client = { query: async (sql, params) => {
   if (params) { const r = await db.query(sql, params.map((v) => (v && typeof v === 'object' ? JSON.stringify(v) : v))); return { rows: r.rows, rowCount: r.affectedRows ?? r.rows.length }; }
@@ -99,6 +99,9 @@ const rpc = async (name, args) => {
   return r.rows[0].r;
 };
 
+// Every prerequisite the checks file names must be a real migration file (the apply tool refuses a missing one in production).
+{ const req = JSON.parse(lf(`${REPO}/migrations/checks/${F.replace('.sql', '.json')}`)).requires || []; const missing = req.filter((x) => !fs.existsSync(`${REPO}/migrations/${x}`));
+  check('every prerequisite named by the 500 checks file is a real migration file', missing.length === 0, JSON.stringify(missing)); }
 const plan = await A.planMigration({ ...ctx, filename: F });
 if (PRINT) { const rr = await A.applyMigration({ ...ctx, planToken: plan.plan_token, log: { error() {} }, apiCheck: async () => ({ ok: true, count: 0 }) }); console.log(JSON.stringify((rr.detail || {}).objects || rr, null, 2)); console.log(JSON.stringify((rr.detail || {}).row_changes)); process.exit(0); }
 check('plan: ready, every preflight passes', plan.status === 'ready' && plan.preflight.every((p) => p.ok), JSON.stringify({ status: plan.status, error: plan.error, pre: plan.preflight }).slice(0, 600));
