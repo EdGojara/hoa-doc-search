@@ -61,6 +61,7 @@ function dryStore(db) {
 
   // 1. Every hard bounce in the mailboxes.
   const bounced = new Map();
+  const counted = new Set();   // one report found by several search terms is still one report
   for (const mb of mailboxes) {
     for (const term of NDR_TERMS) {
       let r;
@@ -72,6 +73,8 @@ function dryStore(db) {
           const evs = AS.eventsFromMessages(email, [m], own);
           if (!evs.length) continue;
           await store.addEvents(evs);
+          if (counted.has(email + '|' + m.id)) continue;
+          counted.add(email + '|' + m.id);
           bounced.set(email, (bounced.get(email) || 0) + 1);
         }
       }
@@ -82,7 +85,7 @@ function dryStore(db) {
 
   // 2. Address-book contacts on a bounced address: find the verified replacement.
   const list = [...bounced.keys()];
-  const { data: book, error } = await sb.from('ea_contacts').select('id, name, email').not('email', 'is', null).limit(2000);
+  const { data: book, error } = await sb.from('ea_contacts').select('id, name, organization, email').not('email', 'is', null).limit(2000);
   if (error) throw error;
   const onFile = list.filter((e) => (book || []).some((c) => String(c.email).toLowerCase() === e));
   console.log(`\n${onFile.length} bounced address(es) are in Tessa's address book:`);
@@ -91,7 +94,17 @@ function dryStore(db) {
   console.log('\nResult:');
   for (const e of onFile) {
     const st = statuses[e];
-    console.log(`  ${e}: ${st && st.superseded_by ? 'superseded by ' + st.superseded_by : 'bounced, no verified replacement in the mail (Tessa will ask)'}`);
+    const rows = (book || []).filter((c) => String(c.email).toLowerCase() === e);
+    const holder = st && st.superseded_by ? (book || []).find((c) => String(c.email).toLowerCase() === st.superseded_by) : null;
+    for (const c of rows) {
+      if (st && st.superseded_by) {
+        console.log(holder
+          ? `  CONTACT ${c.name} [${c.id}]: email ${c.email} -> cleared, points at "${holder.name}" [${holder.id}] <${holder.email}>; old address kept in history`
+          : `  CONTACT ${c.name} [${c.id}]: email ${c.email} -> ${st.superseded_by}; old address kept in history`);
+      } else {
+        console.log(`  CONTACT ${c.name} [${c.id}] <${c.email}>: row unchanged; the address is retired (Tessa will not send to it and will ask for a working one)`);
+      }
+    }
   }
   if (!APPLY) console.log('\nDry run: nothing was written. Re-run with --apply to record this.');
 })().catch((e) => { console.error(e.message); process.exit(1); });
