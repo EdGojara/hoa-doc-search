@@ -717,9 +717,11 @@ router.post('/proration-preview', express.json({ limit: '8kb' }), async (req, re
 
 // ----------------------------------------------------------------------------
 // POST /api/home-sales/proration-retry — finish an assessment proration that
-// did not post after the transfer, or post one that was blocked once the
-// ledger is fixed. Idempotent: a transfer is prorated once.
-//   body: { home_sale_id, reviewed_by? }
+// did not post after the transfer, post one that was blocked once the ledger is
+// fixed, or post a STAGED one once the community's accounting conversion is
+// posted (recomputed and shown first: 409 proration_confirmation_required until
+// confirmed: true). Idempotent: a transfer is prorated once.
+//   body: { home_sale_id, reviewed_by?, confirmed? }
 // ----------------------------------------------------------------------------
 router.post('/proration-retry', express.json({ limit: '8kb' }), async (req, res) => {
   try {
@@ -730,7 +732,11 @@ router.post('/proration-retry', express.json({ limit: '8kb' }), async (req, res)
     if (error) throw error;
     if (!sale) return res.status(404).json({ error: 'home_sale_not_found' });
     if (sale.status !== 'closed' || !sale.ownership_proposal_id) return res.status(409).json({ error: 'sale_not_closed' });
-    res.json({ proration: await TP.postTransferProration(supabase, { proposalId: sale.ownership_proposal_id, postedBy: b.reviewed_by || 'home_sales' }) });
+    const r = await TP.postStagedProration(supabase, { proposalId: sale.ownership_proposal_id, postedBy: b.reviewed_by || 'home_sales', confirmed: b.confirmed });
+    if (r.status === 'confirmation_required') {
+      return res.status(409).json({ error: 'proration_confirmation_required: review the recomputed assessment proration, then confirm', code: 'proration_confirmation_required', proration: r.plan });
+    }
+    res.json({ proration: r });
   } catch (err) {
     console.error('[home-sales] proration-retry failed:', err.message);
     res.status(err.code === 'P0001' ? 409 : 500).json({ error: err.code === 'P0001' ? err.message : safeErrorMessage(err) });

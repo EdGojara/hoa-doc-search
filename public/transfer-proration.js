@@ -47,9 +47,11 @@
         + '<button class="btn" data-tp="ack" style="margin-top:8px;">Record the transfer, leave the proration open</button>', 'warn');
       wrap.querySelector('[data-tp="ack"]').addEventListener('click', (e) => { e.preventDefault(); onAck(); });
     } else {
+      const notReady = p.posting_ready === false;
       wrap.innerHTML = box('<b>Assessment proration</b> (' + esc(p.builder || 'builder') + ' to ' + esc(p.buyer_name || 'new owner') + ')'
         + '<div style="margin:8px 0;">' + breakdown(p) + '</div>'
-        + '<button class="btn" data-tp="ok" style="margin-top:4px;">Confirm and record</button>');
+        + (notReady ? '<div style="margin:6px 0; padding:8px 10px; border-radius:6px; background:#fff8ec; border:1px solid #e8b86d; font-size:12.5px;"><b>Will be staged, not posted.</b> This community\'s accounting conversion is not posted yet, so the year\'s billing is not in trustEd\'s books. Recording the closing saves this calculation with the transfer; no charge, credit or GL entry is made. After the conversion posts, it is recomputed against the converted ledger and shown again before it posts.</div>' : '')
+        + '<button class="btn" data-tp="ok" style="margin-top:4px;">' + (notReady ? 'Confirm, record, and stage the proration' : 'Confirm and record') + '</button>');
       wrap.querySelector('[data-tp="ok"]').addEventListener('click', (e) => { e.preventDefault(); onConfirm(); });
     }
     return wrap;
@@ -61,6 +63,7 @@
     if (r.status === 'posted' || r.status === 'already_posted' || r.status === 'completed_retry') {
       return '<span class="badge ok">Assessment proration posted</span> builder ' + money(r.builder_adjustment_cents) + ', new owner ' + money(r.homeowner_due_cents) + (r.journal_reference ? ' · GL ' + esc(r.journal_reference) : '') + '.';
     }
+    if (r.status === 'staged') return '<span class="badge" style="background:#fff3dc; color:#8a5a00;">Assessment proration staged</span> builder ' + money(r.builder_adjustment_cents) + ', new owner ' + money(r.homeowner_due_cents) + '. Nothing posted: it posts after the accounting conversion, with a fresh confirmation.';
     if (r.status === 'blocked') return '<span class="badge err">Assessment proration not posted</span> ' + esc((r.blocked_text || r.blocked_reasons || []).join('; ')) + '. Resolve the ledger, then post it.' + (retryJs ? ' <a class="link" onclick="' + retryJs + '">Post proration</a>' : '');
     if (r.status === 'pending') return '<span class="badge err">Assessment proration NOT posted yet</span> ' + esc(r.error || '') + (retryJs ? ' <a class="link" onclick="' + retryJs + '">Retry</a>' : '');
     return '';

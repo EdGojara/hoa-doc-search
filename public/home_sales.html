@@ -467,11 +467,18 @@
     } catch (e) { el.innerHTML = '<span class="badge err">Payoff still pending: ' + esc(e.message) + '</span> <a class="link" onclick="retryPayoff(\'' + saleId + '\')">Retry</a>'; }
   }
   window.retryPayoff = retryPayoff;
-  async function retryProration(saleId) {
+  async function retryProration(saleId, confirmed) {
     const el = $('sc-proration-result'); el.innerHTML = '<span class="muted">Posting…</span>';
     try {
-      const r = await fetch('/api/home-sales/proration-retry', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ home_sale_id: saleId }) });
-      const j = await r.json(); if (!r.ok || j.error) throw new Error(j.error || ('HTTP ' + r.status));
+      const r = await fetch('/api/home-sales/proration-retry', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ home_sale_id: saleId, confirmed: confirmed === true }) });
+      const j = await r.json();
+      if (r.status === 409 && j.proration) {
+        // A staged proration after the conversion: show the recomputed numbers first.
+        el.innerHTML = '';
+        el.appendChild(TransferProration.confirmPanel(j, { onConfirm: () => retryProration(saleId, true), onAck: () => {} }));
+        return;
+      }
+      if (!r.ok || j.error) throw new Error(j.error || ('HTTP ' + r.status));
       el.innerHTML = TransferProration.resultHtml(j.proration, "retryProration('" + saleId + "')");
     } catch (e) { el.innerHTML = '<span class="badge err">Assessment proration still not posted: ' + esc(e.message) + '</span> <a class="link" onclick="retryProration(\'' + saleId + '\')">Retry</a>'; }
   }

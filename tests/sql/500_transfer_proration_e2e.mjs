@@ -55,6 +55,8 @@ await db.exec(`
     effective_start_date date, proposed_owner_name text, current_contact_id uuid, seller_tenure_id uuid REFERENCES ownership_tenures(id),
     buyer_tenure_id uuid REFERENCES ownership_tenures(id));
   CREATE TABLE journal_entries (id uuid PRIMARY KEY DEFAULT gen_random_uuid());
+  CREATE TABLE conversion_batches (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), community_id uuid NOT NULL REFERENCES communities(id), batch_code text NOT NULL,
+    as_of_date date NOT NULL, status text NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','staged','validated','approved','posted','voided')), created_at timestamptz NOT NULL DEFAULT now());
   CREATE TABLE transaction_upload_batches (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(), management_company_id uuid NOT NULL, community_id uuid NOT NULL REFERENCES communities(id),
     period_label text NOT NULL, as_of_date date NOT NULL, source_filename text, source_format text NOT NULL DEFAULT 'csv' CHECK (source_format IN ('csv','pdf','manual')),
@@ -80,7 +82,7 @@ const m457 = lf(`${REPO}/migrations/457_current_tenure_reader_views.sql`);
 const viewSql = m457.slice(m457.indexOf('CREATE OR REPLACE VIEW v_current_owner_ledger'), m457.indexOf('CREATE OR REPLACE VIEW v_current_owner_balance AS'));
 await db.exec(viewSql);
 await db.exec(lf(`${REPO}/migrations/360_assessment_proration.sql`));
-await db.exec(`INSERT INTO schema_migrations (filename, sha256) VALUES ('360_assessment_proration.sql', 'recorded'), ('459_ownership_transfer_single_path.sql', 'recorded'), ('461_payment_applications.sql', 'recorded')`);
+await db.exec(`INSERT INTO schema_migrations (filename, sha256) VALUES ('360_assessment_proration.sql', 'recorded'), ('452_conversion_staging.sql', 'recorded'), ('459_ownership_transfer_single_path.sql', 'recorded'), ('461_payment_applications.sql', 'recorded')`);
 
 const client = { query: async (sql, params) => {
   if (params) { const r = await db.query(sql, params.map((v) => (v && typeof v === 'object' ? JSON.stringify(v) : v))); return { rows: r.rows, rowCount: r.affectedRows ?? r.rows.length }; }
@@ -145,6 +147,97 @@ const preview = (L, settle, buyer = 'Pat Homeowner') => rpc('transfer_proration_
 const post = (T, dry = false) => rpc('post_transfer_assessment_proration', { p_proposal_id: T.proposal, p_posted_by: 'tester', p_dry_run: dry });
 const pick = (p, ks) => Object.fromEntries(ks.map((k) => [k, p[k]]));
 
+// ================================================================ BEFORE CONVERSION
+// Still Creek has no POSTED conversion: its 2026 annual billing lives only in the
+// Vantaca-era ledger. The workflow calculates, shows and STAGES; nothing financial.
+const htCount = async () => (await one(`SELECT count(*)::int AS n FROM homeowner_transactions WHERE raw_row_jsonb->>'source' = 'transfer_proration'`)).n;
+const tpBatches = async () => (await one(`SELECT count(*)::int AS n FROM transaction_upload_batches WHERE uploaded_by = 'transfer_proration'`)).n;
+await db.query(`INSERT INTO conversion_batches (community_id, batch_code, as_of_date, status) VALUES ($1, 'CONV-SCR-DRAFT', '2026-06-30', 'validated')`, [SCR]);
+const B0 = await lot();
+const b0 = await preview(B0, '2026-07-01');
+check('before conversion: the calculation is the same ($122.73 / $249.53) but posting is NOT ready (accounting_not_converted); a validated-but-unposted conversion does not count',
+  b0.applies && !b0.blocked && b0.posting_ready === false && b0.not_ready_reason === 'accounting_not_converted' && b0.builder_due_cents === 12273 && b0.homeowner_due_cents === 24953,
+  JSON.stringify(pick(b0, ['applies', 'blocked', 'posting_ready', 'not_ready_reason', 'builder_due_cents', 'homeowner_due_cents'])));
+const TB0 = await approve(B0, '2026-07-01');
+const s0 = await post(TB0);
+const st0 = await q(`SELECT role, status, prorated_amount_cents, net_responsibility_cents, homeowner_txn_id, batch_id, staged_plan IS NOT NULL AS has_plan FROM assessment_prorations WHERE proposal_id = $1 ORDER BY role`, [TB0.proposal]);
+check('before conversion, an unbilled Lennar lot: STAGED (both amounts recorded against the transfer), no owner-ledger row, no batch, no GL',
+  s0.staged === true && JSON.stringify(st0) === JSON.stringify([
+    { role: 'builder_adjustment', status: 'staged', prorated_amount_cents: 12273, net_responsibility_cents: 12273, homeowner_txn_id: null, batch_id: null, has_plan: true },
+    { role: 'homeowner_charge', status: 'staged', prorated_amount_cents: 24953, net_responsibility_cents: 24953, homeowner_txn_id: null, batch_id: null, has_plan: true }])
+    && await htCount() === 0 && await tpBatches() === 0, JSON.stringify({ s0: pick(s0, ['staged', 'posting_ready']), st0 }));
+const s0b = await post(TB0);
+check('re-running while still not converted: stays staged, writes nothing new', s0b.staged === true && s0b.posted === false
+  && (await one(`SELECT count(*)::int AS n FROM assessment_prorations WHERE proposal_id = $1`, [TB0.proposal])).n === 2 && await htCount() === 0);
+// 5302 Sleepy Fox before conversion: the $372.27 credit must NOT exist; the calculation says Lennar nets to $122.73.
+const sleepyPre = [
+  { date: '2026-01-01', cents: 57128, desc: 'Prior Balance', type: 'balance_brought_forward' },
+  { date: '2026-01-01', cents: 49500, desc: 'Annual Assessment' },
+  { date: '2026-01-01', cents: 413, desc: 'Late Interest' }, { date: '2026-02-01', cents: 825, desc: 'Late Interest' }, { date: '2026-02-01', cents: 1000, desc: 'Late Fees' }];
+const TS0 = await approve(await lot({ prior: sleepyPre }), '2026-07-01');
+const bal0 = Number((await one(`SELECT sum(amount_cents)::bigint AS s FROM homeowner_transactions WHERE tenure_id = $1`, [TS0.seller])).s);
+const ss0 = await post(TS0);
+const sb0 = await one(`SELECT status, prorated_amount_cents, net_responsibility_cents, prior_billed_cents, homeowner_txn_id FROM assessment_prorations WHERE proposal_id = $1 AND role = 'builder_adjustment'`, [TS0.proposal]);
+check('before conversion, 5302 Sleepy Fox: calculated (Lennar nets to $122.73; the would-be adjustment -$372.27 is recorded as STAGED), but NO credit row exists and Lennar\u2019s ledger is unchanged',
+  ss0.staged === true && sb0.status === 'staged' && Number(sb0.prorated_amount_cents) === -37227 && Number(sb0.net_responsibility_cents) === 12273 && Number(sb0.prior_billed_cents) === 49500
+    && sb0.homeowner_txn_id === null && await htCount() === 0
+    && Number((await one(`SELECT sum(amount_cents)::bigint AS s FROM homeowner_transactions WHERE tenure_id = $1`, [TS0.seller])).s) === bal0,
+  JSON.stringify({ sb0, bal0 }));
+const TA0 = await approve(await lot({ prior: [{ date: '2026-05-13', cents: 9018 }] }), '2026-07-01');
+const sa0 = await post(TA0);
+check('before conversion, 5450 Still Meadow ($90.18): still BLOCKED as ambiguous, nothing staged',
+  sa0.blocked === true && sa0.blocked_reasons.includes('ambiguous_builder_assessment')
+    && (await one(`SELECT count(*)::int AS n FROM assessment_prorations WHERE proposal_id = $1`, [TA0.proposal])).n === 0);
+
+// --report: print what the database holds for the three real lot shapes.
+const REPORT = process.argv.includes('--report');
+if (REPORT) { process.env.SUPABASE_URL = process.env.SUPABASE_URL || 'http://localhost'; process.env.SUPABASE_KEY = process.env.SUPABASE_KEY || 'test'; }   // module load only; no database call
+const glOf = (p) => require(`${REPO}/lib/accounting/transfer_proration.js`).glLines({ 1300: '1300 AR', 4000: '4000 Assessment Income' }, p)
+  .map((l) => `${l.debit_cents ? 'Dr' : 'Cr'} ${l.account_id} $${((l.debit_cents || l.credit_cents) / 100).toFixed(2)}`);
+async function report(stage) {
+  if (!REPORT) return;
+  console.log(`\n==================== ${stage}`);
+  for (const [label, T] of [['Unbilled Lennar lot (22 lots)', TB0], ['5302 Sleepy Fox', TS0], ['5450 Still Meadow', TA0]]) {
+    const ap = await q(`SELECT role, status, prorated_amount_cents AS amount, net_responsibility_cents AS net, prior_billed_cents AS prior, homeowner_txn_id IS NOT NULL AS ledger_row FROM assessment_prorations WHERE proposal_id = $1 ORDER BY role`, [T.proposal]);
+    const ht = await q(`SELECT CASE WHEN h.tenure_id = $2 THEN 'Lennar (seller)' ELSE 'new owner (buyer)' END AS account, h.transaction_date::text AS date, h.txn_type, h.amount_cents, h.description, b.status AS batch
+                         FROM homeowner_transactions h JOIN transaction_upload_batches b ON b.id = h.source_batch_id
+                        WHERE h.raw_row_jsonb->>'proposal_id' = $1 ORDER BY h.source_row_index`, [T.proposal, T.seller]);
+    console.log(`\n-- ${label}`);
+    console.log('   proration record:', ap.length ? JSON.stringify(ap) : 'none');
+    console.log('   owner-ledger rows:', ht.length ? '' : 'none');
+    for (const h of ht) console.log(`     ${h.account}  ${h.date}  ${h.txn_type}  $${(h.amount_cents / 100).toFixed(2)}  "${h.description}"  [batch ${h.batch}]`);
+    if (ht.length) {
+      const plan = JSON.parse((await one(`SELECT raw_row_jsonb->>'plan' AS p FROM homeowner_transactions WHERE raw_row_jsonb->>'proposal_id' = $1 LIMIT 1`, [T.proposal])).p);
+      console.log('   GL entry (assessment_billing, dated ' + plan.settlement_date + '):', glOf({ ...plan, property_id: T.property }).join(' | '));
+    } else console.log('   GL entry: none');
+  }
+}
+await report('BEFORE STILL CREEK CONVERSION (no posted conversion_batches row)');
+
+// ================================================================ CONVERSION POSTED
+await db.query(`INSERT INTO conversion_batches (community_id, batch_code, as_of_date, status) VALUES ($1, 'CONV-SCR-20260630', '2026-06-30', 'posted')`, [SCR]);
+const s1dry = await post(TB0, true);
+check('after conversion: a dry run of the staged proration shows the recomputed numbers for confirmation, writes nothing',
+  s1dry.dry_run === true && s1dry.posting_ready === true && s1dry.staged === true && s1dry.conversion_batch === 'CONV-SCR-20260630' && s1dry.builder_due_cents === 12273 && await htCount() === 0,
+  JSON.stringify(pick(s1dry, ['dry_run', 'posting_ready', 'staged', 'conversion_batch'])));
+const s1 = await post(TB0);
+const st1 = await q(`SELECT role, status, prorated_amount_cents, homeowner_txn_id IS NOT NULL AS has_txn, batch_id IS NOT NULL AS has_batch, staged_plan IS NOT NULL AS kept_plan FROM assessment_prorations WHERE proposal_id = $1 ORDER BY role`, [TB0.proposal]);
+check('after conversion, posting the staged proration: the same two rows become DRAFT with ledger rows and a batch (no second set); the staged calculation is kept for audit',
+  s1.written === true && s1.from_staged === true && JSON.stringify(st1) === JSON.stringify([
+    { role: 'builder_adjustment', status: 'draft', prorated_amount_cents: 12273, has_txn: true, has_batch: true, kept_plan: true },
+    { role: 'homeowner_charge', status: 'draft', prorated_amount_cents: 24953, has_txn: true, has_batch: true, kept_plan: true }]) && await htCount() === 2,
+  JSON.stringify({ s1: pick(s1, ['written', 'from_staged']), st1 }));
+const ss1 = await post(TS0);
+const credit = await one(`SELECT amount_cents, txn_type, reduction_source, tenure_id FROM homeowner_transactions WHERE raw_row_jsonb->>'proposal_id' = $1 AND raw_row_jsonb->>'role' = 'builder_adjustment'`, [TS0.proposal]);
+check('after conversion, 5302 Sleepy Fox: the -$372.27 credit is created against the converted $495.00 annual assessment; Lennar nets to $122.73',
+  ss1.written === true && Number(credit.amount_cents) === -37227 && credit.reduction_source === 'correcting_adjustment' && credit.tenure_id === TS0.seller
+    && Number((await one(`SELECT sum(amount_cents)::bigint AS s FROM homeowner_transactions WHERE tenure_id = $1 AND description ILIKE '%assessment%'`, [TS0.seller])).s) === 12273,
+  JSON.stringify({ credit }));
+check('after conversion, 5450 Still Meadow is still BLOCKED (conversion does not resolve an ambiguous charge)', (await post(TA0)).blocked === true);
+
+await report('AFTER STILL CREEK CONVERSION (CONV-SCR-20260630 posted; staged prorations recomputed, confirmed, written)');
+if (REPORT) process.exit(0);
+
 // ---------------------------------------------------------------- mid-year (the issue's example)
 const L1 = await lot();
 const pv = await preview(L1, '2026-07-01');
@@ -154,7 +247,8 @@ check('mid-year 7/1/2026 preview: Lennar 181 days at 50% = $122.73; homeowner 18
   JSON.stringify(pv));
 const T1 = await approve(L1, '2026-07-01');
 const dry = await post(T1, true);
-check('dry run writes nothing', dry.dry_run === true && (await one(`SELECT count(*)::int AS n FROM assessment_prorations`)).n === 0 && (await one(`SELECT count(*)::int AS n FROM transaction_upload_batches WHERE uploaded_by = 'transfer_proration'`)).n === 0);
+const batchesBeforeDry = await tpBatches();
+check('dry run writes nothing', dry.dry_run === true && (await one(`SELECT count(*)::int AS n FROM assessment_prorations WHERE proposal_id = $1`, [T1.proposal])).n === 0 && await tpBatches() === batchesBeforeDry);
 const w1 = await post(T1);
 const rows1 = await q(`SELECT h.tenure_id, h.amount_cents, h.txn_type, h.charge_category, h.transaction_date::text AS d, h.description, b.status FROM homeowner_transactions h JOIN transaction_upload_batches b ON b.id = h.source_batch_id WHERE h.raw_row_jsonb->>'proposal_id' = $1 ORDER BY h.source_row_index`, [T1.proposal]);
 check('post: builder charge on the SELLER tenure, homeowner charge on the BUYER tenure, dated the settlement, in a DRAFT batch',
@@ -181,13 +275,13 @@ const cur = await q(`SELECT amount_cents FROM v_current_owner_ledger WHERE prope
 check('current-owner ledger shows ONLY the homeowner charge (the builder adjustment stays with the seller)', cur.length === 1 && Number(cur[0].amount_cents) === 24953, JSON.stringify(cur));
 
 // ---------------------------------------------------------------- edge dates
-// Jan 1 needs a GL that was already the book of record on Jan 1 (Still Creek's cutover is 7/1/2026).
-await db.query("UPDATE communities SET gl_cutover_date = '2026-01-01' WHERE id = $1", [SCR]);
+// Jan 1 needs converted books whose baseline is before Jan 1 (Still Creek's test conversion is 6/30/2026).
+await db.query("UPDATE conversion_batches SET as_of_date = '2025-12-31' WHERE community_id = $1 AND status = 'posted'", [SCR]);
 const pJan = await preview(await lot(), '2026-01-01');
 check('Jan 1 transfer: Lennar $0 (0 days), homeowner the full $495.00', pJan.builder_days === 0 && pJan.builder_due_cents === 0 && pJan.homeowner_days === 365 && pJan.homeowner_due_cents === 49500 && !pJan.blocked, JSON.stringify(pJan));
 const TJan = await approve(await lot(), '2026-01-01');
 await post(TJan);
-await db.query("UPDATE communities SET gl_cutover_date = '2026-07-01' WHERE id = $1", [SCR]);
+await db.query("UPDATE conversion_batches SET as_of_date = '2026-06-30' WHERE community_id = $1 AND status = 'posted'", [SCR]);
 const jr = await q(`SELECT role, status, prorated_amount_cents, homeowner_txn_id IS NULL AS no_txn FROM assessment_prorations WHERE proposal_id = $1 ORDER BY role`, [TJan.proposal]);
 check('Jan 1 post: no builder ledger row (zero), the audit row still records it; homeowner charged $495.00',
   JSON.stringify(jr) === JSON.stringify([{ role: 'builder_adjustment', status: 'posted', prorated_amount_cents: 0, no_txn: true }, { role: 'homeowner_charge', status: 'draft', prorated_amount_cents: 49500, no_txn: false }]), JSON.stringify(jr));
@@ -243,7 +337,7 @@ check('...and posting writes nothing', rAmb.blocked === true && (await one(`SELE
 const pTwo = await preview(await lot({ prior: [{ date: '2026-01-01', cents: 49500 }, { date: '2026-03-01', cents: -10000, type: 'credit', desc: 'Assessment credit' }] }), '2026-07-01');
 check('two assessment rows (charge + credit): BLOCKED', pTwo.blocked && pTwo.blocked_reasons.includes('ambiguous_builder_assessment'));
 const pCut = await preview(await lot(), '2026-06-15');
-check('settlement before the 7/1/2026 GL cutover: BLOCKED (Vantaca was the book of record)', pCut.blocked && pCut.blocked_reasons.includes('before_gl_cutover'), JSON.stringify(pCut.blocked_reasons));
+check('settlement on/before the conversion baseline (6/15 vs 6/30): BLOCKED (Vantaca-era activity)', pCut.blocked && pCut.blocked_reasons.includes('settlement_before_conversion_baseline'), JSON.stringify(pCut.blocked_reasons));
 const pMix = await preview(await lot({ sellers: ['Lennar Homes LLC', 'John Doe'] }), '2026-07-01');
 check('mixed owners on the seller account (Lennar + a person): BLOCKED', pMix.blocked && pMix.blocked_reasons.includes('seller_mixed_owners'));
 const pSpec = await preview(await lot({ prior: [{ date: '2026-01-01', cents: 49500, desc: 'Special Assessment' }] }), '2026-07-01');

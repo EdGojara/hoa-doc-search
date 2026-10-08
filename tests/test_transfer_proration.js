@@ -144,6 +144,36 @@ check('not applicable / blocked: no GL, no writes', async () => {
   assert.strictEqual(posted.length, 0);
 });
 
+// ------------------------------------------------------------------ accounting readiness (Ed 2026-10-08)
+check('not converted: the post returns STAGED; no GL entry, no batch commit, no row marked posted', async () => {
+  posted.length = 0;
+  const db = fakeDb({ rpc: { post_transfer_assessment_proration: { data: { ...PLAN, posting_ready: false, not_ready_reason: 'accounting_not_converted', staged: true }, error: null } }, tables: BASE_TABLES });
+  const r = await TP.postTransferProration(db, { proposalId: 'prop-x' });
+  assert.strictEqual(r.status, 'staged');
+  assert.strictEqual(posted.length, 0);
+  assert.strictEqual(db.calls.updates.length, 0);
+});
+check('after conversion, a staged proration is shown again (recomputed) and posts only once confirmed', async () => {
+  posted.length = 0;
+  const rpc = { post_transfer_assessment_proration: ({ p_dry_run }) => ({ data: p_dry_run ? { ...PLAN, posting_ready: true, staged: true, dry_run: true } : { ...WRITTEN, from_staged: true }, error: null }) };
+  const db1 = fakeDb({ rpc, tables: BASE_TABLES });
+  const ask = await TP.postStagedProration(db1, { proposalId: 'prop-x' });
+  assert.strictEqual(ask.status, 'confirmation_required');
+  assert.strictEqual(ask.plan.builder_due_cents, 12273);
+  assert.strictEqual(posted.length, 0, 'nothing posts without the confirmation');
+  assert.ok(db1.calls.rpc.every((c) => c.args.p_dry_run === true));
+  const db2 = fakeDb({ rpc, tables: BASE_TABLES });
+  const done = await TP.postStagedProration(db2, { proposalId: 'prop-x', confirmed: true });
+  assert.strictEqual(done.status, 'posted');
+  assert.strictEqual(posted.length, 1);
+});
+check('still not converted: posting a staged proration stays staged even when confirmed', async () => {
+  posted.length = 0;
+  const db = fakeDb({ rpc: { post_transfer_assessment_proration: { data: { ...PLAN, posting_ready: false, staged: true, dry_run: true }, error: null } }, tables: BASE_TABLES });
+  assert.strictEqual((await TP.postStagedProration(db, { proposalId: 'prop-x', confirmed: true })).status, 'staged');
+  assert.strictEqual(posted.length, 0);
+});
+
 // ------------------------------------------------------------------ the gate
 const gate = (data, extra = {}) => TP.gateTransferProration(fakeDb({ rpc: { transfer_proration_plan: data } }),
   { propertyId: 'p', sellerTenureId: 't', settlementDate: '2026-07-01', buyerName: 'Pat', ...extra });
@@ -190,6 +220,11 @@ check('wiring: Ownership Review approve gates BEFORE and posts AFTER the transfe
   const s = read('api/ownership_proposals.js');
   const g = s.indexOf('TP.gateTransferProration'), a = s.indexOf("rpc('approve_ownership_proposal'"), p = s.indexOf('TP.afterTransfer');
   assert.ok(g > 0 && a > g && p > a, JSON.stringify({ g, a, p }));
+});
+check('wiring: posting later (Home Sales retry and the generic transfer endpoint) goes through postStagedProration, which requires confirmation', () => {
+  assert.ok(read('api/home_sales.js').includes('TP.postStagedProration(supabase'));
+  const ap = read('api/assessment_proration.js');
+  assert.ok(ap.includes("router.get('/transfer/staged'") && ap.includes("router.post('/transfer/:proposalId/post'") && ap.includes('TP.postStagedProration'));
 });
 check('wiring: the manual Prorate tool refuses a builder-to-homeowner proration where the transfer does it', () => {
   const s = read('lib/accounting/assessment_proration.js');

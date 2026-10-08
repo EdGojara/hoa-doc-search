@@ -28,12 +28,26 @@
 --     builder's existing assessment activity, and whether it is safe to post.
 --     Ambiguous activity BLOCKS (listed for a human); nothing is guessed.
 --   post_transfer_assessment_proration(p_proposal_id, p_posted_by, p_dry_run)
---     after an approved transfer: writes the builder adjustment (seller tenure)
---     and the homeowner charge (buyer tenure) to a DRAFT batch plus one
---     assessment_prorations row per role. The caller posts the GL entry and
---     commits the batch (lib/accounting/transfer_proration.js), the same
---     pattern as the closing payoff (mig 461). One proposal can be prorated
---     once: UNIQUE (proposal_id, role) and a unique ledger-row key.
+--     after an approved transfer. Two states, decided by ACCOUNTING READINESS:
+--       not converted -> STAGED: the calculation is recorded against the
+--         transfer (assessment_prorations, status 'staged', staged_plan) and
+--         NOTHING financial is written: no ledger row, no batch, no GL.
+--       converted     -> the plan is recomputed against the converted ledger,
+--         then the builder adjustment (seller tenure) and the homeowner charge
+--         (buyer tenure) are written to a DRAFT batch; the caller posts the GL
+--         entry and commits the batch (lib/accounting/transfer_proration.js),
+--         the closing-payoff pattern (mig 461).
+--     One transfer, one set: UNIQUE (proposal_id, role) and a unique ledger key.
+--
+-- ACCOUNTING READINESS (Ed 2026-10-08) uses the platform's one rule
+-- (lib/ar/ownership_history.js, Ed 2026-09-28): a community's owner-ledger
+-- history is in trustEd ONLY when it has a conversion_batches row with status
+-- 'posted'. gl_cutover_date does not count. Without it the builder's annual
+-- assessment (billed in the Vantaca era) does not exist in trustEd's books, and
+-- an adjustment against it would make the trustEd GL wrong in the interim. We
+-- do not create an interim GL that a later conversion is expected to repair.
+-- A settlement on or before the conversion baseline is Vantaca-era activity
+-- and blocks.
 --
 -- Record ownership: rates + builder rules are association configuration
 -- (association_record); assessment_prorations is the audit trail of charges on
@@ -90,7 +104,8 @@ ALTER TABLE assessment_prorations
   ADD COLUMN IF NOT EXISTS homeowner_txn_id         uuid,
   ADD COLUMN IF NOT EXISTS batch_id                 uuid,
   ADD COLUMN IF NOT EXISTS journal_entry_id         uuid,
-  ADD COLUMN IF NOT EXISTS status                   text;
+  ADD COLUMN IF NOT EXISTS status                   text,
+  ADD COLUMN IF NOT EXISTS staged_plan              jsonb;   -- the calculation shown at the transfer (kept after posting)
 ALTER TABLE assessment_prorations DROP CONSTRAINT IF EXISTS assessment_prorations_proposal_fk;
 ALTER TABLE assessment_prorations ADD CONSTRAINT assessment_prorations_proposal_fk FOREIGN KEY (proposal_id) REFERENCES ownership_change_proposals(id) ON DELETE RESTRICT;
 ALTER TABLE assessment_prorations DROP CONSTRAINT IF EXISTS assessment_prorations_tenure_fk;
@@ -104,13 +119,14 @@ ALTER TABLE assessment_prorations ADD CONSTRAINT assessment_prorations_je_fk FOR
 ALTER TABLE assessment_prorations DROP CONSTRAINT IF EXISTS assessment_prorations_role_check;
 ALTER TABLE assessment_prorations ADD CONSTRAINT assessment_prorations_role_check CHECK (role IS NULL OR role IN ('builder_adjustment', 'homeowner_charge'));
 ALTER TABLE assessment_prorations DROP CONSTRAINT IF EXISTS assessment_prorations_status_check;
-ALTER TABLE assessment_prorations ADD CONSTRAINT assessment_prorations_status_check CHECK (status IS NULL OR status IN ('draft', 'posted'));
+ALTER TABLE assessment_prorations ADD CONSTRAINT assessment_prorations_status_check CHECK (status IS NULL OR status IN ('staged', 'draft', 'posted'));
 ALTER TABLE assessment_prorations DROP CONSTRAINT IF EXISTS assessment_prorations_transfer_complete;
 ALTER TABLE assessment_prorations ADD CONSTRAINT assessment_prorations_transfer_complete CHECK (
   proposal_id IS NULL
   OR (role IS NOT NULL AND tenure_id IS NOT NULL AND status IS NOT NULL AND period_start IS NOT NULL AND period_end IS NOT NULL
       AND net_responsibility_cents IS NOT NULL AND prior_billed_cents IS NOT NULL
-      AND (prorated_amount_cents = 0 OR homeowner_txn_id IS NOT NULL))
+      AND (status = 'staged' OR prorated_amount_cents = 0 OR homeowner_txn_id IS NOT NULL)
+      AND (status <> 'staged' OR (homeowner_txn_id IS NULL AND batch_id IS NULL AND journal_entry_id IS NULL AND staged_plan IS NOT NULL)))
 );
 CREATE UNIQUE INDEX IF NOT EXISTS uq_assessment_prorations_transfer_role
   ON assessment_prorations (proposal_id, role) WHERE proposal_id IS NOT NULL;
@@ -155,6 +171,7 @@ DECLARE
   b_start date; b_days int; h_days int;
   pct numeric; b_due bigint; h_due bigint; b_full bigint;
   prior jsonb := '[]'::jsonb; prior_n int := 0; prior_billed bigint := 0; one record;
+  conv_code text; conv_asof date;
   buyer_prior jsonb := '[]'::jsonb;
   blocked text[] := '{}';
   base jsonb;
@@ -278,9 +295,11 @@ BEGIN
     IF jsonb_array_length(buyer_prior) > 0 THEN blocked := blocked || 'buyer_already_billed'::text; END IF;
   END IF;
 
-  -- The GL must be the book of record on the settlement date.
-  IF coalesce(comm.books_of_record, '') <> 'trusted' OR comm.gl_cutover_date IS NULL OR p_settlement_date < comm.gl_cutover_date THEN
-    blocked := blocked || 'before_gl_cutover'::text;
+  -- Accounting readiness: the community's converted books (a POSTED conversion).
+  SELECT batch_code, as_of_date INTO conv_code, conv_asof FROM conversion_batches
+   WHERE community_id = comm.id AND status = 'posted' ORDER BY as_of_date DESC, created_at DESC LIMIT 1;
+  IF conv_code IS NOT NULL AND p_settlement_date <= conv_asof THEN
+    blocked := blocked || 'settlement_before_conversion_baseline'::text;
   END IF;
 
   base := jsonb_build_object(
@@ -293,7 +312,9 @@ BEGIN
     'builder_due_cents', b_due, 'homeowner_due_cents', h_due, 'total_recognized_cents', b_due + h_due,
     'builder_prior_billed_cents', prior_billed, 'builder_prior_rows', prior,
     'builder_adjustment_cents', b_due - prior_billed, 'buyer_prior_rows', buyer_prior,
-    'gl_cutover_date', comm.gl_cutover_date, 'books_of_record', comm.books_of_record);
+    'posting_ready', conv_code IS NOT NULL,
+    'not_ready_reason', CASE WHEN conv_code IS NULL THEN 'accounting_not_converted' END,
+    'conversion_batch', conv_code, 'conversion_as_of', conv_asof);
   RETURN base;
 END;
 $fn$;
@@ -316,6 +337,7 @@ DECLARE
   adj bigint; h_due bigint; idx int := 0; n_rows int;
   money_fmt text := 'FM999,999,990.00';
   b_desc text; h_desc text;
+  staged boolean := false; s_plan jsonb;
 BEGIN
   IF coalesce(btrim(p_posted_by), '') = '' THEN RAISE EXCEPTION 'posted_by required'; END IF;
   SELECT * INTO pr FROM ownership_change_proposals WHERE id = p_proposal_id FOR UPDATE;
@@ -324,23 +346,50 @@ BEGIN
     RAISE EXCEPTION 'transfer % is not an approved transfer with both tenures', p_proposal_id;
   END IF;
 
-  -- Already prorated: return what exists (never a second set).
+  -- Already prorated: return what exists (never a second set). A STAGED
+  -- proration (calculated before the community was converted) continues below.
   SELECT jsonb_agg(jsonb_build_object('role', a.role, 'status', a.status, 'amount_cents', a.prorated_amount_cents,
-           'homeowner_txn_id', a.homeowner_txn_id, 'batch_id', a.batch_id, 'journal_entry_id', a.journal_entry_id) ORDER BY a.role)
-    INTO existing FROM assessment_prorations a WHERE a.proposal_id = p_proposal_id;
-  IF existing IS NOT NULL THEN
+           'homeowner_txn_id', a.homeowner_txn_id, 'batch_id', a.batch_id, 'journal_entry_id', a.journal_entry_id) ORDER BY a.role),
+         bool_and(a.status = 'staged'), max(a.staged_plan::text)::jsonb
+    INTO existing, staged, s_plan FROM assessment_prorations a WHERE a.proposal_id = p_proposal_id;
+  staged := coalesce(staged, false);
+  IF existing IS NOT NULL AND NOT staged THEN
     RETURN jsonb_build_object('already_prorated', true, 'proposal_id', p_proposal_id, 'rows', existing,
       'batch_id', (SELECT max(a.batch_id::text) FROM assessment_prorations a WHERE a.proposal_id = p_proposal_id),
       'all_posted', NOT EXISTS (SELECT 1 FROM assessment_prorations a WHERE a.proposal_id = p_proposal_id AND a.status <> 'posted'));
   END IF;
 
+  -- Always recomputed from the current ledger: after a conversion the builder's
+  -- converted annual assessment is what the adjustment nets against.
   plan := transfer_proration_plan(pr.property_id, pr.seller_tenure_id, pr.effective_start_date, pr.proposed_owner_name, pr.buyer_tenure_id);
-  IF NOT (plan->>'applies')::boolean OR (plan->>'blocked')::boolean OR p_dry_run THEN
-    RETURN plan || jsonb_build_object('proposal_id', p_proposal_id, 'dry_run', p_dry_run, 'posted', false);
+  IF NOT (plan->>'applies')::boolean OR (plan->>'blocked')::boolean OR p_dry_run
+     OR (staged AND NOT (plan->>'posting_ready')::boolean) THEN
+    RETURN plan || jsonb_build_object('proposal_id', p_proposal_id, 'dry_run', p_dry_run, 'posted', false,
+      'staged', staged, 'staged_plan', s_plan);
   END IF;
   IF pr.effective_start_date > current_date THEN RAISE EXCEPTION 'settlement % is in the future', pr.effective_start_date; END IF;
 
   SELECT * INTO prop FROM properties WHERE id = pr.property_id;
+
+  -- Not converted: record the calculation against the transfer, nothing financial.
+  IF NOT (plan->>'posting_ready')::boolean THEN
+    INSERT INTO assessment_prorations (community_id, property_id, transfer_type, owner_class, effective_date, fiscal_year_end,
+        days_prorated, days_in_year, annual_amount_cents, prorated_amount_cents, posted_by, notes,
+        proposal_id, role, tenure_id, period_start, period_end, rate_pct, net_responsibility_cents, prior_billed_cents, status, staged_plan)
+    VALUES
+      (prop.community_id, prop.id, 'builder_to_homeowner', 'builder', pr.effective_start_date, (plan->>'homeowner_period_end')::date,
+        (plan->>'builder_days')::int, (plan->>'days_in_year')::int, (plan->>'annual_assessment_cents')::int, (plan->>'builder_adjustment_cents')::int,
+        p_posted_by, 'Staged: not posted until the community''s accounting conversion is posted',
+        p_proposal_id, 'builder_adjustment', pr.seller_tenure_id, (plan->>'builder_period_start')::date, (plan->>'builder_period_end')::date,
+        (plan->>'builder_rate_pct')::numeric, (plan->>'builder_due_cents')::bigint, (plan->>'builder_prior_billed_cents')::bigint, 'staged', plan),
+      (prop.community_id, prop.id, 'builder_to_homeowner', 'homeowner', pr.effective_start_date, (plan->>'homeowner_period_end')::date,
+        (plan->>'homeowner_days')::int, (plan->>'days_in_year')::int, (plan->>'annual_assessment_cents')::int, (plan->>'homeowner_due_cents')::int,
+        p_posted_by, 'Staged: not posted until the community''s accounting conversion is posted',
+        p_proposal_id, 'homeowner_charge', pr.buyer_tenure_id, (plan->>'homeowner_period_start')::date, (plan->>'homeowner_period_end')::date,
+        100, (plan->>'homeowner_due_cents')::bigint, 0, 'staged', plan);
+    RETURN plan || jsonb_build_object('proposal_id', p_proposal_id, 'dry_run', false, 'posted', false, 'staged', true, 'staged_plan', plan);
+  END IF;
+
   SELECT * INTO st FROM ownership_tenures WHERE id = pr.seller_tenure_id;
   SELECT * INTO bt FROM ownership_tenures WHERE id = pr.buyer_tenure_id;
   SELECT management_company_id INTO mc FROM communities WHERE id = prop.community_id;
@@ -394,19 +443,27 @@ BEGIN
   INSERT INTO assessment_prorations (community_id, property_id, transfer_type, owner_class, effective_date, fiscal_year_end,
       days_prorated, days_in_year, annual_amount_cents, prorated_amount_cents, ar_charge_id, posted_by, notes,
       proposal_id, role, tenure_id, period_start, period_end, rate_pct, net_responsibility_cents, prior_billed_cents,
-      homeowner_txn_id, batch_id, status)
+      homeowner_txn_id, batch_id, status, staged_plan)
   VALUES
     (prop.community_id, prop.id, 'builder_to_homeowner', 'builder', pr.effective_start_date, (plan->>'homeowner_period_end')::date,
       (plan->>'builder_days')::int, (plan->>'days_in_year')::int, (plan->>'annual_assessment_cents')::int, adj, b_txn, p_posted_by, b_desc,
       p_proposal_id, 'builder_adjustment', st.id, (plan->>'builder_period_start')::date, (plan->>'builder_period_end')::date,
       (plan->>'builder_rate_pct')::numeric, (plan->>'builder_due_cents')::bigint, (plan->>'builder_prior_billed_cents')::bigint,
-      b_txn, batch_id, CASE WHEN adj <> 0 THEN 'draft' ELSE 'posted' END),
+      b_txn, batch_id, CASE WHEN adj <> 0 THEN 'draft' ELSE 'posted' END, s_plan),
     (prop.community_id, prop.id, 'builder_to_homeowner', 'homeowner', pr.effective_start_date, (plan->>'homeowner_period_end')::date,
       (plan->>'homeowner_days')::int, (plan->>'days_in_year')::int, (plan->>'annual_assessment_cents')::int, h_due, h_txn, p_posted_by, h_desc,
       p_proposal_id, 'homeowner_charge', bt.id, (plan->>'homeowner_period_start')::date, (plan->>'homeowner_period_end')::date,
-      100, h_due, 0, h_txn, batch_id, CASE WHEN h_due > 0 THEN 'draft' ELSE 'posted' END);
+      100, h_due, 0, h_txn, batch_id, CASE WHEN h_due > 0 THEN 'draft' ELSE 'posted' END, s_plan)
+  ON CONFLICT (proposal_id, role) WHERE proposal_id IS NOT NULL DO UPDATE SET
+    days_prorated = EXCLUDED.days_prorated, days_in_year = EXCLUDED.days_in_year, annual_amount_cents = EXCLUDED.annual_amount_cents,
+    prorated_amount_cents = EXCLUDED.prorated_amount_cents, ar_charge_id = EXCLUDED.ar_charge_id, notes = EXCLUDED.notes,
+    period_start = EXCLUDED.period_start, period_end = EXCLUDED.period_end, rate_pct = EXCLUDED.rate_pct,
+    net_responsibility_cents = EXCLUDED.net_responsibility_cents, prior_billed_cents = EXCLUDED.prior_billed_cents,
+    homeowner_txn_id = EXCLUDED.homeowner_txn_id, batch_id = EXCLUDED.batch_id, status = EXCLUDED.status,
+    posted_by = EXCLUDED.posted_by
+  WHERE assessment_prorations.status = 'staged';
 
-  RETURN plan || jsonb_build_object('proposal_id', p_proposal_id, 'dry_run', false, 'posted', false, 'written', true,
+  RETURN plan || jsonb_build_object('proposal_id', p_proposal_id, 'dry_run', false, 'posted', false, 'written', true, 'from_staged', staged, 'staged_plan', s_plan,
     'batch_id', batch_id, 'builder_txn_id', b_txn, 'homeowner_txn_id', h_txn,
     'seller_tenure_id', st.id, 'buyer_tenure_id', bt.id, 'property_id', prop.id, 'community_id', prop.community_id);
 END;

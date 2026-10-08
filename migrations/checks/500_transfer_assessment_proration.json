@@ -1,7 +1,8 @@
 {
   "migration": "500_transfer_assessment_proration.sql",
-  "summary": "Issue #94: builder-to-homeowner assessment proration inside the ownership transfer (Still Creek Ranch / Lennar only). Builder rates may be a percent of the homeowner rate; transfer_proration_builders says which builders trigger it; assessment_prorations ties each charge to the transfer, tenure, ledger row, batch and GL entry; transfer_proration_plan (read-only) and post_transfer_assessment_proration (writes a draft batch) implement the calendar-day rule and block on ambiguous builder activity. Seeds Still Creek's $495.00 homeowner rate, 50% builder rate and the Lennar rule. No ledger, GL, tenure or ownership row changes.",
+  "summary": "Issue #94: builder-to-homeowner assessment proration inside the ownership transfer (Still Creek Ranch / Lennar only). Builder rates may be a percent of the homeowner rate; transfer_proration_builders says which builders trigger it; assessment_prorations ties each charge to the transfer, tenure, ledger row, batch and GL entry; transfer_proration_plan (read-only) and post_transfer_assessment_proration (writes a draft batch) implement the calendar-day rule and block on ambiguous builder activity; before the community has a POSTED conversion the proration is only STAGED (calculation recorded against the transfer; no ledger, batch or GL). Seeds Still Creek's $495.00 homeowner rate, 50% builder rate and the Lennar rule. No ledger, GL, tenure or ownership row changes.",
   "requires": [
+    "452_conversion_staging.sql",
     "360_assessment_proration.sql",
     "459_ownership_transfer_single_path.sql",
     "461_payment_applications.sql"
@@ -48,6 +49,7 @@
       "column:assessment_prorations.proposal_id",
       "column:assessment_prorations.rate_pct",
       "column:assessment_prorations.role",
+      "column:assessment_prorations.staged_plan",
       "column:assessment_prorations.status",
       "column:assessment_prorations.tenure_id",
       "column:community_assessment_rates.pct_of_homeowner_rate",
