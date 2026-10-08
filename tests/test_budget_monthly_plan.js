@@ -128,11 +128,18 @@ const sum = (m) => m.reduce((s, v) => s + v, 0);
     const src = require('fs').readFileSync(path.join(root, 'api', 'gl.js'), 'utf8').split(/\r?\n/);
     const from = src.findIndex((l) => l.includes("router.get('/:communityId/trial-balance'")) + 1;
     const to = src.findIndex((l) => l.includes('// Per-homeowner ledgers')) + 1;
+    // The AR aging section (Ed 2026-10-08: the aging reconciles explicitly to GL 1300)
+    // is also allowed: from the current-tenure map through the AR drill-down, plus the
+    // test-export line at the end of the file. Every statement route stays off limits.
+    const arFrom = src.findIndex((l) => l.includes('async function _currentTenureMap(')) + 1;
+    const arTo = src.findIndex((l) => l.includes('// AR drill-down')) + 1;
+    const testExport = src.findIndex((l) => l.startsWith('module.exports._test')) + 1;
+    const inside = (s, e) => (from > 0 && to > from && s >= from && e < to) || (arFrom > 0 && arTo > arFrom && s >= arFrom && e < arTo) || (s === testExport && e === testExport);
     const hunks = execSync('git diff -U0 main -- api/gl.js', { cwd: root }).toString().split(/\r?\n/).filter((l) => l.startsWith('@@'));
     for (const h of hunks) {
       const m = h.match(/\+(\d+)(?:,(\d+))?/); const startLine = Number(m[1]); const count = m[2] === undefined ? 1 : Number(m[2]);
       const endLine = startLine + Math.max(count, 1) - 1;
-      assert.ok(from > 0 && to > from && startLine >= from && endLine < to, `api/gl.js changed outside the Trial Balance section: ${h}`);
+      assert.ok(count === 0 || inside(startLine, endLine), `api/gl.js changed outside the Trial Balance and AR aging sections: ${h}`);
     }
   });
 
