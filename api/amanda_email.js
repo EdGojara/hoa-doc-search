@@ -93,6 +93,7 @@ router.post('/ask', async (req, res) => {
       mailboxes: graphSend.isConfigured() ? [graphSend.AMANDA_MAILBOX] : [],
       drafter: desk.draftAmandaEmail,
       onEdsBehalf: false,
+      addressStore: require('../lib/ea/address_status').supabaseStore(sb()),
     });
     if (out.degraded) return res.status(503).json({ ok: false, error: 'not_understood', detail: 'Amanda could not work that one out. Try saying it a different way.' });
     const people = (list) => (list || []).map((p) => ({ name: p.name || null, email: p.email || null }));
