@@ -34,14 +34,14 @@
   // The GL the posting makes, on the community's own revenue treatment.
   function books(p) {
     const inc = p.income_account || '4000', dfr = p.deferral_account, adj = Number(p.builder_adjustment_cents || 0), rec = p.homeowner_recognition;
-    if (p.deferral_adjustment) {
-      const d = p.deferral_adjustment;
-      return 'Required when resolved: Dr ' + d.income_account + ' ' + money(d.income_reversal_cents) + ', Dr ' + d.deferral_account + ' ' + money(d.deferral_reversal_cents)
-        + ', Cr 1300 AR ' + money(d.ar_credit_cents) + '; the ' + d.deferral_account + ' schedule reduced ' + money(d.schedule_reduction_monthly_cents) + '/month for '
-        + d.schedule_reduction_months + ' months from ' + day(d.schedule_reduction_from) + '.';
+    if (p.normalization_required) {
+      const n = p.normalization_required;
+      return 'Waiting for the accounting conversion to normalize the ' + money(n.annual_cents) + ' annual assessment (' + day(n.annual_date) + ') to the '
+        + pct(n.builder_rate_pct) + '% builder rate and carry ' + esc(n.deferral_account) + ' without this lot\'s share. Nothing posts from here until it does.';
     }
     return 'Books, dated ' + day(p.settlement_date) + ': '
       + (adj > 0 ? 'Dr 1300 AR / Cr ' + inc + ' ' + money(adj) + ' (builder, its months have elapsed); ' : adj < 0 ? 'Dr ' + inc + ' / Cr 1300 AR ' + money(-adj) + ' (builder); ' : '')
+      + (p.builder_normalized ? 'builder already normalized by conversion ' + esc(p.builder_normalized.conversion_batch || '') + ' to ' + money(p.builder_normalized.normalized_cents) + ' through ' + day(p.builder_normalized.covered_through) + ' (no second adjustment); ' : '')
       + (dfr ? 'Dr 1300 AR / Cr ' + dfr + ' Unearned ' + money(p.homeowner_due_cents) + ' (new owner), released to ' + inc + ' ' + money(rec && rec.monthly_cents) + '/month for ' + (rec && rec.term_months) + ' months from ' + day(rec && rec.start_month) + '.'
              : 'Dr 1300 AR / Cr ' + inc + ' ' + money(p.homeowner_due_cents) + ' (new owner).');
   }
@@ -55,11 +55,11 @@
       const detail = it.status === 'Blocked'
         ? '<div style="font-size:12px; color:#5b6472; margin-top:3px;">' + why
           + ((it.builder_prior_rows || []).length ? '<br>Builder activity this year: ' + it.builder_prior_rows.map((x) => day(x.date) + ' ' + esc(x.description) + ' ' + money(x.amount_cents)).join('; ') : '')
-          + (it.deferral_adjustment ? '<br>' + esc(books({ deferral_adjustment: it.deferral_adjustment })) : '') + '</div>'
+          + (it.normalization_required ? '<br>' + esc(books({ normalization_required: it.normalization_required })) : '') + '</div>'
         : (why ? '<div style="font-size:12px; color:#5b6472; margin-top:3px;">' + why + '</div>' : '');
       const action = it.status === 'Ready to Post' ? '<button class="btn" style="padding:4px 10px; font-size:12.5px;" data-tpq="' + esc(it.proposal_id) + '">Review &amp; post</button>' : '';
       return '<tr><td>' + esc(it.property || '') + '</td><td>' + esc(it.outgoing_owner || it.builder || '') + ' <span class="muted">→</span> ' + esc(it.incoming_owner || '') + '</td>'
-        + '<td>' + day(it.settlement_date) + '</td><td class="num">' + money(it.builder_due_cents) + (Number(it.builder_prior_billed_cents) ? '<div style="font-size:11.5px; color:#5b6472;">net of ' + money(it.builder_prior_billed_cents) + ' billed</div>' : '') + '</td>'
+        + '<td>' + day(it.settlement_date) + '</td><td class="num">' + money(it.builder_due_cents) + (it.builder_normalized ? '<div style="font-size:11.5px; color:#5b6472;">' + money(it.builder_normalized.normalized_cents) + ' already normalized by conversion</div>' : (Number(it.builder_prior_billed_cents) ? '<div style="font-size:11.5px; color:#5b6472;">' + money(it.builder_prior_billed_cents) + ' billed; awaiting normalization</div>' : '')) + '</td>'
         + '<td class="num">' + money(it.homeowner_due_cents) + '</td>'
         + '<td><span class="badge" style="' + (BADGE[it.status] || '') + '">' + esc(it.status) + '</span>' + detail + '</td><td>' + action + '</td></tr>'
         + '<tr data-tpq-row="' + esc(it.proposal_id) + '" style="display:none;"><td colspan="7"></td></tr>';

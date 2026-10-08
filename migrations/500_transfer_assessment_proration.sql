@@ -61,10 +61,24 @@
 -- A new owner's prorated charge is billed to the deferral account and released
 -- monthly by the recognition engine (lib/accounting/transfer_proration.js
 -- creates the schedule); a builder's share is wholly elapsed at settlement and
--- is recognized directly. Crediting a builder's DEFERRED annual assessment
--- would also have to shrink the community's converted deferral schedule
--- (approved schedules are fixed: cancel and replace only), so that case BLOCKS
--- with the exact required entries until it is resolved by a person.
+-- is recognized directly.
+--
+-- A BUILDER ALREADY BILLED A DEFERRED ANNUAL ASSESSMENT (Still Creek: 5302
+-- Sleepy Fox, $495.00 on 1/1/2026) is normalized by the community's ACCOUNTING
+-- CONVERSION, never by this workflow (Ed 2026-10-08): the transfer workflow
+-- never cancels or replaces a community-wide revenue schedule. The conversion
+-- records, on the builder's tenure, ONE homeowner_transactions row:
+--   txn_type 'adjustment', charge_category 'assessment', reduction_source
+--   'correcting_adjustment', amount = builder-rate earned through the baseline
+--   minus the annual charge, raw_row_jsonb = { source:
+--   'conversion_builder_normalization', fiscal_year, normalizes_txn_id (the
+--   annual charge), covered_through (the baseline), builder_rate_pct,
+--   conversion_batch }
+-- and carries 2205 and the release schedule without that lot's share. Until
+-- that row exists the transfer BLOCKS ('awaiting_conversion_normalization').
+-- Once it exists the transfer nets against the normalized amount: the
+-- builder's remaining charge covers only baseline+1 .. settlement-1 (elapsed,
+-- recognized directly), so nothing is adjusted twice.
 --
 -- Record ownership: rates + builder rules are association configuration
 -- (association_record); assessment_prorations is the audit trail of charges on
@@ -199,7 +213,8 @@ DECLARE
   pct numeric; b_due bigint; h_due bigint; b_full bigint;
   prior jsonb := '[]'::jsonb; prior_n int := 0; prior_billed bigint := 0; one record;
   conv_code text; conv_asof date;
-  rec_months int; m_recognized int; recog_before bigint; defer_adj jsonb;
+  rec_months int; annual jsonb; norm jsonb; annual_n int := 0; norm_n int := 0; identified boolean := false;
+  norm_expected bigint; normalized jsonb; norm_required jsonb;
   buyer_prior jsonb := '[]'::jsonb;
   blocked text[] := '{}';
   base jsonb;
@@ -284,7 +299,7 @@ BEGIN
 
   -- What the builder was already billed for this year (its own tenure only).
   FOR one IN
-    SELECT h.id, h.transaction_date, h.description, h.txn_type, h.charge_category, h.amount_cents
+    SELECT h.id, h.transaction_date, h.description, h.txn_type, h.charge_category, h.amount_cents, h.raw_row_jsonb AS raw
       FROM homeowner_transactions h
       JOIN transaction_upload_batches b ON b.id = h.source_batch_id AND b.status = 'committed'
      WHERE h.transaction_date BETWEEN jan1 AND dec31
@@ -297,7 +312,13 @@ BEGIN
     prior_n := prior_n + 1;
     prior_billed := prior_billed + one.amount_cents;
     prior := prior || jsonb_build_object('id', one.id, 'date', one.transaction_date, 'description', one.description,
-      'txn_type', one.txn_type, 'category', one.charge_category, 'amount_cents', one.amount_cents);
+      'txn_type', one.txn_type, 'category', one.charge_category, 'amount_cents', one.amount_cents,
+      'source', one.raw->>'source');
+    IF one.raw->>'source' = 'conversion_builder_normalization' THEN
+      norm_n := norm_n + 1; norm := one.raw || jsonb_build_object('id', one.id, 'amount_cents', one.amount_cents);
+    ELSE
+      annual_n := annual_n + 1; annual := prior->(prior_n - 1);
+    END IF;
   END LOOP;
   -- Unambiguous only when the builder has nothing for the year, or exactly one
   -- positively identified ANNUAL assessment charge: a charge, described as the
@@ -306,13 +327,33 @@ BEGIN
   -- assessment, a partial amount like $90.18, a credit, two rows) stops for a
   -- person. Only that one charge is netted; prior balances, late fees,
   -- interest and payments are never part of the adjustment.
-  IF prior_n > 1 OR (prior_n = 1 AND NOT (
-       (prior->0->>'date')::date = jan1
-       AND prior->0->>'txn_type' = 'charge'
-       AND (prior->0->>'category' = 'assessment' OR prior->0->>'description' ILIKE '%annual%assessment%')
-       AND prior->0->>'description' NOT ILIKE '%special%'
-       AND (prior->0->>'amount_cents')::bigint IN (ho.annual_amount_cents::bigint, b_full))) THEN
-    blocked := blocked || 'ambiguous_builder_assessment'::text;
+  identified := annual_n = 1
+       AND (annual->>'date')::date = jan1
+       AND annual->>'txn_type' = 'charge'
+       AND (annual->>'category' = 'assessment' OR annual->>'description' ILIKE '%annual%assessment%')
+       AND annual->>'description' NOT ILIKE '%special%'
+       AND (annual->>'amount_cents')::bigint IN (ho.annual_amount_cents::bigint, b_full);
+  IF norm_n = 0 THEN
+    IF annual_n > 1 OR (annual_n = 1 AND NOT identified) THEN
+      blocked := blocked || 'ambiguous_builder_assessment'::text;
+    END IF;
+  ELSE
+    -- The conversion normalized the builder's annual assessment. It must be
+    -- exactly one row, for this year, on the identified annual charge, at the
+    -- builder rate through its baseline, and the settlement must be after it.
+    IF norm_n = 1 AND identified AND norm->>'normalizes_txn_id' = annual->>'id' AND (norm->>'fiscal_year')::int = y
+       AND (norm->>'covered_through') IS NOT NULL THEN
+      norm_expected := round(ho.annual_amount_cents::numeric * coalesce(bl.pct_of_homeowner_rate, round(bl.annual_amount_cents::numeric * 100 / nullif(ho.annual_amount_cents, 0), 2))
+                             * ((norm->>'covered_through')::date - b_start + 1) / (100 * diy));
+    END IF;
+    IF norm_expected IS NULL OR (annual->>'amount_cents')::bigint + (norm->>'amount_cents')::bigint <> norm_expected
+       OR p_settlement_date <= (norm->>'covered_through')::date THEN
+      blocked := blocked || 'normalization_mismatch'::text;
+    ELSE
+      normalized := jsonb_build_object('annual_txn_id', annual->>'id', 'annual_cents', (annual->>'amount_cents')::bigint,
+        'normalization_txn_id', norm->>'id', 'normalization_cents', (norm->>'amount_cents')::bigint,
+        'normalized_cents', norm_expected, 'covered_through', norm->>'covered_through', 'conversion_batch', norm->>'conversion_batch');
+    END IF;
   END IF;
 
   -- The buyer starts the year clean (after approval: its new tenure).
@@ -326,24 +367,14 @@ BEGIN
     IF jsonb_array_length(buyer_prior) > 0 THEN blocked := blocked || 'buyer_already_billed'::text; END IF;
   END IF;
 
-  -- A builder's annual assessment that sits in the DEFERRAL account: the credit
-  -- splits between income already recognized (months before the settlement
-  -- month; the settlement month too when the builder owned part of it) and the
-  -- unearned balance, and the community's deferral schedule must lose the
-  -- builder's monthly share for the remaining months. That schedule is approved
-  -- and fixed; changing it is a person's decision. Exact entries are returned.
-  IF ho.deferral_account_number IS NOT NULL AND prior_billed <> 0 AND NOT ('ambiguous_builder_assessment' = ANY (blocked)) THEN
-    m_recognized := extract(month FROM p_settlement_date)::int - 1 + CASE WHEN extract(day FROM p_settlement_date) > 1 THEN 1 ELSE 0 END;
-    recog_before := round(prior_billed::numeric * m_recognized / 12);
-    defer_adj := jsonb_build_object(
-      'income_account', ho.income_account_number, 'deferral_account', ho.deferral_account_number,
-      'income_reversal_cents', recog_before - b_due,
-      'deferral_reversal_cents', prior_billed - recog_before,
-      'ar_credit_cents', prior_billed - b_due,
-      'schedule_reduction_monthly_cents', round(prior_billed::numeric / 12),
-      'schedule_reduction_months', 12 - m_recognized,
-      'schedule_reduction_from', make_date(y, m_recognized + 1, 1));
-    blocked := blocked || 'deferral_schedule_adjustment_required'::text;
+  -- A builder's identified annual assessment in a DEFERRING community, not yet
+  -- normalized: the community's conversion must normalize it (and carry 2205 and
+  -- the release schedule without the lot's share). This workflow never touches
+  -- community-wide revenue schedules, so it waits.
+  IF ho.deferral_account_number IS NOT NULL AND identified AND norm_n = 0 THEN
+    norm_required := jsonb_build_object('annual_txn_id', annual->>'id', 'annual_cents', (annual->>'amount_cents')::bigint,
+      'annual_date', annual->>'date', 'builder_rate_pct', pct, 'deferral_account', ho.deferral_account_number, 'income_account', ho.income_account_number);
+    blocked := blocked || 'awaiting_conversion_normalization'::text;
   END IF;
 
   -- Accounting readiness: the community's converted books (a POSTED conversion).
@@ -367,7 +398,7 @@ BEGIN
     'homeowner_recognition', CASE WHEN ho.deferral_account_number IS NULL THEN NULL ELSE jsonb_build_object(
       'start_month', date_trunc('month', p_settlement_date)::date, 'term_months', rec_months,
       'monthly_cents', round(h_due::numeric / rec_months), 'method', 'straight_line_monthly') END,
-    'deferral_adjustment', defer_adj,
+    'normalization_required', norm_required, 'builder_normalized', normalized,
     'posting_ready', conv_code IS NOT NULL,
     'not_ready_reason', CASE WHEN conv_code IS NULL THEN 'accounting_not_converted' END,
     'conversion_batch', conv_code, 'conversion_as_of', conv_asof);

@@ -215,10 +215,11 @@ async function report(stage) {
     } else {
       const p = await post(T, true);
       console.log('   GL entry: none' + (p.blocked ? '  [BLOCKED: ' + p.blocked_reasons.join(', ') + ']' : ''));
-      if (p.deferral_adjustment) {
-        const d = p.deferral_adjustment;
-        console.log(`   required when resolved: Dr ${d.income_account} $${(d.income_reversal_cents / 100).toFixed(2)} | Dr ${d.deferral_account} $${(d.deferral_reversal_cents / 100).toFixed(2)} | Cr 1300 AR $${(d.ar_credit_cents / 100).toFixed(2)}; deferral schedule reduced $${(d.schedule_reduction_monthly_cents / 100).toFixed(2)}/month for ${d.schedule_reduction_months} months from ${d.schedule_reduction_from}`);
-      }
+      if (p.normalization_required) console.log(`   waiting for: the conversion to normalize the $${(p.normalization_required.annual_cents / 100).toFixed(2)} annual assessment (${p.normalization_required.annual_date}) to the ${Number(p.normalization_required.builder_rate_pct)}% builder rate`);
+    }
+    const nrow = await q(`SELECT h.transaction_date::text AS date, h.amount_cents, h.description FROM homeowner_transactions h WHERE h.tenure_id = $1 AND h.raw_row_jsonb->>'source' = 'conversion_builder_normalization'`, [T.seller]);
+    for (const n of nrow) console.log(`   conversion normalization on Lennar's account: ${n.date}  $${(n.amount_cents / 100).toFixed(2)}  "${n.description}"`);
+    {
     }
   }
 }
@@ -241,20 +242,58 @@ check('after conversion, the new owner\u2019s share is billed to the deferral ac
   s1.deferral_account === '2205' && s1.income_account === '4000' && JSON.stringify(s1.homeowner_recognition) === JSON.stringify({ method: 'straight_line_monthly', start_month: '2026-07-01', term_months: 6, monthly_cents: 4159 }),
   JSON.stringify(pick(s1, ['deferral_account', 'income_account', 'homeowner_recognition'])));
 const ss1 = await post(TS0);
-const d1 = ss1.deferral_adjustment || {};
-check('after conversion, 5302 Sleepy Fox: Lennar\u2019s $495.00 sits in the 2205 deferral, so the credit needs the deferral schedule changed: BLOCKED with the exact entries (Dr 4000 $124.77, Dr 2205 $247.50, Cr 1300 $372.27; schedule -$41.25/month Jul-Dec); nothing posted',
-  ss1.blocked === true && ss1.blocked_reasons.includes('deferral_schedule_adjustment_required') && !ss1.written
-    && d1.income_reversal_cents === 12477 && d1.deferral_reversal_cents === 24750 && d1.ar_credit_cents === 37227
-    && d1.schedule_reduction_monthly_cents === 4125 && d1.schedule_reduction_months === 6 && d1.schedule_reduction_from === '2026-07-01'
-    && ss1.builder_due_cents === 12273 && (await one(`SELECT count(*)::int AS n FROM homeowner_transactions WHERE raw_row_jsonb->>'proposal_id' = $1`, [TS0.proposal])).n === 0,
-  JSON.stringify(pick(ss1, ['blocked', 'blocked_reasons', 'deferral_adjustment', 'written'])));
-const mid = await rpc('transfer_proration_plan', { p_property_id: TS0.property, p_seller_tenure_id: TS0.seller, p_settlement_date: '2026-07-15', p_buyer_name: 'Pat Homeowner', p_buyer_tenure_id: TS0.buyer });
-check('mid-month (7/15): Lennar owned part of July, whose share is recognized on 7/1, so 7 months are on the income side: Dr 4000 = $288.75 - Lennar\u2019s due; Dr 2205 = 5 months $206.25',
-  mid.deferral_adjustment.income_reversal_cents === 28875 - mid.builder_due_cents && mid.deferral_adjustment.deferral_reversal_cents === 20625 && mid.deferral_adjustment.schedule_reduction_from === '2026-08-01',
-  JSON.stringify(mid.deferral_adjustment));
+check('after conversion, BEFORE the conversion records 5302\u2019s normalization: still BLOCKED (awaiting_conversion_normalization), nothing written',
+  ss1.blocked === true && ss1.blocked_reasons.includes('awaiting_conversion_normalization') && !ss1.written
+    && ss1.normalization_required.annual_cents === 49500 && ss1.normalization_required.annual_date === '2026-01-01'
+    && (await one(`SELECT count(*)::int AS n FROM homeowner_transactions WHERE raw_row_jsonb->>'proposal_id' = $1`, [TS0.proposal])).n === 0,
+  JSON.stringify(pick(ss1, ['blocked', 'blocked_reasons', 'normalization_required', 'written'])));
 check('after conversion, 5450 Still Meadow is still BLOCKED (conversion does not resolve an ambiguous charge)', (await post(TA0)).blocked === true);
+await report('AFTER STILL CREEK CONVERSION (CONV-SCR-20260630 posted; normalization of 5302 not yet recorded)');
 
-await report('AFTER STILL CREEK CONVERSION (CONV-SCR-20260630 posted; staged prorations recomputed, confirmed, written)');
+// The Still Creek conversion records 5302's normalization (the contract in migration 500):
+// Lennar's $495.00 annual assessment -> the 50% builder rate through the 6/30 baseline
+// (181/365 x $247.50 = $122.73), i.e. a -$372.27 correcting adjustment on Lennar's tenure.
+async function normalize(T, { amount = -37227, covered = '2026-06-30', annualDesc = 'Annual Assessment' } = {}) {
+  const annual = await one(`SELECT id FROM homeowner_transactions WHERE tenure_id = $1 AND description = $2 AND transaction_date = '2026-01-01'`, [T.seller, annualDesc]);
+  const b = await one(`INSERT INTO transaction_upload_batches (management_company_id, community_id, period_label, as_of_date, status, uploaded_by) VALUES ($1, $2, 'Conversion CONV-SCR-20260630', $3, 'committed', 'conversion') RETURNING id`, [MC, SCR, covered]);
+  await db.query(`INSERT INTO homeowner_transactions (source_batch_id, source_row_index, community_id, property_id, tenure_id, transaction_date, description, txn_type, charge_category, amount_cents, reduction_source, raw_row_jsonb)
+    VALUES ($1, 1, $2, $3, $4, $5, 'Builder-rate normalization 2026: 181/365 days at 50% of $495.00 (Jan 01 to Jun 30), conversion CONV-SCR-20260630', 'adjustment', 'assessment', $6, 'correcting_adjustment',
+      jsonb_build_object('source', 'conversion_builder_normalization', 'fiscal_year', 2026, 'normalizes_txn_id', $7::text, 'covered_through', $8::text, 'builder_rate_pct', 50, 'conversion_batch', 'CONV-SCR-20260630'))`,
+    [b.id, SCR, T.property, T.seller, covered, amount, annual.id, covered]);
+}
+await normalize(TS0);
+const lennarBefore = await q(`SELECT description, amount_cents FROM homeowner_transactions WHERE tenure_id = $1 ORDER BY transaction_date, source_row_index`, [TS0.seller]);
+const sn = await post(TS0);
+const lennarAfter = await q(`SELECT description, amount_cents FROM homeowner_transactions WHERE tenure_id = $1 ORDER BY transaction_date, source_row_index`, [TS0.seller]);
+const sAp = await q(`SELECT role, status, prorated_amount_cents, prior_billed_cents, homeowner_txn_id IS NOT NULL AS has_txn FROM assessment_prorations WHERE proposal_id = $1 ORDER BY role`, [TS0.proposal]);
+check('after the normalization: #95 recognizes 5302 as normalized ($495.00 - $372.27 = $122.73 through 6/30) and posts NO second Lennar adjustment (7/1: $0.00), only the new owner\u2019s $249.53',
+  sn.written === true && sn.builder_normalized && sn.builder_normalized.normalized_cents === 12273 && sn.builder_normalized.covered_through === '2026-06-30'
+    && sn.builder_prior_billed_cents === 12273 && sn.builder_adjustment_cents === 0
+    && JSON.stringify(sAp) === JSON.stringify([
+      { role: 'builder_adjustment', status: 'posted', prorated_amount_cents: 0, prior_billed_cents: 12273, has_txn: false },
+      { role: 'homeowner_charge', status: 'draft', prorated_amount_cents: 24953, prior_billed_cents: 0, has_txn: true }])
+    && JSON.stringify(lennarAfter) === JSON.stringify(lennarBefore),
+  JSON.stringify({ n: sn.builder_normalized, adj: sn.builder_adjustment_cents, sAp }));
+check('Lennar\u2019s 2026 annual assessment on 5302 nets to exactly $122.73; prior balance, late interest and fees untouched',
+  Number((await one(`SELECT sum(amount_cents)::bigint AS s FROM homeowner_transactions WHERE tenure_id = $1 AND (description = 'Annual Assessment' OR raw_row_jsonb->>'source' = 'conversion_builder_normalization')`, [TS0.seller])).s) === 12273
+    && lennarAfter.filter((x) => /Prior Balance|Late/.test(x.description)).map((x) => x.amount_cents).join(',') === '57128,413,825,1000');
+check('re-running after it posted: already prorated, never a second adjustment', (await post(TS0)).already_prorated === true
+  && (await one(`SELECT count(*)::int AS n FROM homeowner_transactions WHERE tenure_id = $1 AND (raw_row_jsonb->>'source' IN ('transfer_proration', 'conversion_builder_normalization'))`, [TS0.seller])).n === 1);
+// A normalized lot that sells LATER: only the elapsed builder months after the baseline are charged.
+const sleepyN = [{ date: '2026-01-01', cents: 49500, desc: 'Annual Assessment' }];
+const LN = await lot({ prior: sleepyN });
+const TN = await approve(LN, '2026-09-15');
+await normalize(TN);
+const pN = await post(TN, true);
+check('normalized lot selling 9/15: builder owes Jan 1-Sep 14 at 50% ($174.27); $122.73 is already normalized, so only $51.54 (Jul 1-Sep 14, elapsed) is charged',
+  !pN.blocked && pN.builder_due_cents === 17427 && pN.builder_prior_billed_cents === 12273 && pN.builder_adjustment_cents === 5154,
+  JSON.stringify(pick(pN, ['blocked', 'blocked_reasons', 'builder_due_cents', 'builder_prior_billed_cents', 'builder_adjustment_cents'])));
+const TBad = await approve(await lot({ prior: sleepyN }), '2026-07-01');
+await normalize(TBad, { amount: -37000 });
+const pBad = await post(TBad, true);
+check('a normalization that does not equal the builder rate through its baseline: BLOCKED (normalization_mismatch), never netted',
+  pBad.blocked && pBad.blocked_reasons.includes('normalization_mismatch'), JSON.stringify(pick(pBad, ['blocked_reasons'])));
+await report('AFTER THE CONVERSION RECORDS 5302\u2019s NORMALIZATION');
 if (REPORT) process.exit(0);
 
 // ---------------------------------------------------------------- mid-year (the issue's example)

@@ -114,8 +114,8 @@ check('Still Creek treatment (7/1, unbilled lot): builder Dr 1300 / Cr 4000 $122
   assert.deepStrictEqual(l.map((x) => [x.account_id, x.debit_cents, x.credit_cents]), [
     ['acct-ar', 12273, 0], ['acct-income', 0, 12273], ['acct-ar', 24953, 0], ['acct-unearned', 0, 24953]]);
 });
-check('a credit against a DEFERRED annual assessment can never reach the GL from here (it needs the deferral schedule changed by a person)', () => {
-  assert.throws(() => TP.glLines(ACCT, { ...SCR_PLAN, builder_adjustment_cents: -37227 }), /deferral_schedule_adjustment_required/);
+check('a credit against a DEFERRED annual assessment can never reach the GL from here (the accounting conversion normalizes it)', () => {
+  assert.throws(() => TP.glLines(ACCT, { ...SCR_PLAN, builder_adjustment_cents: -37227 }), /awaiting_conversion_normalization/);
 });
 check('post (Still Creek): the new owner\u2019s share gets ONE recognition schedule (2205 -> 4000, Jul-Dec, $41.59/month, keyed to the proration row); a retry does not create a second', async () => {
   posted.length = 0;
@@ -227,8 +227,8 @@ check('queue: each unposted transfer proration is recalculated and shown Staged 
     'p-unbilled': { ...PLAN, seller_names: ['Lennar Homes LLC'], posting_ready: false },
     'p-ready': { ...PLAN, seller_names: ['Lennar Homes LLC'], posting_ready: true },
     'p-5450': { ...PLAN, seller_names: ['Lennar Homes LLC'], posting_ready: true, blocked: true, blocked_reasons: ['ambiguous_builder_assessment'], builder_prior_rows: [{ date: '2026-05-13', description: 'Annual Assessment', amount_cents: 9018 }] },
-    'p-5302': { ...PLAN, seller_names: ['Lennar Homes LLC'], posting_ready: true, blocked: true, blocked_reasons: ['deferral_schedule_adjustment_required'], builder_prior_billed_cents: 49500,
-      deferral_adjustment: { income_account: '4000', deferral_account: '2205', income_reversal_cents: 12477, deferral_reversal_cents: 24750, ar_credit_cents: 37227, schedule_reduction_monthly_cents: 4125, schedule_reduction_months: 6, schedule_reduction_from: '2026-07-01' } },
+    'p-5302': { ...PLAN, seller_names: ['Lennar Homes LLC'], posting_ready: true, blocked: true, blocked_reasons: ['awaiting_conversion_normalization'], builder_prior_billed_cents: 49500,
+      normalization_required: { annual_txn_id: 'h-495', annual_cents: 49500, annual_date: '2026-01-01', builder_rate_pct: 50, deferral_account: '2205', income_account: '4000' } },
   };
   const db = fakeDb({
     rpc: { post_transfer_assessment_proration: ({ p_proposal_id, p_dry_run }) => { assert.strictEqual(p_dry_run, true, 'the queue only ever dry-runs'); return { data: { ...plans[p_proposal_id], staged: true }, error: null }; } },
@@ -241,7 +241,7 @@ check('queue: each unposted transfer proration is recalculated and shown Staged 
     [12273, 24953, 'Lennar Homes LLC', 'Pat Homeowner']);
   assert.ok(/accounting conversion/.test(by['8211 Rustic Pine Trail'].reasons[0]));
   assert.ok(/does not show clearly what it was billed/.test(by['5450 Still Meadow Lane'].reasons[0]));
-  assert.ok(/unearned-income schedule/.test(by['5302 Sleepy Fox Lane'].reasons[0]) && by['5302 Sleepy Fox Lane'].deferral_adjustment.deferral_reversal_cents === 24750);
+  assert.ok(/accounting conversion must first normalize/.test(by['5302 Sleepy Fox Lane'].reasons[0]) && by['5302 Sleepy Fox Lane'].normalization_required.annual_cents === 49500);
   assert.strictEqual(posted.length, 0);
   assert.strictEqual((db.calls.inserts || []).length + db.calls.updates.length, 0, 'listing writes nothing');
 });
