@@ -358,8 +358,49 @@ const LR = await lot();
 await convCover(LR);
 for (const [f, t] of [['07-01', '07-31'], ['08-01', '08-31'], ['09-01', '09-30'], ['10-01', '10-31'], ['11-01', '11-30']]) await cover(LR, { from: `2026-${f}`, through: `2026-${t}` });
 await cover(LR, { from: '2026-12-01', through: '2026-12-31', annual: 60000 });
-check('a rate changed mid-year: the December period carries NO true-up (annual x rate is not one number for that year)',
+check('YEAR-END: the ANNUAL ASSESSMENT changed mid-year ($495 -> $600 in December): NO true-up (annual x rate is not one number for that year)',
   (await one(`SELECT rounding_true_up_cents AS tu, amount_cents FROM builder_assessment_coverage WHERE tenure_id = $1 AND covered_from = '2026-12-01'`, [LR.seller])).tu == 0);
+const LRp = await lot();
+await convCover(LRp);
+for (const [f, t] of [['07-01', '07-31'], ['08-01', '08-31'], ['09-01', '09-30'], ['10-01', '10-31'], ['11-01', '11-30']]) await cover(LRp, { from: `2026-${f}`, through: `2026-${t}` });
+check('YEAR-END: the BUILDER RATE changed mid-year (50% -> 40% in December): a December true-up is refused; it carries none',
+  /must carry a rounding true-up of 0 cents/.test(await err(`INSERT INTO builder_assessment_coverage (community_id, property_id, tenure_id, builder_company_id, fiscal_year, covered_from, covered_through, days, days_in_year, annual_assessment_cents, builder_rate_pct, base_amount_cents, rounding_true_up_cents, amount_cents, source_type, accrual_run_id, created_by)
+    VALUES ($1, $2, $3, $4, 2026, '2026-12-01', '2026-12-31', 31, 365, 49500, 40, 1682, 1, 1683, 'scheduled_accrual', gen_random_uuid(), 'test')`, [SCR, LRp.property, LRp.seller, LENNAR]) || ''));
+await cover(LRp, { from: '2026-12-01', through: '2026-12-31', pct: 40 });
+check('...and the year is simply the sum of its periods (each rounded on its own days)',
+  Number((await one(`SELECT sum(amount_cents)::bigint AS s, max(rounding_true_up_cents) AS tu FROM builder_assessment_coverage WHERE tenure_id = $1`, [LRp.seller])).tu) === 0);
+// Ownership that begins after Jan 1 (a recorded transfer gave Lennar the lot on 3/1): never a full-year true-up.
+const LB = await lot({ origin: 'transfer', start: '2026-03-01' });
+for (const [f, t] of [['03-01', '06-30'], ['07-01', '09-30'], ['10-01', '11-30']]) await cover(LB, { from: `2026-${f}`, through: `2026-${t}` });
+check('YEAR-END: ownership BEGAN after Jan 1 (3/1): a December true-up is refused (no full year to true up to)',
+  /must carry a rounding true-up of 0 cents/.test(await err(`INSERT INTO builder_assessment_coverage (community_id, property_id, tenure_id, builder_company_id, fiscal_year, covered_from, covered_through, days, days_in_year, annual_assessment_cents, builder_rate_pct, base_amount_cents, rounding_true_up_cents, amount_cents, source_type, accrual_run_id, created_by)
+    VALUES ($1, $2, $3, $4, 2026, '2026-12-01', '2026-12-31', 31, 365, 49500, 50, 2102, 1, 2103, 'scheduled_accrual', gen_random_uuid(), 'test')`, [SCR, LB.property, LB.seller, LENNAR]) || ''));
+await cover(LB, { from: '2026-12-01', through: '2026-12-31' });
+check('...it ends the year with the sum of its own periods, no penny added',
+  Number((await one(`SELECT max(rounding_true_up_cents) AS tu FROM builder_assessment_coverage WHERE tenure_id = $1`, [LB.seller])).tu) === 0);
+// Ownership that ends before Dec 31 (sold 12/1): no December period can exist, so no true-up.
+const LE = await lot();
+await convCover(LE);
+for (const [f, t] of [['07-01', '07-31'], ['08-01', '08-31'], ['09-01', '09-30'], ['10-01', '10-31'], ['11-01', '11-30']]) await cover(LE, { from: `2026-${f}`, through: `2026-${t}` });
+const TE = await approve(LE, '2026-12-01');
+check('YEAR-END: ownership ENDED before Dec 31 (sold 12/1): no December period can be written for the builder, so no full-year true-up; the transfer bills 0 more days',
+  /runs past the end of the builder/.test(await err(`INSERT INTO builder_assessment_coverage (community_id, property_id, tenure_id, builder_company_id, fiscal_year, covered_from, covered_through, days, days_in_year, annual_assessment_cents, builder_rate_pct, base_amount_cents, rounding_true_up_cents, amount_cents, source_type, accrual_run_id, created_by)
+    VALUES ($1, $2, $3, $4, 2026, '2026-12-01', '2026-12-31', 31, 365, 49500, 50, 2102, 1, 2103, 'scheduled_accrual', gen_random_uuid(), 'test')`, [SCR, LE.property, LE.seller, LENNAR]) || '')
+    && (await post(TE, true)).builder_adjustment_cents === 0
+    && Number((await one(`SELECT sum(amount_cents)::bigint AS s FROM builder_assessment_coverage WHERE tenure_id = $1`, [LE.seller])).s) === 12273 + 2102 * 3 + 2034 * 2);
+// Rerun after the true-up: the December period (with its +1) can never be written twice.
+check('YEAR-END RERUN: writing December again (with or without the penny) is refused; the year still totals exactly $247.50 with ONE +1 true-up',
+  /uq_builder_assessment_coverage_period|would leave a overlap/.test(await err(`INSERT INTO builder_assessment_coverage (community_id, property_id, tenure_id, builder_company_id, fiscal_year, covered_from, covered_through, days, days_in_year, annual_assessment_cents, builder_rate_pct, base_amount_cents, rounding_true_up_cents, amount_cents, source_type, accrual_run_id, created_by)
+    VALUES ($1, $2, $3, $4, 2026, '2026-12-01', '2026-12-31', 31, 365, 49500, 50, 2102, 1, 2103, 'scheduled_accrual', gen_random_uuid(), 'test')`, [SCR, LY.property, LY.seller, LENNAR]) || '')
+    && (await one(`SELECT sum(amount_cents)::bigint AS s, sum(rounding_true_up_cents)::bigint AS tu, count(*) FILTER (WHERE rounding_true_up_cents <> 0)::int AS n FROM builder_assessment_coverage WHERE tenure_id = $1 AND status <> 'voided'`, [LY.seller]).then((x) => x.s == 24750 && x.n === 1 && x.tu == 1)));
+const decId = (await one(`SELECT id FROM builder_assessment_coverage WHERE tenure_id = $1 AND covered_from = '2026-12-01'`, [LY.seller])).id;
+await db.query(`UPDATE builder_assessment_coverage SET status = 'voided', voided_by = 'ed', voided_at = now(), void_reason = 'rerun test' WHERE id = $1`, [decId]);
+check('YEAR-END RERUN after voiding December: the rewrite must again carry exactly +1 (never +2: the voided penny does not count)',
+  /must carry a rounding true-up of 1 cents/.test(await err(`INSERT INTO builder_assessment_coverage (community_id, property_id, tenure_id, builder_company_id, fiscal_year, covered_from, covered_through, days, days_in_year, annual_assessment_cents, builder_rate_pct, base_amount_cents, rounding_true_up_cents, amount_cents, source_type, accrual_run_id, created_by)
+    VALUES ($1, $2, $3, $4, 2026, '2026-12-01', '2026-12-31', 31, 365, 49500, 50, 2102, 2, 2104, 'scheduled_accrual', gen_random_uuid(), 'test')`, [SCR, LY.property, LY.seller, LENNAR]) || ''));
+await cover(LY, { from: '2026-12-01', through: '2026-12-31', trueUp: 1 });
+check('...rewritten with +1: the live year totals exactly $247.50 again, one true-up row',
+  JSON.stringify(await one(`SELECT sum(amount_cents)::bigint AS s, count(*) FILTER (WHERE rounding_true_up_cents <> 0)::int AS n FROM builder_assessment_coverage WHERE tenure_id = $1 AND status <> 'voided'`, [LY.seller])) === JSON.stringify({ s: 24750, n: 1 }));
 
 // ---------------------------------------------------------------- mid-year (the issue's example)
 // Posting mechanics on a community converted in an EARLIER year: no conversion-year coverage is
