@@ -301,6 +301,7 @@
 
 <div class="toast" id="toast"></div>
 
+<script src="/transfer-proration.js"></script>
 <script>
 'use strict';
 const state = { items: [], total: 0, selectedId: null };
@@ -347,7 +348,7 @@ async function api(method, path, body) {
   if (body) { opts.headers['Content-Type'] = 'application/json'; opts.body = JSON.stringify(body); }
   const r = await fetch(path, opts);
   const data = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
+  if (!r.ok) throw Object.assign(new Error(data.error || `HTTP ${r.status}`), { status: r.status, body: data });
   return data;
 }
 
@@ -566,7 +567,7 @@ function exceptionsHtml(list) {
     + '<ul style="margin:8px 0 0 18px;">' + rows + '</ul></div>';
 }
 
-async function decide(id, action) {
+async function decide(id, action, prorationFlags) {
   const reviewed_by = $('reviewedBy').value.trim();
   if (!reviewed_by) { toast('Enter your name first (audit trail).', 'error'); return; }
   const notes = $('decisionNotes').value.trim();
@@ -581,6 +582,8 @@ async function decide(id, action) {
     if (action === 'approve') {
       body.settlement_date = $('settlementDate').value;
       if (!body.settlement_date) { toast('Enter the settlement date first.', 'error'); btn.disabled = false; btn.textContent = '✓ Approve — apply ownership transition'; return; }
+      // Assessment proration (issue #94): only from the staff's click on the calculation panel.
+      Object.assign(body, prorationFlags || {});
     }
     const res = await api('POST', `/api/ownership-proposals/${id}/${action}`, body);
     const nExc = res && Array.isArray(res.transfer_exceptions) ? res.transfer_exceptions.length : 0;
@@ -589,7 +592,25 @@ async function decide(id, action) {
       : 'Proposal rejected.', 'success');
     await loadQueue();
     await loadDetail(id);
+    if (action === 'approve' && res.proration) {
+      const host = document.createElement('div');
+      host.innerHTML = TransferProration.resultHtml(res.proration, null);
+      if (host.innerHTML) toast(host.textContent.trim(), res.proration.status === 'posted' || res.proration.status === 'already_posted' ? 'success' : 'error');
+    }
   } catch (err) {
+    if (action === 'approve' && err.status === 409 && err.body && err.body.proration) {
+      // Builder-to-homeowner proration: show the calculation next to the button; nothing was written.
+      const old = document.getElementById('tpPanel'); if (old) old.remove();
+      const panel = TransferProration.confirmPanel(err.body, {
+        onConfirm: () => { panel.remove(); decide(id, 'approve', { proration_confirmed: true }); },
+        onAck: () => { panel.remove(); decide(id, 'approve', { proration_blocked_ack: true }); },
+      });
+      panel.id = 'tpPanel';
+      btn.parentNode.insertBefore(panel, btn);
+      btn.disabled = false;
+      btn.textContent = '✓ Approve — apply ownership transition';
+      return;
+    }
     toast(`${action} failed: ${err.message}`, 'error');
     btn.disabled = false;
     btn.textContent = action === 'approve' ? '✓ Approve — apply ownership transition' : 'Reject';

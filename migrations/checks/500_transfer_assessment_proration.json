@@ -1,0 +1,128 @@
+{
+  "migration": "500_transfer_assessment_proration.sql",
+  "summary": "Issue #94: builder-to-homeowner assessment proration inside the ownership transfer (Still Creek Ranch / Lennar only). Builder rates may be a percent of the homeowner rate; transfer_proration_builders says which builders trigger it; assessment_prorations ties each charge to the transfer, tenure, ledger row, batch and GL entry; transfer_proration_plan (read-only) and post_transfer_assessment_proration (writes a draft batch) implement the calendar-day rule and block on ambiguous builder activity. Seeds Still Creek's $495.00 homeowner rate, 50% builder rate and the Lennar rule. No ledger, GL, tenure or ownership row changes.",
+  "requires": [
+    "360_assessment_proration.sql",
+    "459_ownership_transfer_single_path.sql",
+    "461_payment_applications.sql"
+  ],
+  "preflight": [
+    {
+      "name": "assessment_prorations exists (360)",
+      "sql": "SELECT count(*)::int FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'assessment_prorations'",
+      "expect": 1
+    },
+    {
+      "name": "no proration has ever been posted (the table changes shape safely)",
+      "sql": "SELECT count(*)::int FROM assessment_prorations",
+      "expect": 0
+    },
+    {
+      "name": "transfer_proration_builders does not exist yet",
+      "sql": "SELECT count(*)::int FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'transfer_proration_builders'",
+      "expect": 0
+    },
+    {
+      "name": "Still Creek has no assessment rates yet (the seed adds them)",
+      "sql": "SELECT count(*)::int FROM community_assessment_rates WHERE community_id = 'a0000000-0000-4000-8000-000000000006'",
+      "expect": 0
+    }
+  ],
+  "expected_changes": [
+    "community_assessment_rates: annual_amount_cents becomes nullable; adds pct_of_homeowner_rate (builder only, 0 < pct <= 100); a builder rate is an amount OR a percent, a homeowner rate is an amount.",
+    "Creates transfer_proration_builders (community, builder company, active), PK (community_id, builder_company_id), FKs RESTRICT. Grants SELECT, INSERT, UPDATE to service_role.",
+    "assessment_prorations: adds proposal_id, role, tenure_id, period_start/end, rate_pct, net_responsibility_cents, prior_billed_cents, homeowner_txn_id, batch_id, journal_entry_id, status, with FKs (RESTRICT), role/status CHECKs, a completeness CHECK when tied to a transfer, and UNIQUE (proposal_id, role).",
+    "homeowner_transactions: unique index so one transfer can never carry two proration rows of the same role. No row changes.",
+    "Functions transfer_proration_name_has (immutable), transfer_proration_plan (read-only plan), post_transfer_assessment_proration (writes a draft batch + ledger rows + audit rows after an approved transfer); the two plan/post functions are service_role only.",
+    "Seeds Still Creek Ranch: homeowner rate $495.00 (12-31 year), builder rate 50% of the homeowner rate, and the Lennar rule (3 rows). No other row in any table changes."
+  ],
+  "objects": {
+    "added": [
+      "column:assessment_prorations.batch_id",
+      "column:assessment_prorations.homeowner_txn_id",
+      "column:assessment_prorations.journal_entry_id",
+      "column:assessment_prorations.net_responsibility_cents",
+      "column:assessment_prorations.period_end",
+      "column:assessment_prorations.period_start",
+      "column:assessment_prorations.prior_billed_cents",
+      "column:assessment_prorations.proposal_id",
+      "column:assessment_prorations.rate_pct",
+      "column:assessment_prorations.role",
+      "column:assessment_prorations.status",
+      "column:assessment_prorations.tenure_id",
+      "column:community_assessment_rates.pct_of_homeowner_rate",
+      "column:transfer_proration_builders.active",
+      "column:transfer_proration_builders.builder_company_id",
+      "column:transfer_proration_builders.community_id",
+      "column:transfer_proration_builders.created_at",
+      "column:transfer_proration_builders.created_by",
+      "column:transfer_proration_builders.notes",
+      "constraint:assessment_prorations.assessment_prorations_batch_fk",
+      "constraint:assessment_prorations.assessment_prorations_je_fk",
+      "constraint:assessment_prorations.assessment_prorations_proposal_fk",
+      "constraint:assessment_prorations.assessment_prorations_role_check",
+      "constraint:assessment_prorations.assessment_prorations_status_check",
+      "constraint:assessment_prorations.assessment_prorations_tenure_fk",
+      "constraint:assessment_prorations.assessment_prorations_transfer_complete",
+      "constraint:assessment_prorations.assessment_prorations_txn_fk",
+      "constraint:community_assessment_rates.community_assessment_rates_amount_or_pct",
+      "constraint:community_assessment_rates.community_assessment_rates_pct_range",
+      "constraint:transfer_proration_builders.transfer_proration_builders_builder_fk",
+      "constraint:transfer_proration_builders.transfer_proration_builders_community_fk",
+      "constraint:transfer_proration_builders.transfer_proration_builders_pkey",
+      "function:post_transfer_assessment_proration",
+      "function:transfer_proration_name_has",
+      "function:transfer_proration_plan",
+      "index:transfer_proration_builders_pkey",
+      "index:uq_assessment_prorations_transfer_role",
+      "index:uq_homeowner_txn_transfer_proration",
+      "table:transfer_proration_builders"
+    ],
+    "changed": [
+      "column:community_assessment_rates.annual_amount_cents"
+    ],
+    "removed": []
+  },
+  "row_changes": {
+    "community_assessment_rates": 2,
+    "transfer_proration_builders": 1,
+    "homeowner_transactions": 0,
+    "assessment_prorations": 0
+  },
+  "protected": [
+    {
+      "table": "homeowner_transactions",
+      "order_by": "id"
+    },
+    {
+      "table": "ownership_tenures",
+      "order_by": "id"
+    },
+    {
+      "table": "property_ownerships",
+      "order_by": "id"
+    }
+  ],
+  "verify": [
+    {
+      "name": "Still Creek rates seeded as configuration",
+      "sql": "SELECT count(*)::int FROM community_assessment_rates WHERE community_id = 'a0000000-0000-4000-8000-000000000006' AND ((owner_class = 'homeowner' AND annual_amount_cents = 49500) OR (owner_class = 'builder' AND pct_of_homeowner_rate = 50 AND annual_amount_cents IS NULL))",
+      "expect": 2
+    },
+    {
+      "name": "exactly one builder rule (Still Creek / Lennar)",
+      "sql": "SELECT count(*)::int FROM transfer_proration_builders",
+      "expect": 1
+    },
+    {
+      "name": "one proration per transfer and role (unique index present)",
+      "sql": "SELECT count(*)::int FROM pg_indexes WHERE indexname IN ('uq_assessment_prorations_transfer_role', 'uq_homeowner_txn_transfer_proration')",
+      "expect": 2
+    },
+    {
+      "name": "post function is service_role only",
+      "sql": "SELECT (CASE WHEN has_function_privilege('service_role', 'post_transfer_assessment_proration(uuid,text,boolean)', 'EXECUTE') AND NOT has_function_privilege('anon', 'post_transfer_assessment_proration(uuid,text,boolean)', 'EXECUTE') AND NOT has_function_privilege('authenticated', 'transfer_proration_plan(uuid,uuid,date,text,uuid)', 'EXECUTE') THEN 1 ELSE 0 END)::int",
+      "expect": 1
+    }
+  ]
+}

@@ -42,7 +42,7 @@ router.post('/preview', express.json(), async (req, res) => {
 router.post('/post', express.json(), async (req, res) => {
   try {
     const out = await postProration({ ...(req.body || {}), posted_by: (req.body && req.body.posted_by) || 'staff' });
-    if (!out.ok) return res.status(out.error === 'already_prorated' ? 409 : 400).json(out);
+    if (!out.ok) return res.status(['already_prorated', 'proration_runs_at_transfer'].includes(out.error) ? 409 : 400).json(out);
     res.json(out);
   } catch (err) { fail(res, 'post', err); }
 });
