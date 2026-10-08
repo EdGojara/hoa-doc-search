@@ -323,7 +323,20 @@ router.post('/request', express.json({ limit: '16kb' }), async (req, res) => {
       ? [graphSend.ED_MAILBOX, graphSend.TESSA_MAILBOX].filter(Boolean)
       : [];
 
-    const out = await runRequest(text, { resolveRecipient, searchMailbox, mailboxes });
+    // Availability (Ed 2026-10-07): the slot comes from Ed's calendar + Tessa's held
+    // slots before anything is drafted or staged. No Graph = no blind booking: the
+    // request still parses, but nothing is staged without a calendar read.
+    const { chooseSlot, settleHold } = require('../lib/ea/tessa_availability');
+    let graphToken = null;
+    const schedule = graphSend.isConfigured()
+      ? async (args) => { graphToken = graphToken || await graphSend.getToken(); return chooseSlot(args, { token: graphToken, supabase, edMailbox: graphSend.ED_MAILBOX }); }
+      : null;
+    let out;
+    try { out = await runRequest(text, { resolveRecipient, searchMailbox, mailboxes, schedule }); }
+    catch (e) {
+      if (e && (e.code === 'calendar_read_failed' || e.code === 'holds_read_failed')) return res.status(503).json({ error: e.message });
+      throw e;
+    }
     if (out.degraded) return res.status(503).json({ error: 'Tessa could not work that one out. Try saying it a different way.' });
 
     // Create any contacts Ed asked her to add — into ea_contacts, the book she
@@ -351,7 +364,18 @@ router.post('/request', express.json({ limit: '16kb' }), async (req, res) => {
     // always in the room; never invite Tessa herself.
     let staged_meeting = null; let staged_meeting_error = null;
     const mode = (out.meeting && out.meeting.mode) || 'online';
-    const canStage = out.meeting && out.meeting.direct_invite
+    const sched = out.meeting && out.meeting.schedule;
+    const fmtAlt = (a) => require('../lib/ea/tessa_slots').labelOf(a.start);
+    if (sched && sched.status !== 'ok') {
+      // Never a double-booking and never a guess: say why and offer the best 2-3 openings.
+      staged_meeting_error = (sched.status === 'conflict' ? 'That time is not open on your calendar: ' : 'No open slot in that window: ')
+        + (sched.reasons || []).join('; ') + '.'
+        + (sched.alternatives && sched.alternatives.length ? ' Open alternatives: ' + sched.alternatives.map(fmtAlt).join('; ') + '.' : ' No nearby opening found.');
+    }
+    if (out.meeting && out.meeting.direct_invite && !schedule) {
+      staged_meeting_error = 'Tessa cannot read your calendar right now, so nothing was booked (she never books a time blind).';
+    }
+    const canStage = !staged_meeting_error && out.meeting && out.meeting.direct_invite
       && (mode === 'calendar_only' ? (out.to.length || (out.parsed.to_hints || []).length || out.meeting.topic) : out.to.length);
     if (canStage) {
       const wt = resolveMeetingWallTimes(out.meeting);
@@ -387,7 +411,12 @@ router.post('/request', express.json({ limit: '16kb' }), async (req, res) => {
           const { data, error } = (same && same.length)
             ? { data: { ...same[0], already_queued: true }, error: null }
             : await supabase.from('tessa_outbox').insert({ ...row, created_by: owner.email || 'Ed' }).select(SEL).single();
-          if (!error && data) {
+          if (!error && data && !data.already_queued) {
+            // Two requests raced for one slot: the hold written first keeps it.
+            const held = await settleHold(supabase, { id: data.id, meeting_start: data.meeting_start, meeting_end: data.meeting_end });
+            if (!held.kept) { staged_meeting_error = held.reason + ' Ask Tessa again for the next opening.'; out.draft = null; }
+          }
+          if (!error && data && !staged_meeting_error) {
             const hm = (w) => { const [h, m] = String(w).slice(11, 16).split(':').map(Number); return `${((h + 11) % 12) + 1}:${String(m).padStart(2, '0')} ${h < 12 ? 'AM' : 'PM'}`; };
             staged_meeting = { ...data, when_label: `${wt.date_label}, ${hm(wt.start)} to ${hm(wt.end)} Central` };
           } else if (error) {
