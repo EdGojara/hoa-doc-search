@@ -7,8 +7,8 @@
 //   POST /preview                            compute a proration (no write)
 //   POST /post                               post the prorated charge + log it
 //   GET  /history?community_id[&property_id] the proration audit trail
-//   GET  /transfer/staged?community_id       transfer prorations STAGED until the
-//                                            community's accounting conversion posts
+//   GET  /transfer/queue?community_id        transfer prorations not yet posted,
+//                                            recalculated: Staged / Ready to Post / Blocked
 //   POST /transfer/:proposalId/post          post one (recomputed; 409 with the
 //                                            numbers until { confirmed: true })
 // ============================================================================
@@ -61,9 +61,9 @@ router.get('/history', async (req, res) => {
   } catch (err) { fail(res, 'history', err); }
 });
 
-router.get('/transfer/staged', async (req, res) => {
-  try { res.json({ staged: await TP.listStagedProrations(supabase, req.query.community_id || null) }); }
-  catch (err) { fail(res, 'transfer-staged', err); }
+router.get('/transfer/queue', async (req, res) => {
+  try { res.json({ queue: await TP.listTransferQueue(supabase, req.query.community_id || null) }); }
+  catch (err) { fail(res, 'transfer-queue', err); }
 });
 
 router.post('/transfer/:proposalId/post', express.json(), async (req, res) => {

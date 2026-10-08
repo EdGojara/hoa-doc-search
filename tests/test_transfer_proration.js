@@ -29,7 +29,7 @@ require.cache[postingPath] = { id: postingPath, filename: postingPath, loaded: t
 const TP = require('../lib/accounting/transfer_proration');
 
 const tests = []; const check = (n, fn) => tests.push([n, fn]);
-const ACCT = { 1300: 'acct-ar', 4000: 'acct-income' };
+const ACCT = { 1300: 'acct-ar', 4000: 'acct-income', 2205: 'acct-unearned' };
 const balanced = (lines) => lines.reduce((s, l) => s + l.debit_cents - l.credit_cents, 0) === 0;
 
 // A minimal supabase double: rpc results by name, tables as arrays, chained filters.
@@ -37,15 +37,25 @@ function fakeDb({ rpc = {}, tables = {}, failUpdate = null } = {}) {
   const t = JSON.parse(JSON.stringify(tables));
   const calls = { rpc: [], updates: [] };
   const q = (name) => {
-    let rows = (t[name] || []).slice(); let upd = null; const filters = [];
+    let rows = (t[name] || []).slice(); let upd = null; let ins = null; const filters = [];
     const api = {
       select() { return api; },
+      insert(r) { ins = Array.isArray(r) ? r : [r]; return api; },
+      not(k, op, v) { filters.push((r) => !(op === 'is' && v === null ? r[k] == null : r[k] === v)); return api; },
+      order() { return api; }, limit() { return api; },
+      single() { return api._done(true); },
       eq(k, v) { filters.push((r) => r[k] === v); return api; },
       in(k, vs) { filters.push((r) => vs.includes(r[k])); return api; },
       update(p) { upd = p; return api; },
       maybeSingle() { return api._done(true); },
       then(res, rej) { return api._done(false).then(res, rej); },
       async _done(single) {
+        if (ins) {
+          const made = ins.map((r, i) => ({ id: name + '-' + ((t[name] || []).length + i + 1), ...r }));
+          t[name] = [...(t[name] || []), ...made];
+          calls.inserts = calls.inserts || []; calls.inserts.push({ table: name, rows: made });
+          return { data: single ? made[0] : made, error: null };
+        }
         const hit = rows.filter((r) => filters.every((f) => f(r)));
         if (upd) {
           if (failUpdate === name) return { data: null, error: { message: 'simulated ' + name + ' failure' } };
@@ -71,12 +81,16 @@ const PLAN = {
   builder_due_cents: 12273, homeowner_due_cents: 24953, builder_adjustment_cents: 12273, builder_prior_billed_cents: 0,
 };
 const WRITTEN = { ...PLAN, written: true, batch_id: 'batch-1', property_id: 'prop-1', community_id: 'scr', seller_tenure_id: 'ten-lennar', buyer_tenure_id: 'ten-buyer' };
+// Still Creek's own treatment: deferred through 2205, released 1/n monthly from the settlement month.
+const SCR_PLAN = { ...WRITTEN, income_account: '4000', deferral_account: '2205', homeowner_period_end: '2026-12-31',
+  homeowner_recognition: { method: 'straight_line_monthly', start_month: '2026-07-01', term_months: 6, monthly_cents: 4159 } };
 const ROWS = [
   { id: 'ap-b', role: 'builder_adjustment', status: 'draft', prorated_amount_cents: 12273, batch_id: 'batch-1', tenure_id: 'ten-lennar', community_id: 'scr', property_id: 'prop-1', proposal_id: 'prop-x' },
   { id: 'ap-h', role: 'homeowner_charge', status: 'draft', prorated_amount_cents: 24953, batch_id: 'batch-1', tenure_id: 'ten-buyer', community_id: 'scr', property_id: 'prop-1', proposal_id: 'prop-x' },
 ];
 const BASE_TABLES = {
-  chart_of_accounts: [{ id: 'acct-ar', account_number: '1300', community_id: 'scr' }, { id: 'acct-income', account_number: '4000', community_id: 'scr' }],
+  chart_of_accounts: [{ id: 'acct-ar', account_number: '1300', community_id: 'scr' }, { id: 'acct-income', account_number: '4000', community_id: 'scr' }, { id: 'acct-unearned', account_number: '2205', community_id: 'scr' }],
+  recognition_schedules: [], recognition_schedule_segments: [],
   assessment_prorations: ROWS,
   journal_entries: [],
   transaction_upload_batches: [{ id: 'batch-1', status: 'draft' }],
@@ -94,6 +108,36 @@ check('GL (Lennar billed $495.00): the builder credit reverses income and AR (Dr
   assert.ok(balanced(l));
   assert.deepStrictEqual(l.slice(0, 2).map((x) => [x.account_id, x.debit_cents, x.credit_cents, x.property_id || null]), [['acct-income', 37227, 0, null], ['acct-ar', 0, 37227, 'prop-1']]);
 });
+check('Still Creek treatment (7/1, unbilled lot): builder Dr 1300 / Cr 4000 $122.73 (elapsed); new owner Dr 1300 / Cr 2205 $249.53 (deferred)', () => {
+  const l = TP.glLines(ACCT, SCR_PLAN);
+  assert.ok(balanced(l));
+  assert.deepStrictEqual(l.map((x) => [x.account_id, x.debit_cents, x.credit_cents]), [
+    ['acct-ar', 12273, 0], ['acct-income', 0, 12273], ['acct-ar', 24953, 0], ['acct-unearned', 0, 24953]]);
+});
+check('a credit against a DEFERRED annual assessment can never reach the GL from here (it needs the deferral schedule changed by a person)', () => {
+  assert.throws(() => TP.glLines(ACCT, { ...SCR_PLAN, builder_adjustment_cents: -37227 }), /deferral_schedule_adjustment_required/);
+});
+check('post (Still Creek): the new owner\u2019s share gets ONE recognition schedule (2205 -> 4000, Jul-Dec, $41.59/month, keyed to the proration row); a retry does not create a second', async () => {
+  posted.length = 0;
+  const db = fakeDb({ rpc: { post_transfer_assessment_proration: { data: SCR_PLAN, error: null } }, tables: BASE_TABLES });
+  const r = await TP.postTransferProration(db, { proposalId: 'prop-x', postedBy: 'ed' });
+  assert.strictEqual(r.status, 'posted');
+  const s = db.t.recognition_schedules;
+  assert.strictEqual(s.length, 1);
+  assert.deepStrictEqual(pickK(s[0], ['schedule_type', 'balance_account_number', 'recognition_account_id', 'recognize_amount_cents', 'start_month', 'term_months', 'monthly_amount_cents', 'recognition_method', 'status', 'source_type', 'source_id', 'source_journal_entry_id', 'period_start', 'period_end']), {
+    schedule_type: 'deferred_revenue', balance_account_number: '2205', recognition_account_id: 'acct-income', recognize_amount_cents: 24953,
+    start_month: '2026-07-01', term_months: 6, monthly_amount_cents: 4159, recognition_method: 'straight_line_monthly', status: 'active',
+    source_type: 'assessment_billing', source_id: 'ap-h', source_journal_entry_id: 'je-1', period_start: '2026-07-01', period_end: '2026-12-31' });
+  assert.deepStrictEqual(db.t.recognition_schedule_segments.map((x) => [x.income_account_number, x.monthly_amount_cents]), [['4000', 4159]]);
+  assert.strictEqual(db.t.assessment_prorations.find((x) => x.role === 'homeowner_charge').recognition_schedule_id, s[0].id);
+  assert.ok(posted[0].lines.some((x) => x.account_id === 'acct-unearned' && x.credit_cents === 24953));
+  // Retry with the schedule already there: found by its source, not created again.
+  const db2 = fakeDb({ rpc: { post_transfer_assessment_proration: { data: SCR_PLAN, error: null } }, tables: { ...BASE_TABLES, recognition_schedules: [{ id: 'sched-1', source_type: 'assessment_billing', source_id: 'ap-h' }] } });
+  await TP.postTransferProration(db2, { proposalId: 'prop-x' });
+  assert.strictEqual(db2.t.recognition_schedules.length, 1);
+});
+const pickK = (o, ks) => Object.fromEntries(ks.map((k) => [k, o[k]]));
+
 check('GL (Jan 1: no builder share, Lennar unbilled): only the homeowner charge', () => {
   const l = TP.glLines(ACCT, { ...WRITTEN, builder_adjustment_cents: 0, homeowner_due_cents: 49500 });
   assert.deepStrictEqual(l.map((x) => x.debit_cents + x.credit_cents), [49500, 49500]);
@@ -174,6 +218,34 @@ check('still not converted: posting a staged proration stays staged even when co
   assert.strictEqual(posted.length, 0);
 });
 
+// ------------------------------------------------------------------ the queue (Ed 2026-10-08)
+check('queue: each unposted transfer proration is recalculated and shown Staged / Ready to Post / Blocked, with the reason; nothing posts', async () => {
+  posted.length = 0;
+  const staged = (pid, prop) => [{ proposal_id: pid, community_id: 'scr', property_id: prop, role: 'builder_adjustment', status: 'staged', effective_date: '2026-07-01', properties: { street_address: prop } },
+    { proposal_id: pid, community_id: 'scr', property_id: prop, role: 'homeowner_charge', status: 'staged', effective_date: '2026-07-01', properties: { street_address: prop } }];
+  const plans = {
+    'p-unbilled': { ...PLAN, seller_names: ['Lennar Homes LLC'], posting_ready: false },
+    'p-ready': { ...PLAN, seller_names: ['Lennar Homes LLC'], posting_ready: true },
+    'p-5450': { ...PLAN, seller_names: ['Lennar Homes LLC'], posting_ready: true, blocked: true, blocked_reasons: ['ambiguous_builder_assessment'], builder_prior_rows: [{ date: '2026-05-13', description: 'Annual Assessment', amount_cents: 9018 }] },
+    'p-5302': { ...PLAN, seller_names: ['Lennar Homes LLC'], posting_ready: true, blocked: true, blocked_reasons: ['deferral_schedule_adjustment_required'], builder_prior_billed_cents: 49500,
+      deferral_adjustment: { income_account: '4000', deferral_account: '2205', income_reversal_cents: 12477, deferral_reversal_cents: 24750, ar_credit_cents: 37227, schedule_reduction_monthly_cents: 4125, schedule_reduction_months: 6, schedule_reduction_from: '2026-07-01' } },
+  };
+  const db = fakeDb({
+    rpc: { post_transfer_assessment_proration: ({ p_proposal_id, p_dry_run }) => { assert.strictEqual(p_dry_run, true, 'the queue only ever dry-runs'); return { data: { ...plans[p_proposal_id], staged: true }, error: null }; } },
+    tables: { assessment_prorations: [...staged('p-unbilled', '8211 Rustic Pine Trail'), ...staged('p-ready', '8218 Rustic Pine Trail'), ...staged('p-5450', '5450 Still Meadow Lane'), ...staged('p-5302', '5302 Sleepy Fox Lane')] },
+  });
+  const qd = await TP.listTransferQueue(db, 'scr');
+  const by = Object.fromEntries(qd.map((x) => [x.property, x]));
+  assert.deepStrictEqual(qd.map((x) => [x.property, x.status]), [['8211 Rustic Pine Trail', 'Staged'], ['8218 Rustic Pine Trail', 'Ready to Post'], ['5450 Still Meadow Lane', 'Blocked'], ['5302 Sleepy Fox Lane', 'Blocked']]);
+  assert.deepStrictEqual([by['8218 Rustic Pine Trail'].builder_due_cents, by['8218 Rustic Pine Trail'].homeowner_due_cents, by['8218 Rustic Pine Trail'].outgoing_owner, by['8218 Rustic Pine Trail'].incoming_owner],
+    [12273, 24953, 'Lennar Homes LLC', 'Pat Homeowner']);
+  assert.ok(/accounting conversion/.test(by['8211 Rustic Pine Trail'].reasons[0]));
+  assert.ok(/does not show clearly what it was billed/.test(by['5450 Still Meadow Lane'].reasons[0]));
+  assert.ok(/unearned-income schedule/.test(by['5302 Sleepy Fox Lane'].reasons[0]) && by['5302 Sleepy Fox Lane'].deferral_adjustment.deferral_reversal_cents === 24750);
+  assert.strictEqual(posted.length, 0);
+  assert.strictEqual((db.calls.inserts || []).length + db.calls.updates.length, 0, 'listing writes nothing');
+});
+
 // ------------------------------------------------------------------ the gate
 const gate = (data, extra = {}) => TP.gateTransferProration(fakeDb({ rpc: { transfer_proration_plan: data } }),
   { propertyId: 'p', sellerTenureId: 't', settlementDate: '2026-07-01', buyerName: 'Pat', ...extra });
@@ -224,7 +296,11 @@ check('wiring: Ownership Review approve gates BEFORE and posts AFTER the transfe
 check('wiring: posting later (Home Sales retry and the generic transfer endpoint) goes through postStagedProration, which requires confirmation', () => {
   assert.ok(read('api/home_sales.js').includes('TP.postStagedProration(supabase'));
   const ap = read('api/assessment_proration.js');
-  assert.ok(ap.includes("router.get('/transfer/staged'") && ap.includes("router.post('/transfer/:proposalId/post'") && ap.includes('TP.postStagedProration'));
+  assert.ok(ap.includes("router.get('/transfer/queue'") && ap.includes("router.post('/transfer/:proposalId/post'") && ap.includes('TP.postStagedProration'));
+  const hs = read('public/home_sales.html');
+  assert.ok(hs.includes('/api/assessment-proration/transfer/queue') && hs.includes('TransferProration.queueHtml') && hs.includes('TransferProration.wireQueue'), 'Home Sales shows the queue');
+  const ui = read('public/transfer-proration.js');
+  assert.ok(ui.includes("confirmed: confirmed === true") && /post\(false\)/.test(ui), 'the queue button asks first (unconfirmed), posts only after Confirm');
 });
 check('wiring: the manual Prorate tool refuses a builder-to-homeowner proration where the transfer does it', () => {
   const s = read('lib/accounting/assessment_proration.js');

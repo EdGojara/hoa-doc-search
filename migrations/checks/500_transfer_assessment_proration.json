@@ -5,7 +5,8 @@
     "452_conversion_staging.sql",
     "360_assessment_proration.sql",
     "459_ownership_transfer_single_path.sql",
-    "461_payment_applications.sql"
+    "461_payment_applications.sql",
+    "466_recognition_schedules_controls.sql"
   ],
   "preflight": [
     {
@@ -30,12 +31,12 @@
     }
   ],
   "expected_changes": [
-    "community_assessment_rates: annual_amount_cents becomes nullable; adds pct_of_homeowner_rate (builder only, 0 < pct <= 100); a builder rate is an amount OR a percent, a homeowner rate is an amount.",
+    "community_assessment_rates: annual_amount_cents becomes nullable; adds pct_of_homeowner_rate (builder only, 0 < pct <= 100); a builder rate is an amount OR a percent, a homeowner rate is an amount. Adds income_account_number (default 4000) and deferral_account_number (homeowner row only): the community's revenue treatment.",
     "Creates transfer_proration_builders (community, builder company, active), PK (community_id, builder_company_id), FKs RESTRICT. Grants SELECT, INSERT, UPDATE to service_role.",
-    "assessment_prorations: adds proposal_id, role, tenure_id, period_start/end, rate_pct, net_responsibility_cents, prior_billed_cents, homeowner_txn_id, batch_id, journal_entry_id, status, with FKs (RESTRICT), role/status CHECKs, a completeness CHECK when tied to a transfer, and UNIQUE (proposal_id, role).",
+    "assessment_prorations: adds proposal_id, role, tenure_id, period_start/end, rate_pct, net_responsibility_cents, prior_billed_cents, homeowner_txn_id, batch_id, journal_entry_id, status, staged_plan, recognition_schedule_id (FK recognition_schedules), with FKs (RESTRICT), role/status CHECKs, a completeness CHECK when tied to a transfer, and UNIQUE (proposal_id, role).",
     "homeowner_transactions: unique index so one transfer can never carry two proration rows of the same role. No row changes.",
     "Functions transfer_proration_name_has (immutable), transfer_proration_plan (read-only plan), post_transfer_assessment_proration (writes a draft batch + ledger rows + audit rows after an approved transfer); the two plan/post functions are service_role only.",
-    "Seeds Still Creek Ranch: homeowner rate $495.00 (12-31 year), builder rate 50% of the homeowner rate, and the Lennar rule (3 rows). No other row in any table changes."
+    "Seeds Still Creek Ranch: homeowner rate $495.00 (12-31 year) deferred through 2205 into 4000 (its own GL: 1/1/2026 reclass of $158,895.00 to 2205, $13,241.25 released monthly), builder rate 50% of the homeowner rate, and the Lennar rule (3 rows). No other row in any table changes."
   ],
   "objects": {
     "added": [
@@ -48,10 +49,13 @@
       "column:assessment_prorations.prior_billed_cents",
       "column:assessment_prorations.proposal_id",
       "column:assessment_prorations.rate_pct",
+      "column:assessment_prorations.recognition_schedule_id",
       "column:assessment_prorations.role",
       "column:assessment_prorations.staged_plan",
       "column:assessment_prorations.status",
       "column:assessment_prorations.tenure_id",
+      "column:community_assessment_rates.deferral_account_number",
+      "column:community_assessment_rates.income_account_number",
       "column:community_assessment_rates.pct_of_homeowner_rate",
       "column:transfer_proration_builders.active",
       "column:transfer_proration_builders.builder_company_id",
@@ -62,12 +66,14 @@
       "constraint:assessment_prorations.assessment_prorations_batch_fk",
       "constraint:assessment_prorations.assessment_prorations_je_fk",
       "constraint:assessment_prorations.assessment_prorations_proposal_fk",
+      "constraint:assessment_prorations.assessment_prorations_recognition_fk",
       "constraint:assessment_prorations.assessment_prorations_role_check",
       "constraint:assessment_prorations.assessment_prorations_status_check",
       "constraint:assessment_prorations.assessment_prorations_tenure_fk",
       "constraint:assessment_prorations.assessment_prorations_transfer_complete",
       "constraint:assessment_prorations.assessment_prorations_txn_fk",
       "constraint:community_assessment_rates.community_assessment_rates_amount_or_pct",
+      "constraint:community_assessment_rates.community_assessment_rates_deferral_homeowner",
       "constraint:community_assessment_rates.community_assessment_rates_pct_range",
       "constraint:transfer_proration_builders.transfer_proration_builders_builder_fk",
       "constraint:transfer_proration_builders.transfer_proration_builders_community_fk",
@@ -107,8 +113,8 @@
   ],
   "verify": [
     {
-      "name": "Still Creek rates seeded as configuration",
-      "sql": "SELECT count(*)::int FROM community_assessment_rates WHERE community_id = 'a0000000-0000-4000-8000-000000000006' AND ((owner_class = 'homeowner' AND annual_amount_cents = 49500) OR (owner_class = 'builder' AND pct_of_homeowner_rate = 50 AND annual_amount_cents IS NULL))",
+      "name": "Still Creek rates seeded as configuration (deferred through 2205 into 4000)",
+      "sql": "SELECT count(*)::int FROM community_assessment_rates WHERE community_id = 'a0000000-0000-4000-8000-000000000006' AND ((owner_class = 'homeowner' AND annual_amount_cents = 49500 AND income_account_number = '4000' AND deferral_account_number = '2205') OR (owner_class = 'builder' AND pct_of_homeowner_rate = 50 AND annual_amount_cents IS NULL AND deferral_account_number IS NULL))",
       "expect": 2
     },
     {

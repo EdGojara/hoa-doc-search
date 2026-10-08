@@ -55,6 +55,7 @@ await db.exec(`
     effective_start_date date, proposed_owner_name text, current_contact_id uuid, seller_tenure_id uuid REFERENCES ownership_tenures(id),
     buyer_tenure_id uuid REFERENCES ownership_tenures(id));
   CREATE TABLE journal_entries (id uuid PRIMARY KEY DEFAULT gen_random_uuid());
+  CREATE TABLE recognition_schedules (id uuid PRIMARY KEY DEFAULT gen_random_uuid());
   CREATE TABLE conversion_batches (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), community_id uuid NOT NULL REFERENCES communities(id), batch_code text NOT NULL,
     as_of_date date NOT NULL, status text NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','staged','validated','approved','posted','voided')), created_at timestamptz NOT NULL DEFAULT now());
   CREATE TABLE transaction_upload_batches (
@@ -82,7 +83,7 @@ const m457 = lf(`${REPO}/migrations/457_current_tenure_reader_views.sql`);
 const viewSql = m457.slice(m457.indexOf('CREATE OR REPLACE VIEW v_current_owner_ledger'), m457.indexOf('CREATE OR REPLACE VIEW v_current_owner_balance AS'));
 await db.exec(viewSql);
 await db.exec(lf(`${REPO}/migrations/360_assessment_proration.sql`));
-await db.exec(`INSERT INTO schema_migrations (filename, sha256) VALUES ('360_assessment_proration.sql', 'recorded'), ('452_conversion_staging.sql', 'recorded'), ('459_ownership_transfer_single_path.sql', 'recorded'), ('461_payment_applications.sql', 'recorded')`);
+await db.exec(`INSERT INTO schema_migrations (filename, sha256) VALUES ('360_assessment_proration.sql', 'recorded'), ('452_conversion_staging.sql', 'recorded'), ('459_ownership_transfer_single_path.sql', 'recorded'), ('461_payment_applications.sql', 'recorded'), ('466_recognition_schedules_controls.sql', 'recorded')`);
 
 const client = { query: async (sql, params) => {
   if (params) { const r = await db.query(sql, params.map((v) => (v && typeof v === 'object' ? JSON.stringify(v) : v))); return { rows: r.rows, rowCount: r.affectedRows ?? r.rows.length }; }
@@ -105,9 +106,9 @@ const r = await A.applyMigration({ ...ctx, planToken: plan.plan_token, log: { er
 check('apply: 500 applied and verified through the tool (objects + seeded rows as declared)', r.status === 'applied', JSON.stringify({ status: r.status, error: r.error, detail: r.detail }).slice(0, 1200));
 if (r.status !== 'applied') { console.log(`\n${pass} passed, ${fail} failed`); process.exit(1); }
 
-const rates = await q(`SELECT owner_class, annual_amount_cents, pct_of_homeowner_rate::text AS pct FROM community_assessment_rates WHERE community_id = $1 ORDER BY owner_class`, [SCR]);
-check('seed: Still Creek homeowner $495.00 and builder 50% of the homeowner rate (configuration, not code)',
-  JSON.stringify(rates) === JSON.stringify([{ owner_class: 'builder', annual_amount_cents: null, pct: '50.00' }, { owner_class: 'homeowner', annual_amount_cents: 49500, pct: null }]), JSON.stringify(rates));
+const rates = await q(`SELECT owner_class, annual_amount_cents, pct_of_homeowner_rate::text AS pct, income_account_number AS income, deferral_account_number AS deferral FROM community_assessment_rates WHERE community_id = $1 ORDER BY owner_class`, [SCR]);
+check('seed: Still Creek homeowner $495.00 deferred through 2205 into 4000, builder 50% of the homeowner rate (configuration from its own GL, not code)',
+  JSON.stringify(rates) === JSON.stringify([{ owner_class: 'builder', annual_amount_cents: null, pct: '50.00', income: '4000', deferral: null }, { owner_class: 'homeowner', annual_amount_cents: 49500, pct: null, income: '4000', deferral: '2205' }]), JSON.stringify(rates));
 
 // ---------------------------------------------------------------- the world
 let lotN = 0;
@@ -185,14 +186,15 @@ check('before conversion, 5302 Sleepy Fox: calculated (Lennar nets to $122.73; t
   JSON.stringify({ sb0, bal0 }));
 const TA0 = await approve(await lot({ prior: [{ date: '2026-05-13', cents: 9018 }] }), '2026-07-01');
 const sa0 = await post(TA0);
-check('before conversion, 5450 Still Meadow ($90.18): still BLOCKED as ambiguous, nothing staged',
-  sa0.blocked === true && sa0.blocked_reasons.includes('ambiguous_builder_assessment')
-    && (await one(`SELECT count(*)::int AS n FROM assessment_prorations WHERE proposal_id = $1`, [TA0.proposal])).n === 0);
+check('before conversion, 5450 Still Meadow ($90.18): BLOCKED as ambiguous; recorded for the queue (staged calculation), nothing financial',
+  sa0.blocked === true && sa0.blocked_reasons.includes('ambiguous_builder_assessment') && sa0.staged === true
+    && (await one(`SELECT count(*)::int AS n FROM assessment_prorations WHERE proposal_id = $1 AND status = 'staged' AND homeowner_txn_id IS NULL`, [TA0.proposal])).n === 2
+    && await htCount() === 0);
 
 // --report: print what the database holds for the three real lot shapes.
 const REPORT = process.argv.includes('--report');
 if (REPORT) { process.env.SUPABASE_URL = process.env.SUPABASE_URL || 'http://localhost'; process.env.SUPABASE_KEY = process.env.SUPABASE_KEY || 'test'; }   // module load only; no database call
-const glOf = (p) => require(`${REPO}/lib/accounting/transfer_proration.js`).glLines({ 1300: '1300 AR', 4000: '4000 Assessment Income' }, p)
+const glOf = (p) => require(`${REPO}/lib/accounting/transfer_proration.js`).glLines({ 1300: '1300 AR', 4000: '4000 Assessment Income', 2205: '2205 Unearned Income' }, p)
   .map((l) => `${l.debit_cents ? 'Dr' : 'Cr'} ${l.account_id} $${((l.debit_cents || l.credit_cents) / 100).toFixed(2)}`);
 async function report(stage) {
   if (!REPORT) return;
@@ -209,7 +211,15 @@ async function report(stage) {
     if (ht.length) {
       const plan = JSON.parse((await one(`SELECT raw_row_jsonb->>'plan' AS p FROM homeowner_transactions WHERE raw_row_jsonb->>'proposal_id' = $1 LIMIT 1`, [T.proposal])).p);
       console.log('   GL entry (assessment_billing, dated ' + plan.settlement_date + '):', glOf({ ...plan, property_id: T.property }).join(' | '));
-    } else console.log('   GL entry: none');
+      if (plan.homeowner_recognition) console.log(`   recognition schedule (created after the GL posts): 2205 -> 4000, ${plan.homeowner_recognition.start_month} for ${plan.homeowner_recognition.term_months} months, $${(plan.homeowner_recognition.monthly_cents / 100).toFixed(2)}/month (last month takes the rounding)`);
+    } else {
+      const p = await post(T, true);
+      console.log('   GL entry: none' + (p.blocked ? '  [BLOCKED: ' + p.blocked_reasons.join(', ') + ']' : ''));
+      if (p.deferral_adjustment) {
+        const d = p.deferral_adjustment;
+        console.log(`   required when resolved: Dr ${d.income_account} $${(d.income_reversal_cents / 100).toFixed(2)} | Dr ${d.deferral_account} $${(d.deferral_reversal_cents / 100).toFixed(2)} | Cr 1300 AR $${(d.ar_credit_cents / 100).toFixed(2)}; deferral schedule reduced $${(d.schedule_reduction_monthly_cents / 100).toFixed(2)}/month for ${d.schedule_reduction_months} months from ${d.schedule_reduction_from}`);
+      }
+    }
   }
 }
 await report('BEFORE STILL CREEK CONVERSION (no posted conversion_batches row)');
@@ -227,12 +237,21 @@ check('after conversion, posting the staged proration: the same two rows become 
     { role: 'builder_adjustment', status: 'draft', prorated_amount_cents: 12273, has_txn: true, has_batch: true, kept_plan: true },
     { role: 'homeowner_charge', status: 'draft', prorated_amount_cents: 24953, has_txn: true, has_batch: true, kept_plan: true }]) && await htCount() === 2,
   JSON.stringify({ s1: pick(s1, ['written', 'from_staged']), st1 }));
+check('after conversion, the new owner\u2019s share is billed to the deferral account and released monthly (2205 -> 4000, Jul-Dec, $41.59/month)',
+  s1.deferral_account === '2205' && s1.income_account === '4000' && JSON.stringify(s1.homeowner_recognition) === JSON.stringify({ method: 'straight_line_monthly', start_month: '2026-07-01', term_months: 6, monthly_cents: 4159 }),
+  JSON.stringify(pick(s1, ['deferral_account', 'income_account', 'homeowner_recognition'])));
 const ss1 = await post(TS0);
-const credit = await one(`SELECT amount_cents, txn_type, reduction_source, tenure_id FROM homeowner_transactions WHERE raw_row_jsonb->>'proposal_id' = $1 AND raw_row_jsonb->>'role' = 'builder_adjustment'`, [TS0.proposal]);
-check('after conversion, 5302 Sleepy Fox: the -$372.27 credit is created against the converted $495.00 annual assessment; Lennar nets to $122.73',
-  ss1.written === true && Number(credit.amount_cents) === -37227 && credit.reduction_source === 'correcting_adjustment' && credit.tenure_id === TS0.seller
-    && Number((await one(`SELECT sum(amount_cents)::bigint AS s FROM homeowner_transactions WHERE tenure_id = $1 AND description ILIKE '%assessment%'`, [TS0.seller])).s) === 12273,
-  JSON.stringify({ credit }));
+const d1 = ss1.deferral_adjustment || {};
+check('after conversion, 5302 Sleepy Fox: Lennar\u2019s $495.00 sits in the 2205 deferral, so the credit needs the deferral schedule changed: BLOCKED with the exact entries (Dr 4000 $124.77, Dr 2205 $247.50, Cr 1300 $372.27; schedule -$41.25/month Jul-Dec); nothing posted',
+  ss1.blocked === true && ss1.blocked_reasons.includes('deferral_schedule_adjustment_required') && !ss1.written
+    && d1.income_reversal_cents === 12477 && d1.deferral_reversal_cents === 24750 && d1.ar_credit_cents === 37227
+    && d1.schedule_reduction_monthly_cents === 4125 && d1.schedule_reduction_months === 6 && d1.schedule_reduction_from === '2026-07-01'
+    && ss1.builder_due_cents === 12273 && (await one(`SELECT count(*)::int AS n FROM homeowner_transactions WHERE raw_row_jsonb->>'proposal_id' = $1`, [TS0.proposal])).n === 0,
+  JSON.stringify(pick(ss1, ['blocked', 'blocked_reasons', 'deferral_adjustment', 'written'])));
+const mid = await rpc('transfer_proration_plan', { p_property_id: TS0.property, p_seller_tenure_id: TS0.seller, p_settlement_date: '2026-07-15', p_buyer_name: 'Pat Homeowner', p_buyer_tenure_id: TS0.buyer });
+check('mid-month (7/15): Lennar owned part of July, whose share is recognized on 7/1, so 7 months are on the income side: Dr 4000 = $288.75 - Lennar\u2019s due; Dr 2205 = 5 months $206.25',
+  mid.deferral_adjustment.income_reversal_cents === 28875 - mid.builder_due_cents && mid.deferral_adjustment.deferral_reversal_cents === 20625 && mid.deferral_adjustment.schedule_reduction_from === '2026-08-01',
+  JSON.stringify(mid.deferral_adjustment));
 check('after conversion, 5450 Still Meadow is still BLOCKED (conversion does not resolve an ambiguous charge)', (await post(TA0)).blocked === true);
 
 await report('AFTER STILL CREEK CONVERSION (CONV-SCR-20260630 posted; staged prorations recomputed, confirmed, written)');
@@ -312,6 +331,10 @@ const pAttn = await preview(await lot({ sellers: ['Attn: Lennar Homes of Texas L
 check('Lennar’s second contact form ("Attn: Lennar Homes of Texas ... LTD") is recognized', pAttn.applies === true && pAttn.builder === 'Lennar', JSON.stringify(pick(pAttn, ['applies', 'reason', 'builder'])));
 
 // ---------------------------------------------------------------- builder already has activity
+// The netting MECHANICS, on a community that recognizes assessments directly
+// (no deferral account): Still Creek's rate row with its deferral cleared for
+// this block, restored after.
+await db.query(`UPDATE community_assessment_rates SET deferral_account_number = NULL WHERE community_id = $1 AND owner_class = 'homeowner'`, [SCR]);
 const pFull = await preview(await lot({ prior: [{ date: '2026-01-01', cents: 49500 }] }), '2026-07-01');
 check('Lennar billed the full $495.00 on Jan 1: adjustment credits $372.27 so its net is its $122.73 share',
   !pFull.blocked && pFull.builder_prior_billed_cents === 49500 && pFull.builder_adjustment_cents === -37227 && pFull.builder_due_cents === 12273, JSON.stringify(pick(pFull, ['blocked', 'blocked_reasons', 'builder_prior_billed_cents', 'builder_adjustment_cents'])));
@@ -333,7 +356,9 @@ check('ambiguous activity (a $90.18 assessment on 5/13): BLOCKED, the row is sur
   && pAmb.builder_prior_rows.length === 1 && pAmb.builder_prior_rows[0].amount_cents === 9018, JSON.stringify(pick(pAmb, ['blocked', 'blocked_reasons', 'builder_prior_rows'])));
 const TAmb = await approve(await lot(amb), '2026-07-01');
 const rAmb = await post(TAmb);
-check('...and posting writes nothing', rAmb.blocked === true && (await one(`SELECT count(*)::int AS n FROM assessment_prorations WHERE proposal_id = $1`, [TAmb.proposal])).n === 0);
+check('...and posting writes nothing financial (the calculation is recorded for the queue)', rAmb.blocked === true
+  && (await one(`SELECT count(*)::int AS n FROM assessment_prorations WHERE proposal_id = $1 AND status = 'staged'`, [TAmb.proposal])).n === 2
+  && (await one(`SELECT count(*)::int AS n FROM homeowner_transactions WHERE raw_row_jsonb->>'proposal_id' = $1`, [TAmb.proposal])).n === 0);
 const pTwo = await preview(await lot({ prior: [{ date: '2026-01-01', cents: 49500 }, { date: '2026-03-01', cents: -10000, type: 'credit', desc: 'Assessment credit' }] }), '2026-07-01');
 check('two assessment rows (charge + credit): BLOCKED', pTwo.blocked && pTwo.blocked_reasons.includes('ambiguous_builder_assessment'));
 const pCut = await preview(await lot(), '2026-06-15');
@@ -354,7 +379,8 @@ const balBefore = Number((await one(`SELECT sum(amount_cents)::bigint AS s FROM 
 await post(TS);
 const sRows = await q(`SELECT description, amount_cents FROM homeowner_transactions WHERE tenure_id = $1 ORDER BY source_row_index, transaction_date`, [TS.seller]);
 const balAfter = Number((await one(`SELECT sum(amount_cents)::bigint AS s FROM homeowner_transactions WHERE tenure_id = $1`, [TS.seller])).s);
-check('5302 Sleepy Fox shape: only the $495.00 annual assessment is netted (adjustment -$372.27); prior balance, late interest and late fees untouched',
+await db.query(`UPDATE community_assessment_rates SET deferral_account_number = '2205' WHERE community_id = $1 AND owner_class = 'homeowner'`, [SCR]);
+check('5302 Sleepy Fox shape (direct-recognition mechanics): only the $495.00 annual assessment is netted (adjustment -$372.27); prior balance, late interest and late fees untouched',
   !pS.blocked && pS.builder_prior_rows.length === 1 && pS.builder_prior_rows[0].description === 'Annual Assessment' && pS.builder_adjustment_cents === -37227
     && balAfter - balBefore === -37227 && sRows.filter((x) => !/proration/i.test(x.description)).length === sleepy.length,
   JSON.stringify({ blocked: pS.blocked_reasons, prior: pS.builder_prior_rows, adj: pS.builder_adjustment_cents, balBefore, balAfter }));

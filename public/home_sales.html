@@ -156,6 +156,18 @@
   function currentCommunityName(){ const c = COMMS.find((x) => x.id === CID); return c ? c.name : 'this association'; }
 
   // ── The lifecycle list ────────────────────────────────────────────────────
+  // Builder transfer prorations not yet posted (issue #94): Staged / Ready to Post / Blocked.
+  async function loadProrationQueue() {
+    const host = $('tp-queue'); if (!host || !CID) return;
+    try {
+      const r = await fetch('/api/assessment-proration/transfer/queue?community_id=' + encodeURIComponent(CID));
+      const j = await r.json(); if (!r.ok || j.error) throw new Error(j.error || ('HTTP ' + r.status));
+      host.innerHTML = TransferProration.queueHtml(j.queue || []);
+      TransferProration.wireQueue(host, loadList);
+    } catch (e) { host.innerHTML = '<div class="card" style="color:var(--err)">Couldn\'t load builder transfer prorations: ' + esc(e.message) + '</div>'; }
+  }
+  window.loadProrationQueue = loadProrationQueue;
+
   async function loadList() {
     $('list').innerHTML = '<div class="muted" style="padding:30px; text-align:center;">Loading…</div>';
     try {
@@ -164,7 +176,8 @@
       const j = await r.json(); if (j.error) throw new Error(j.error);
       const sales = j.sales || [];
       if (!sales.length) {
-        $('list').innerHTML = '<div class="card muted" style="padding:24px;">No home sales tracked yet. Log a resale request when HomeWise emails, or scan a closing packet when the title mail arrives.</div>';
+        $('list').innerHTML = '<div id="tp-queue"></div><div class="card muted" style="padding:24px;">No home sales tracked yet. Log a resale request when HomeWise emails, or scan a closing packet when the title mail arrives.</div>';
+        loadProrationQueue();
         return;
       }
       const rows = sales.map((s)=>{
@@ -192,11 +205,12 @@
           <td>${packet}</td>
         </tr>`;
       }).join('');
-      $('list').innerHTML = `<div class="card">
+      $('list').innerHTML = `<div id="tp-queue"></div><div class="card">
         <h2 class="sec">Sales &amp; resale requests</h2>
         <div class="muted" style="margin-bottom:10px; font-size:12.5px;">Click a property for its full ownership history.</div>
         <table><thead><tr><th>Property</th><th>Stage</th><th>Seller → Buyer</th><th>Closing / Request</th><th>DRV</th><th class="num">Balance</th><th class="num">Transfer fee</th><th>Welcome</th></tr></thead>
         <tbody>${rows}</tbody></table></div>`;
+      loadProrationQueue();
     } catch (e) { $('list').innerHTML = '<div class="card" style="color:var(--err)">Couldn\'t load: '+esc(e.message)+'</div>'; }
   }
 

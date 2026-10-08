@@ -595,7 +595,7 @@ async function decide(id, action, prorationFlags) {
     if (action === 'approve' && res.proration) {
       const host = document.createElement('div');
       host.innerHTML = TransferProration.resultHtml(res.proration, null);
-      if (host.innerHTML) toast(host.textContent.trim(), res.proration.status === 'posted' || res.proration.status === 'already_posted' ? 'success' : 'error');
+      if (host.innerHTML) toast(host.textContent.trim() + (['staged', 'blocked', 'pending'].includes(res.proration.status) ? ' It is listed under Builder transfer prorations in Home Sales.' : ''), res.proration.status === 'posted' || res.proration.status === 'already_posted' ? 'success' : 'error');
     }
   } catch (err) {
     if (action === 'approve' && err.status === 409 && err.body && err.body.proration) {

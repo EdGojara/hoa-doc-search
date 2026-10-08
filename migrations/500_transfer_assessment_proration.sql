@@ -49,6 +49,23 @@
 -- A settlement on or before the conversion baseline is Vantaca-era activity
 -- and blocks.
 --
+-- REVENUE TREATMENT (Ed 2026-10-08) is configuration, from the community's own
+-- books. Still Creek's Vantaca-era GL bills each owner's $495 on Jan 1, then
+-- "Reclass 4000 to 2205" moves the full annual billing ($158,895.00 = 321 x
+-- $495) to 2205 Unearned Income, and "Current Month Income" releases exactly
+-- 1/12 ($13,241.25) from 2205 to 4000 on the 1st of each month (2025 the same:
+-- elapsed months straight to 4000 at the 4/30 billing, the rest to 2205, then
+-- monthly). So Still Creek DEFERS and recognizes straight-line by month:
+--   community_assessment_rates.deferral_account_number = '2205' (homeowner row)
+--   community_assessment_rates.income_account_number   = '4000'
+-- A new owner's prorated charge is billed to the deferral account and released
+-- monthly by the recognition engine (lib/accounting/transfer_proration.js
+-- creates the schedule); a builder's share is wholly elapsed at settlement and
+-- is recognized directly. Crediting a builder's DEFERRED annual assessment
+-- would also have to shrink the community's converted deferral schedule
+-- (approved schedules are fixed: cancel and replace only), so that case BLOCKS
+-- with the exact required entries until it is resolved by a person.
+--
 -- Record ownership: rates + builder rules are association configuration
 -- (association_record); assessment_prorations is the audit trail of charges on
 -- the association's books (association_record).
@@ -62,6 +79,13 @@ BEGIN;
 -- 1) A builder rate can be a percent of the homeowner rate.
 -- ---------------------------------------------------------------------------
 ALTER TABLE community_assessment_rates ADD COLUMN IF NOT EXISTS pct_of_homeowner_rate numeric(5,2);
+-- Revenue treatment (homeowner row): where the annual assessment is recognized,
+-- and (when set) the unearned account it is deferred through, released monthly.
+ALTER TABLE community_assessment_rates ADD COLUMN IF NOT EXISTS income_account_number text NOT NULL DEFAULT '4000';
+ALTER TABLE community_assessment_rates ADD COLUMN IF NOT EXISTS deferral_account_number text;
+ALTER TABLE community_assessment_rates DROP CONSTRAINT IF EXISTS community_assessment_rates_deferral_homeowner;
+ALTER TABLE community_assessment_rates ADD CONSTRAINT community_assessment_rates_deferral_homeowner
+  CHECK (deferral_account_number IS NULL OR owner_class = 'homeowner');
 ALTER TABLE community_assessment_rates ALTER COLUMN annual_amount_cents DROP NOT NULL;
 ALTER TABLE community_assessment_rates DROP CONSTRAINT IF EXISTS community_assessment_rates_amount_or_pct;
 ALTER TABLE community_assessment_rates ADD CONSTRAINT community_assessment_rates_amount_or_pct CHECK (
@@ -105,7 +129,8 @@ ALTER TABLE assessment_prorations
   ADD COLUMN IF NOT EXISTS batch_id                 uuid,
   ADD COLUMN IF NOT EXISTS journal_entry_id         uuid,
   ADD COLUMN IF NOT EXISTS status                   text,
-  ADD COLUMN IF NOT EXISTS staged_plan              jsonb;   -- the calculation shown at the transfer (kept after posting)
+  ADD COLUMN IF NOT EXISTS staged_plan              jsonb,   -- the calculation shown at the transfer (kept after posting)
+  ADD COLUMN IF NOT EXISTS recognition_schedule_id  uuid;    -- homeowner charge released from the deferral account monthly
 ALTER TABLE assessment_prorations DROP CONSTRAINT IF EXISTS assessment_prorations_proposal_fk;
 ALTER TABLE assessment_prorations ADD CONSTRAINT assessment_prorations_proposal_fk FOREIGN KEY (proposal_id) REFERENCES ownership_change_proposals(id) ON DELETE RESTRICT;
 ALTER TABLE assessment_prorations DROP CONSTRAINT IF EXISTS assessment_prorations_tenure_fk;
@@ -114,6 +139,8 @@ ALTER TABLE assessment_prorations DROP CONSTRAINT IF EXISTS assessment_proration
 ALTER TABLE assessment_prorations ADD CONSTRAINT assessment_prorations_txn_fk FOREIGN KEY (homeowner_txn_id) REFERENCES homeowner_transactions(id) ON DELETE RESTRICT;
 ALTER TABLE assessment_prorations DROP CONSTRAINT IF EXISTS assessment_prorations_batch_fk;
 ALTER TABLE assessment_prorations ADD CONSTRAINT assessment_prorations_batch_fk FOREIGN KEY (batch_id) REFERENCES transaction_upload_batches(id) ON DELETE RESTRICT;
+ALTER TABLE assessment_prorations DROP CONSTRAINT IF EXISTS assessment_prorations_recognition_fk;
+ALTER TABLE assessment_prorations ADD CONSTRAINT assessment_prorations_recognition_fk FOREIGN KEY (recognition_schedule_id) REFERENCES recognition_schedules(id) ON DELETE RESTRICT;
 ALTER TABLE assessment_prorations DROP CONSTRAINT IF EXISTS assessment_prorations_je_fk;
 ALTER TABLE assessment_prorations ADD CONSTRAINT assessment_prorations_je_fk FOREIGN KEY (journal_entry_id) REFERENCES journal_entries(id) ON DELETE RESTRICT;
 ALTER TABLE assessment_prorations DROP CONSTRAINT IF EXISTS assessment_prorations_role_check;
@@ -172,6 +199,7 @@ DECLARE
   pct numeric; b_due bigint; h_due bigint; b_full bigint;
   prior jsonb := '[]'::jsonb; prior_n int := 0; prior_billed bigint := 0; one record;
   conv_code text; conv_asof date;
+  rec_months int; m_recognized int; recog_before bigint; defer_adj jsonb;
   buyer_prior jsonb := '[]'::jsonb;
   blocked text[] := '{}';
   base jsonb;
@@ -250,6 +278,9 @@ BEGIN
     b_full := bl.annual_amount_cents;
   END IF;
   h_due := round(ho.annual_amount_cents::numeric * h_days / diy);
+  -- The new owner's share is released from the deferral account straight-line by
+  -- month, from the settlement month through year end (the community's convention).
+  rec_months := 12 - extract(month FROM p_settlement_date)::int + 1;
 
   -- What the builder was already billed for this year (its own tenure only).
   FOR one IN
@@ -295,6 +326,26 @@ BEGIN
     IF jsonb_array_length(buyer_prior) > 0 THEN blocked := blocked || 'buyer_already_billed'::text; END IF;
   END IF;
 
+  -- A builder's annual assessment that sits in the DEFERRAL account: the credit
+  -- splits between income already recognized (months before the settlement
+  -- month; the settlement month too when the builder owned part of it) and the
+  -- unearned balance, and the community's deferral schedule must lose the
+  -- builder's monthly share for the remaining months. That schedule is approved
+  -- and fixed; changing it is a person's decision. Exact entries are returned.
+  IF ho.deferral_account_number IS NOT NULL AND prior_billed <> 0 AND NOT ('ambiguous_builder_assessment' = ANY (blocked)) THEN
+    m_recognized := extract(month FROM p_settlement_date)::int - 1 + CASE WHEN extract(day FROM p_settlement_date) > 1 THEN 1 ELSE 0 END;
+    recog_before := round(prior_billed::numeric * m_recognized / 12);
+    defer_adj := jsonb_build_object(
+      'income_account', ho.income_account_number, 'deferral_account', ho.deferral_account_number,
+      'income_reversal_cents', recog_before - b_due,
+      'deferral_reversal_cents', prior_billed - recog_before,
+      'ar_credit_cents', prior_billed - b_due,
+      'schedule_reduction_monthly_cents', round(prior_billed::numeric / 12),
+      'schedule_reduction_months', 12 - m_recognized,
+      'schedule_reduction_from', make_date(y, m_recognized + 1, 1));
+    blocked := blocked || 'deferral_schedule_adjustment_required'::text;
+  END IF;
+
   -- Accounting readiness: the community's converted books (a POSTED conversion).
   SELECT batch_code, as_of_date INTO conv_code, conv_asof FROM conversion_batches
    WHERE community_id = comm.id AND status = 'posted' ORDER BY as_of_date DESC, created_at DESC LIMIT 1;
@@ -312,6 +363,11 @@ BEGIN
     'builder_due_cents', b_due, 'homeowner_due_cents', h_due, 'total_recognized_cents', b_due + h_due,
     'builder_prior_billed_cents', prior_billed, 'builder_prior_rows', prior,
     'builder_adjustment_cents', b_due - prior_billed, 'buyer_prior_rows', buyer_prior,
+    'income_account', ho.income_account_number, 'deferral_account', ho.deferral_account_number,
+    'homeowner_recognition', CASE WHEN ho.deferral_account_number IS NULL THEN NULL ELSE jsonb_build_object(
+      'start_month', date_trunc('month', p_settlement_date)::date, 'term_months', rec_months,
+      'monthly_cents', round(h_due::numeric / rec_months), 'method', 'straight_line_monthly') END,
+    'deferral_adjustment', defer_adj,
     'posting_ready', conv_code IS NOT NULL,
     'not_ready_reason', CASE WHEN conv_code IS NULL THEN 'accounting_not_converted' END,
     'conversion_batch', conv_code, 'conversion_as_of', conv_asof);
@@ -362,8 +418,8 @@ BEGIN
   -- Always recomputed from the current ledger: after a conversion the builder's
   -- converted annual assessment is what the adjustment nets against.
   plan := transfer_proration_plan(pr.property_id, pr.seller_tenure_id, pr.effective_start_date, pr.proposed_owner_name, pr.buyer_tenure_id);
-  IF NOT (plan->>'applies')::boolean OR (plan->>'blocked')::boolean OR p_dry_run
-     OR (staged AND NOT (plan->>'posting_ready')::boolean) THEN
+  IF NOT (plan->>'applies')::boolean OR p_dry_run
+     OR (staged AND ((plan->>'blocked')::boolean OR NOT (plan->>'posting_ready')::boolean)) THEN
     RETURN plan || jsonb_build_object('proposal_id', p_proposal_id, 'dry_run', p_dry_run, 'posted', false,
       'staged', staged, 'staged_plan', s_plan);
   END IF;
@@ -371,8 +427,14 @@ BEGIN
 
   SELECT * INTO prop FROM properties WHERE id = pr.property_id;
 
-  -- Not converted: record the calculation against the transfer, nothing financial.
-  IF NOT (plan->>'posting_ready')::boolean THEN
+  -- Nothing calculable (e.g. rates missing): nothing to record.
+  IF plan->>'builder_due_cents' IS NULL THEN
+    RETURN plan || jsonb_build_object('proposal_id', p_proposal_id, 'dry_run', false, 'posted', false, 'staged', false);
+  END IF;
+
+  -- Not converted, or blocked: record the calculation against the transfer
+  -- (the staged-proration queue lists it), nothing financial.
+  IF NOT (plan->>'posting_ready')::boolean OR (plan->>'blocked')::boolean THEN
     INSERT INTO assessment_prorations (community_id, property_id, transfer_type, owner_class, effective_date, fiscal_year_end,
         days_prorated, days_in_year, annual_amount_cents, prorated_amount_cents, posted_by, notes,
         proposal_id, role, tenure_id, period_start, period_end, rate_pct, net_responsibility_cents, prior_billed_cents, status, staged_plan)
@@ -477,8 +539,9 @@ GRANT EXECUTE ON FUNCTION post_transfer_assessment_proration(uuid, text, boolean
 -- ---------------------------------------------------------------------------
 -- 7) Still Creek Ranch: the current rates and the Lennar rule (configuration).
 -- ---------------------------------------------------------------------------
-INSERT INTO community_assessment_rates (community_id, owner_class, annual_amount_cents, fiscal_year_end_mmdd, notes)
-SELECT 'a0000000-0000-4000-8000-000000000006', 'homeowner', 49500, '12-31', 'Annual assessment (issue #94, 2026-10-08)'
+INSERT INTO community_assessment_rates (community_id, owner_class, annual_amount_cents, fiscal_year_end_mmdd, income_account_number, deferral_account_number, notes)
+SELECT 'a0000000-0000-4000-8000-000000000006', 'homeowner', 49500, '12-31', '4000', '2205',
+  'Annual assessment (issue #94). Deferred through 2205, released 1/12 monthly to 4000: Still Creek''s own GL (1/1/2026 Reclass 4000 to 2205 $158,895.00; Current Month Income $13,241.25 monthly)'
  WHERE EXISTS (SELECT 1 FROM communities WHERE id = 'a0000000-0000-4000-8000-000000000006')
 ON CONFLICT (community_id, owner_class) DO NOTHING;
 INSERT INTO community_assessment_rates (community_id, owner_class, annual_amount_cents, pct_of_homeowner_rate, fiscal_year_end_mmdd, notes)
