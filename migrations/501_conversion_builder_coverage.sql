@@ -1,22 +1,27 @@
 -- ============================================================================
 -- 501_conversion_builder_coverage.sql  (Ed 2026-10-08, GitHub issue #96)
 -- ----------------------------------------------------------------------------
--- The Still Creek conversion brings Lennar's builder assessments to the builder
--- rate, carries the deferred annual assessments correctly, and every month after
--- it Lennar's lots are billed forward with no overlap and no silent gap.
+-- A configured community's accounting conversion brings its builder lots to the
+-- builder rate and carries any deferred annual assessment correctly; after it,
+-- the builder lots are billed forward by the program's cadence with no overlap
+-- and no silent gap. GENERIC: every community fact (builder, annual assessment,
+-- rates, accounts, deferral release, assessment year, cadence) comes from
+-- configuration (migration 500: builder_assessment_programs,
+-- community_assessment_rates, transfer_proration_builders) or from the approved
+-- conversion plan. Nothing here names a community, a builder or an amount.
 --
 -- 1) conversion_reconciling_items: what a conversion found that does not
---    reconcile and must NOT be folded into anything (Still Creek: $2.00 left in
---    2205 from 2025; 5450 Still Meadow, whose builder activity does not show what
---    it was billed). Written by EXECUTE, one row per (batch, kind, key). APPEND
---    ONLY: never deleted, never edited; the one change allowed is open ->
---    resolved, which records who, when and why (10+ characters). A rerun of the
---    conversion cannot remove one: a committed EXECUTE returns the earlier result
---    and writes nothing; an attempt that rolls back took its items with it and the
---    next attempt writes them again; a later batch for the same community gets its
---    own rows. Record ownership: association_record (the association's books).
+--    reconcile and must NOT be folded into anything (e.g. a residue left in a
+--    deferral account outside the release schedule; a builder lot whose activity
+--    does not show what it was billed). Written by EXECUTE, one row per (batch,
+--    kind, key). APPEND ONLY: never deleted, never edited; the one change allowed
+--    is open -> resolved, which records who, when and why (10+ characters). A
+--    rerun of the conversion cannot remove one: a committed EXECUTE returns the
+--    earlier result and writes nothing; an attempt that rolls back took its items
+--    with it and the next attempt writes them again; a later batch for the same
+--    community gets its own rows. Record ownership: association_record.
 --
--- 2) builder_accrual_runs: one row per monthly accrual run (staged -> posted).
+-- 2) builder_accrual_runs: one row per accrual run (staged -> posted).
 --    builder_assessment_coverage.accrual_run_id now references it (RESTRICT).
 --    Record ownership: association_record.
 --
@@ -37,20 +42,25 @@
 --    builder section verify exactly as before).
 --    onboarding_execution_writes gains the tables/kinds these writes log under.
 --
--- 4) Builder accrual (post-conversion, monthly; the scheduler job is OFF by
---    default): builder_accrual_plan (read-only), builder_accrual_stage (draft
---    batch + ledger rows + pending coverage), builder_accrual_finish (marks a
---    month posted once its journal entry, posted by lib/accounting/builder_accrual.js
---    through the normal posting path, equals the month's coverage exactly).
---    Completed months only; from the day after the last covered day (or the
---    builder's start); never past the run date; December carries the year-end
---    rounding true-up the coverage guard demands. Blocked lots are listed, never
---    skipped silently.
+-- 4) Builder accrual: builder_accrual_plan (read-only), builder_accrual_stage
+--    (draft batch + ledger rows + pending coverage), builder_accrual_finish (marks
+--    a billing period posted once its journal entry, posted by
+--    lib/accounting/builder_accrual.js through the normal posting path, equals
+--    the period's coverage exactly). Completed periods of the program's cadence
+--    only, within the community's assessment year; from the day after the last
+--    covered day (or the builder's start); never past the run date; the period
+--    ending the assessment year carries the rounding true-up the coverage guard
+--    demands. Blocked lots are listed, never skipped silently.
+--    ACTIVATION is an explicit post-conversion step: activate_builder_accrual
+--    (who, when) is refused until the community's conversion is posted, and
+--    builder_accrual_stage refuses until it is activated. The scheduler job
+--    (builder_assessment_accrual) is also OFF unless SCHEDULER_ENABLED names it.
 --
 -- 5) builder_coverage_status(community, as_of): per builder lot, covered through
---    vs expected through, and the open reconciling items: the AR email, the Home
---    Sales card and the operations warning read this one function. From Jan 5 a
---    lot not covered through Dec 31 of the prior year is RED.
+--    vs expected through (the cadence, 5 days' grace), whether the accrual is
+--    activated, and the open reconciling items: the AR email, the Home Sales card
+--    and the Operations Feed read this one function. Five days after an
+--    assessment year ends, a lot not covered through its last day is RED.
 --
 -- Requires 500 (builder_assessment_coverage). Changes no existing row.
 -- ============================================================================
@@ -130,7 +140,7 @@ CREATE TABLE IF NOT EXISTS builder_accrual_runs (
 );
 -- One unfinished run per community: a retry finishes it, never starts a second.
 CREATE UNIQUE INDEX IF NOT EXISTS uq_builder_accrual_runs_staged ON builder_accrual_runs (community_id) WHERE status = 'staged';
-COMMENT ON TABLE builder_accrual_runs IS 'association_record: one monthly builder-assessment accrual run (staged -> posted).';
+COMMENT ON TABLE builder_accrual_runs IS 'association_record: one builder-assessment accrual run (staged -> posted).';
 CREATE OR REPLACE FUNCTION builder_accrual_runs_guard() RETURNS trigger
 LANGUAGE plpgsql AS $fn$
 BEGIN
@@ -373,10 +383,10 @@ BEGIN
         END IF;
         cov_id := gen_random_uuid();
         INSERT INTO builder_assessment_coverage (id, community_id, property_id, account_number, vantaca_account_id, tenure_id, builder_company_id, fiscal_year,
-            covered_from, covered_through, days, days_in_year, annual_assessment_cents, builder_rate_pct, rate_source, base_amount_cents, rounding_true_up_cents,
+            year_start, year_end, covered_from, covered_through, days, days_in_year, annual_assessment_cents, builder_rate_pct, rate_source, base_amount_cents, rounding_true_up_cents,
             amount_cents, annual_billed_cents, legacy_evidence, source_type, conversion_batch_id, batch_id, homeowner_txn_id, status, created_by)
         VALUES (cov_id, comm, (r->>'property_id')::uuid, r->>'account_number', r->>'vantaca_account_id', (r->>'tenure_id')::uuid, (r->>'builder_company_id')::uuid,
-            (r->>'fiscal_year')::int, (r->>'covered_from')::date, (r->>'covered_through')::date, (r->>'days')::int, (r->>'days_in_year')::int,
+            (r->>'fiscal_year')::int, (r->>'year_start')::date, (r->>'year_end')::date, (r->>'covered_from')::date, (r->>'covered_through')::date, (r->>'days')::int, (r->>'days_in_year')::int,
             (r->>'annual_assessment_cents')::bigint, (r->>'builder_rate_pct')::numeric, coalesce(r->'rate_source', '{}'::jsonb), (r->>'base_amount_cents')::bigint, 0,
             (r->>'base_amount_cents')::bigint, (r->>'annual_billed_cents')::bigint, r->'legacy_evidence', 'conversion', p_batch, b_batch, txn, 'pending', 'conversion:' || code);
         UPDATE builder_assessment_coverage SET status = 'posted', journal_entry_id = b_je, journal_entry_reference = b_je_ref WHERE id = cov_id;
@@ -526,10 +536,11 @@ END;
 $fn$;
 
 -- ---------------------------------------------------------------------------
--- 4) Builder accrual
+-- 4) Builder accrual (generic: everything from the community's program)
 -- ---------------------------------------------------------------------------
 -- The one configured builder every owner on this tenure is; NULL when it is not
--- a builder tenure. 'mixed' tells a lot whose owners mix a builder with others.
+-- a builder tenure. 'matched' < 'owners' tells a lot whose owners mix a builder
+-- with others.
 CREATE OR REPLACE FUNCTION builder_tenure_match(p_tenure_id uuid)
 RETURNS jsonb LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $fn$
   WITH t AS (SELECT * FROM ownership_tenures WHERE id = p_tenure_id),
@@ -550,30 +561,57 @@ $fn$;
 REVOKE ALL ON FUNCTION builder_tenure_match(uuid) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION builder_tenure_match(uuid) TO service_role;
 
--- What the accrual through p_through (a month end) would bill. Read-only.
+-- The end of every billing period of an assessment year, by the program's
+-- cadence (1, 3, 6 or 12 months from the year's first day; the last ends on the
+-- year's last day).
+CREATE OR REPLACE FUNCTION builder_cadence_ends(p_year_start date, p_year_end date, p_cadence_months int)
+RETURNS SETOF date LANGUAGE sql IMMUTABLE AS $fn$
+  SELECT least((p_year_start + make_interval(months => k * p_cadence_months) - interval '1 day')::date, p_year_end)
+    FROM generate_series(1, (12 / p_cadence_months)) k
+$fn$;
+
+-- The explicit post-conversion activation of the periodic accrual (who, when).
+-- Refused until the community's accounting conversion is posted (the program
+-- guard enforces it for any write).
+CREATE OR REPLACE FUNCTION activate_builder_accrual(p_community_id uuid, p_actor text)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $fn$
+DECLARE p builder_assessment_programs%ROWTYPE;
+BEGIN
+  IF coalesce(btrim(p_actor), '') = '' THEN RAISE EXCEPTION 'actor required'; END IF;
+  SELECT * INTO p FROM builder_assessment_programs WHERE community_id = p_community_id FOR UPDATE;
+  IF NOT FOUND OR NOT p.active THEN RAISE EXCEPTION 'no active builder assessment program for this community'; END IF;
+  IF p.accrual_activated_at IS NOT NULL THEN
+    RETURN jsonb_build_object('status', 'already_active', 'activated_at', p.accrual_activated_at, 'activated_by', p.accrual_activated_by);
+  END IF;
+  UPDATE builder_assessment_programs SET accrual_activated_at = now(), accrual_activated_by = btrim(p_actor) WHERE community_id = p_community_id
+  RETURNING * INTO p;
+  RETURN jsonb_build_object('status', 'activated', 'activated_at', p.accrual_activated_at, 'activated_by', p.accrual_activated_by);
+END;
+$fn$;
+REVOKE ALL ON FUNCTION activate_builder_accrual(uuid, text) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION activate_builder_accrual(uuid, text) TO service_role;
+
+-- What the accrual through p_through would bill: every COMPLETED billing period
+-- (period end <= p_through) after each builder lot's last covered day. Read-only.
 CREATE OR REPLACE FUNCTION builder_accrual_plan(p_community_id uuid, p_through date)
 RETURNS jsonb LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public AS $fn$
 DECLARE
-  ho community_assessment_rates%ROWTYPE; bl community_assessment_rates%ROWTYPE;
-  conv_code text; conv_asof date; t record; m jsonb; y int; cov jsonb; st date; en date; mf date; mt date;
-  diy int; pct numeric; annual bigint; base bigint; tu bigint; prior_sum bigint; prior_from date; mixed boolean;
-  lots jsonb := '[]'::jsonb; blocked jsonb := '[]'::jsonb; periods jsonb; why text; total bigint := 0; n_per int := 0;
+  prog builder_assessment_programs%ROWTYPE; ho community_assessment_rates%ROWTYPE;
+  conv_code text; conv_asof date; t record; m jsonb; cov jsonb; yb record; st date; pe date; ps date; mf date;
+  pct numeric; annual bigint; base bigint; tu bigint; prior_sum bigint; prior_from date; mixed boolean;
+  lots jsonb := '[]'::jsonb; blocked jsonb := '[]'::jsonb; periods jsonb; why text; total bigint := 0; n_per int := 0; guard int;
 BEGIN
-  IF p_through IS NULL OR p_through <> (date_trunc('month', p_through) + interval '1 month' - interval '1 day')::date THEN
-    RAISE EXCEPTION 'the accrual runs through a month end (got %)', p_through;
-  END IF;
-  IF NOT EXISTS (SELECT 1 FROM transfer_proration_builders WHERE community_id = p_community_id AND active) THEN
+  IF p_through IS NULL THEN RAISE EXCEPTION 'the accrual needs a through date'; END IF;
+  SELECT * INTO prog FROM builder_assessment_programs WHERE community_id = p_community_id AND active;
+  IF NOT FOUND OR NOT EXISTS (SELECT 1 FROM transfer_proration_builders WHERE community_id = p_community_id AND active) THEN
     RETURN jsonb_build_object('applies', false, 'reason', 'community_not_configured');
   END IF;
   SELECT batch_code, as_of_date INTO conv_code, conv_asof FROM conversion_batches
    WHERE community_id = p_community_id AND status = 'posted' ORDER BY as_of_date DESC, created_at DESC LIMIT 1;
-  IF conv_code IS NULL THEN RETURN jsonb_build_object('applies', true, 'converted', false, 'reason', 'not_converted', 'lots', '[]'::jsonb, 'blocked', '[]'::jsonb); END IF;
-  IF p_through <= conv_asof THEN RETURN jsonb_build_object('applies', true, 'converted', true, 'reason', 'through_on_or_before_conversion', 'conversion_as_of', conv_asof, 'lots', '[]'::jsonb, 'blocked', '[]'::jsonb); END IF;
+  IF conv_code IS NULL THEN RETURN jsonb_build_object('applies', true, 'converted', false, 'activated', false, 'reason', 'not_converted', 'lots', '[]'::jsonb, 'blocked', '[]'::jsonb); END IF;
   SELECT * INTO ho FROM community_assessment_rates WHERE community_id = p_community_id AND owner_class = 'homeowner';
-  SELECT * INTO bl FROM community_assessment_rates WHERE community_id = p_community_id AND owner_class = 'builder';
-  IF ho.id IS NULL OR bl.id IS NULL THEN RETURN jsonb_build_object('applies', true, 'converted', true, 'reason', 'rates_missing', 'lots', '[]'::jsonb, 'blocked', '[]'::jsonb); END IF;
-  annual := ho.annual_amount_cents;
-  pct := coalesce(bl.pct_of_homeowner_rate, round(bl.annual_amount_cents::numeric * 100 / nullif(ho.annual_amount_cents, 0), 2));
+  IF ho.id IS NULL OR ho.annual_amount_cents IS NULL THEN RETURN jsonb_build_object('applies', true, 'converted', true, 'reason', 'rates_missing', 'lots', '[]'::jsonb, 'blocked', '[]'::jsonb); END IF;
+  annual := ho.annual_amount_cents; pct := prog.builder_rate_pct;
 
   FOR t IN SELECT ot.*, p.street_address, p.trusted_account_number, p.vantaca_account_id AS p_vacct
              FROM ownership_tenures ot JOIN properties p ON p.id = ot.property_id
@@ -585,38 +623,43 @@ BEGIN
       blocked := blocked || jsonb_build_object('property_id', t.property_id, 'street_address', t.street_address, 'tenure_id', t.id, 'reason', 'owners_mixed_or_multiple_builders');
       CONTINUE;
     END IF;
-    periods := '[]'::jsonb; why := NULL;
-    FOR y IN extract(year FROM conv_asof)::int .. extract(year FROM p_through)::int LOOP
-      cov := builder_coverage(t.id, y);
+    periods := '[]'::jsonb; why := NULL; cov := NULL;
+    SELECT * INTO yb FROM assessment_year_bounds(ho.fiscal_year_end_mmdd, conv_asof);
+    guard := 0;
+    WHILE yb.year_start <= p_through AND guard < 50 LOOP
+      guard := guard + 1;
+      cov := builder_coverage(t.id, yb.year_start);
       IF (cov->>'count')::int = 0 THEN
-        IF y = extract(year FROM conv_asof)::int AND NOT (t.origin = 'transfer' AND t.start_date > conv_asof) THEN why := 'builder_coverage_missing'; EXIT; END IF;
-        st := builder_coverage_start(t.id, y);
+        IF conv_asof BETWEEN yb.year_start AND yb.year_end AND NOT (t.origin = 'transfer' AND t.start_date > conv_asof) THEN why := 'builder_coverage_missing'; EXIT; END IF;
+        st := builder_coverage_start(t.id, yb.year_start);
       ELSE
         IF NOT (cov->>'valid')::boolean THEN why := 'builder_coverage_invalid'; EXIT; END IF;
         IF (cov->>'pending')::int > 0 THEN why := 'builder_coverage_pending'; EXIT; END IF;
         st := (cov->>'covered_through')::date + 1;
       END IF;
-      en := least(p_through, make_date(y, 12, 31));
-      IF st > en THEN CONTINUE; END IF;
-      diy := make_date(y, 12, 31) - make_date(y, 1, 1) + 1;
       SELECT coalesce(sum(amount_cents), 0), min(covered_from),
              coalesce(bool_or(annual_assessment_cents <> annual OR builder_rate_pct <> pct), false)
         INTO prior_sum, prior_from, mixed
-        FROM builder_assessment_coverage WHERE tenure_id = t.id AND fiscal_year = y AND status <> 'voided';
+        FROM builder_assessment_coverage WHERE tenure_id = t.id AND year_start = yb.year_start AND status <> 'voided';
       prior_from := coalesce(prior_from, st);
-      mf := st;
-      WHILE mf <= en LOOP
-        mt := least((date_trunc('month', mf) + interval '1 month' - interval '1 day')::date, en);
-        base := round(annual::numeric * pct * (mt - mf + 1) / (100 * diy));
-        tu := 0;
-        IF mt = make_date(y, 12, 31) AND prior_from = make_date(y, 1, 1) AND NOT mixed THEN
-          tu := round(annual::numeric * pct / 100) - prior_sum - base;
+      ps := yb.year_start;
+      FOR pe IN SELECT * FROM builder_cadence_ends(yb.year_start, yb.year_end, prog.accrual_cadence_months) LOOP
+        IF pe > p_through THEN EXIT; END IF;
+        IF pe >= st THEN
+          mf := greatest(ps, st);
+          base := round(annual::numeric * pct * (pe - mf + 1) / (100 * yb.days_in_year));
+          tu := 0;
+          IF pe = yb.year_end AND prior_from = yb.year_start AND NOT mixed THEN
+            tu := round(annual::numeric * pct / 100) - prior_sum - base;
+          END IF;
+          periods := periods || jsonb_build_object('fiscal_year', yb.fiscal_year, 'year_start', yb.year_start, 'year_end', yb.year_end,
+            'covered_from', mf, 'covered_through', pe, 'days', pe - mf + 1, 'days_in_year', yb.days_in_year,
+            'annual_assessment_cents', annual, 'builder_rate_pct', pct, 'base_amount_cents', base, 'rounding_true_up_cents', tu, 'amount_cents', base + tu);
+          prior_sum := prior_sum + base + tu; total := total + base + tu; n_per := n_per + 1;
         END IF;
-        periods := periods || jsonb_build_object('fiscal_year', y, 'covered_from', mf, 'covered_through', mt, 'days', mt - mf + 1, 'days_in_year', diy,
-          'annual_assessment_cents', annual, 'builder_rate_pct', pct, 'base_amount_cents', base, 'rounding_true_up_cents', tu, 'amount_cents', base + tu);
-        prior_sum := prior_sum + base + tu; total := total + base + tu; n_per := n_per + 1;
-        mf := mt + 1;
+        ps := pe + 1;
       END LOOP;
+      SELECT * INTO yb FROM assessment_year_bounds(ho.fiscal_year_end_mmdd, yb.year_end + 1);
     END LOOP;
     IF why IS NOT NULL THEN
       blocked := blocked || jsonb_build_object('property_id', t.property_id, 'street_address', t.street_address, 'tenure_id', t.id, 'reason', why, 'coverage', cov);
@@ -626,24 +669,36 @@ BEGIN
         'builder_company_id', m->>'builder_company_id', 'periods', periods);
     END IF;
   END LOOP;
-  RETURN jsonb_build_object('applies', true, 'converted', true, 'conversion_code', conv_code, 'conversion_as_of', conv_asof, 'through', p_through,
-    'income_account_number', ho.income_account_number, 'rate', jsonb_build_object('annual_cents', annual, 'builder_rate_pct', pct, 'homeowner_rate_id', ho.id, 'builder_rate_id', bl.id),
+  RETURN jsonb_build_object('applies', true, 'converted', true, 'activated', prog.accrual_activated_at IS NOT NULL,
+    'activated_at', prog.accrual_activated_at, 'activated_by', prog.accrual_activated_by,
+    'conversion_code', conv_code, 'conversion_as_of', conv_asof, 'through', p_through, 'cadence_months', prog.accrual_cadence_months,
+    'ar_account_number', prog.ar_account_number, 'income_account_number', prog.income_account_number,
+    'rate', jsonb_build_object('annual_cents', annual, 'builder_rate_pct', pct, 'year_end_mmdd', ho.fiscal_year_end_mmdd, 'homeowner_rate_id', ho.id),
     'lots', lots, 'blocked', blocked, 'periods', n_per, 'total_cents', total);
 END;
 $fn$;
 REVOKE ALL ON FUNCTION builder_accrual_plan(uuid, date) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION builder_accrual_plan(uuid, date) TO service_role;
 
--- Stage the accrual: a draft batch, its ledger rows (dated each period's last day,
--- tenure-stamped) and pending coverage. An unfinished run is returned, never doubled.
-CREATE OR REPLACE FUNCTION builder_accrual_stage(p_community_id uuid, p_through date, p_actor text)
+-- Stage the accrual: a draft batch, its ledger rows (dated each period's last
+-- day, tenure-stamped) and pending coverage. Refused until the program's accrual
+-- is activated, and for a through date that has not passed yet (a period is billed
+-- only after it ends; p_as_of defaults to today). An unfinished run is returned,
+-- never doubled.
+CREATE OR REPLACE FUNCTION builder_accrual_stage(p_community_id uuid, p_through date, p_actor text, p_as_of date DEFAULT current_date)
 RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $fn$
 DECLARE plan jsonb; run builder_accrual_runs%ROWTYPE; lot jsonb; per jsonb; b_id uuid; txn uuid; idx int := 0; mc uuid; n_rows int;
 BEGIN
   IF coalesce(btrim(p_actor), '') = '' THEN RAISE EXCEPTION 'actor required'; END IF;
+  IF p_through IS NULL OR p_through >= coalesce(p_as_of, current_date) THEN
+    RAISE EXCEPTION 'the accrual bills only periods that have ended: % is not before %', p_through, coalesce(p_as_of, current_date);
+  END IF;
   SELECT * INTO run FROM builder_accrual_runs WHERE community_id = p_community_id AND status = 'staged' FOR UPDATE;
   IF FOUND THEN RETURN builder_accrual_run_view(run.id) || jsonb_build_object('resumed', true); END IF;
   plan := builder_accrual_plan(p_community_id, p_through);
+  IF coalesce((plan->>'converted')::boolean, false) AND NOT coalesce((plan->>'activated')::boolean, false) THEN
+    RAISE EXCEPTION 'the builder accrual is not activated for this community (activate it after the conversion is posted)';
+  END IF;
   IF NOT coalesce((plan->>'applies')::boolean, false) OR NOT coalesce((plan->>'converted')::boolean, false) OR coalesce((plan->>'periods')::int, 0) = 0 THEN
     RETURN jsonb_build_object('status', 'nothing_to_accrue', 'plan', plan);
   END IF;
@@ -653,7 +708,8 @@ BEGIN
       total_charges_cents, total_payments_cents, min_transaction_date, max_transaction_date, uploaded_by, notes)
   VALUES (mc, p_community_id, 'Builder assessment accrual through ' || p_through, p_through, 'manual', 'draft', n_rows, jsonb_array_length(plan->'lots'),
       (plan->>'total_cents')::bigint, 0,
-      (SELECT min((p->>'covered_through')::date) FROM jsonb_array_elements(plan->'lots') l, jsonb_array_elements(l->'periods') p), p_through,
+      (SELECT min((p->>'covered_through')::date) FROM jsonb_array_elements(plan->'lots') l, jsonb_array_elements(l->'periods') p),
+      (SELECT max((p->>'covered_through')::date) FROM jsonb_array_elements(plan->'lots') l, jsonb_array_elements(l->'periods') p),
       'builder_accrual', format('Builder assessment accrual through %s; staged by %s', p_through, p_actor))
   RETURNING id INTO b_id;
   INSERT INTO builder_accrual_runs (community_id, through_date, status, batch_id, plan, created_by)
@@ -671,12 +727,14 @@ BEGIN
           'charge', 'assessment', (per->>'amount_cents')::bigint,
           jsonb_build_object('source', 'builder_accrual', 'accrual_run_id', run.id, 'period', per))
       RETURNING id INTO txn;
-      INSERT INTO builder_assessment_coverage (community_id, property_id, account_number, vantaca_account_id, tenure_id, builder_company_id, fiscal_year,
+      INSERT INTO builder_assessment_coverage (community_id, property_id, account_number, vantaca_account_id, tenure_id, builder_company_id, fiscal_year, year_start, year_end,
           covered_from, covered_through, days, days_in_year, annual_assessment_cents, builder_rate_pct, rate_source, base_amount_cents, rounding_true_up_cents,
           amount_cents, source_type, accrual_run_id, batch_id, homeowner_txn_id, status, created_by)
       VALUES (p_community_id, (lot->>'property_id')::uuid, lot->>'account_number', lot->>'vantaca_account_id', (lot->>'tenure_id')::uuid, (lot->>'builder_company_id')::uuid,
-          (per->>'fiscal_year')::int, (per->>'covered_from')::date, (per->>'covered_through')::date, (per->>'days')::int, (per->>'days_in_year')::int,
-          (per->>'annual_assessment_cents')::bigint, (per->>'builder_rate_pct')::numeric, jsonb_build_object('rates', 'community_assessment_rates') || coalesce(plan->'rate', '{}'::jsonb),
+          (per->>'fiscal_year')::int, (per->>'year_start')::date, (per->>'year_end')::date, (per->>'covered_from')::date, (per->>'covered_through')::date,
+          (per->>'days')::int, (per->>'days_in_year')::int,
+          (per->>'annual_assessment_cents')::bigint, (per->>'builder_rate_pct')::numeric,
+          jsonb_build_object('annual', 'community_assessment_rates', 'rate', 'builder_assessment_programs') || coalesce(plan->'rate', '{}'::jsonb),
           (per->>'base_amount_cents')::bigint, (per->>'rounding_true_up_cents')::bigint, (per->>'amount_cents')::bigint,
           'scheduled_accrual', run.id, b_id, txn, 'pending', 'accrual:' || p_actor);
     END LOOP;
@@ -685,14 +743,14 @@ BEGIN
 END;
 $fn$;
 
--- A run, grouped by month end: what each month's journal entry must equal.
+-- A run, grouped by billing period end: what each period's journal entry must equal.
 CREATE OR REPLACE FUNCTION builder_accrual_run_view(p_run uuid)
 RETURNS jsonb LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $fn$
   SELECT jsonb_build_object('status', r.status, 'run_id', r.id, 'community_id', r.community_id, 'through', r.through_date, 'batch_id', r.batch_id,
-    'income_account_number', coalesce(r.plan->>'income_account_number', '4000'), 'blocked', coalesce(r.plan->'blocked', '[]'::jsonb),
-    'months', coalesce((SELECT jsonb_agg(jsonb_build_object('month_end', me, 'amount_cents', amt, 'periods', n, 'pending', pend, 'journal_entry_reference', ref,
-                                'lines', lines) ORDER BY me)
-       FROM (SELECT (date_trunc('month', c.covered_through) + interval '1 month' - interval '1 day')::date AS me, sum(c.amount_cents) AS amt, count(*) AS n,
+    'ar_account_number', r.plan->>'ar_account_number', 'income_account_number', r.plan->>'income_account_number', 'blocked', coalesce(r.plan->'blocked', '[]'::jsonb),
+    'periods', coalesce((SELECT jsonb_agg(jsonb_build_object('period_end', pe, 'amount_cents', amt, 'lots', n, 'pending', pend, 'journal_entry_reference', ref,
+                                'lines', lines) ORDER BY pe)
+       FROM (SELECT c.covered_through AS pe, sum(c.amount_cents) AS amt, count(*) AS n,
                     count(*) FILTER (WHERE c.status = 'pending') AS pend, max(c.journal_entry_reference) AS ref,
                     jsonb_agg(jsonb_build_object('property_id', c.property_id, 'amount_cents', c.amount_cents, 'from', c.covered_from, 'through', c.covered_through,
                                                  'rounding_true_up_cents', c.rounding_true_up_cents) ORDER BY c.covered_from, c.property_id) AS lines
@@ -701,10 +759,11 @@ RETURNS jsonb LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $
     FROM builder_accrual_runs r WHERE r.id = p_run
 $fn$;
 
--- One month's journal entry is posted: it must be this community's, posted, and its
--- AR debit must equal the month's coverage exactly. Marks the month posted; when no
--- period of the run is pending, commits the batch and closes the run.
-CREATE OR REPLACE FUNCTION builder_accrual_finish(p_run uuid, p_month_end date, p_je uuid)
+-- One period's journal entry is posted: it must be this community's, posted, and
+-- its receivable lines (the ones naming a lot) must equal the period's coverage
+-- exactly. Marks the period posted; when nothing in the run is pending, commits
+-- the batch and closes the run.
+CREATE OR REPLACE FUNCTION builder_accrual_finish(p_run uuid, p_period_end date, p_je uuid)
 RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $fn$
 DECLARE run builder_accrual_runs%ROWTYPE; j journal_entries%ROWTYPE; want bigint; got bigint; n int;
 BEGIN
@@ -713,14 +772,13 @@ BEGIN
   SELECT * INTO j FROM journal_entries WHERE id = p_je;
   IF NOT FOUND OR j.community_id <> run.community_id OR j.status <> 'posted' THEN RAISE EXCEPTION 'journal entry % is not a posted entry of this community', p_je; END IF;
   SELECT coalesce(sum(amount_cents), 0), count(*) INTO want, n FROM builder_assessment_coverage
-   WHERE accrual_run_id = p_run AND status = 'pending' AND (date_trunc('month', covered_through) + interval '1 month' - interval '1 day')::date = p_month_end;
+   WHERE accrual_run_id = p_run AND status = 'pending' AND covered_through = p_period_end;
   IF n > 0 THEN
-    -- the receivable lines name a lot; the income line names none
     SELECT coalesce(sum(jl.debit_cents - jl.credit_cents), 0) INTO got FROM journal_entry_lines jl
      WHERE jl.journal_entry_id = p_je AND jl.property_id IS NOT NULL;
-    IF got <> want THEN RAISE EXCEPTION 'journal entry % debits AR %, the month''s coverage is %', j.reference, got, want; END IF;
+    IF got <> want THEN RAISE EXCEPTION 'journal entry % debits AR %, the period''s coverage is %', j.reference, got, want; END IF;
     UPDATE builder_assessment_coverage SET status = 'posted', journal_entry_id = p_je, journal_entry_reference = j.reference
-     WHERE accrual_run_id = p_run AND status = 'pending' AND (date_trunc('month', covered_through) + interval '1 month' - interval '1 day')::date = p_month_end;
+     WHERE accrual_run_id = p_run AND status = 'pending' AND covered_through = p_period_end;
   END IF;
   IF NOT EXISTS (SELECT 1 FROM builder_assessment_coverage WHERE accrual_run_id = p_run AND status = 'pending') AND run.status = 'staged' THEN
     UPDATE transaction_upload_batches SET status = 'committed', committed_at = now() WHERE id = run.batch_id AND status = 'draft';
@@ -729,27 +787,30 @@ BEGIN
   RETURN builder_accrual_run_view(p_run);
 END;
 $fn$;
-REVOKE ALL ON FUNCTION builder_accrual_stage(uuid, date, text) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION builder_accrual_stage(uuid, date, text, date) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION builder_accrual_run_view(uuid) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION builder_accrual_finish(uuid, date, uuid) FROM PUBLIC, anon, authenticated;
-GRANT EXECUTE ON FUNCTION builder_accrual_stage(uuid, date, text) TO service_role;
+GRANT EXECUTE ON FUNCTION builder_accrual_stage(uuid, date, text, date) TO service_role;
 GRANT EXECUTE ON FUNCTION builder_accrual_run_view(uuid) TO service_role;
 GRANT EXECUTE ON FUNCTION builder_accrual_finish(uuid, date, uuid) TO service_role;
 
 -- ---------------------------------------------------------------------------
 -- 5) Coverage status: one function for the AR email, Home Sales and the warning
 -- ---------------------------------------------------------------------------
--- expected_through: the last month end the accrual should have reached by
--- p_as_of (the month before, once the 5th has passed; else the month before
--- that), never before the conversion as-of. RED when a lot is not covered
--- through Dec 31 of the prior year on/after Jan 5, or is blocked; AMBER when
--- simply behind. Reconciling items still open are listed with it.
+-- expected_through: the latest billing-period end at least 5 days before
+-- p_as_of (the program's cadence), never before the conversion as-of. RED when a
+-- lot is blocked, or is not covered through the last assessment-year end that is
+-- at least 5 days past; AMBER when simply behind or when the accrual has not been
+-- activated since the conversion. Open reconciling items are listed with it.
 CREATE OR REPLACE FUNCTION builder_coverage_status(p_community_id uuid, p_as_of date)
 RETURNS jsonb LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public AS $fn$
-DECLARE conv_code text; conv_asof date; expect date; t record; m jsonb; cov jsonb; y int; thru date; sev text; why text;
+DECLARE
+  prog builder_assessment_programs%ROWTYPE; ho community_assessment_rates%ROWTYPE;
+  conv_code text; conv_asof date; expect date; ye_last date; yb record; t record; m jsonb; cov jsonb; thru date; sev text; why text;
   lots jsonb := '[]'::jsonb; red int := 0; amber int := 0; ok int := 0; items jsonb; staged jsonb;
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM transfer_proration_builders WHERE community_id = p_community_id AND active) THEN
+  SELECT * INTO prog FROM builder_assessment_programs WHERE community_id = p_community_id AND active;
+  IF NOT FOUND OR NOT EXISTS (SELECT 1 FROM transfer_proration_builders WHERE community_id = p_community_id AND active) THEN
     RETURN jsonb_build_object('applies', false);
   END IF;
   SELECT batch_code, as_of_date INTO conv_code, conv_asof FROM conversion_batches
@@ -758,39 +819,43 @@ BEGIN
            'amount_cents', i.amount_cents, 'detail', i.detail, 'created_at', i.created_at) ORDER BY i.created_at), '[]'::jsonb)
     INTO items FROM conversion_reconciling_items i WHERE i.community_id = p_community_id AND i.status = 'open';
   IF conv_code IS NULL THEN RETURN jsonb_build_object('applies', true, 'converted', false, 'open_reconciling_items', items); END IF;
-  expect := (date_trunc('month', p_as_of) - interval '1 day')::date;                         -- last day of the previous month
-  IF extract(day FROM p_as_of) < 5 THEN expect := (date_trunc('month', expect) - interval '1 day')::date; END IF;
+  SELECT * INTO ho FROM community_assessment_rates WHERE community_id = p_community_id AND owner_class = 'homeowner';
+  IF ho.id IS NULL THEN RETURN jsonb_build_object('applies', true, 'converted', true, 'status', 'red', 'reason', 'rates_missing', 'open_reconciling_items', items); END IF;
+  -- the latest period end (any assessment year) at least 5 days before p_as_of
+  SELECT * INTO yb FROM assessment_year_bounds(ho.fiscal_year_end_mmdd, p_as_of - 5);
+  SELECT max(e) INTO expect FROM (
+    SELECT builder_cadence_ends(yb.year_start, yb.year_end, prog.accrual_cadence_months) AS e
+    UNION ALL SELECT yb.year_start - 1) x WHERE e <= p_as_of - 5;
   expect := greatest(expect, conv_asof);
+  ye_last := CASE WHEN yb.year_end <= p_as_of - 5 THEN yb.year_end ELSE yb.year_start - 1 END;   -- the last assessment-year end at least 5 days past
   SELECT to_jsonb(r) INTO staged FROM (SELECT id, through_date, created_at FROM builder_accrual_runs WHERE community_id = p_community_id AND status = 'staged') r;
   FOR t IN SELECT ot.*, p.street_address, p.trusted_account_number FROM ownership_tenures ot JOIN properties p ON p.id = ot.property_id
             WHERE ot.community_id = p_community_id AND ot.kind = 'owner' AND ot.end_date IS NULL ORDER BY p.street_address, ot.id LOOP
     m := builder_tenure_match(t.id);
     IF (m->>'matched')::int = 0 THEN CONTINUE; END IF;
-    y := extract(year FROM expect)::int;
-    cov := builder_coverage(t.id, y);
-    thru := (cov->>'covered_through')::date;
-    IF thru IS NULL AND y > extract(year FROM conv_asof)::int THEN
-      thru := (builder_coverage(t.id, y - 1)->>'covered_through')::date;
-    END IF;
+    SELECT max(covered_through) INTO thru FROM builder_assessment_coverage WHERE tenure_id = t.id AND status <> 'voided';
+    cov := builder_coverage(t.id, (SELECT year_start FROM assessment_year_bounds(ho.fiscal_year_end_mmdd, coalesce(thru, conv_asof))));
     why := NULL; sev := 'ok';
     IF m->>'builder_company_id' IS NULL THEN why := 'owners_mixed_or_multiple_builders'; sev := 'red';
     ELSIF NOT (cov->>'valid')::boolean THEN why := 'coverage_invalid'; sev := 'red';
     ELSIF (cov->>'pending')::int > 0 THEN why := 'coverage_pending'; sev := 'red';
     ELSIF thru IS NULL AND NOT (t.origin = 'transfer' AND t.start_date > conv_asof) THEN why := 'coverage_missing'; sev := 'red';
-    ELSIF coalesce(thru, builder_coverage_start(t.id, y) - 1) < expect THEN
+    ELSIF coalesce(thru, t.start_date - 1) < expect THEN
       why := 'behind';
-      sev := CASE WHEN extract(month FROM p_as_of) = 1 AND extract(day FROM p_as_of) >= 5 AND coalesce(thru, '1900-01-01'::date) < make_date(extract(year FROM p_as_of)::int - 1, 12, 31)
-                  THEN 'red' ELSE 'amber' END;
+      sev := CASE WHEN ye_last > conv_asof AND coalesce(thru, '1900-01-01'::date) < ye_last THEN 'red' ELSE 'amber' END;
     END IF;
     IF sev = 'red' THEN red := red + 1; ELSIF sev = 'amber' THEN amber := amber + 1; ELSE ok := ok + 1; END IF;
     lots := lots || jsonb_build_object('property_id', t.property_id, 'street_address', t.street_address, 'account_number', t.trusted_account_number, 'tenure_id', t.id,
       'covered_through', thru, 'expected_through', expect, 'severity', sev, 'reason', why);
   END LOOP;
   RETURN jsonb_build_object('applies', true, 'converted', true, 'conversion_code', conv_code, 'conversion_as_of', conv_asof, 'as_of', p_as_of,
-    'expected_through', expect, 'lots', lots, 'counts', jsonb_build_object('ok', ok, 'amber', amber, 'red', red, 'lots', ok + amber + red),
+    'expected_through', expect, 'cadence_months', prog.accrual_cadence_months,
+    'accrual_active', prog.accrual_activated_at IS NOT NULL, 'accrual_activated_at', prog.accrual_activated_at, 'accrual_activated_by', prog.accrual_activated_by,
+    'lots', lots, 'counts', jsonb_build_object('ok', ok, 'amber', amber, 'red', red, 'lots', ok + amber + red),
     'covered_through_min', (SELECT min((x->>'covered_through')::date) FROM jsonb_array_elements(lots) x),
     'staged_run', staged, 'open_reconciling_items', items,
-    'status', CASE WHEN red > 0 OR staged IS NOT NULL THEN 'red' WHEN amber > 0 OR jsonb_array_length(items) > 0 THEN 'amber' ELSE 'ok' END);
+    'status', CASE WHEN red > 0 OR staged IS NOT NULL THEN 'red'
+                   WHEN amber > 0 OR jsonb_array_length(items) > 0 OR prog.accrual_activated_at IS NULL THEN 'amber' ELSE 'ok' END);
 END;
 $fn$;
 REVOKE ALL ON FUNCTION builder_coverage_status(uuid, date) FROM PUBLIC, anon, authenticated;

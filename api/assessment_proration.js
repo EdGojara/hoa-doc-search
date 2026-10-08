@@ -85,7 +85,8 @@ router.post('/transfer/:proposalId/post', express.json(), async (req, res) => {
 // ---- Builder assessment coverage + monthly accrual (GitHub #96) -------------
 // GET  /builder-coverage?community_id[&as_of]       status: covered through vs expected, per lot; open reconciling items
 // GET  /builder-accrual/preview?community_id&through   what the accrual through a month end would bill (read-only)
-// POST /builder-accrual/run {community_id, through, confirmed:true}   posts it (admin; never twice)
+// POST /builder-accrual/activate {community_id, confirmed:true}   the post-conversion activation (admin; refused before the conversion posts)
+// POST /builder-accrual/run {community_id, through, confirmed:true}   posts it (admin; never twice; refused until activated)
 // POST /reconciling-items/:id/resolve {note}          resolves a conversion reconciling item (admin; note 10+ chars)
 const centralToday = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Chicago' }).format(new Date());
 router.get('/builder-coverage', async (req, res) => {
@@ -100,16 +101,28 @@ router.get('/builder-accrual/preview', async (req, res) => {
   try {
     const u = await requireStaff(req, res); if (!u) return;
     if (!req.query.community_id) return res.status(400).json({ error: 'community_id_required' });
-    if (!BA.isMonthEnd(req.query.through || '')) return res.status(400).json({ error: 'through_must_be_a_month_end' });
+    if (!BA.isDate(req.query.through || '')) return res.status(400).json({ error: 'through_must_be_a_date' });
     res.json({ plan: await BA.preview(supabase, { communityId: req.query.community_id, through: req.query.through }) });
   } catch (err) { fail(res, 'builder-accrual-preview', err); }
+});
+router.post('/builder-accrual/activate', express.json(), async (req, res) => {
+  try {
+    const u = await requireAdmin(req, res); if (!u) return;
+    const b = req.body || {};
+    if (!b.community_id) return res.status(400).json({ error: 'community_id_required' });
+    if (b.confirmed !== true) return res.status(409).json({ error: 'confirmation_required: activate the periodic builder billing for this community', code: 'confirmation_required' });
+    res.json({ activation: await BA.activate(supabase, { communityId: b.community_id, actor: u.email || u.id }) });
+  } catch (err) {
+    if (err.code === 'P0001') return res.status(409).json({ error: err.message });
+    fail(res, 'builder-accrual-activate', err);
+  }
 });
 router.post('/builder-accrual/run', express.json(), async (req, res) => {
   try {
     const u = await requireAdmin(req, res); if (!u) return;
     const b = req.body || {};
     if (!b.community_id) return res.status(400).json({ error: 'community_id_required' });
-    if (!BA.isMonthEnd(b.through || '')) return res.status(400).json({ error: 'through_must_be_a_month_end' });
+    if (!BA.isDate(b.through || '')) return res.status(400).json({ error: 'through_must_be_a_date' });
     if (b.confirmed !== true) return res.status(409).json({ error: 'confirmation_required: review the preview, then confirm', code: 'confirmation_required', plan: await BA.preview(supabase, { communityId: b.community_id, through: b.through }) });
     res.json({ accrual: await BA.run(supabase, { communityId: b.community_id, through: b.through, actor: u.email || u.id || 'staff' }) });
   } catch (err) {

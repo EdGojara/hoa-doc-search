@@ -33,17 +33,19 @@
 
   // The GL the posting makes, on the community's own revenue treatment.
   function books(p) {
-    const inc = p.income_account || '4000', dfr = p.deferral_account, adj = Number(p.builder_adjustment_cents || 0), rec = p.homeowner_recognition;
+    const inc = esc(p.income_account || 'income'), ar = esc(p.ar_account || 'AR'), dfr = p.deferral_account, adj = Number(p.builder_adjustment_cents || 0), rec = p.homeowner_recognition;
+    const months = (rec && rec.months) || [];
     if (p.normalization_required) {
       const n = p.normalization_required;
       return 'Waiting for the accounting conversion to normalize the ' + money(n.annual_cents) + ' annual assessment (' + day(n.annual_date) + ') to the '
         + pct(n.builder_rate_pct) + '% builder rate and carry ' + esc(n.deferral_account) + ' without this lot\'s share. Nothing posts from here until it does.';
     }
     return 'Books, dated ' + day(p.settlement_date) + ': '
-      + (adj > 0 ? 'Dr 1300 AR / Cr ' + inc + ' ' + money(adj) + ' (builder, its months have elapsed); ' : adj < 0 ? 'Dr ' + inc + ' / Cr 1300 AR ' + money(-adj) + ' (builder); ' : '')
+      + (adj > 0 ? 'Dr ' + ar + ' / Cr ' + inc + ' ' + money(adj) + ' (builder, its days have elapsed); ' : adj < 0 ? 'Dr ' + inc + ' / Cr ' + ar + ' ' + money(-adj) + ' (builder); ' : '')
       + (p.builder_normalized ? 'builder already normalized by conversion ' + esc(p.builder_normalized.conversion_batch || '') + ' to ' + money(p.builder_normalized.normalized_cents) + ' through ' + day(p.builder_normalized.covered_through) + ' (no second adjustment); ' : '')
-      + (dfr ? 'Dr 1300 AR / Cr ' + dfr + ' Unearned ' + money(p.homeowner_due_cents) + ' (new owner), released to ' + inc + ' ' + money(rec && rec.monthly_cents) + '/month for ' + (rec && rec.term_months) + ' months from ' + day(rec && rec.start_month) + '.'
-             : 'Dr 1300 AR / Cr ' + inc + ' ' + money(p.homeowner_due_cents) + ' (new owner).');
+      + (dfr ? 'Dr ' + ar + ' / Cr ' + esc(dfr) + ' Unearned ' + money(p.homeowner_due_cents) + ' (new owner), released to ' + inc + ' by the days it covers each month: '
+               + months.map((m) => esc(String(m.month).slice(0, 7)) + ' ' + m.days + ' days ' + money(m.cents)).join(', ') + '.'
+             : 'Dr ' + ar + ' / Cr ' + inc + ' ' + money(p.homeowner_due_cents) + ' (new owner).');
   }
 
   // The staged-proration queue. items = GET /api/assessment-proration/transfer/queue.
@@ -141,6 +143,7 @@
     const items = s.open_reconciling_items || [];
     const lines = bad.slice(0, 6).map((l) => esc(l.street_address) + ': ' + (l.covered_through ? 'through ' + day(l.covered_through) : 'no coverage') + (l.reason && l.reason !== 'behind' ? ' (' + esc(String(l.reason).replace(/_/g, ' ')) + ')' : ''));
     return '<div class="card" style="font-size:13px;"><b>Builder assessments</b> <span class="badge" style="' + (SEV[s.status] || '') + '">' + esc(s.status === 'ok' ? 'Current' : s.status === 'red' ? 'Exception' : 'Behind') + '</span>'
+      + (s.accrual_active === false ? '<div style="margin-top:4px; color:#8a5a00;">The periodic builder billing has not been activated since the conversion; lots fall behind until it is.</div>' : '')
       + '<div class="muted" style="margin-top:4px;">' + (c.lots || 0) + ' builder lot' + (c.lots === 1 ? '' : 's') + ' · covered through ' + (minThru ? day(minThru) : '—') + ' (expected ' + day(s.expected_through) + ')'
       + (c.red ? ' · <span style="color:#a12828;">' + c.red + ' exception' + (c.red === 1 ? '' : 's') + '</span>' : '') + (c.amber ? ' · ' + c.amber + ' behind' : '')
       + (s.staged_run ? ' · <span style="color:#a12828;">an accrual run stopped part-way; run it again to finish</span>' : '') + '</div>'

@@ -30,7 +30,8 @@ function world({ tb2205 = 7944950, extraLennar = [], cutoff = '2026-06-30', owne
     cutoff, cutover: cutoff === '2026-06-30' ? '2026-07-01' : null, code: 'CONV-SCR-20260630', properties, tenures, resolveAcct,
     tbOf: (a) => (a === '2205' ? -tb2205 : 0),
     builder: { builders: [{ id: LENNAR, company_name: 'Lennar' }], owners: ownersOverride ? ownersOverride(owners) : owners,
-      rates: { homeowner: { id: 'rh', annual_amount_cents: 49500, income_account_number: '4000', deferral_account_number: '2205' }, builder: { id: 'rb', pct_of_homeowner_rate: 50, annual_amount_cents: null } },
+      program: { builder_rate_pct: 50, homeowner_rate_pct: 100, ar_account_number: '1300', income_account_number: '4000', deferral_account_number: '2205', deferral_release: 'monthly_in_advance', accrual_cadence_months: 1 },
+      rate: { id: 'rh', annual_amount_cents: 49500, fiscal_year_end_mmdd: '12-31' },
       legacy_rows: rows, annual_rows: rows },
   };
 }
@@ -83,10 +84,47 @@ const leap = world({ cutoff: '2028-06-30' }); leap.cutover = '2028-07-01';
 for (const r of leap.builder.legacy_rows) r.transaction_date = r.transaction_date.replace('2026', '2028');
 const lp = buildBuilderPositions(leap).rows.find((r) => r.street_address === '8000 Rustic Pine Trail');
 check('leap year: Jan 1 - Jun 30, 2028 = 182/366 = $123.07', lp && lp.days === 182 && lp.days_in_year === 366 && lp.base_amount_cents === 12307, JSON.stringify(lp));
-const half = buildBuilderPositions({ ...world(), builder: { ...world().builder, rates: { homeowner: { annual_amount_cents: 73000, income_account_number: '4000', deferral_account_number: null }, builder: { pct_of_homeowner_rate: 50 } } } });
+const half = buildBuilderPositions({ ...world(), builder: { ...world().builder, program: { ...world().builder.program, deferral_account_number: null, deferral_release: null }, rate: { annual_amount_cents: 73000, fiscal_year_end_mmdd: '12-31' } } });
 check('a different annual rate prorates on the configured rate ($730 x 50% x 181/365 = $181.00)', half.rows.find((r) => r.street_address === '8000 Rustic Pine Trail').base_amount_cents === 18100);
 check('no deferral account: no schedule; a legacy charge that is neither the annual nor the builder amount ($495 vs $730) is unresolved, not normalized',
   !half.schedule && !half.rows.some((r) => r.street_address === '5302 Sleepy Fox') && half.unresolved.some((u) => u.street_address === '5302 Sleepy Fox'));
+
+console.log('portability: a second community configuration (nothing community-specific in the engine)');
+// A different community: $600.00 annual, builder 25%, homeowner 100%, AR 1310 / income 4010,
+// no deferral (charges recognized directly), assessment year Jul 1 - Jun 30.
+{
+  const acc2 = { 1310: { id: 'b1310', account_number: '1310', fund_id: 'op' }, 4010: { id: 'b4010', account_number: '4010', fund_id: 'op' } };
+  const props = [{ id: 'q1', vantaca_account_id: 'Q1', trusted_account_number: 'T-Q1', street_address: '1 Oak Ct' }, { id: 'q2', vantaca_account_id: 'Q2', trusted_account_number: 'T-Q2', street_address: '2 Oak Ct' },
+    { id: 'q3', vantaca_account_id: 'Q3', trusted_account_number: 'T-Q3', street_address: '3 Oak Ct' }];
+  const tens = props.map((p, i) => ({ id: `u${i + 1}`, property_id: p.id, kind: 'owner', start_date: '2026-08-01', end_date: null, origin: 'backfill_current' }));
+  const second = buildBuilderPositions({ cutoff: '2026-09-30', cutover: '2026-10-01', code: 'CONV-OAK-20260930', properties: props, tenures: tens,
+    resolveAcct: (n) => acc2[n] || null, tbOf: () => 0,
+    builder: { builders: [{ id: 'acme', company_name: 'Acme Homes' }],
+      owners: [{ tenure_id: 'u1', full_name: 'Acme Homes of Texas LLC' }, { tenure_id: 'u2', full_name: 'Acme Homes of Texas LLC' }, { tenure_id: 'u3', full_name: 'Pat Owner' }],
+      program: { builder_rate_pct: 25, homeowner_rate_pct: 100, ar_account_number: '1310', income_account_number: '4010', deferral_account_number: null, deferral_release: null, accrual_cadence_months: 3 },
+      rate: { id: 'r2', annual_amount_cents: 60000, fiscal_year_end_mmdd: '06-30' },
+      legacy_rows: [{ id: 'x1', property_id: 'q2', vantaca_account_id: 'Q2', transaction_date: '2026-07-01', description: 'Annual Assessment', txn_type: 'charge', charge_category: 'assessment', amount_cents: 60000 }],
+      annual_rows: [] } });
+  const r1 = second.rows.find((r) => r.street_address === '1 Oak Ct'); const r2 = second.rows.find((r) => r.street_address === '2 Oak Ct');
+  check('second community: its own assessment year (Jul 1 2026 - Jun 30 2027, FY2027), 92 days to 9/30 at 25% of $600.00 = $37.81; accounts 1310 / 4010',
+    r1 && r1.covered_from === '2026-07-01' && r1.covered_through === '2026-09-30' && r1.fiscal_year === 2027 && r1.year_start === '2026-07-01' && r1.year_end === '2027-06-30'
+      && r1.days === 92 && r1.days_in_year === 365 && r1.base_amount_cents === 3781 && r1.builder_rate_pct === 25, JSON.stringify(r1));
+  check('second community: a builder billed its full $600.00 on the year\u2019s first day is normalized on ITS accounts with no deferral (Dr 4010 $562.19 / Cr 1310 $562.19)',
+    r2 && r2.kind === 'normalization' && r2.ledger_amount_cents === 3781 - 60000 && r2.recognized_cents === 60000 && r2.deferred_cents === 0
+      && second.je.lines.every((l) => ['1310', '4010'].includes(l.account_number)) && second.je.total_debits_cents === second.je.total_credits_cents, JSON.stringify(second.je && second.je.lines));
+  check('second community: a non-builder lot is untouched; no deferral -> no release schedule, no residue item', !second.rows.some((r) => r.street_address === '3 Oak Ct') && !second.schedule && !second.reconciling_items.length);
+  check('second community: nothing from the first community leaks in (no 1300 / 4000 / 2205 line, no $495)', !second.je.lines.some((l) => ['1300', '4000', '2205'].includes(l.account_number)) && !JSON.stringify(second).includes('49500'));
+  const arrears = buildBuilderPositions({ ...world(), builder: { ...world().builder, program: { ...world().builder.program, deferral_release: 'monthly_in_arrears' } } });
+  const s5302a = arrears.rows.find((r) => r.street_address === '5302 Sleepy Fox');
+  check('a program releasing in ARREARS: by 6/30 the June release has been made too (6 releases): same recognized $247.50; by 6/15 only 5 would be', s5302a.recognized_cents === 24750);
+  const { monthsReleasedBy } = require('../lib/onboarding/builder_positions');
+  check('release counting follows the configured rule', monthsReleasedBy('monthly_in_advance', '2026-01-01', '2026-06-15') === 6 && monthsReleasedBy('monthly_in_arrears', '2026-01-01', '2026-06-15') === 5);
+  const midYear = buildBuilderPositions({ ...world(), builder: { ...world().builder, rate: { ...world().builder.rate, fiscal_year_end_mmdd: '06-15' } } });
+  check('a deferring program whose assessment year does not start on a month\u2019s first day is BLOCKED (the release schedule works in calendar months), never guessed',
+    midYear.controls.some((c) => c.code === 'preflight.deferral_year_months' && c.blocked && c.failures.length));
+  const noProg = buildBuilderPositions({ ...world(), builder: { ...world().builder, program: null } });
+  check('no program row: BLOCKED (never a default rate or account)', noProg.controls.some((c) => c.code === 'preflight.builder_program_configured' && c.blocked));
+}
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

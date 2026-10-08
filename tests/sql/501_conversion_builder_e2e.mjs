@@ -30,8 +30,9 @@ const { loadTrustedActivity, loadConversionContext, loadPostProofData } = requir
 const { trustedFingerprint } = require(`${REPO}/lib/onboarding/bridge.js`);
 const PF = require(`${REPO}/lib/onboarding/preflight.js`);
 process.env.SUPABASE_URL = process.env.SUPABASE_URL || 'http://localhost'; process.env.SUPABASE_KEY = process.env.SUPABASE_KEY || 'test';   // module load only
-const { monthLines } = require(`${REPO}/lib/accounting/builder_accrual.js`);
-const { glLines } = require(`${REPO}/lib/accounting/transfer_proration.js`);
+const { periodLines } = require(`${REPO}/lib/accounting/builder_accrual.js`);
+const { glLines, recognitionScheduleRow } = require(`${REPO}/lib/accounting/transfer_proration.js`);
+const { postingDateFor } = require(`${REPO}/lib/accounting/recognition_engine.js`);
 const REPORT = process.argv.includes('--report'); const PRINT = process.argv.includes('--print-objects');
 let pass = 0, fail = 0;
 const check = (name, cond, extra = '') => { if (cond) { pass++; console.log('PASS ', name); } else { fail++; console.log('FAIL ', name, extra); } };
@@ -79,6 +80,8 @@ await db.exec(`
   CREATE TABLE budget_forecasts (id uuid PRIMARY KEY, community_id uuid);
   CREATE TABLE forecast_lines (id uuid PRIMARY KEY, forecast_id uuid, account_id uuid, method text, settings jsonb);`);
 for (const m of ['235_recognition_engine.sql', '253_recognition_basis_daily.sql', '466_recognition_schedules_controls.sql', '360_assessment_proration.sql']) await db.exec(lf(`${REPO}/migrations/${m}`));
+// The real JE reference function (359) the recognition posting engine calls.
+{ const m359 = lf(`${REPO}/migrations/359_je_reference_gap_tolerant.sql`); await db.exec(m359.slice(m359.indexOf('CREATE OR REPLACE FUNCTION next_je_reference'), m359.indexOf('$ LANGUAGE plpgsql;') + '$ LANGUAGE plpgsql;'.length)); }
 const m457 = lf(`${REPO}/migrations/457_current_tenure_reader_views.sql`);
 await db.exec(m457.slice(m457.indexOf('CREATE OR REPLACE VIEW v_current_owner_ledger'), m457.indexOf('CREATE OR REPLACE VIEW v_current_owner_balance AS')));
 await db.exec(`INSERT INTO schema_migrations (filename, sha256) VALUES ('360_assessment_proration.sql', 'recorded'), ('459_ownership_transfer_single_path.sql', 'recorded'),
@@ -167,6 +170,17 @@ async function postJe(ref, date, module, lines, sourceRef = null) {
     [id, ++n, l.account_id, OPR, Number(l.debit_cents || 0), Number(l.credit_cents || 0), l.memo || null, l.property_id || null]);
   return { id, reference: ref };
 }
+async function postJe2(community, ref, date, lines, sourceRef = null) {
+  const per = (await one(`SELECT id FROM accounting_periods WHERE community_id = $1 AND period_start <= $2::date AND period_end >= $2::date`, [community, date])).id;
+  const tot = lines.reduce((s, l) => s + Number(l.debit_cents || 0), 0);
+  const fund = (await one(`SELECT id FROM account_funds WHERE community_id = $1 LIMIT 1`, [community])).id;
+  const id = (await one(`INSERT INTO journal_entries (community_id, period_id, posting_date, reference, description, source_module, source_reference, total_debits_cents, total_credits_cents, status)
+    VALUES ($1, $2, $3, $4, $5, 'assessment_billing', $6, $7, $7, 'posted') RETURNING id`, [community, per, date, ref, `rehearsal ${ref}`, sourceRef, tot])).id;
+  let n = 0;
+  for (const l of lines) await db.query(`INSERT INTO journal_entry_lines (journal_entry_id, line_number, account_id, fund_id, debit_cents, credit_cents, memo, property_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+    [id, ++n, l.account_id, fund, Number(l.debit_cents || 0), Number(l.credit_cents || 0), l.memo || null, l.property_id || null]);
+  return { id, reference: ref };
+}
 // The legacy (Vantaca-era) GL import in Trusted: retired at the cutover, replaced by the opening entries.
 const L1 = await postJe('VANTACA-2026H1', '2026-06-30', 'vantaca_import', [{ account_id: ACC['1300'], debit_cents: 15889500 }, { account_id: ACC['2205'], credit_cents: 15889500 }]);
 
@@ -213,8 +227,8 @@ const row = (addr) => bb.rows.find((r) => r.street_address === addr);
 const bje = w.repost_journal_entries.find((j) => j.reference === `${CODE}-BUILDER`);
 
 console.log('\n-- the conversion plan (production loader + plan builder)');
-check('the loader found the builder rule, both rates, 24 Lennar owner names and the year’s legacy rows (323 = 321 annual + 5302 interest + 5450)',
-  ctx.builder && ctx.builder.builders.length === 1 && ctx.builder.rates.homeowner.annual_amount_cents === 49500 && Number(ctx.builder.rates.builder.pct_of_homeowner_rate) === 50
+check('the loader found the builder rule, the program (50%, deferral 2205) and the annual assessment, 24 Lennar owner names and the year’s legacy rows (323 = 321 annual + 5302 interest + 5450)',
+  ctx.builder && ctx.builder.builders.length === 1 && ctx.builder.rate.annual_amount_cents === 49500 && Number(ctx.builder.program.builder_rate_pct) === 50 && ctx.builder.program.deferral_account_number === '2205'
     && ctx.builder.owners.filter((o) => o.full_name === LENNAR_NAME).length === 24 && ctx.builder.legacy_rows.length === 323, JSON.stringify({ owners: ctx.builder && ctx.builder.owners.length, rows: ctx.builder && ctx.builder.legacy_rows.length }));
 check('23 builder lots resolved (5302 normalized, 22 baseline), 5450 unresolved; all from Jan 1, never the 5/21 load date',
   bb.rows.length === 23 && bb.rows.filter((r) => r.kind === 'normalization').length === 1 && bb.rows.filter((r) => r.kind === 'baseline').length === 22 && bb.rows.every((r) => r.covered_from === '2026-01-01' && r.covered_through === CUTOFF));
@@ -283,7 +297,7 @@ check('5302 entry lines exactly: Dr 4000 $124.77, Dr 2205 $247.50, Cr 1300 $372.
 const l8211 = bLines.filter((l) => /^8211 /.test(l.lot || '') || false);
 check('8211 Rustic Pine Trail (unbilled): Dr 1300 $122.73 on the lot; the matching 4000 credit; no $495 anywhere',
   l8211.length === 1 && l8211[0].dr === 12273 && bLines.some((l) => l.acct === '4000' && l.cr === 12273 && /8211/.test(JSON.stringify(l)) === false) && !bLines.some((l) => l.dr === 49500 || l.cr === 49500), JSON.stringify({ l8211, inc: bLines.filter((l) => l.acct === '4000').slice(0, 3) }));
-const cov = async (L, y = 2026) => rpc('builder_coverage', { p_tenure_id: L.seller, p_fiscal_year: y });
+const cov = async (L, y = 2026) => rpc('builder_coverage', { p_tenure_id: L.seller, p_year_start: `${y}-01-01` });
 const c5302 = await cov(S5302); const c8211 = await cov(S8211); const c5450 = await cov(S5450);
 check('coverage: 5302 and 8211 valid, posted, Jan 1 - Jun 30, $122.73, posted to the BUILDER entry; 5450 has NONE',
   c5302.valid && c5302.count === 1 && c5302.covered_through === '2026-06-30' && c5302.amount_cents === 12273 && c5302.rows[0].journal_entry_reference === `${CODE}-BUILDER` && c5302.rows[0].status === 'posted'
@@ -322,28 +336,44 @@ check('a transfer of 5450 blocks: builder_coverage_missing', p5450.blocked && p5
 
 // ------------------------------------------------------------- the monthly accrual
 console.log('\n-- the monthly accrual');
-async function accrue(through) {
-  const st = await rpc('builder_accrual_stage', { p_community_id: SCR, p_through: through, p_actor: 'rehearsal' });
+// The runner's steps (lib/accounting/builder_accrual.js run()): stage, one entry per period from the
+// production line builder on the program's accounts, finish. acctIds maps account numbers to ids.
+async function accrue(through, community = SCR, acctIds = { 1300: ACC['1300'], 4000: ACC['4000'] }, je = postJe) {
+  // the rehearsal runs each accrual the day after its through date (a period is billed only once it has ended)
+  const asOf = new Date(Date.parse(through + 'T00:00:00Z') + 86400000).toISOString().slice(0, 10);
+  const st = await rpc('builder_accrual_stage', { p_community_id: community, p_through: through, p_actor: 'rehearsal', p_as_of: asOf });
   if (!st || st.status === 'nothing_to_accrue') return st;
-  const acct = { 1300: ACC['1300'], 4000: ACC['4000'] }; const out = [];
-  for (const m of st.months) {
-    if (!Number(m.pending)) continue;
-    const ref = `BACCR-${m.month_end.slice(0, 7)}-${st.run_id.slice(0, 6)}`;
-    const je = await postJe(ref, m.month_end, 'assessment_billing', monthLines(acct, '4000', m), `${st.batch_id}:${m.month_end.slice(0, 7)}`);
-    out.push(await rpc('builder_accrual_finish', { p_run: st.run_id, p_month_end: m.month_end, p_je: je.id }));
+  const out = [];
+  for (const p of st.periods) {
+    if (!Number(p.pending)) continue;
+    const ref = `BACCR-${p.period_end}-${st.run_id.slice(0, 6)}`;
+    const e = await je(ref, p.period_end, 'assessment_billing', periodLines(acctIds, st.ar_account_number, st.income_account_number, p), `${st.batch_id}:${p.period_end}`);
+    out.push(await rpc('builder_accrual_finish', { p_run: st.run_id, p_period_end: p.period_end, p_je: e.id }));
   }
   return { ...st, finished: out[out.length - 1] };
 }
+console.log('   (activation: the explicit post-conversion step)');
+const notYet = await code(() => rpc('builder_accrual_stage', { p_community_id: SCR, p_through: '2026-07-31', p_actor: 'rehearsal' }));
+check('the accrual cannot run until it is activated (the conversion is posted, but activation is a separate, explicit step)', /not activated/.test(notYet || ''), notYet);
+const stNA = await rpc('builder_coverage_status', { p_community_id: SCR, p_as_of: '2026-07-02' });
+check('until activated, the status says so (accrual_active false, amber at least)', stNA.accrual_active === false && stNA.status !== 'ok');
+const act = await rpc('activate_builder_accrual', { p_community_id: SCR, p_actor: 'ed' });
+const act2 = await rpc('activate_builder_accrual', { p_community_id: SCR, p_actor: 'someone else' });
+check('activated by ed (who + when recorded); activating again changes nothing; the activation cannot be rewritten',
+  act.status === 'activated' && act.activated_by === 'ed' && act2.status === 'already_active' && act2.activated_by === 'ed'
+    && /recorded once/.test((await code(() => db.query(`UPDATE builder_assessment_programs SET accrual_activated_by = 'x' WHERE community_id = $1`, [SCR]))) || ''));
 const prev = await rpc('builder_accrual_plan', { p_community_id: SCR, p_through: '2026-08-31' });
 const p8211 = prev.lots.find((l) => l.street_address === '8211 Rustic Pine Trail');
 check('plan through 8/31: 23 lots continue from 7/1 (Jul $21.02, Aug $21.02); 5450 listed BLOCKED (coverage missing), never skipped silently',
   prev.lots.length === 23 && JSON.stringify(p8211.periods.map((p) => [p.covered_from, p.covered_through, p.amount_cents])) === JSON.stringify([['2026-07-01', '2026-07-31', 2102], ['2026-08-01', '2026-08-31', 2102]])
     && prev.blocked.length === 1 && prev.blocked[0].street_address === '5450 Still Meadow' && prev.blocked[0].reason === 'builder_coverage_missing', JSON.stringify({ n: prev.lots.length, blocked: prev.blocked.map((b) => [b.street_address, b.reason]) }));
-check('the accrual refuses a through-date that is not a month end', /month end/.test((await code(() => rpc('builder_accrual_plan', { p_community_id: SCR, p_through: '2026-08-30' }))) || ''));
+check('a period that has not ended is never billed (through 11/30 run on 11/15: refused)', /only periods that have ended/.test((await code(() => rpc('builder_accrual_stage', { p_community_id: SCR, p_through: '2026-11-30', p_actor: 'rehearsal', p_as_of: '2026-11-15' }))) || ''));
+const midMonth = await rpc('builder_accrual_plan', { p_community_id: SCR, p_through: '2026-08-30' });
+check('a through-date mid-period bills only COMPLETED periods (through 8/30: July only)', midMonth.lots.every((l) => l.periods.length === 1 && l.periods[0].covered_through === '2026-07-31'));
 const a1 = await accrue('2026-08-31');
 check('Jul + Aug accrued: 2 entries (23 x $21.02 = $483.46 each), coverage posted, batch committed, run posted',
-  a1.finished.status === 'posted' && a1.months.length === 2 && a1.months.every((m) => Number(m.amount_cents) === 23 * 2102)
-    && (await one(`SELECT status FROM transaction_upload_batches WHERE id = $1`, [a1.batch_id])).status === 'committed', JSON.stringify(a1.finished && a1.finished.months));
+  a1.finished.status === 'posted' && a1.periods.length === 2 && a1.periods.every((m) => Number(m.amount_cents) === 23 * 2102)
+    && (await one(`SELECT status FROM transaction_upload_batches WHERE id = $1`, [a1.batch_id])).status === 'committed', JSON.stringify(a1.finished && a1.finished.periods));
 check('rerun through 8/31: nothing to accrue (no duplicate period, no duplicate penny)', (await rpc('builder_accrual_stage', { p_community_id: SCR, p_through: '2026-08-31', p_actor: 'rehearsal' })).status === 'nothing_to_accrue');
 const c8211b = await cov(S8211);
 check('8211 coverage: Jan 1 - Aug 31 in three contiguous periods ($122.73 + $21.02 + $21.02), all posted', c8211b.valid && c8211b.count === 3 && c8211b.covered_through === '2026-08-31' && c8211b.amount_cents === 16477 && c8211b.pending === 0);
@@ -370,6 +400,29 @@ await db.query(`UPDATE builder_assessment_coverage SET status = 'posted', journa
 const c8211c = await cov(S8211);
 check('8211 after the transfer: Jan 1 - Sep 14 covered once (4 contiguous periods, $174.26), no overlap, no double post',
   c8211c.valid && c8211c.count === 4 && c8211c.covered_through === '2026-09-14' && c8211c.amount_cents === 17426 && c8211c.rows[3].source_type === 'transfer_true_up', JSON.stringify(c8211c.rows.map((r) => [r.from, r.through, r.amount_cents, r.source_type])));
+console.log('\n-- the new owner\u2019s 9/15 charge: released by the days it covers, on the real recognition engine');
+const hRow = await one(`SELECT id FROM assessment_prorations WHERE proposal_id = $1 AND role = 'homeowner_charge'`, [prop]);
+const schedRow = recognitionScheduleRow(tw, { communityId: SCR, proposalId: prop, homeownerRowId: hRow.id, journalEntryId: tje.id, incomeAccountId: ACC['4000'] });
+const keys = Object.keys(schedRow);
+const hSched = (await one(`INSERT INTO recognition_schedules (${keys.join(', ')}) VALUES (${keys.map((_, i) => `$${i + 1}`).join(', ')}) RETURNING id`, keys.map((k) => schedRow[k]))).id;
+const engineMonths = await q(`SELECT period_month::text AS m, scheduled_cents::int AS c FROM recognition_schedule_periods WHERE schedule_id = $1 ORDER BY 1`, [hSched]);
+check('9/15 closing: the new owner owes 108 days (9/15-12/31) = $146.47; Dr 1300 / Cr 2205 $146.47 on 9/15',
+  tw.homeowner_due_cents === 14647 && tw.homeowner_days === 108 && tje && (await one(`SELECT count(*)::int AS n FROM journal_entry_lines WHERE journal_entry_id = $1 AND ((account_id = $2 AND debit_cents = 14647) OR (account_id = $3 AND credit_cents = 14647))`, [tje.id, ACC['1300'], ACC['2205']])).n === 2);
+check('release months by covered days: Sep 16 days $21.70, Oct 31 days $42.04, Nov 30 days $40.69, Dec 31 days $42.04 = $146.47 (not 4 equal quarters); the real engine generates exactly the plan\u2019s months',
+  JSON.stringify(tw.homeowner_recognition.months.map((m) => [m.month, m.days, m.cents])) === JSON.stringify([['2026-09-01', 16, 2170], ['2026-10-01', 31, 4204], ['2026-11-01', 30, 4069], ['2026-12-01', 31, 4204]])
+    && JSON.stringify(engineMonths.map((r) => [r.m, r.c])) === JSON.stringify(tw.homeowner_recognition.months.map((m) => [m.month, m.cents])),
+  JSON.stringify({ plan: tw.homeowner_recognition.months, engine: engineMonths }));
+const relPosted = [];
+for (const m of engineMonths) {
+  // the recognition runner's own date rule (lib/accounting/recognition_engine.js postingDateFor)
+  const pid = (await one(`SELECT post_recognition_period($1, $2::date, 'rehearsal', $3::date) AS id`, [hSched, m.m, postingDateFor(schedRow, m.m)])).id;
+  const pj = await one(`SELECT j.posting_date::text AS d, j.reference, (SELECT debit_cents::int FROM journal_entry_lines WHERE journal_entry_id = j.id AND account_id = $2) AS dr2205,
+    (SELECT credit_cents::int FROM journal_entry_lines WHERE journal_entry_id = j.id AND account_id = $3) AS cr4000 FROM recognition_postings p JOIN journal_entries j ON j.id = p.journal_entry_id WHERE p.id = $1`, [pid, ACC['2205'], ACC['4000']]);
+  relPosted.push(pj);
+}
+check('the releases post on the real engine: 9/15 $21.70 (the settlement month: never before the charge exists), then the 1st of each month (the community\u2019s release day) 10/1 $42.04, 11/1 $40.69, 12/1 $42.04, each Dr 2205 / Cr 4000; the schedule completes at $146.47',
+  JSON.stringify(relPosted.map((r) => [r.d, r.dr2205, r.cr4000])) === JSON.stringify([['2026-09-15', 2170, 2170], ['2026-10-01', 4204, 4204], ['2026-11-01', 4069, 4069], ['2026-12-01', 4204, 4204]])
+    && (await one(`SELECT status FROM recognition_schedules WHERE id = $1`, [hSched])).status === 'fully_recognized', JSON.stringify(relPosted));
 const tw2 = await rpc('post_transfer_assessment_proration', { p_proposal_id: prop, p_posted_by: 'rehearsal', p_dry_run: false });
 check('re-running the transfer posts nothing new', tw2.already_prorated === true && (await one(`SELECT count(*)::int AS n FROM builder_assessment_coverage WHERE tenure_id = $1`, [S8211.seller])).n === 4);
 
@@ -390,7 +443,7 @@ check('the unsold lot’s year: Jan-Jun $122.73 + Jul $21.02 + Aug $21.02 + Sep 
 const y5302 = await cov(S5302);
 check('5302’s year (normalized at conversion, accrued after) is exactly $247.50 too', y5302.amount_cents === 24750 && y5302.covered_through === '2026-12-31');
 check('rerun through 12/31 after the true-up: nothing to accrue, no duplicate penny',
-  (await rpc('builder_accrual_stage', { p_community_id: SCR, p_through: '2026-12-31', p_actor: 'rehearsal' })).status === 'nothing_to_accrue'
+  (await rpc('builder_accrual_stage', { p_community_id: SCR, p_through: '2026-12-31', p_actor: 'rehearsal', p_as_of: '2027-01-03' })).status === 'nothing_to_accrue'
     && (await one(`SELECT count(*)::int AS n FROM builder_assessment_coverage WHERE rounding_true_up_cents <> 0 AND tenure_id = $1`, [UNSOLD.seller])).n === 1);
 const st0106 = await rpc('builder_coverage_status', { p_community_id: SCR, p_as_of: '2027-01-06' });
 check('Jan 6 after December: only 5450 is RED', st0106.counts.red === 1 && st0106.lots.find((l) => l.severity === 'red').street_address === '5450 Still Meadow', JSON.stringify(st0106.counts));
@@ -407,6 +460,97 @@ const base27 = (annual, days) => Math.round(annual * 50 * days / (100 * 365));
 check('2027: Jan-Jun at $495.00, Jul-Dec at $520.00; the year mixes rates so December carries NO true-up (not deterministically recomputable)',
   y27.length === 12 && y27[0].amount_cents === base27(49500, 31) && y27[6].amount_cents === base27(52000, 31) && y27[11].rounding_true_up_cents === 0
     && y27.reduce((t, r) => t + r.amount_cents, 0) === y27.reduce((t, r) => t + (r.amount_cents - r.rounding_true_up_cents), 0), JSON.stringify(y27.map((r) => r.amount_cents)));
+
+console.log('\n-- PORTABILITY: a second community configuration on the same engine (no Still Creek fact anywhere)');
+{
+  // Example Oaks: $600.00 annual, builder 25%, homeowner 100%, AR 1310 / income 4010, NO deferral,
+  // assessment year Jul 1 - Jun 30, QUARTERLY builder billing. Builder: a different company.
+  const OAK = 'a0000000-0000-4000-8000-0000000000cc'; const OF2 = '00000000-0000-4000-8000-00000000f0cc'; const ACME = '00000000-0000-4000-8000-0000000ac0e5';
+  await db.query(`INSERT INTO communities (id, name, management_company_id, gl_cutover_date) VALUES ($1, 'Example Oaks', $2, '2025-10-01')`, [OAK, MC]);
+  await db.query(`INSERT INTO builder_companies VALUES ($1, $2, 'Acme Homes')`, [ACME, MC]);
+  await db.query(`INSERT INTO account_funds VALUES ($1, $2, 'OPR')`, [OF2, OAK]);
+  const A2 = {};
+  for (const [n, ty] of [['1310', 'asset'], ['4010', 'revenue']]) A2[n] = (await one(`INSERT INTO chart_of_accounts (id, community_id, account_number, fund_id, account_type) VALUES (gen_random_uuid(), $1, $2, $3, $4) RETURNING id`, [OAK, n, OF2, ty])).id;
+  await db.query(`INSERT INTO accounting_periods (community_id, fiscal_year, period_number, period_start, period_end, status)
+    SELECT $1, y, m, make_date(y, m, 1), (make_date(y, m, 1) + interval '1 month - 1 day')::date, 'open' FROM generate_series(2025, 2027) y, generate_series(1, 12) m`, [OAK]);
+  await db.query(`INSERT INTO community_assessment_rates (community_id, owner_class, annual_amount_cents, fiscal_year_end_mmdd) VALUES ($1, 'homeowner', 60000, '06-30')`, [OAK]);
+  await db.query(`INSERT INTO builder_assessment_programs (community_id, builder_rate_pct, homeowner_rate_pct, ar_account_number, income_account_number, accrual_cadence_months, evidence, created_by)
+    VALUES ($1, 25, 100, '1310', '4010', 3, 'rehearsal configuration', 'rehearsal')`, [OAK]);
+  await db.query(`INSERT INTO transfer_proration_builders (community_id, builder_company_id, created_by) VALUES ($1, $2, 'rehearsal')`, [OAK, ACME]);
+  const oakLot = async (addr, owner, opts = {}) => {
+    const p = (await one(`INSERT INTO properties (id, community_id, vantaca_account_id, street_address, trusted_account_number) VALUES (gen_random_uuid(), $1, $2, $3, $2) RETURNING id`, [OAK, `O-${addr}`, addr])).id;
+    const tn = (await one(`INSERT INTO ownership_tenures (id, community_id, property_id, kind, start_date, origin) VALUES (gen_random_uuid(), $1, $2, 'owner', $3, $4) RETURNING id`, [OAK, p, opts.start || '2025-08-01', opts.origin || 'backfill_current'])).id;
+    const c = (await one(`INSERT INTO contacts (id, full_name) VALUES (gen_random_uuid(), $1) RETURNING id`, [owner])).id;
+    await db.query(`INSERT INTO property_ownerships (property_id, contact_id, tenure_id, start_date) VALUES ($1, $2, $3, $4)`, [p, c, tn, opts.start || '2025-08-01']);
+    return { property: p, seller: tn, addr };
+  };
+  const OA = await oakLot('10 Oak Ct', 'Acme Homes of Texas LLC');
+  const OB = await oakLot('20 Oak Ct', 'Acme Homes of Texas LLC', { origin: 'transfer', start: '2025-11-10' });
+  const OH = await oakLot('30 Oak Ct', 'Pat Owner');
+  const activateEarly = await code(() => rpc('activate_builder_accrual', { p_community_id: OAK, p_actor: 'ed' }));
+  check('second community: activation is refused before ITS conversion is posted', /only after/.test(activateEarly || ''), activateEarly);
+  // Its conversion (as-of 9/30/2026), posted, with 10 Oak Ct's conversion coverage 7/1-9/30 (92/365 days at 25% of $600 = $37.81).
+  const OCB = (await one(`INSERT INTO conversion_batches (community_id, batch_code, as_of_date, source_system, status) VALUES ($1, 'CONV-OAK-20250930', '2025-09-30', 'vantaca', 'posted') RETURNING id`, [OAK])).id;
+  const convBatch = (await one(`INSERT INTO transaction_upload_batches (management_company_id, community_id, period_label, as_of_date, status, uploaded_by) VALUES ($1, $2, 'conv', '2025-10-01', 'committed', 'conversion') RETURNING id`, [MC, OAK])).id;
+  const convJe = await postJe2(OAK, 'CONV-OAK-BUILDER', '2025-10-01', [{ account_id: A2['1310'], debit_cents: 3781, property_id: OA.property }, { account_id: A2['4010'], credit_cents: 3781 }]);
+  const cvId = (await one(`INSERT INTO builder_assessment_coverage (community_id, property_id, tenure_id, builder_company_id, fiscal_year, covered_from, covered_through, days, days_in_year, annual_assessment_cents, builder_rate_pct,
+      base_amount_cents, amount_cents, source_type, conversion_batch_id, batch_id, status, created_by)
+    VALUES ($1, $2, $3, $4, 2026, '2025-07-01', '2025-09-30', 92, 365, 60000, 25, 3781, 3781, 'conversion', $5, $6, 'pending', 'rehearsal') RETURNING id, year_start::text AS ys, year_end::text AS ye`, [OAK, OA.property, OA.seller, ACME, OCB, convBatch]));
+  await db.query(`UPDATE builder_assessment_coverage SET status = 'posted', journal_entry_id = $2, journal_entry_reference = 'CONV-OAK-BUILDER' WHERE id = $1`, [cvId.id, convJe.id]);
+  check('second community: the coverage row takes ITS assessment year from configuration (Jul 1 2025 - Jun 30 2026)', cvId.ys === '2025-07-01' && cvId.ye === '2026-06-30');
+  const actOak = await rpc('activate_builder_accrual', { p_community_id: OAK, p_actor: 'ed' });
+  check('second community: activated after its conversion posted', actOak.status === 'activated');
+  const je2 = (ref, date, module, lines, sref) => postJe2(OAK, ref, date, lines, sref);
+  const planQ = await rpc('builder_accrual_plan', { p_community_id: OAK, p_through: '2025-12-31' });
+  const pA = planQ.lots.find((l) => l.street_address === '10 Oak Ct'); const pB = planQ.lots.find((l) => l.street_address === '20 Oak Ct');
+  check('second community, quarterly through 12/31: 10 Oak Ct bills Oct 1 - Dec 31 (92 days = $37.81); 20 Oak Ct (builder from 11/10/2025 by transfer) bills Nov 10 - Dec 31 (52 days = $21.37); 30 Oak Ct (not a builder) nothing; accounts 1310 / 4010',
+    JSON.stringify(pA.periods.map((p) => [p.covered_from, p.covered_through, p.amount_cents])) === JSON.stringify([['2025-10-01', '2025-12-31', 3781]])
+      && JSON.stringify(pB.periods.map((p) => [p.covered_from, p.covered_through, p.amount_cents])) === JSON.stringify([['2025-11-10', '2025-12-31', 2137]])
+      && !planQ.lots.some((l) => l.street_address === '30 Oak Ct') && planQ.ar_account_number === '1310' && planQ.income_account_number === '4010' && planQ.cadence_months === 3,
+    JSON.stringify(planQ.lots.map((l) => [l.street_address, l.periods])));
+  await accrue('2025-12-31', OAK, A2, je2);
+  // A transfer on the second community mid-quarter: 10 Oak Ct to a homeowner on 2/15/2027.
+  const settle2 = '2026-02-15';
+  await db.query(`UPDATE ownership_tenures SET end_date = ($1::date - 1) WHERE id = $2`, [settle2, OA.seller]);
+  const bt2 = (await one(`INSERT INTO ownership_tenures (id, community_id, property_id, start_date, origin) VALUES (gen_random_uuid(), $1, $2, $3, 'transfer') RETURNING id`, [OAK, OA.property, settle2])).id;
+  const bc2 = (await one(`INSERT INTO contacts (id, full_name) VALUES (gen_random_uuid(), 'Lee Buyer') RETURNING id`)).id;
+  await db.query(`INSERT INTO property_ownerships (property_id, contact_id, tenure_id, start_date) VALUES ($1, $2, $3, $4)`, [OA.property, bc2, bt2, settle2]);
+  const prop2 = (await one(`INSERT INTO ownership_change_proposals (property_id, community_id, status, effective_start_date, proposed_owner_name, seller_tenure_id, buyer_tenure_id) VALUES ($1, $2, 'approved', $3, 'Lee Buyer', $4, $5) RETURNING id`, [OA.property, OAK, settle2, OA.seller, bt2])).id;
+  const tw3 = await rpc('post_transfer_assessment_proration', { p_proposal_id: prop2, p_posted_by: 'rehearsal', p_dry_run: false });
+  check('second community transfer 2/15/2026: coverage through 12/31 -> bills ONLY 1/1-2/14 (45 days at 25% of $600 = $18.49); homeowner 136 days at 100% = $223.56 straight to 4010 (no deferral: no release schedule)',
+    !tw3.blocked && tw3.builder_unbilled_period.start === '2026-01-01' && tw3.builder_unbilled_period.end === '2026-02-14' && tw3.builder_adjustment_cents === 1849
+      && tw3.homeowner_due_cents === 22356 && tw3.homeowner_days === 136 && tw3.ar_account === '1310' && tw3.income_account === '4010' && tw3.deferral_account === null && tw3.homeowner_recognition === null
+      && tw3.year_start === '2025-07-01' && tw3.year_end === '2026-06-30',
+    JSON.stringify({ b: tw3.blocked_reasons, unb: tw3.builder_unbilled_period, adj: tw3.builder_adjustment_cents, ho: tw3.homeowner_due_cents, ar: tw3.ar_account, inc: tw3.income_account }));
+  const tb3 = (await one(`SELECT batch_id FROM assessment_prorations WHERE proposal_id = $1 AND batch_id IS NOT NULL LIMIT 1`, [prop2])).batch_id;
+  const gl3 = glLines({ 1310: A2['1310'], 4010: A2['4010'] }, tw3);
+  const tje3 = await postJe2(OAK, `TP-${prop2.slice(0, 8)}`, settle2, gl3, tb3);
+  await db.query(`UPDATE transaction_upload_batches SET status = 'committed', committed_at = now() WHERE id = $1`, [tb3]);
+  await db.query(`UPDATE builder_assessment_coverage SET status = 'posted', journal_entry_id = $2, journal_entry_reference = $3 WHERE proposal_id = $1 AND status = 'pending'`, [prop2, tje3.id, tje3.reference]);
+  check('second community transfer GL lines use only ITS accounts (1310 / 4010)', gl3.every((l) => [A2['1310'], A2['4010']].includes(l.account_id)));
+  await accrue('2026-06-30', OAK, A2, je2);
+  const covB = await rpc('builder_coverage', { p_tenure_id: OB.seller, p_year_start: '2025-07-01' });
+  const covA = await rpc('builder_coverage', { p_tenure_id: OA.seller, p_year_start: '2025-07-01' });
+  check('second community year: 20 Oak Ct continues quarterly (Nov 10-Dec 31 $21.37, Jan-Mar $36.99, Apr-Jun $37.40), no true-up (its year did not start on Jul 1); 10 Oak Ct stops at its transfer (Jul-Sep $37.81, Oct-Dec $37.81, Jan 1-Feb 14 $18.49 = $94.11)',
+    JSON.stringify(covB.rows.map((r) => [r.from, r.through, r.amount_cents, r.rounding_true_up_cents])) === JSON.stringify([['2025-11-10', '2025-12-31', 2137, 0], ['2026-01-01', '2026-03-31', 3699, 0], ['2026-04-01', '2026-06-30', 3740, 0]])
+      && covA.valid && covA.amount_cents === 3781 + 3781 + 1849 && covA.covered_through === '2026-02-14',
+    JSON.stringify({ B: covB.rows.map((r) => [r.from, r.through, r.amount_cents]), A: covA.rows.map((r) => [r.from, r.through, r.amount_cents]) }));
+  // A full-year builder lot on the second community: covered from Jul 1, quarterly, year-end true-up -> exactly 25% of $600 = $150.00.
+  const OC2 = await oakLot('40 Oak Ct', 'Acme Homes of Texas LLC', { origin: 'transfer', start: '2026-07-01' });   // the builder bought it from the developer on 7/1/2026 (a recorded transfer)
+  const y2 = '2026-07-01';   // the NEXT assessment year (Jul 1 2026 - Jun 30 2027), billed only by the accrual
+  await accrue('2027-06-30', OAK, A2, je2);
+  const covC = await rpc('builder_coverage', { p_tenure_id: OC2.seller, p_year_start: y2 });
+  check('second community, a full assessment year (Jul 1 2026 - Jun 30 2027) billed quarterly sums to EXACTLY $150.00 (25% of $600) (any rounding difference lands, marked, on the Jun 30 period)',
+    covC.valid && covC.count === 4 && covC.amount_cents === 15000 && covC.rows[3].through === '2027-06-30'
+      && covC.rows.slice(0, 3).every((r) => r.rounding_true_up_cents === 0),
+    JSON.stringify(covC.rows.map((r) => [r.from, r.through, r.amount_cents, r.rounding_true_up_cents])));
+  const stOak = await rpc('builder_coverage_status', { p_community_id: OAK, p_as_of: '2027-07-06' });
+  check('second community status, 6 days after ITS year end: expected through Jun 30 2027; the lots that are not covered through it would be RED; these are covered (only 10 Oak Ct sold) ',
+    stOak.expected_through === '2027-06-30' && stOak.cadence_months === 3 && stOak.lots.every((l) => l.severity === 'ok'), JSON.stringify(stOak.lots.map((l) => [l.street_address, l.covered_through, l.severity, l.reason])));
+  const noLeak = await one(`SELECT count(*)::int AS n FROM journal_entry_lines l JOIN journal_entries j ON j.id = l.journal_entry_id WHERE j.community_id = $1 AND l.account_id NOT IN ($2, $3)`, [OAK, A2['1310'], A2['4010']]);
+  check('nothing from the first community leaks into the second: every one of its entries posts only to 1310 / 4010', noLeak.n === 0);
+  void OH;
+}
 
 console.log('\n-- a community with no builder rule converts exactly as before (501’s EXECUTE)');
 {

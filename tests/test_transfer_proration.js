@@ -80,10 +80,13 @@ const PLAN = {
   fiscal_year: 2026, days_in_year: 365, annual_assessment_cents: 49500, builder_rate_pct: 50, builder_days: 181, homeowner_days: 184,
   builder_due_cents: 12273, homeowner_due_cents: 24953, builder_adjustment_cents: 12273, builder_prior_billed_cents: 0,
 };
-const WRITTEN = { ...PLAN, written: true, batch_id: 'batch-1', property_id: 'prop-1', community_id: 'scr', seller_tenure_id: 'ten-lennar', buyer_tenure_id: 'ten-buyer' };
-// Still Creek's own treatment: deferred through 2205, released 1/n monthly from the settlement month.
-const SCR_PLAN = { ...WRITTEN, income_account: '4000', deferral_account: '2205', homeowner_period_end: '2026-12-31',
-  homeowner_recognition: { method: 'straight_line_monthly', start_month: '2026-07-01', term_months: 6, monthly_cents: 4159 } };
+// The accounts come from the community's program (here: the first configured community's).
+const WRITTEN = { ...PLAN, written: true, batch_id: 'batch-1', property_id: 'prop-1', community_id: 'scr', seller_tenure_id: 'ten-lennar', buyer_tenure_id: 'ten-buyer', ar_account: '1300', income_account: '4000', homeowner_rate_pct: 100 };
+// A deferring program: deferred through 2205, released by the days the charge covers each month (from the SQL plan).
+const MONTHS_7_1 = [['2026-07-01', 31, 4204], ['2026-08-01', 31, 4204], ['2026-09-01', 30, 4069], ['2026-10-01', 31, 4204], ['2026-11-01', 30, 4068], ['2026-12-01', 31, 4204]]
+  .map(([month, days, cents]) => ({ month, days, cents }));
+const SCR_PLAN = { ...WRITTEN, deferral_account: '2205', homeowner_period_end: '2026-12-31',
+  homeowner_recognition: { method: 'covered_days', start_month: '2026-07-01', term_months: 6, period_start: '2026-07-01', period_end: '2026-12-31', months: MONTHS_7_1 } };
 const ROWS = [
   { id: 'ap-b', role: 'builder_adjustment', status: 'draft', prorated_amount_cents: 12273, batch_id: 'batch-1', tenure_id: 'ten-lennar', community_id: 'scr', property_id: 'prop-1', proposal_id: 'prop-x' },
   { id: 'ap-h', role: 'homeowner_charge', status: 'draft', prorated_amount_cents: 24953, batch_id: 'batch-1', tenure_id: 'ten-buyer', community_id: 'scr', property_id: 'prop-1', proposal_id: 'prop-x' },
@@ -117,7 +120,7 @@ check('Still Creek treatment (7/1, unbilled lot): builder Dr 1300 / Cr 4000 $122
 check('a credit against a DEFERRED annual assessment can never reach the GL from here (the accounting conversion normalizes it)', () => {
   assert.throws(() => TP.glLines(ACCT, { ...SCR_PLAN, builder_adjustment_cents: -37227 }), /awaiting_conversion_normalization/);
 });
-check('post (Still Creek): the new owner\u2019s share gets ONE recognition schedule (2205 -> 4000, Jul-Dec, $41.59/month, keyed to the proration row); a retry does not create a second', async () => {
+check('post (deferring program): the new owner\u2019s share gets ONE recognition schedule (2205 -> 4000, daily basis = the days it covers each month, keyed to the proration row); a retry does not create a second', async () => {
   posted.length = 0;
   const db = fakeDb({ rpc: { post_transfer_assessment_proration: { data: SCR_PLAN, error: null } }, tables: BASE_TABLES });
   const r = await TP.postTransferProration(db, { proposalId: 'prop-x', postedBy: 'ed' });
@@ -126,9 +129,10 @@ check('post (Still Creek): the new owner\u2019s share gets ONE recognition sched
   assert.strictEqual(s.length, 1);
   assert.deepStrictEqual(pickK(s[0], ['schedule_type', 'balance_account_number', 'recognition_account_id', 'recognize_amount_cents', 'start_month', 'term_months', 'monthly_amount_cents', 'recognition_method', 'status', 'source_type', 'source_id', 'source_journal_entry_id', 'period_start', 'period_end']), {
     schedule_type: 'deferred_revenue', balance_account_number: '2205', recognition_account_id: 'acct-income', recognize_amount_cents: 24953,
-    start_month: '2026-07-01', term_months: 6, monthly_amount_cents: 4159, recognition_method: 'straight_line_monthly', status: 'active',
+    start_month: '2026-07-01', term_months: 6, monthly_amount_cents: 4204, recognition_method: 'daily', status: 'active',
     source_type: 'assessment_billing', source_id: 'ap-h', source_journal_entry_id: 'je-1', period_start: '2026-07-01', period_end: '2026-12-31' });
-  assert.deepStrictEqual(db.t.recognition_schedule_segments.map((x) => [x.income_account_number, x.monthly_amount_cents]), [['4000', 4159]]);
+  assert.ok(!(db.t.recognition_schedule_segments || []).length, 'no fixed-amount segment: each month posts its covered-days amount to the recognition account');
+  assert.ok(/Jul 31|2026-07 31 days \$42\.04/.test(s[0].explanation), s[0].explanation);
   assert.strictEqual(db.t.assessment_prorations.find((x) => x.role === 'homeowner_charge').recognition_schedule_id, s[0].id);
   assert.ok(posted[0].lines.some((x) => x.account_id === 'acct-unearned' && x.credit_cents === 24953));
   // Retry with the schedule already there: found by its source, not created again.
@@ -138,6 +142,13 @@ check('post (Still Creek): the new owner\u2019s share gets ONE recognition sched
 });
 const pickK = (o, ks) => Object.fromEntries(ks.map((k) => [k, o[k]]));
 
+check('a plan without the program\u2019s AR / income accounts never posts (no default accounts)', () => {
+  assert.throws(() => TP.glLines(ACCT, { ...WRITTEN, ar_account: undefined }), /names no AR \/ income account/);
+});
+check('GL on another program\u2019s accounts (AR 1310, income 4010): the lines follow the configuration', () => {
+  const l = TP.glLines({ 1310: 'other-ar', 4010: 'other-inc' }, { ...WRITTEN, ar_account: '1310', income_account: '4010' });
+  assert.ok(l.every((x) => ['other-ar', 'other-inc'].includes(x.account_id)) && l.filter((x) => x.account_id === 'other-ar').every((x) => x.property_id === 'prop-1'));
+});
 check('GL (Jan 1: no builder share, Lennar unbilled): only the homeowner charge', () => {
   const l = TP.glLines(ACCT, { ...WRITTEN, builder_adjustment_cents: 0, homeowner_due_cents: 49500 });
   assert.deepStrictEqual(l.map((x) => x.debit_cents + x.credit_cents), [49500, 49500]);

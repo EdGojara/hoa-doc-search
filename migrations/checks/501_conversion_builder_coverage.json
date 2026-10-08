@@ -1,6 +1,6 @@
 {
   "migration": "501_conversion_builder_coverage.sql",
-  "summary": "Issue #96: the conversion carries builder assessments at the builder rate and the deferred annual assessments correctly, and every month after it the builder's lots are billed forward without overlap or gap. Adds conversion_reconciling_items (append-only; open -> resolved with who/when/why) and builder_accrual_runs; extends onboarding_execute (the 498 body plus the builder coverage batch, the deferred-assessment release schedule and the reconciling items, each verified before commit); adds the builder accrual functions (plan / stage / finish) and builder_coverage_status for the AR email, Home Sales and the operations warning. Changes no existing row.",
+  "summary": "Issue #96: a configured community's conversion carries builder assessments at the builder rate and any deferred annual assessment correctly; after it, builder lots are billed forward by the program's cadence within the community's assessment year, without overlap or gap, once the accrual is explicitly ACTIVATED after the conversion posts. GENERIC: every community fact comes from configuration (migration 500). Adds conversion_reconciling_items (append-only; open -> resolved with who/when/why) and builder_accrual_runs; extends onboarding_execute (the 498 body plus the builder coverage batch, the deferred-assessment release schedule and the reconciling items, each verified before commit); adds activate_builder_accrual, the accrual functions (plan / stage / finish, cadence-aware) and builder_coverage_status for the AR email, Home Sales and the Operations Feed. Changes no existing row.",
   "requires": [
     "498_onboarding_execute_neutralize_counted.sql",
     "500_transfer_assessment_proration.sql",
@@ -28,7 +28,7 @@
     "Creates builder_accrual_runs (community, through date, staged/posted, batch, plan, who/when); one staged run per community; a guard refuses DELETE and edits. builder_assessment_coverage.accrual_run_id now references it (RESTRICT).",
     "onboarding_execution_writes: the table_name and write_kind CHECKs also allow builder_assessment_coverage / recognition_schedules / conversion_reconciling_items and builder_batch / builder_row / builder_coverage / deferral_schedule / reconciling_item.",
     "Replaces onboarding_execute: the 498 body unchanged, plus (only when the approved plan carries them) the {code}-BUILDER ledger batch and coverage, the deferral release schedule and the reconciling items, all verified before commit (builder ledger = plan = the entry's AR lines; coverage posted per lot; schedule total; item count; write counts). A plan without a builder section executes exactly as before.",
-    "Functions builder_tenure_match, builder_accrual_plan (read-only), builder_accrual_stage, builder_accrual_run_view, builder_accrual_finish and builder_coverage_status: service_role only. No row in any existing table changes."
+    "Functions builder_tenure_match, builder_cadence_ends (immutable), activate_builder_accrual (refused before the conversion posts; records who/when once), builder_accrual_plan (read-only, completed periods of the program cadence), builder_accrual_stage (refused until activated), builder_accrual_run_view, builder_accrual_finish and builder_coverage_status: service_role only. No row in any existing table changes."
   ],
   "objects": {
     "added": [
@@ -73,11 +73,13 @@
       "constraint:conversion_reconciling_items.conversion_reconciling_items_resolution_check",
       "constraint:conversion_reconciling_items.conversion_reconciling_items_status_check",
       "constraint:conversion_reconciling_items.conversion_reconciling_items_unique",
+      "function:activate_builder_accrual",
       "function:builder_accrual_finish",
       "function:builder_accrual_plan",
       "function:builder_accrual_run_view",
       "function:builder_accrual_runs_guard",
       "function:builder_accrual_stage",
+      "function:builder_cadence_ends",
       "function:builder_coverage_status",
       "function:builder_tenure_match",
       "function:conversion_reconciling_items_guard",
@@ -135,7 +137,12 @@
     },
     {
       "name": "accrual and status functions are service_role only",
-      "sql": "SELECT (CASE WHEN has_function_privilege('service_role', 'builder_accrual_stage(uuid,date,text)', 'EXECUTE') AND NOT has_function_privilege('anon', 'builder_accrual_stage(uuid,date,text)', 'EXECUTE') AND NOT has_function_privilege('authenticated', 'builder_coverage_status(uuid,date)', 'EXECUTE') THEN 1 ELSE 0 END)::int",
+      "sql": "SELECT (CASE WHEN has_function_privilege('service_role', 'builder_accrual_stage(uuid,date,text,date)', 'EXECUTE') AND NOT has_function_privilege('anon', 'builder_accrual_stage(uuid,date,text,date)', 'EXECUTE') AND NOT has_function_privilege('authenticated', 'builder_coverage_status(uuid,date)', 'EXECUTE') THEN 1 ELSE 0 END)::int",
+      "expect": 1
+    },
+    {
+      "name": "the accrual activation function is service_role only",
+      "sql": "SELECT (CASE WHEN has_function_privilege('service_role', 'activate_builder_accrual(uuid,text)', 'EXECUTE') AND NOT has_function_privilege('authenticated', 'activate_builder_accrual(uuid,text)', 'EXECUTE') THEN 1 ELSE 0 END)::int",
       "expect": 1
     }
   ]
