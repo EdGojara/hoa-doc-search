@@ -197,6 +197,34 @@ check('NDR parsing: AppRiver / Exchange / Gmail hard bounces name the address; a
   assert.strictEqual(AS.parseNdr(reply, [TESSA]), null, 'a person is not a bounce');
 });
 
+// The backfill dry run (2026-10-07) read every report in the mailboxes. These are
+// their exact shapes (addresses changed). Only an explicit permanent reason
+// retires an address; retiring a working one is the worse failure.
+check('real reports: forwarding failures, transient trouble and vague errors never retire an address', () => {
+  const ex = (from, subject, preview) => ({ id: 'x' + Math.random(), subject, from: { email: from, name: 'Microsoft Outlook' }, to: [{ email: ED }], preview });
+  const notHard = [
+    // info@ forwarding to an outside address failed: info@ itself is fine.
+    ex('microsoftexchange329e71ec88ae4615bbc36ab6ce41109e@example.com', 'Undeliverable: test', "Your email couldn't be forwarded from info@example.com to another email address. Bedrock Information (info@example.com) Your message wasn't delivered because the recipient's email provider rejected it."),
+    ex('postmaster@realpage.example', 'Undeliverable: Homewise start', 'Delivery has failed to these recipients or groups: Kale (kale@realpage.example) A communication failure occurred during the delivery of this message. Please try resending the message later.'),
+    ex('mailer-daemon@server565.appriver.com', 'Undeliverable: Landscaping', "Failed to deliver to 'andres@vendor.example' SMTP module(domain vendor.example) reports: vendor.example: connection refused"),
+    ex('microsoftexchange@example.com', 'Undeliverable: URGENT VOTE', "alph756.prodigy.net rejected your message to the following email addresses: vk@sbc.example (vk@sbc.example) There's a problem with the recipient's mailbox. Please try resending your message."),
+    ex('microsoftexchange@example.com', 'Undeliverable: material', "Delivery has failed to these recipients or groups: rr@sbcglobl.example (rr@sbcglobl.example) Your message wasn't delivered. Despite repeated attempts to deliver your message, the recipient's email system refused to accept a connection from yours."),
+    ex('microsoftexchange@example.com', 'Undeliverable: RE: Year end', "Your message to swm@yahoo.example couldn't be delivered. When Office 365 tried to send your message, the receiving email server outside Office 365 reported an error."),
+  ];
+  for (const m of notHard) {
+    const n = AS.parseNdr(m, [ED, TESSA]);
+    assert.ok(!n || !n.hard, `${m.subject}: ${JSON.stringify(n)}`);
+  }
+  const fwd = AS.parseNdr(notHard[0], [ED, TESSA]);
+  assert.ok(!fwd || !fwd.failed.includes('info@example.com'), 'the forwarder is never the failed address');
+  const hard = [
+    ex('mailer-daemon@server565.appriver.com', 'Undeliverable: LOPF HOA', "Failed to deliver to 'craig@gmail.conm' SMTP module(domain gmail.conm) reports: host name is unknown"),
+    ex('mailer-daemon@googlemail.com', 'Delivery Status Notification (Failure)', "Address not found Your message wasn't delivered to ed@bedrockx.example because the address couldn't be found, or is unable to receive mail. The response was: The email account that you tried to reach does not exist."),
+    ex('mailer-daemon@server565.appriver.com', 'Undeliverable: ACC approval', "Failed to deliver to 'rw@sbc.example' SMTP module(domain sbc.example) reports: message text rejected by mx-att.mail.am0.yahoodns.net: 552 1 Requested mail action aborted, mailbox not found"),
+  ];
+  for (const m of hard) assert.ok(AS.parseNdr(m, [ED, TESSA]).hard, m.subject);
+});
+
 check('the same NDR seen twice (inbox poll + live lookup) is one event', async () => {
   const store = AS.memoryStore();
   const evs = AS.eventsFromMessages(BAD, [ndr], [TESSA]);
