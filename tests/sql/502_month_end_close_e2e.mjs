@@ -208,6 +208,81 @@ const r8b = await run(P[8], f8b, results(['GL-02'], []));
 check('after a reopen, the earlier overrides no longer count: the same BLOCK needs a new owner override', r8b.status === 'review' && r8b.unresolved_blocks.includes('GL-02'));
 check('the full history is kept (run, overrides, acceptance, close, reopen, run)', ev.map((e) => e.event).join(',') === 'run,block_overridden,block_overridden,warnings_accepted,closed,reopened');
 
+// ------------------------------------------------------------------- locking proofs (Ed 2026-10-09)
+// Two fresh communities: K (converted, GL cutover 8/1) and G (greenfield: no cutover,
+// first entry in May, a quiet June with no entries, and no July period row at all).
+const K = '00000000-0000-0000-0000-0000000000d1', G = '00000000-0000-0000-0000-0000000000d2';
+await db.exec(`INSERT INTO communities (id, name, management_company_id, gl_cutover_date) VALUES ('${K}', 'Converted Place', '${MC}', '2026-08-01'), ('${G}', 'Green Place', '${MC}', NULL);
+  INSERT INTO chart_of_accounts (id, community_id, account_number) VALUES
+    ('00000000-0000-0000-0000-0000000d1000', '${K}', '1000'), ('00000000-0000-0000-0000-0000000d5205', '${K}', '5205'),
+    ('00000000-0000-0000-0000-0000000e1000', '${G}', '1000'), ('00000000-0000-0000-0000-0000000e5205', '${G}', '5205');`);
+const K1000 = '00000000-0000-0000-0000-0000000d1000', K5205 = '00000000-0000-0000-0000-0000000d5205';
+const G1000 = '00000000-0000-0000-0000-0000000e1000', G5205 = '00000000-0000-0000-0000-0000000e5205';
+for (let m = 1; m <= 12; m++) {
+  const st = `2026-${String(m).padStart(2, '0')}-01`;
+  await db.query(`INSERT INTO accounting_periods (community_id, fiscal_year, period_number, period_start, period_end) VALUES ($1, 2026, $2, $3::date, ($3::date + interval '1 month' - interval '1 day')::date)`, [K, m, st]);
+  if (m !== 7) await db.query(`INSERT INTO accounting_periods (community_id, fiscal_year, period_number, period_start, period_end) VALUES ($1, 2026, $2, $3::date, ($3::date + interval '1 month' - interval '1 day')::date)`, [G, m, st]);
+}
+const KP = {}, GP = {};
+for (const r of await q(`SELECT id, period_number FROM accounting_periods WHERE community_id = $1`, [K])) KP[r.period_number] = r.id;
+for (const r of await q(`SELECT id, period_number FROM accounting_periods WHERE community_id = $1`, [G])) GP[r.period_number] = r.id;
+const kOpen = await je('2026-07-31', [[K1000, 100000, 0], [K5205, 0, 100000]], { cid: K, source: 'opening_entry', ref: 'K-OPEN' });
+const kAug = await je('2026-08-12', [[K5205, 2500, 0], [K1000, 0, 2500]], { cid: K, ref: 'K-AUG' });
+await je('2026-09-08', [[K5205, 1500, 0], [K1000, 0, 1500]], { cid: K, ref: 'K-SEP' });
+await je('2026-05-04', [[G5205, 900, 0], [G1000, 0, 900]], { cid: G, ref: 'G-MAY' });
+const closeK = async (pid, cid = K) => {
+  const f = await rpc('close_ledger_facts', { p_community: cid, p_period: pid });
+  const r = await rpc('close_record_run', { p_community: cid, p_period: pid, p_actor: 'kat', p_actor_user_id: null, p_engine_version: 'test', p_fingerprint: f.fingerprint, p_ledger_facts: f, p_results: [{ code: 'GL-01', status: 'PASS', evidence_hash: 'h' }], p_summary: {} });
+  return rpc('close_period', { p_community: cid, p_period: pid, p_run: r.run_id, p_actor: 'admin@x', p_actor_user_id: null, p_actor_role: 'admin' });
+};
+const through = async (cid) => (await one(`SELECT close_closed_through($1)::text AS d`, [cid])).d;
+
+// 1) A later month cannot close unless every prior required month is closed.
+let e1 = await code(() => closeK(KP[9]));
+check('PROOF 1: September cannot close while August (after the cutover) is open; the refusal names 2026-08', /close the earlier months first/.test(e1 || '') && /2026-08/.test(e1 || ''), e1);
+check('PROOF 2: ...and the refused September close locked nothing (closed-through still empty; August still posts)',
+  (await through(K)) === null && !(await code(async () => { const x = await je('2026-08-20', [[K5205, 100, 0], [K1000, 0, 100]], { cid: K, ref: 'K-AUG-2' }); await db.query(`DELETE FROM journal_entry_lines WHERE journal_entry_id = $1`, [x]); await db.query(`DELETE FROM journal_entries WHERE id = $1`, [x]); })));
+check('PROOF 1: months before the GL cutover (prior system: Jan-Jul) are not required; August closes with July still flagged open', (await closeK(KP[8])).status === 'closed');
+e1 = await code(() => closeK(KP[10]));
+check('PROOF 1: October cannot close with August closed but September open (no skipping a month)', /2026-09/.test(e1 || '') && !/2026-08/.test(e1 || ''), e1);
+e1 = await code(() => closeK(GP[6], G));
+check('PROOF 1 (greenfield, no cutover): the books start with the first entry (May); June cannot close before May', /2026-05/.test(e1 || ''), e1);
+await closeK(GP[5], G);
+e1 = await code(() => closeK(GP[8], G));
+check('PROOF 1 (greenfield): a QUIET month with no entries (June) still has to be closed before a later month', /2026-06/.test(e1 || ''), e1);
+check('PROOF 1 (greenfield): a month with NO period row (July) is reported, never skipped', /2026-07 \(no period set up\)/.test(e1 || ''), e1);
+
+// 2) Closing a later month cannot lock an unresolved earlier month.
+check('PROOF 2: G (May closed, June open): the refused August close left closed-through at 5/31, and June still posts',
+  (await through(G)) === '2026-05-31' && !(await code(() => je('2026-06-20', [[G5205, 100, 0], [G1000, 0, 100]], { cid: G, ref: 'G-JUN' }))));
+check('PROOF 2: the lock cannot be widened by hand: marking a later month "closed" directly is refused', /period_closed/.test(await code(() => db.query(`UPDATE accounting_periods SET status = 'closed' WHERE id = $1`, [GP[8]])) || ''));
+check('PROOF 2: ...and inserting an already-closed period is refused', /starts open/.test(await code(() => db.query(`INSERT INTO accounting_periods (community_id, fiscal_year, period_number, period_start, period_end, status) VALUES ($1, 2026, 7, '2026-07-01', '2026-07-31', 'closed')`, [G])) || ''));
+
+// 4) An adjusting entry in an open later month is possible; the closed entry is untouched.
+const augRow = async () => JSON.stringify([await one(`SELECT posting_date::text, total_debits_cents, status, reference, period_id FROM journal_entries WHERE id = $1`, [kAug]),
+  await q(`SELECT account_id, debit_cents, credit_cents FROM journal_entry_lines WHERE journal_entry_id = $1 ORDER BY line_number`, [kAug])]);
+const augBefore = await augRow();
+const augFp = (await one(`SELECT fingerprint FROM period_closes WHERE period_id = $1`, [KP[8]])).fingerprint;
+check('PROOF 4: the closed August entry cannot be corrected in place', /period_closed/.test(await code(() => db.query(`UPDATE journal_entry_lines SET debit_cents = 2000 WHERE journal_entry_id = $1 AND debit_cents > 0`, [kAug])) || ''));
+const adj = await code(() => je('2026-09-03', [[K1000, 500, 0], [K5205, 0, 500]], { cid: K, ref: 'K-ADJ-AUG' }));
+check('PROOF 4: an adjusting entry dated in open September (correcting the August amount) posts', !adj, adj);
+check('PROOF 4: the closed August entry and its lines are unchanged, field for field', (await augRow()) === augBefore);
+check('PROOF 4: August’s ledger fingerprint still equals the fingerprint recorded at its close', (await rpc('close_ledger_facts', { p_community: K, p_period: KP[8] })).fingerprint === augFp);
+const sepF = await rpc('close_ledger_facts', { p_community: K, p_period: KP[9] });
+check('PROOF 4: the adjustment is September activity, and nothing was recorded into closed August', Number(sepF.period_debits_cents) === 1500 + 500 && sepF.backdated_into_closed.length === 0, JSON.stringify([sepF.period_debits_cents, sepF.backdated_into_closed]));
+
+// 3) Reopening is newest first.
+await closeK(KP[9]); await closeK(KP[10]);
+check('PROOF 3: with Aug, Sep and Oct closed, closed-through is 10/31', (await through(K)) === '2026-10-31');
+const ro = (pid) => code(() => rpc('reopen_period', { p_community: K, p_period: pid, p_reason: 'proof of newest-first order', p_actor: 'ed', p_actor_user_id: null, p_actor_role: 'owner' }));
+const roAug = (await ro(KP[8])) || '';
+check('PROOF 3: August cannot reopen while September and October are closed (the refusal names both)', /2026-09/.test(roAug) && /2026-10/.test(roAug), roAug);
+check('PROOF 3: September cannot reopen while October is closed', /2026-10/.test((await ro(KP[9])) || ''));
+check('PROOF 3: October reopens; closed-through falls back to 9/30', !(await ro(KP[10])) && (await through(K)) === '2026-09-30');
+check('PROOF 3: then September; closed-through 8/31', !(await ro(KP[9])) && (await through(K)) === '2026-08-31');
+check('PROOF 3: then August; nothing is closed and the prior-system July opening is editable again', !(await ro(KP[8])) && (await through(K)) === null
+  && !(await code(() => db.query(`UPDATE journal_entries SET description = 'x' WHERE id = $1`, [kOpen]))));
+
 // ------------------------------------------------------------------- evidence for an "other" source
 await db.query(`INSERT INTO close_source_requirements (community_id, source_key, label, set_by, set_reason) VALUES ($1, 'other', 'Edward Jones statement', 'ed', 'brokerage statement is required monthly')`, [C]);
 const reqId = (await one(`SELECT id FROM close_source_requirements WHERE community_id = $1`, [C])).id;

@@ -420,15 +420,23 @@ $fn$;
 
 CREATE OR REPLACE FUNCTION close_previous_open_periods(p_community uuid, p_period uuid) RETURNS jsonb
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $fn$
-  -- Earlier months that take part in the close sequence (ending on/after the GL
-  -- cutover; with no cutover, any month holding entries) and are not closed.
-  SELECT coalesce(jsonb_agg(to_char(p.period_end, 'YYYY-MM') ORDER BY p.period_end), '[]'::jsonb)
-    FROM accounting_periods p JOIN accounting_periods me ON me.id = p_period
-    LEFT JOIN communities c ON c.id = p_community
-   WHERE p.community_id = p_community AND p.period_type = 'monthly' AND p.period_end < me.period_start
-     AND p.status NOT IN ('closed', 'locked')
-     AND (CASE WHEN c.gl_cutover_date IS NOT NULL THEN p.period_end >= c.gl_cutover_date
-               ELSE EXISTS (SELECT 1 FROM journal_entries j WHERE j.community_id = p_community AND j.posting_date BETWEEN p.period_start AND p.period_end) END);
+  -- Every calendar month from the start of the community's books in trustEd (the
+  -- GL cutover date; with no cutover, the first month holding any entry) up to the
+  -- month before this one must have a monthly period AND be closed. A quiet month
+  -- with no entries still counts, and a missing period row is reported, so closing
+  -- a later month can never lock an earlier month nobody closed.
+  WITH me AS (SELECT period_start FROM accounting_periods WHERE id = p_period AND community_id = p_community),
+  start_d AS (
+    SELECT date_trunc('month', coalesce(
+             (SELECT gl_cutover_date FROM communities WHERE id = p_community),
+             (SELECT min(posting_date) FROM journal_entries WHERE community_id = p_community)))::date AS d),
+  months AS (
+    SELECT gs::date AS m FROM me, start_d, generate_series(start_d.d, me.period_start - interval '1 month', interval '1 month') gs
+     WHERE start_d.d IS NOT NULL)
+  SELECT coalesce(jsonb_agg(to_char(months.m, 'YYYY-MM') || CASE WHEN p.id IS NULL THEN ' (no period set up)' ELSE '' END ORDER BY months.m), '[]'::jsonb)
+    FROM months
+    LEFT JOIN accounting_periods p ON p.community_id = p_community AND p.period_type = 'monthly' AND p.period_start = months.m
+   WHERE p.id IS NULL OR p.status NOT IN ('closed', 'locked');
 $fn$;
 
 CREATE OR REPLACE FUNCTION close_ensure_record(p_community uuid, p_period uuid) RETURNS period_closes
