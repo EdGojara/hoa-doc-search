@@ -84,6 +84,7 @@ const CHECKS = [
   'tests/test_homeowner_ledger_path.js',
   'tests/test_ap_as_of.js',
   'tests/test_ap_cutover.js',
+  'tests/test_clear_posted_entry.js',
   'tests/test_home_sales_balance.js',
   'tests/test_ownership_transfer_single_path.js',
   'tests/test_home_sales_closing_checks.js',

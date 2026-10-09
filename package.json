@@ -73,7 +73,8 @@
     "test:lifecycle": "node tests/test_community_lifecycle.js",
     "test:bedrock-pay": "node tests/test_bedrock_pay.js",
     "test:refunds": "node tests/test_refund_routing.js",
-    "test:autopay": "node tests/test_autopay.js"
+    "test:autopay": "node tests/test_autopay.js",
+    "test:clear-entry": "node tests/test_clear_posted_entry.js"
   },
   "keywords": [],
   "author": "",

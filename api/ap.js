@@ -27,6 +27,7 @@ const { createClient } = require('@supabase/supabase-js');
 const Anthropic = require('../lib/ai/anthropic');
 const { createInvoice, attachSourceAndRecode, approveInvoice, recordPayment, autoCodeGlAccount } = require('../lib/accounting/ap_engine');
 const { safeErrorMessage } = require('./_safe_error');
+const { clearPostedEntry, describeClear } = require('../lib/accounting/clear_entry');
 const { captureServerError } = require('../lib/capture_error');
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
@@ -1355,30 +1356,24 @@ router.post('/invoices/:id/code', express.json(), async (req, res) => {
 
     // Clear the old accrual before re-posting. HOW depends on whether it's a
     // committed cash transaction: not-yet-paid it's a coding mistake to DELETE;
-    // once paid it's a real entry corrected by REVERSAL (audit trail).
+    // once paid it's a real entry corrected by REVERSAL (audit trail). An entry
+    // that is already reversed (a conversion NEUT), in a period that isn't open,
+    // or before the GL cutover is never deleted. lib/accounting/clear_entry.js
+    // makes that call and checks every write. Scar: LOPF JE-2026-00169..00172
+    // (2026-09-28), where a try/catch around supabase deletes caught nothing and
+    // left four posted headers with no lines. If it throws, the old entry is
+    // still on the books and re-posting would double-count. Stop.
     let jeId = inv.posting_journal_entry_id;
+    let cleared = null;
     if (jeId) {
-      if (notYetPaid) {
-        // System misinterpretation on an unpaid bill → remove it, no reversal.
-        try {
-          await supabase.from('journal_entry_lines').delete().eq('journal_entry_id', jeId);
-          await supabase.from('journal_entries').delete().eq('id', jeId);
-        } catch (e) {
-          // Couldn't remove the old entry → re-posting would double-count. Stop.
-          console.error('[ap] recode replace FAILED — refusing to re-post:', e.message);
-          return res.status(500).json({ error: 'replace_failed', detail: 'Could not remove the mis-coded entry, so the account was not changed (re-posting would double-count the expense). Nothing was modified.' });
-        }
-      } else {
-        const voidReason = isRecode
-          ? `Re-coded ${prevLabel} -> ${acct.account_number} ${acct.account_name} by ${who}: ${reason}`
-          : 'Re-coded expense account';
-        try { const { voidJournalEntry } = require('../lib/accounting/posting'); await voidJournalEntry({ journal_entry_id: jeId, void_reason: voidReason }); }
-        catch (e) {
-          // A reversal we couldn't post means the OLD entry is still live on the
-          // books. Re-posting now would double-count the expense. Stop.
-          console.error('[ap] recode reversal FAILED — refusing to re-post:', e.message);
-          return res.status(500).json({ error: 'reversal_failed', detail: 'Could not reverse the existing journal entry, so the account was not changed (re-posting would double-count the expense). Nothing was modified.' });
-        }
+      const voidReason = isRecode
+        ? `Re-coded ${prevLabel} -> ${acct.account_number} ${acct.account_name} by ${who}${reason ? ': ' + reason : ''}`
+        : 'Re-coded expense account';
+      try {
+        cleared = await clearPostedEntry({ supabase, journal_entry_id: jeId, void_reason: voidReason, allow_delete: notYetPaid, posted_by_user_id: (ctx && ctx.user && ctx.user.id) || null });
+      } catch (e) {
+        console.error('[ap] recode: clearing the old accrual FAILED, refusing to re-post:', e.code || '', e.message);
+        return res.status(e.code === 'lines_restore_failed' ? 500 : 409).json({ error: e.code || 'replace_failed', detail: `${e.detail || 'Could not take the existing entry off the books.'} The account was not changed (re-posting would double-count the expense).` });
       }
       jeId = null;
     }
@@ -1413,8 +1408,8 @@ router.post('/invoices/:id/code', express.json(), async (req, res) => {
         invoice_id: id, action: 'recoded', user_id: (ctx.user && ctx.user.id) || null, user_name: who,
         amount_at_time_cents: inv.total_cents,
         notes: notYetPaid
-          ? `Expense account corrected from ${prevLabel} to ${acct.account_number} ${acct.account_name} before payment — mis-coded accrual replaced (no reversal; not yet a committed cash transaction).${reason ? ' Reason: ' + reason : ''}`
-          : `Expense account changed from ${prevLabel} to ${acct.account_number} ${acct.account_name} after the bill was paid. Prior entry reversed, replacement posted. Reason: ${reason}`,
+          ? `Expense account corrected from ${prevLabel} to ${acct.account_number} ${acct.account_name} before payment. ${describeClear(cleared)}${reason ? ' Reason: ' + reason : ''}`
+          : `Expense account changed from ${prevLabel} to ${acct.account_number} ${acct.account_name} after the bill was paid. ${describeClear(cleared)} Replacement posted. Reason: ${reason}`,
       });
       if (audErr) {
         // Never let this fail silently — an unrecorded exception is the whole
@@ -1476,25 +1471,20 @@ router.post('/invoices/:id/lines/:lineId/code', express.json(), async (req, res)
     const { data: lines } = await supabase.from('ap_invoice_lines').select('*').eq('invoice_id', id).order('line_number');
     const allCoded = (lines || []).length > 0 && lines.every((l) => l.gl_account_id);
     let jeId = inv.posting_journal_entry_id;
+    let cleared = null;
     if (posted) {
-      if (notYetPaid) {
-        // Unpaid mis-code → remove the old accrual and repost clean, no reversal.
-        // (Same mechanism as the invoice-level not-yet-paid correction above.)
-        try {
-          await supabase.from('journal_entry_lines').delete().eq('journal_entry_id', jeId);
-          await supabase.from('journal_entries').delete().eq('id', jeId);
-        } catch (e) {
-          console.error('[ap] line recode replace FAILED — refusing to re-post:', e.message);
-          await supabase.from('ap_invoice_lines').update({ gl_account_id: line.gl_account_id }).eq('id', lineId);   // put it back
-          return res.status(500).json({ error: 'replace_failed', detail: 'Could not remove the mis-coded entry, so nothing was changed (re-posting would double-count the expense).' });
-        }
-      } else {
-        try { const { voidJournalEntry } = require('../lib/accounting/posting'); await voidJournalEntry({ journal_entry_id: jeId, void_reason: `Line ${line.line_number} re-coded ${prevLabel} -> ${acct.account_number} ${acct.account_name} by ${who}: ${reason}` }); }
-        catch (e) {
-          console.error('[ap] line recode reversal FAILED — refusing to re-post:', e.message);
-          await supabase.from('ap_invoice_lines').update({ gl_account_id: line.gl_account_id }).eq('id', lineId);   // put it back
-          return res.status(500).json({ error: 'reversal_failed', detail: 'Could not reverse the existing journal entry, so nothing was changed (re-posting would double-count the expense).' });
-        }
+      // Unpaid mis-code -> remove the old accrual; paid -> reverse it. Same shared
+      // rule as the invoice-level control above (lib/accounting/clear_entry.js).
+      try {
+        cleared = await clearPostedEntry({
+          supabase, journal_entry_id: jeId, allow_delete: notYetPaid, posted_by_user_id: (ctx && ctx.user && ctx.user.id) || null,
+          void_reason: `Line ${line.line_number} re-coded ${prevLabel} -> ${acct.account_number} ${acct.account_name} by ${who}${reason ? ': ' + reason : ''}`,
+        });
+      } catch (e) {
+        console.error('[ap] line recode: clearing the old accrual FAILED, refusing to re-post:', e.code || '', e.message);
+        const { error: backErr } = await supabase.from('ap_invoice_lines').update({ gl_account_id: line.gl_account_id, notes: line.notes }).eq('id', lineId);   // put it back
+        if (backErr) console.error('[ap] line recode: could not put the line account back:', backErr.message);
+        return res.status(e.code === 'lines_restore_failed' ? 500 : 409).json({ error: e.code || 'replace_failed', detail: `${e.detail || 'Could not take the existing entry off the books.'} Nothing was changed (re-posting would double-count the expense).${backErr ? ' The line\'s account could not be put back; re-check it.' : ''}` });
       }
       jeId = null;
     }
@@ -1518,8 +1508,8 @@ router.post('/invoices/:id/lines/:lineId/code', express.json(), async (req, res)
         invoice_id: id, action: 'recoded', user_id: (ctx.user && ctx.user.id) || null, user_name: who,
         amount_at_time_cents: line.amount_cents,
         notes: notYetPaid
-          ? `Line ${line.line_number} ("${String(line.description || '').slice(0, 120)}") corrected from ${prevLabel} to ${acct.account_number} ${acct.account_name} before payment — mis-coded accrual replaced (no reversal; not yet a committed cash transaction).${reason ? ' Reason: ' + reason : ''}`
-          : `Line ${line.line_number} ("${String(line.description || '').slice(0, 120)}") re-coded from ${prevLabel} to ${acct.account_number} ${acct.account_name} after the bill was paid. Entry reversed and re-posted. Reason: ${reason}`,
+          ? `Line ${line.line_number} ("${String(line.description || '').slice(0, 120)}") corrected from ${prevLabel} to ${acct.account_number} ${acct.account_name} before payment. ${describeClear(cleared)}${reason ? ' Reason: ' + reason : ''}`
+          : `Line ${line.line_number} ("${String(line.description || '').slice(0, 120)}") re-coded from ${prevLabel} to ${acct.account_number} ${acct.account_name} after the bill was paid. ${describeClear(cleared)} Re-posted. Reason: ${reason}`,
       });
       if (audErr) { console.error('[ap] line recode audit FAILED:', audErr.message); auditWarning = 'The line was re-coded and the journal entry adjusted, but the audit note could not be saved.'; }
     }
@@ -1601,15 +1591,16 @@ router.post('/invoices/:id/hold-prior-periods', express.json(), async (req, res)
 
     // Replace the over-stated accrual (unpaid → delete + repost, no reversal).
     if (inv.posting_journal_entry_id) {
-      const je = inv.posting_journal_entry_id;
+      // Shared rule (lib/accounting/clear_entry.js): deleted only if nothing
+      // references it and its period is open; every write checked.
       try {
-        await supabase.from('journal_entry_lines').delete().eq('journal_entry_id', je);
-        await supabase.from('journal_entries').delete().eq('id', je);
+        await clearPostedEntry({ supabase, journal_entry_id: inv.posting_journal_entry_id, allow_delete: true, posted_by_user_id: (ctx.user && ctx.user.id) || null, void_reason: `Prior-period restatement held; current month re-posted (${who})` });
       } catch (e) {
-        console.error('[ap] hold-prior replace FAILED — refusing to re-post:', e.message);
-        return res.status(500).json({ error: 'replace_failed', detail: 'Could not remove the over-stated entry; nothing was changed.' });
+        console.error('[ap] hold-prior: clearing the over-stated accrual FAILED, refusing to re-post:', e.code || '', e.message);
+        return res.status(e.code === 'lines_restore_failed' ? 500 : 409).json({ error: e.code || 'replace_failed', detail: `${e.detail || 'Could not take the over-stated entry off the books.'} Nothing was changed.` });
       }
-      await supabase.from('ap_invoices').update({ posting_journal_entry_id: null }).eq('id', id);
+      const { error: ptrErr } = await supabase.from('ap_invoices').update({ posting_journal_entry_id: null }).eq('id', id);
+      if (ptrErr) console.warn('[ap] hold-prior: could not clear the old posting pointer (it is replaced below):', ptrErr.message);
     }
     const { postAccrualForInvoice } = require('../lib/ap/intake');
     const newJe = await postAccrualForInvoice({
