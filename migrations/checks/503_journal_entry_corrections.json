@@ -1,0 +1,99 @@
+{
+  "migration": "503_journal_entry_corrections.sql",
+  "summary": "A posted journal entry is permanent (Ed 2026-10-09). Creates journal_entry_corrections, the append-only record linking each correction of a posted entry by an application workflow (AP invoice re-code, line re-code, prior-period hold) to its invoice, original entry, the entry actually reversed, the correcting (reversal) entry, the replacement, the actor, the time and the reason. Scar: LOPF JE-2026-00169..00172 lost their lines on 2026-09-28. Repairs nothing; no existing row changes; adds no trigger to journal_entries or journal_entry_lines (independent of 502).",
+  "requires": [
+    "170_gl_foundation.sql",
+    "175_ap_subledger.sql"
+  ],
+  "preflight": [
+    {
+      "name": "journal_entry_corrections does not exist yet",
+      "sql": "SELECT count(*)::int FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'journal_entry_corrections'",
+      "expect": 0
+    },
+    {
+      "name": "journal_entries and ap_invoices exist",
+      "sql": "SELECT count(*)::int FROM information_schema.tables WHERE table_schema = 'public' AND table_name IN ('journal_entries','ap_invoices')",
+      "expect": 2
+    }
+  ],
+  "expected_changes": [
+    "Creates table journal_entry_corrections: community, invoice (nullable), original entry, corrected entry, correcting entry (nullable), replacement entry (nullable), kind IN ap_recode / ap_line_recode / ap_hold_prior_periods, actor id (nullable) + actor name, reason, created_at. Every FK ON DELETE RESTRICT. A row names a correcting entry or a replacement; reason and actor name are non-blank. One row per correcting entry (partial unique index).",
+    "A guard trigger refuses UPDATE and DELETE (append-only).",
+    "Grants SELECT, INSERT to service_role and SELECT to authenticated.",
+    "No existing row in any table is changed; no trigger is added to journal_entries or journal_entry_lines."
+  ],
+  "objects": {
+    "added": [
+      "column:journal_entry_corrections.actor_name",
+      "column:journal_entry_corrections.actor_user_id",
+      "column:journal_entry_corrections.community_id",
+      "column:journal_entry_corrections.corrected_je_id",
+      "column:journal_entry_corrections.correcting_je_id",
+      "column:journal_entry_corrections.created_at",
+      "column:journal_entry_corrections.id",
+      "column:journal_entry_corrections.invoice_id",
+      "column:journal_entry_corrections.kind",
+      "column:journal_entry_corrections.original_je_id",
+      "column:journal_entry_corrections.reason",
+      "column:journal_entry_corrections.replacement_je_id",
+      "constraint:journal_entry_corrections.journal_entry_corrections_actor_check",
+      "constraint:journal_entry_corrections.journal_entry_corrections_community_fk",
+      "constraint:journal_entry_corrections.journal_entry_corrections_corrected_fk",
+      "constraint:journal_entry_corrections.journal_entry_corrections_correcting_fk",
+      "constraint:journal_entry_corrections.journal_entry_corrections_entries_check",
+      "constraint:journal_entry_corrections.journal_entry_corrections_invoice_fk",
+      "constraint:journal_entry_corrections.journal_entry_corrections_kind_check",
+      "constraint:journal_entry_corrections.journal_entry_corrections_original_fk",
+      "constraint:journal_entry_corrections.journal_entry_corrections_pkey",
+      "constraint:journal_entry_corrections.journal_entry_corrections_reason_check",
+      "constraint:journal_entry_corrections.journal_entry_corrections_replacement_fk",
+      "function:journal_entry_corrections_append_only",
+      "index:idx_journal_entry_corrections_community",
+      "index:idx_journal_entry_corrections_invoice",
+      "index:idx_journal_entry_corrections_original",
+      "index:journal_entry_corrections_pkey",
+      "index:uq_journal_entry_corrections_correcting",
+      "table:journal_entry_corrections",
+      "trigger:journal_entry_corrections.trg_journal_entry_corrections_append_only"
+    ],
+    "changed": [],
+    "removed": []
+  },
+  "row_changes": {
+    "journal_entries": 0,
+    "journal_entry_lines": 0,
+    "ap_invoices": 0
+  },
+  "protected": [
+    {
+      "table": "journal_entries",
+      "order_by": "id"
+    },
+    {
+      "table": "journal_entry_lines",
+      "order_by": "id"
+    },
+    {
+      "table": "ap_invoices",
+      "order_by": "id"
+    }
+  ],
+  "verify": [
+    {
+      "name": "the table exists and is empty",
+      "sql": "SELECT count(*)::int FROM journal_entry_corrections",
+      "expect": 0
+    },
+    {
+      "name": "append-only (guard trigger present)",
+      "sql": "SELECT count(*)::int FROM pg_trigger WHERE tgname = 'trg_journal_entry_corrections_append_only'",
+      "expect": 1
+    },
+    {
+      "name": "service_role can read and insert; anon cannot insert",
+      "sql": "SELECT (CASE WHEN has_table_privilege('service_role', 'journal_entry_corrections', 'SELECT') AND has_table_privilege('service_role', 'journal_entry_corrections', 'INSERT') AND NOT has_table_privilege('anon', 'journal_entry_corrections', 'INSERT') THEN 1 ELSE 0 END)::int",
+      "expect": 1
+    }
+  ]
+}
