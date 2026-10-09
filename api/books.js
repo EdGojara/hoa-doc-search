@@ -125,43 +125,12 @@ router.get('/periods', async (req, res) => {
   }
 });
 
-router.post('/periods/:id/close', express.json(), async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { user_id } = req.body || {};
-    const { data, error } = await supabase
-      .from('accounting_periods').update({
-        status: 'closed',
-        closed_at: new Date().toISOString(),
-        closed_by_user_id: user_id || null,
-      }).eq('id', id).select('*').single();
-    if (error) throw error;
-    res.json({ period: data });
-  } catch (err) {
-    console.error('[books] close period failed:', err);
-    res.status(500).json({ error: safeErrorMessage(err) });
-  }
-});
-
-router.post('/periods/:id/reopen', express.json(), async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { user_id, reason } = req.body || {};
-    if (!reason) return res.status(400).json({ error: 'reason_required_for_audit' });
-    const { data, error } = await supabase
-      .from('accounting_periods').update({
-        status: 'reopened',
-        reopened_at: new Date().toISOString(),
-        reopened_by_user_id: user_id || null,
-        reopened_reason: reason,
-      }).eq('id', id).select('*').single();
-    if (error) throw error;
-    res.json({ period: data });
-  } catch (err) {
-    console.error('[books] reopen period failed:', err);
-    res.status(500).json({ error: safeErrorMessage(err) });
-  }
-});
+// Closing and reopening a period is the month-end close (Ed 2026-10-09,
+// migration 502): a computed checklist, owner-only BLOCK overrides, admin authority
+// and a written reason, all recorded. The old bare status flip is retired; the
+// database also refuses a status change made any other way.
+router.post('/periods/:id/close', (req, res) => res.status(410).json({ error: 'Closing a month now runs the month-end close checklist: Accounting > Close.', moved_to: '/api/close/:community/periods/:period/close' }));
+router.post('/periods/:id/reopen', (req, res) => res.status(410).json({ error: 'Reopening a month now goes through the month-end close (owner/admin, with a reason): Accounting > Close.', moved_to: '/api/close/:community/periods/:period/reopen' }));
 
 // ---------------------------------------------------------------------------
 // Journal entries

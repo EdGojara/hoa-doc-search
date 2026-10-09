@@ -78,6 +78,7 @@
     { id:'bank',       label:'🏦 Bank Rec',   views:[['bankrec','Reconciliation']] },
     { id:'financials', label:'📊 Financials', views:[['bs','Balance Sheet'],['is','Income Statement'],['eq','Equity'],['undeposited','Undeposited'],['trial','Trial Balance'],['tieout','Tie-Out']] },
     { id:'budget',     label:'📈 Budget',     views:[['bva','Budget vs Actual'],['budget','Budget']] },
+    { id:'close',      label:'✅ Close',      views:[['close','Month-End Close']] },
     { id:'setup',      label:'⚙️ Setup',      views:[['onlinepay','Online Payments'],['periods','Periods'],['policy','Billing Policy'],['coa','Chart of Accounts'],['rptcat','Report Categories'],['je','Journal Entries']] },
   ];
   let CID = null, GROUP = 'homeowners', VIEW = 'owners';
@@ -160,6 +161,7 @@
       if (VIEW==='bva') return renderBVA();
       if (VIEW==='budget') return renderBudget();
       if (VIEW==='periods') return renderPeriods();
+      if (VIEW==='close') return window.renderMonthEndClose(CID);
       if (VIEW==='onlinepay') return renderOnlinePay();
     } catch (e) { $('body').innerHTML = '<div class="card" style="color:var(--err)">Couldn\'t load: '+esc(e.message)+'</div>'; }
   }
@@ -3416,6 +3418,7 @@
 
   init();
 </script>
+<script src="/close.js"></script>
 <script src="/deploy-watcher.js"></script>
 </body>
 </html>

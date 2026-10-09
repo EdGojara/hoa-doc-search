@@ -1390,6 +1390,12 @@ app.use('/api/bank-rec', bankRecRouter);
 // (migration target). Migration 170 + lib/accounting/* power it.
 const { router: booksRouter } = require('./api/books');
 app.use('/api/books', booksRouter);
+
+// Month-end close (Ed 2026-10-09, migration 502): deterministic close checklist,
+// owner-only BLOCK overrides, admin close/reopen with reason, and a database lock
+// on closed months. lib/close/* + api/close.js.
+const { router: closeRouter } = require('./api/close');
+app.use('/api/close', closeRouter);
 const { router: chamberRouter } = require('./api/chamber');
 app.use('/api/chamber', chamberRouter);
 // Phase 0 meeting-recording feasibility spike (throwaway; 404 unless
