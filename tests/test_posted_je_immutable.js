@@ -545,9 +545,12 @@ const link = () => db.journal_entry_corrections[db.journal_entry_corrections.len
     assert.strictEqual(scan('x.js', "await sb.from('journal_entries').update({ status: 'voided' }).eq('id', x);").length, 0, 'header updates (the void flip) are allowed');
     assert.strictEqual(scan('x.js', "await sb.from('journal_entry_lines').delete().eq('id', x); // posted-lines-ok: drafts only").length, 0, 'a reasoned exception on the same line is allowed');
     try {
-      const old = execSync('git show origin/main:api/ap.js', { cwd: path.join(__dirname, '..'), stdio: ['ignore', 'pipe', 'ignore'] }).toString();
-      assert.ok(scan('api/ap.js', old).length >= 6, 'the pre-fix api/ap.js (origin/main) is flagged');
-    } catch (e) { if (e instanceof assert.AssertionError) throw e; /* origin/main not available here: covered by the inline sample above */ }
+      // Pinned to the last commit before #102 (the deleting re-code), never origin/main: once #102 merged,
+      // origin/main holds the fix and this assertion could never pass again.
+      const PRE_FIX = '9dfc02df0007bb301aafeabb69faa452912180ad';
+      const old = execSync(`git show ${PRE_FIX}:api/ap.js`, { cwd: path.join(__dirname, '..'), stdio: ['ignore', 'pipe', 'ignore'] }).toString();
+      assert.ok(scan('api/ap.js', old).length >= 6, `the pre-fix api/ap.js (${PRE_FIX.slice(0, 8)}) is flagged`);
+    } catch (e) { if (e instanceof assert.AssertionError) throw e; /* pre-fix commit not available here (shallow clone): covered by the inline sample above */ }
   });
 
   console.warn = origWarn; console.error = realError;
