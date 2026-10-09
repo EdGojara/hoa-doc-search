@@ -101,15 +101,19 @@ const line = (id, annual, monthly) => ({ account_id: id, fund_id: 'F', annual_am
     assert.ok(/source_storage_path:_pendingBudget\.source_storage_path/.test(html), 'commit sends the kept file');
     assert.ok(/Excluded on upload/.test(html), 'exclusions recorded in notes');
   });
-  await t('BvA colours: revenue over budget is green, expense over budget is red (arithmetic unchanged)', () => {
-    const src = html.slice(html.indexOf('    const vc = (v, r) =>'), html.indexOf('\n', html.indexOf('    const vc = (v, r) =>')));
+  // PR B (Ed 2026-10-09): the server's variance is favorable-positive for revenue AND expense
+  // (lib/accounting/variance.js), so the colour rule is simply positive = green.
+  await t('BvA colours: revenue over budget is green, expense over budget is red (favorable-positive variance)', () => {
+    const tok = '    const vc = (v) =>';
+    const src = html.slice(html.indexOf(tok), html.indexOf('\n', html.indexOf(tok)));
     const vc = new Function(src + '; return vc;')();
+    const { favorableVariance } = require('../lib/accounting/variance');
     const GREEN = '#166534', RED = '#991b1b';
-    // variance = budget - actual
-    assert.strictEqual(vc(1000 - 1500, { account_type: 'revenue' }), GREEN, 'revenue above budget');
-    assert.strictEqual(vc(1000 - 500, { account_type: 'revenue' }), RED, 'revenue below budget');
-    assert.strictEqual(vc(1000 - 1500, { account_type: 'expense' }), RED, 'expense above budget');
-    assert.strictEqual(vc(1000 - 500, { account_type: 'expense' }), GREEN, 'expense below budget');
+    assert.strictEqual(vc(favorableVariance('revenue', 1000, 1500)), GREEN, 'revenue above budget');
+    assert.strictEqual(vc(favorableVariance('revenue', 1000, 500)), RED, 'revenue below budget');
+    assert.strictEqual(vc(favorableVariance('expense', 1000, 1500)), RED, 'expense above budget');
+    assert.strictEqual(vc(favorableVariance('expense', 1000, 500)), GREEN, 'expense below budget');
+    assert.strictEqual(vc(null), 'var(--ink-soft)', 'no variance (not available) is neutral');
   });
 
   // ---- live LOPF (read-only) ----

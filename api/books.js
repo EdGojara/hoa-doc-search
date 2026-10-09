@@ -1542,7 +1542,11 @@ router.get('/budgets/living-lines', async (req, res) => {
     // than elapsed months; dividing partial data by elapsed months understates
     // every line. Count the distinct months that actually have postings.
     let coverageMonths = monthsElapsed;
-    try {
+    // A converted community's YTD already includes the opening YTD carryforward
+    // (Jan through the cutoff, lib/accounting/statement_periods.js), so it covers every
+    // elapsed month: annualize by months elapsed, never by the months with postings.
+    const ytdCoversYear = !!(isYtd.availability && isYtd.availability.ytd && isYtd.availability.ytd.carryforward_included.length);
+    if (!ytdCoversYear) try {
       const jeCov = await fetchAllQuery(() => supabase.from('journal_entries')
         .select('posting_date').eq('community_id', community_id)
         .gte('posting_date', `${cy}-01-01`).lte('posting_date', `${cy}-12-31`), { orderBy: 'posting_date' });

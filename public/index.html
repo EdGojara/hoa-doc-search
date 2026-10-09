@@ -45464,6 +45464,9 @@ ${questionsPage}
     function bkEsc(s) {
       return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     }
+    // Statement amounts: null = not available in trustEd (before a conversion cutover; lib/accounting/statement_periods.js).
+    function bkFmtNA(c) { return c === null ? '<span style="color:#888; font-family:inherit; font-size:11.5px;" title="Monthly detail before the conversion cutover is in the prior system">Not available in TrustEd</span>' : bkFmtCents(c); }
+    function bkStmtNotes(notes) { const n = notes.filter(Boolean); return n.length ? `<div style="margin:0 0 8px; padding:8px 10px; background:#f5f8fc; border:1px solid #d0d7de; border-radius:6px; font-size:12px; color:#334155;">${n.map((x) => `<div>${bkEsc(x)}</div>`).join('')}</div>` : ''; }
     function bkFmtCents(c) {
       const n = Number(c) || 0;
       const v = n / 100;
@@ -45672,26 +45675,30 @@ ${questionsPage}
                   <td style="padding:5px 8px; font-family:ui-monospace,monospace; color:#5a7390;">${bkEsc(row.account_number || '')}</td>
                   <td style="padding:5px 8px;">${bkEsc(row.account_name || '')}</td>
                   <td style="padding:5px 8px; color:#5a7390;">${bkEsc(row.fund_code || '')}</td>
-                  <td style="padding:5px 8px; text-align:right; font-family:ui-monospace,monospace;">${bkFmtCents(row.period_amount_cents)}</td>
-                  <td style="padding:5px 8px; text-align:right; font-family:ui-monospace,monospace;">${bkFmtCents(row.ytd_amount_cents)}</td>
+                  <td style="padding:5px 8px; text-align:right; font-family:ui-monospace,monospace;">${bkFmtNA(row.period_amount_cents)}</td>
+                  <td style="padding:5px 8px; text-align:right; font-family:ui-monospace,monospace;">${bkFmtNA(row.ytd_amount_cents)}</td>
                 </tr>`).join('')}
             <tr style="font-weight:700; border-top:2px solid #0B1D34;">
               <td colspan="3" style="padding:6px 8px;">Total ${bkEsc(title)}</td>
-              <td style="padding:6px 8px; text-align:right; font-family:ui-monospace,monospace;">${bkFmtCents(periodTotal)}</td>
-              <td style="padding:6px 8px; text-align:right; font-family:ui-monospace,monospace;">${bkFmtCents(ytdTotal)}</td>
+              <td style="padding:6px 8px; text-align:right; font-family:ui-monospace,monospace;">${bkFmtNA(periodTotal)}</td>
+              <td style="padding:6px 8px; text-align:right; font-family:ui-monospace,monospace;">${bkFmtNA(ytdTotal)}</td>
             </tr>
           </tbody>
         </table>
       `;
       const niColor = j.totals.period.net_income_cents >= 0 ? '#16a34a' : '#dc2626';
+      const av = j.availability || {}; const cfw = (j.carryforward && j.carryforward.windows && j.carryforward.windows[0]) || null;
+      const cy = j.carryforward && j.carryforward.ytd;
       return `
         <div style="margin-bottom:8px; font-size:13px; color:#5a7390;">${bkEsc(bkFmtDate(j.period_start))} — ${bkEsc(bkFmtDate(j.period_end))}</div>
+        ${bkStmtNotes([av.period && av.period.note ? 'Period: ' + av.period.note : null, av.ytd && av.ytd.note ? 'Year to date: ' + av.ytd.note : null,
+          cfw && cy && (cy.revenue_cents || cy.expenses_cents) ? `${cfw.label}: revenue ${bkFmtCents(cy.revenue_cents)}, expenses ${bkFmtCents(cy.expenses_cents)} (included in YTD).` : null])}
         ${sectionTable('Revenue', j.sections.revenue, j.totals.period.revenue_cents, j.totals.ytd.revenue_cents)}
         ${sectionTable('Expenses', j.sections.expenses, j.totals.period.expenses_cents, j.totals.ytd.expenses_cents)}
         <div style="margin-top:18px; padding:12px; background:#f5f8fc; border:2px solid ${niColor}; border-radius:8px;">
           <div style="display:flex; justify-content:space-between; font-weight:700;">
             <span>NET INCOME</span>
-            <span style="color:${niColor};">Period: ${bkFmtCents(j.totals.period.net_income_cents)}  ·  YTD: ${bkFmtCents(j.totals.ytd.net_income_cents)}</span>
+            <span style="color:${niColor};">Period: ${bkFmtNA(j.totals.period.net_income_cents)}  ·  YTD: ${bkFmtNA(j.totals.ytd.net_income_cents)}</span>
           </div>
         </div>
       `;
@@ -45765,24 +45772,27 @@ ${questionsPage}
       if (!j.has_budget) {
         return `<div style="padding:30px; text-align:center; color:#888;">No budget loaded for fiscal year ${j.fiscal_year}. Switch to the <strong>💰 Budget</strong> sub-tab to upload one.</div>`;
       }
+      // Favorable-positive for revenue AND expense (lib/accounting/variance.js).
       const varCol = (v) => {
-        if (Math.abs(v) <= 1) return '#666';
+        if (v === null || Math.abs(v) <= 1) return '#666';
         return v >= 0 ? '#16a34a' : '#dc2626';
       };
+      const av = j.availability || {};
       const rows = j.rows.map((r) => `
         <tr style="border-bottom:1px solid #f3f4f6;">
           <td style="padding:5px 8px; font-family:ui-monospace,monospace; color:#5a7390;">${bkEsc(r.account_number)}</td>
           <td style="padding:5px 8px;">${bkEsc(r.account_name)}</td>
           <td style="padding:5px 8px; text-align:right; font-family:ui-monospace,monospace;">${bkFmtCents(r.mtd_budget_cents)}</td>
-          <td style="padding:5px 8px; text-align:right; font-family:ui-monospace,monospace;">${bkFmtCents(r.mtd_actual_cents)}</td>
-          <td style="padding:5px 8px; text-align:right; font-family:ui-monospace,monospace; color:${varCol(r.mtd_variance_cents)};">${bkFmtCents(r.mtd_variance_cents)}</td>
+          <td style="padding:5px 8px; text-align:right; font-family:ui-monospace,monospace;">${bkFmtNA(r.mtd_actual_cents)}</td>
+          <td style="padding:5px 8px; text-align:right; font-family:ui-monospace,monospace; color:${varCol(r.mtd_variance_cents)};">${bkFmtNA(r.mtd_variance_cents)}</td>
           <td style="padding:5px 8px; text-align:right; font-family:ui-monospace,monospace;">${bkFmtCents(r.ytd_budget_cents)}</td>
-          <td style="padding:5px 8px; text-align:right; font-family:ui-monospace,monospace;">${bkFmtCents(r.ytd_actual_cents)}</td>
-          <td style="padding:5px 8px; text-align:right; font-family:ui-monospace,monospace; color:${varCol(r.ytd_variance_cents)};">${bkFmtCents(r.ytd_variance_cents)}</td>
+          <td style="padding:5px 8px; text-align:right; font-family:ui-monospace,monospace;">${bkFmtNA(r.ytd_actual_cents)}</td>
+          <td style="padding:5px 8px; text-align:right; font-family:ui-monospace,monospace; color:${varCol(r.ytd_variance_cents)};">${bkFmtNA(r.ytd_variance_cents)}</td>
           <td style="padding:5px 8px; text-align:right; font-family:ui-monospace,monospace;">${bkFmtCents(r.annual_budget_cents)}</td>
         </tr>
       `).join('');
       return `
+        ${bkStmtNotes([av.mtd && av.mtd.note ? 'Month: ' + av.mtd.note : null, av.ytd && av.ytd.note ? 'Year to date: ' + av.ytd.note : null])}
         <table style="width:100%; font-size:12px; border-collapse:collapse;">
           <thead><tr style="background:#f5f8fc; border-bottom:1px solid #d0d7de;">
             <th style="padding:6px 6px; text-align:left;">#</th>

@@ -213,23 +213,36 @@ router.get('/:communityId/rolling-income-statement', async (req, res) => {
     const esc = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;');
     const mLabel = (ym) => { const [y, m] = ym.split('-'); return ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][Number(m) - 1] + " '" + y.slice(2); };
     const zero = new Set(data.zero_months);
-    const th = data.months.map((m) => `<th class="${zero.has(m) ? 'z' : ''}">${mLabel(m)}</th>`).join('');
-    const rowHtml = (r) => `<tr><td class="acct">${esc(r.account_number)} ${esc(r.account_name)}</td>${data.months.map((m) => `<td class="${zero.has(m) ? 'z' : ''}">${r.by_month[m] ? fmt(r.by_month[m]) : '·'}</td>`).join('')}<td class="tot">${fmt(r.total_cents)}</td></tr>`;
-    const totRow = (label, key, cls) => `<tr class="${cls}"><td class="acct">${label}</td>${data.monthly.map((m) => `<td class="${zero.has(m.month) ? 'z' : ''}">${fmt(m[key])}</td>`).join('')}<td class="tot">${fmt(data.monthly.reduce((s, m) => s + m[key], 0))}</td></tr>`;
-    const groupHtml = (grp) => `<tr class="grp"><td class="acct">${esc(grp.group)}</td>${data.months.map(() => '<td></td>').join('')}<td></td></tr>`
+    // Months inside a conversion carryforward window have no monthly detail in
+    // trustEd (lib/accounting/statement_periods.js): shown as n/a, never $0 or
+    // a "gap". The opening YTD carryforward is its own column, never July.
+    const na = new Set(data.not_available_months || []);
+    const cf = data.carryforward || {};
+    const showCarry = !!(cf.revenue_cents || cf.expense_cents);
+    const carryHead = showCarry ? `<th class="cf" title="${esc((cf.included_in_total[0] || {}).label || '')}">Opening YTD (prior system)</th>` : '';
+    const cls = (m) => (na.has(m) ? 'na' : zero.has(m) ? 'z' : '');
+    const cell = (m, v) => (na.has(m) ? (v ? `${fmt(v)}*` : 'n/a') : (v ? fmt(v) : '·'));
+    const th = data.months.map((m) => `<th class="${cls(m)}">${mLabel(m)}</th>`).join('') + carryHead;
+    const rowHtml = (r) => `<tr><td class="acct">${esc(r.account_number)} ${esc(r.account_name)}</td>${data.months.map((m) => `<td class="${cls(m)}">${cell(m, r.by_month[m])}</td>`).join('')}${showCarry ? `<td class="cf">${r.carryforward_cents ? fmt(r.carryforward_cents) : '·'}</td>` : ''}<td class="tot">${fmt(r.total_cents)}</td></tr>`;
+    const sumG = (groups) => groups.reduce((t, g) => t + g.subtotal_total, 0);
+    const totals = { revenue_cents: sumG(data.revenue_groups), expense_cents: sumG(data.expense_groups) }; totals.net_cents = totals.revenue_cents - totals.expense_cents;
+    const carryTot = { revenue_cents: cf.revenue_cents || 0, expense_cents: cf.expense_cents || 0, net_cents: cf.net_cents || 0 };
+    const totRow = (label, key, cls2) => `<tr class="${cls2}"><td class="acct">${label}</td>${data.monthly.map((m) => `<td class="${cls(m.month)}">${m[key] === null ? 'n/a' : fmt(m[key])}</td>`).join('')}${showCarry ? `<td class="cf">${fmt(carryTot[key])}</td>` : ''}<td class="tot">${fmt(totals[key])}</td></tr>`;
+    const groupHtml = (grp) => `<tr class="grp"><td class="acct">${esc(grp.group)}</td>${data.months.map(() => '<td></td>').join('')}${showCarry ? '<td></td>' : ''}<td></td></tr>`
       + grp.accounts.map(rowHtml).join('')
-      + `<tr class="sub"><td class="acct">Total ${esc(grp.group)}</td>${data.months.map((m) => `<td class="${zero.has(m) ? 'z' : ''}">${fmt(grp.subtotal_by_month[m] || 0)}</td>`).join('')}<td class="tot">${fmt(grp.subtotal_total)}</td></tr>`;
+      + `<tr class="sub"><td class="acct">Total ${esc(grp.group)}</td>${data.months.map((m) => `<td class="${cls(m)}">${na.has(m) && !grp.subtotal_by_month[m] ? 'n/a' : fmt(grp.subtotal_by_month[m] || 0)}</td>`).join('')}${showCarry ? `<td class="cf">${fmt(grp.accounts.reduce((t, a) => t + (a.carryforward_cents || 0), 0))}</td>` : ''}<td class="tot">${fmt(grp.subtotal_total)}</td></tr>`;
     const html = `<!doctype html><html><head><meta charset="utf-8"><title>${esc(comm ? comm.name : '')} — Rolling ${months}-Month Income Statement</title>
 <style>body{font:13px -apple-system,Arial,sans-serif;color:#0B1D34;margin:24px;}h1{font-size:18px;margin:0 0 2px;}.sub{color:#6b7a8d;margin:0 0 16px;}
 .wrap{overflow-x:auto;border:1px solid #e3e8ef;border-radius:8px;}table{border-collapse:collapse;white-space:nowrap;}
 th,td{padding:6px 10px;text-align:right;border-bottom:1px solid #eef2f6;font-variant-numeric:tabular-nums;}
 th{background:#0B1D34;color:#fff;position:sticky;top:0;font-weight:600;}td.acct,th:first-child{text-align:left;position:sticky;left:0;background:#fff;min-width:230px;}
-th:first-child{background:#0B1D34;}.tot{font-weight:700;background:#f7f9fc;}.z{background:#fdecec;color:#b42318;}
+th:first-child{background:#0B1D34;}.tot{font-weight:700;background:#f7f9fc;}.z{background:#fdecec;color:#b42318;}.na{background:#f3f4f6;color:#6b7280;}.cf{background:#fff8e6;}
 tr.section td{background:#eef2f6;font-weight:700;} tr.net td{border-top:2px solid #0B1D34;font-weight:700;background:#f0f6ff;}
 tr.grp td.acct{font-weight:700;padding-top:12px;color:#0B1D34;} tr.sub td{font-weight:600;border-top:1px solid #cbd5e1;background:#f7f9fc;} td.acct{padding-left:18px;} tr.grp td.acct,tr.sub td.acct,tr.section td.acct{padding-left:10px;}
 .flag{margin:14px 0;padding:10px 14px;border-radius:8px;background:#fdecec;color:#b42318;font-weight:600;} .ok{background:#eaf7ee;color:#1a7f37;}</style></head>
 <body><h1>${esc(comm ? comm.name : '')} — Rolling ${months}-Month Income Statement</h1>
 <p class="sub">Through ${esc(data.to_date)} · each column a month · red = no activity posted</p>
+${na.size ? `<div class="flag" style="background:#f3f4f6;color:#374151;">${esc(data.not_available_label || 'Not available in TrustEd')}: ${[...na].map(mLabel).join(', ')}. Monthly detail before the conversion cutover is in the prior system${showCarry ? `; ${esc((cf.included_in_total[0] || {}).label || 'the opening YTD activity')} is shown in its own column and included in the total` : ''}.${data.monthly.some((m) => m.status === 'not_available' && (m.native_revenue_cents || m.native_expense_cents)) ? ' * = trustEd activity dated in a not-available month, shown and counted, never hidden.' : ''}</div>` : ''}
 <div class="${data.zero_months.length ? 'flag' : 'flag ok'}">${data.zero_months.length ? `${data.zero_months.length} month(s) with zero activity: ${data.zero_months.map(mLabel).join(', ')} — pre-cutover boundary if before the community's migration, otherwise a data gap to investigate.` : 'Every month has activity — no gaps.'}</div>
 <div class="wrap"><table><thead><tr><th>Account</th>${th}<th class="tot">Total</th></tr></thead><tbody>
 <tr class="section"><td class="acct">REVENUE</td>${data.months.map(() => '<td></td>').join('')}<td></td></tr>
@@ -273,7 +286,8 @@ router.get('/:communityId/income-statement-print', async (req, res) => {
     if (req.query.format !== 'html') return res.json(data);
     const { data: comm } = await supabase.from('communities').select('name').eq('id', req.params.communityId).maybeSingle();
     const monthName = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'][Number(period_end.slice(5, 7)) - 1];
-    const fmt = (c) => { const n = Number(c || 0) / 100; if (Math.round(n) === 0) return '<span class="dot">·</span>'; return (n < 0 ? '(' : '') + '$' + Math.abs(Math.round(n)).toLocaleString('en-US') + (n < 0 ? ')' : ''); };
+    // null = not available in trustEd (a month before a conversion cutover; lib/accounting/statement_periods.js).
+    const fmt = (c) => { if (c === null) return '<span class="dot" title="Not available in TrustEd">n/a</span>'; const n = Number(c || 0) / 100; if (Math.round(n) === 0) return '<span class="dot">·</span>'; return (n < 0 ? '(' : '') + '$' + Math.abs(Math.round(n)).toLocaleString('en-US') + (n < 0 ? ')' : ''); };
     const esc = (x) => String(x == null ? '' : x).replace(/&/g, '&amp;').replace(/</g, '&lt;');
     const K = data.amount_keys;
     const cells = (o) => K.map((k, i) => `<td class="num${i === 0 || i === 3 || i === 6 ? ' a' : ''}">${fmt(o[k])}</td>`).join('');
@@ -292,7 +306,7 @@ router.get('/:communityId/income-statement-print', async (req, res) => {
     const style = _printStyle() + '<style>td.a{border-left:1px solid var(--rule)}tr.grp3 td{font-weight:600;font-style:italic;padding-left:14px}tr.sub3 td{font-style:italic;border-top:1px dotted var(--rule)}tr.unm td{color:#92400e;background:#fef3c7}thead tr.grp2 th{background:#16304d;font-size:10px;letter-spacing:.05em;text-align:center}tr.fund td{background:var(--navy);color:#fff;font-weight:800;text-transform:uppercase;letter-spacing:.04em}tr.sub2 td{font-weight:800;background:#e8eef6;border-top:1px solid var(--navy)}@media(prefers-color-scheme:dark){tr.sub2 td{background:#1b2c40}}</style>';
     const head = `<thead><tr class="grp2"><th class="acct"></th><th class="num a" colspan="3">Current Period (${monthName})</th><th class="num" colspan="3">Year to Date</th><th class="num a"></th></tr>`
       + `<tr><th class="acct">Account</th><th class="num a">Actual</th><th class="num">Budget</th><th class="num">Variance</th><th class="num a">Actual</th><th class="num">Budget</th><th class="num">Variance</th><th class="num a">Annual Budget</th></tr></thead>`;
-    const html = `${style}<div class="doc"><h1>${esc(comm ? comm.name : '')}</h1><p class="sub">Statement of Revenues and Expenses — by fund · ${monthName} ${period_end.slice(0, 4)} &amp; Year-to-Date</p><table>${head}<tbody>${data.funds.map(fundBlock).join('')}</tbody></table></div>`;
+    const html = `${style}<div class="doc"><h1>${esc(comm ? comm.name : '')}</h1><p class="sub">Statement of Revenues and Expenses — by fund · ${monthName} ${period_end.slice(0, 4)} &amp; Year-to-Date</p>${(() => { const av = data.availability || {}; const w = data.carryforward && data.carryforward.windows && data.carryforward.windows[0]; const n = [av.mtd && av.mtd.note ? 'Current period: ' + av.mtd.note : null, av.ytd && av.ytd.note ? 'Year to date: ' + av.ytd.note : null, w && av.ytd && av.ytd.carryforward_included && av.ytd.carryforward_included.length ? 'Year-to-date actuals include ' + w.label + '.' : null, 'Variance: favorable is positive (revenue above budget, expense below budget).'].filter(Boolean); return `<p class="sub" style="font-size:11px;">${n.map(esc).join('<br>')}</p>`; })()}<table>${head}<tbody>${data.funds.map(fundBlock).join('')}</tbody></table></div>`;
     res.set('Content-Type', 'text/html').send(html);
   } catch (err) {
     console.error('[gl] income-statement-print failed:', err.message);
