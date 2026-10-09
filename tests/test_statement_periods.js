@@ -230,9 +230,9 @@ t('rolling 12 (Oct 2025-Sep 2026): July is NOT Jan-Jul; Jan-Jul are not availabl
   const jul = r.monthly.find((m) => m.month === '2026-07');
   assert.strictEqual(jul.status, 'not_available');
   assert.strictEqual(jul.revenue_cents, null);
-  assert.deepStrictEqual(r.not_available_months, ['2026-01', '2026-02', '2026-03', '2026-04', '2026-05', '2026-06', '2026-07']);
+  assert.deepStrictEqual(r.not_available_months.filter((m) => m >= '2026-01'), ['2026-01', '2026-02', '2026-03', '2026-04', '2026-05', '2026-06', '2026-07']);
+  // (pre-history Oct-Dec 2025 is covered by its own test below)
   assert.ok(!r.zero_months.some((m) => r.not_available_months.includes(m)), 'not-available months are not data gaps');
-  assert.deepStrictEqual(r.zero_months, ['2025-10', '2025-11', '2025-12'], 'months before the year are honest zeros here');
   assert.strictEqual(r.monthly.find((m) => m.month === '2026-08').revenue_cents, 1000000);
   assert.strictEqual(r.carryforward.revenue_cents, 7000000);
   const rev = r.revenue_groups.flatMap((g) => g.accounts).find((a) => a.account_number === '4000');
@@ -255,6 +255,65 @@ t('budget plan monthly actuals: Jan-Jul null (not available), never the lump in 
   assert.strictEqual(m['cg-a4000'][7], 1000000);
   assert.strictEqual(m['cg-a4000'][8], 1100000);
   assert.throws(() => phase({ method: 'prior_actual', annual_cents: 12000000, prior_actual_months: m['cg-a4000'], settings: {} }), /prior_actual_months_not_available_in_trusted/);
+});
+
+// ---------------------------------------------------------------- pre-history (Ed 2026-10-09)
+// A converted community's trustEd books begin with the opening carryforward: there is no
+// monthly history before Jan 1 of the conversion year. Those months are not available,
+// never zero; Jan-Jul stay governed by the window rule; Aug/Sep and YTD are unchanged.
+for (const [cid, code, label] of [['cg', 'CGACR', 'Canyon Gate'], ['lpf', 'LPF', 'LOPF']]) {
+  t(`${label} pre-history: Oct-Dec 2025 in the rolling 12 are NOT AVAILABLE (null), never $0 or a "zero month" gap; Jan-Jul still the window; Aug/Sep unchanged`, async () => {
+    reset(); seedConverted(cid, code);
+    const r = await FS.rollingIncomeStatement({ community_id: cid, end_date: '2026-09-30', months: 12 });
+    const m = (k) => r.monthly.find((x) => x.month === k);
+    for (const k of ['2025-10', '2025-11', '2025-12']) {
+      assert.strictEqual(m(k).status, 'not_available', k);
+      assert.strictEqual(m(k).revenue_cents, null, k);
+      assert.strictEqual(m(k).net_cents, null, k);
+    }
+    assert.deepStrictEqual(r.not_available_months, ['2025-10', '2025-11', '2025-12', '2026-01', '2026-02', '2026-03', '2026-04', '2026-05', '2026-06', '2026-07']);
+    assert.deepStrictEqual(r.zero_months, [], 'no fake zero months remain');
+    assert.deepStrictEqual([m('2026-08').revenue_cents, m('2026-08').expense_cents], [1000000, 450000], 'August unchanged');
+    assert.deepStrictEqual([m('2026-09').revenue_cents, m('2026-09').expense_cents], [1100000, 500000], 'September unchanged');
+    assert.strictEqual(r.carryforward.revenue_cents, 7000000, 'the 12-month range still covers the window: carryforward column unchanged');
+    assert.ok(/books for this community begin 1\/1\/2026/.test(r.range_availability.note), r.range_availability.note);
+  });
+}
+
+t('pre-history: a 2025 month, a full 2025 year and 2025 budget vs actual are not available (null, never $0); 2026 YTD unchanged', async () => {
+  reset(); seedConverted('cg', 'CGACR'); seedBudget('cg');
+  db.community_budgets.push({ id: 'cg-b25', community_id: 'cg', fiscal_year: 2025, status: 'approved' });
+  db.budget_line_items.push({ budget_id: 'cg-b25', account_id: 'cg-a4000', fund_id: null, annual_amount_cents: 1200000, monthly_amounts_cents: Array(12).fill(100000) });
+  const nov = await FS.incomeStatement({ community_id: 'cg', period_start: '2025-11-01', period_end: '2025-11-30' });
+  assert.strictEqual(nov.availability.period.status, 'not_available');
+  assert.strictEqual(nov.totals.period.revenue_cents, null);
+  assert.strictEqual(nov.totals.ytd.revenue_cents, null, '2025 YTD is pre-history too');
+  const y25 = await FS.incomeStatement({ community_id: 'cg', period_start: '2025-01-01', period_end: '2025-12-31' });
+  assert.strictEqual(y25.totals.ytd.net_income_cents, null);
+  const b25 = await FS.budgetVsActual({ community_id: 'cg', period_end: '2025-11-30' });
+  const rev = b25.rows.find((x) => x.account_number === '4000');
+  assert.deepStrictEqual([rev.mtd_actual_cents, rev.mtd_variance_cents, rev.ytd_actual_cents, rev.ytd_variance_cents], [null, null, null, null]);
+  assert.strictEqual(rev.mtd_budget_cents, 100000, 'the budget still shows');
+  const p25 = await FS.perFundIncomeStatement({ community_id: 'cg', period_end: '2025-11-30', _mapping: { has_mapping: false, byAccount: new Map() } });
+  assert.strictEqual(p25.funds[0].net_totals.ytd_actual_cents, null, 'no null-to-zero in the printed totals');
+  const sep = await FS.incomeStatement({ community_id: 'cg', period_start: '2026-09-01', period_end: '2026-09-30' });
+  assert.deepStrictEqual([sep.totals.ytd.revenue_cents, sep.totals.ytd.expenses_cents], [9100000, 4950000], '2026 YTD unchanged');
+  const m25 = await monthlyActualsByAccount(fakeClient(), 'cg', 2025, [{ id: 'cg-a4000', normal_balance: 'credit' }]);
+  assert.deepStrictEqual(m25['cg-a4000'], Array(12).fill(null), 'budget plan prior-year (2025) months: not available, never zeros');
+  const bs = await FS.balanceSheet({ community_id: 'cg', as_of_date: '2025-12-31' });
+  assert.ok(bs && bs.sections, 'balance sheet unaffected by the activity rule');
+});
+
+t('rule: pre-history is only for communities whose books begin with a carryforward; spans into the window are handled', () => {
+  const w = [{ from: '2026-01-01', through: '2026-07-31', label: 'L', references: [] }];
+  assert.strictEqual(SP.coverage(w, '2025-10-01', '2025-10-31').status, 'not_available');
+  assert.strictEqual(SP.coverage(w, '2025-12-01', '2026-07-15').status, 'not_available', 'pre-history straight into a window the period ends inside');
+  const span = SP.coverage(w, '2025-10-01', '2026-09-30');
+  assert.strictEqual(span.status, 'partial');
+  assert.strictEqual(span.carryforward_included.length, 1, 'the carryforward decision is unchanged');
+  assert.deepStrictEqual(span.unavailable_months, ['2025-10', '2025-11', '2025-12']);
+  assert.strictEqual(SP.coverage(w, '2026-08-01', '2026-08-31').status, 'available');
+  assert.strictEqual(SP.coverage([], '2025-10-01', '2025-10-31').status, 'available', 'no carryforward: never pre-history');
 });
 
 // ---------------------------------------------------------------- LOPF: same cutover, known broken history
@@ -293,6 +352,9 @@ t('greenfield (no conversion): July monthly is July, YTD is the plain sum — ex
   assert.deepStrictEqual(is.carryforward.windows, []);
   const r = await FS.rollingIncomeStatement({ community_id: 'gf', end_date: '2026-07-31', months: 12 });
   assert.deepStrictEqual(r.not_available_months, []);
+  assert.deepStrictEqual(r.zero_months, ['2025-08', '2025-09', '2025-10', '2025-11', '2025-12', '2026-02', '2026-03', '2026-04', '2026-05', '2026-06'], 'a greenfield community keeps ordinary zero months (no pre-history rule)');
+  const nov = await FS.incomeStatement({ community_id: 'gf', period_start: '2025-11-01', period_end: '2025-11-30' });
+  assert.strictEqual(nov.totals.period.revenue_cents, 0, 'greenfield 2025 month is an ordinary zero');
   assert.strictEqual(r.monthly.find((m) => m.month === '2026-07').revenue_cents, 300000);
 });
 

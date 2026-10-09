@@ -34,6 +34,9 @@ const { balanceSheet, incomeStatement, equityStatement, budgetVsActual, budgetVs
 // A YTD amount that is not available in trustEd (null: a period ending before a conversion
 // cutover, lib/accounting/statement_periods.js) must never be read as zero by the budget builder.
 const ytdOf = (r) => { if (r.ytd_amount_cents === null) throw Object.assign(new Error('Year-to-date actuals for this period are not available in TrustEd (before the conversion cutover).'), { code: 'ytd_not_available_in_trusted', userMessage: 'Year-to-date actuals for this period are not available in TrustEd (before the conversion cutover).' }); return r.ytd_amount_cents || 0; };
+// A whole statement year that is not available in trustEd (a converted community's
+// pre-history, or a period inside its carryforward window).
+const yearNA = (is) => !!(is && is.availability && is.availability.ytd && is.availability.ytd.status === 'not_available');
 const ytdTot = (t, k) => { if (t && t.ytd && t.ytd[k] === null) return ytdOf({ ytd_amount_cents: null }); return (t && t.ytd && t.ytd[k]) || 0; };
 const { extractBudget } = require('../lib/accounting/budget_pdf_extractor');
 const { rollForwardBudget } = require('../lib/accounting/budget_roll_forward');
@@ -1370,8 +1373,11 @@ router.get('/budgets/plan-seed', async (req, res) => {
     let annualize = 1;
     let sourceLabel = `FY ${srcYear} actual`;
 
-    const priorTotal = Math.abs(ytdTot(is.totals, 'revenue_cents')) + Math.abs(ytdTot(is.totals, 'expenses_cents'));
-    if (basis === 'ytd_annualized' || priorTotal === 0) {
+    // A prior year that is not available in trustEd (pre-history of a converted community) is
+    // not a zero year: it is no basis at all, so the draft uses the annualized current year.
+    const priorNA = yearNA(is);
+    const priorTotal = priorNA ? null : Math.abs(ytdTot(is.totals, 'revenue_cents')) + Math.abs(ytdTot(is.totals, 'expenses_cents'));
+    if (basis === 'ytd_annualized' || priorNA || priorTotal === 0) {
       // Annualize the current calendar year's YTD (months elapsed → 12).
       const today = new Date();
       const cy = today.getUTCFullYear();
@@ -1379,7 +1385,7 @@ router.get('/budgets/plan-seed', async (req, res) => {
       is = await incomeStatement({ community_id, period_start: `${cy}-01-01`, period_end: today.toISOString().slice(0, 10) });
       annualize = monthsElapsed > 0 ? 12 / monthsElapsed : 1;
       basis = 'ytd_annualized';
-      sourceLabel = `${cy} YTD annualized (${monthsElapsed} mo → 12)`;
+      sourceLabel = `${cy} YTD annualized (${monthsElapsed} mo → 12)${priorNA ? ` · FY ${srcYear} not available in TrustEd` : ''}`;
     }
 
     const rows = [];
@@ -1438,6 +1444,8 @@ router.get('/budgets/ai-plan', async (req, res) => {
       }
     };
     merge(is2, 'fy2'); merge(is1, 'fy1'); merge(isYtd, 'ytd_annualized', annualize);
+    // A year not available in trustEd is null on every line (never an implied $0).
+    for (const a of acc.values()) { if (yearNA(is2)) a.fy2 = null; if (yearNA(is1)) a.fy1 = null; }
     const rows = [...acc.values()].sort((a, b) => String(a.account_number).localeCompare(String(b.account_number)));
     if (!rows.length) return res.json({ community_id, fiscal_year: fy, rows: [], note: 'No revenue/expense history to plan from yet.' });
 
@@ -1472,7 +1480,7 @@ router.get('/budgets/ai-plan', async (req, res) => {
       }
     } catch (_) { /* vendor history optional */ }
 
-    const d = (c) => (Number(c || 0) / 100).toFixed(0);
+    const d = (c) => (c === null ? 'n/a (not available in TrustEd)' : (Number(c || 0) / 100).toFixed(0));
     const table = rows.map((r) => `${r.account_number}\t${r.account_name}\t${r.account_type}\tFY${fy - 2}=$${d(r.fy2)}\tFY${fy - 1}=$${d(r.fy1)}\tYTD-annualized=$${d(r.ytd_annualized)}\trecurring vendors (FY${fy - 1}): ${vendorByAcct[r.account_id] || '—'}`).join('\n');
     const prompt = `You are a CPA preparing the FY ${fy} operating budget for a Texas HOA. For each account below, propose a next-year budget amount in whole dollars and a one-sentence rationale.
 
@@ -1576,6 +1584,7 @@ router.get('/budgets/living-lines', async (req, res) => {
       }
     };
     merge(is2, 'fy2'); merge(is1, 'fy1'); merge(isYtd, 'ytd', annualize);
+    for (const a of acc.values()) { if (yearNA(is2)) a.fy2 = null; if (yearNA(is1)) a.fy1 = null; }   // not available in trustEd: null, never $0
 
     // Include accounts that are BUDGETED but had no GL activity this year (e.g.
     // a reserve contribution transfer) — a budgeted line belongs in next year's
@@ -1748,7 +1757,8 @@ router.get('/budgets/living-lines', async (req, res) => {
         // lacks a prior budget must NOT be zeroed. Large + far-above-prior is the
         // real capital-event signal (monument replacement, wall/fence work).
         const ONE_TIME_FLOOR = 2000000; // $20k
-        const isSpike = a.forecast > ONE_TIME_FLOOR && a.forecast > priorB * 3 && prevYr < a.forecast * 0.25 && priorB < a.forecast * 0.4;
+        // prevYr null (not available in trustEd) is no evidence either way: never read as $0.
+        const isSpike = a.forecast > ONE_TIME_FLOOR && a.forecast > priorB * 3 && prevYr != null && prevYr < a.forecast * 0.25 && priorB < a.forecast * 0.4;
         if (isSpike && source_type === 'trend') {
           const recurring = Math.max(priorB, prevYr);
           flags.push({ type: 'one_time', severity: 'high', msg: `Spending here ran ~$${Math.round(a.forecast / 100).toLocaleString()} this year with little prior history — likely a one-time capital cost, not recurring. Reset to the recurring level ($${Math.round(recurring / 100).toLocaleString()}); raise it if it truly repeats.` });
