@@ -34,6 +34,10 @@ function handleErr(res, feature, err) {
   if (err.code === 'vendor_no_address') {
     return res.status(409).json({ error: err.message, code: err.code, vendors: err.vendors || [] });
   }
+  // Conversion opening AP not cleared for payment (opening_ap_guard): refused, named.
+  if (err.code === 'opening_ap_not_cleared') {
+    return res.status(409).json({ error: err.message, code: err.code, invoices: err.invoices || [] });
+  }
   if (err.code === 'invalid_input' || err.code === 'invalid_state') {
     return res.status(400).json({ error: err.message, code: err.code });
   }
@@ -43,8 +47,8 @@ function handleErr(res, feature, err) {
 
 router.get('/payable', async (req, res) => {
   try {
-    const invoices = await listPayableInvoices({ community_id: req.query.community_id });
-    res.json({ invoices });
+    const { invoices, held_opening_ap } = await listPayableInvoices({ community_id: req.query.community_id });
+    res.json({ invoices, held_opening_ap });
   } catch (err) { handleErr(res, 'payable', err); }
 });
 

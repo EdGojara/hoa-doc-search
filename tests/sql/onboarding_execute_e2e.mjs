@@ -259,8 +259,9 @@ check('ledger ties: receivables 2000 = GL 1300; current prepaids -100 + prior-ow
   && rows.filter((r) => r.txn_type === 'credit').reduce((t, r) => t + r.a, 0) === -300);
 check('provenance on every ledger row (batch, preflight completion, execution id)', rows.every((r) => r.raw_row_jsonb.onboarding.execution_id === EX && r.raw_row_jsonb.onboarding.preflight_completion_id === pf && r.notes.includes(EX)));
 const ap = await one(`SELECT a.vendor_id, a.vendor_invoice_number, a.total_cents::int AS t, a.status, j.reference, a.notes FROM ap_invoices a JOIN journal_entries j ON j.id = a.posting_journal_entry_id`);
-check('AP: the open invoice is posted by the opening entry (no second GL posting), with its idempotency key and provenance',
-  ap && ap.vendor_id === V && ap.vendor_invoice_number === 'INV-1' && ap.t === 500 && ap.status === 'approved' && ap.reference === 'CONV-EX-20260331-OPEN-OPR' && ap.notes.includes('key CONV-EX-20260331:') && ap.notes.includes(EX));
+// 504 (Ed 2026-10-09): opening AP is a carried liability, written in its own review state, never 'approved'.
+check('AP: the open invoice is posted by the opening entry (no second GL posting), in conversion_review (never approved/payable), with its idempotency key and provenance',
+  ap && ap.vendor_id === V && ap.vendor_invoice_number === 'INV-1' && ap.t === 500 && ap.status === 'conversion_review' && ap.reference === 'CONV-EX-20260331-OPEN-OPR' && ap.notes.includes('key CONV-EX-20260331:') && ap.notes.includes(EX));
 const bt = await one(`SELECT onboarding_stage, write_locked, status FROM conversion_batches WHERE id = $1`, [W.B]);
 check('cutover date 2026-04-01; batch posted, in execute, write lock CLOSED again', (await counts()).cutover === '2026-04-01' && bt.onboarding_stage === 'execute' && bt.write_locked === true && bt.status === 'posted');
 const ev = await q(`SELECT event_type, stage, to_stage, actor_kind, result->>'status' AS st FROM onboarding_stage_events WHERE batch_id = $1 ORDER BY seq DESC LIMIT 3`, [W.B]);
@@ -354,6 +355,24 @@ check('Batches list (491): a completed batch reports its most recent post-proof 
 const firstDone = listed.findIndex((b) => b.stage === 'complete');
 check('Batches list (491): active batches sort above completed ones (the older preflight batch is listed first)', listed.length === 2 && firstDone === 1 && listed[0].batch_code === 'CONV-EX2-20260331' && listed[0].result_stage === 'preflight', JSON.stringify(listed.map((b) => [b.batch_code, b.stage, b.current_status])));
 check('a completed batch cannot be executed again', /ALREADY_EXECUTED|already_executed|NOT_IN_PREFLIGHT/.test(JSON.stringify(await svcPP.execute(ED, W.B, { completion_id: pf, preflight_sha256: report.sha256 }).catch((e) => ({ e: e.code })))));
+
+// 504 insert backstop on the REAL SQL: an invoice born posted by a conversion opening entry carries its
+// vendor's auto-pay flag and starts in conversion_review even if a writer said 'approved'; an ordinary
+// bill is untouched. Rolled back, so nothing above is affected.
+{
+  const VA = u(990);
+  await db.exec('BEGIN');
+  await db.query(`INSERT INTO vendors (id, name, management_company_id, auto_pay_ach) VALUES ($1, 'Drafting Utility', $2, true)`, [VA, MC]);
+  const openJe = (await one(`SELECT id FROM journal_entries WHERE reference = 'CONV-EX-20260331-OPEN-OPR'`)).id;
+  const otherJe = (await one(`SELECT id FROM journal_entries WHERE source_module <> 'opening_entry' ORDER BY reference LIMIT 1`)).id;
+  const a = await one(`INSERT INTO ap_invoices (community_id, vendor_id, vendor_invoice_number, invoice_date, total_cents, status, posting_journal_entry_id)
+                        VALUES ($1, $2, 'BACKSTOP-1', '2026-03-17', 3718, 'approved', $3) RETURNING status, is_ach_autopay`, [COMM, VA, openJe]);
+  const b = await one(`INSERT INTO ap_invoices (community_id, vendor_id, vendor_invoice_number, invoice_date, total_cents, status, posting_journal_entry_id)
+                        VALUES ($1, $2, 'ORDINARY-1', '2026-04-10', 5000, 'approved', $3) RETURNING status, is_ach_autopay`, [COMM, VA, otherJe]);
+  await db.exec('ROLLBACK');
+  check('504 backstop: opening AP born approved becomes conversion_review and carries the vendor auto-pay flag', a.status === 'conversion_review' && a.is_ach_autopay === true, JSON.stringify(a));
+  check('504 backstop: an ordinary bill keeps its status and flag', b.status === 'approved' && b.is_ach_autopay === false, JSON.stringify(b));
+}
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
