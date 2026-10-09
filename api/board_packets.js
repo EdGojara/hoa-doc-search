@@ -3214,6 +3214,10 @@ const FINANCIAL_NATIVE = ['ar_aging', 'delinquency', 'ap_approval', 'reserve_act
 // a matching handler here (the gap that made readiness over-promise).
 const AUTO_FILL_NATIVE_KEYS = ['agenda', 'prior_minutes', 'balance_sheet', 'income_statement', 'drv', 'arc_decisions', 'legal_referral', ...FINANCIAL_NATIVE];
 
+// Sections built from trustEd's GL / homeowner ledger. They are produced only for
+// a community formally onboarded with its books in trustEd (canProduceBoardFinancials).
+const BOARD_LEDGER_SECTIONS = ['balance_sheet', 'income_statement', 'legal_referral', ...FINANCIAL_NATIVE];
+
 // Build the input_data payload for a native FINANCIAL section straight from the
 // trustEd GL / bank-rec / reserve modules. Single source so the packet
 // assembler AND the renderer verifier shape identically. Returns
@@ -3407,6 +3411,14 @@ async function autoFillSection(packetId, sectionKey) {
   // The registry test asserts these branches cover every native key.
   const NATIVE = nativeSectionKeys();
   if (NATIVE.includes(sectionKey)) {
+    // Ledger-derived sections reach a board only for a community that is formally
+    // onboarded with its books in trustEd (lib/community/lifecycle.js). A partial
+    // legacy ledger is never presented to a board as complete (Ed 2026-10-08).
+    if (BOARD_LEDGER_SECTIONS.includes(sectionKey)) {
+      const { canProduceBoardFinancials } = require('../lib/community/lifecycle');
+      const gate = await canProduceBoardFinancials(cid);
+      if (!gate.allowed) return { _status: 409, error: 'books_not_onboarded', message: gate.reason, section_key: sectionKey };
+    }
     const md = packet.meeting_date ? new Date(packet.meeting_date + 'T12:00:00Z') : new Date();
     const cutoff = new Date(Date.UTC(md.getUTCFullYear(), md.getUTCMonth(), 0)).toISOString().slice(0, 10);
     const periodStart = cutoff.slice(0, 8) + '01';
@@ -4112,4 +4124,4 @@ router.get('/readiness', async (req, res) => {
   }
 });
 
-module.exports = { router, assemblePackage, autoFillSection, renderSectionStandaloneHtml, buildFinancialSectionData, AUTO_FILL_NATIVE_KEYS };
+module.exports = { router, assemblePackage, autoFillSection, renderSectionStandaloneHtml, buildFinancialSectionData, AUTO_FILL_NATIVE_KEYS, BOARD_LEDGER_SECTIONS };
