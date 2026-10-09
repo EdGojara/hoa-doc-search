@@ -31,6 +31,10 @@ const { createClient } = require('@supabase/supabase-js');
 const { postJournalEntry, voidJournalEntry, editJournalEntry } = require('../lib/accounting/posting');
 const { onboardCommunityToGL, openInitialPeriods } = require('../lib/accounting/coa_template');
 const { balanceSheet, incomeStatement, equityStatement, budgetVsActual, budgetVsActualGrouped } = require('../lib/accounting/financial_statements');
+// A YTD amount that is not available in trustEd (null: a period ending before a conversion
+// cutover, lib/accounting/statement_periods.js) must never be read as zero by the budget builder.
+const ytdOf = (r) => { if (r.ytd_amount_cents === null) throw Object.assign(new Error('Year-to-date actuals for this period are not available in TrustEd (before the conversion cutover).'), { code: 'ytd_not_available_in_trusted', userMessage: 'Year-to-date actuals for this period are not available in TrustEd (before the conversion cutover).' }); return r.ytd_amount_cents || 0; };
+const ytdTot = (t, k) => { if (t && t.ytd && t.ytd[k] === null) return ytdOf({ ytd_amount_cents: null }); return (t && t.ytd && t.ytd[k]) || 0; };
 const { extractBudget } = require('../lib/accounting/budget_pdf_extractor');
 const { rollForwardBudget } = require('../lib/accounting/budget_roll_forward');
 const { mergeBudgetLines } = require('../lib/accounting/budget_merge');
@@ -1366,7 +1370,7 @@ router.get('/budgets/plan-seed', async (req, res) => {
     let annualize = 1;
     let sourceLabel = `FY ${srcYear} actual`;
 
-    const priorTotal = Math.abs((is.totals?.ytd?.revenue_cents || 0)) + Math.abs((is.totals?.ytd?.expenses_cents || 0));
+    const priorTotal = Math.abs(ytdTot(is.totals, 'revenue_cents')) + Math.abs(ytdTot(is.totals, 'expenses_cents'));
     if (basis === 'ytd_annualized' || priorTotal === 0) {
       // Annualize the current calendar year's YTD (months elapsed → 12).
       const today = new Date();
@@ -1380,7 +1384,7 @@ router.get('/budgets/plan-seed', async (req, res) => {
 
     const rows = [];
     const push = (r, type) => {
-      const prior = Math.round((r.ytd_amount_cents || 0) * annualize);
+      const prior = Math.round(ytdOf(r) * annualize);
       const suggested = Math.round(prior * (1 + bumpPct / 100));
       rows.push({
         account_id: r.account_id, account_number: r.account_number, account_name: r.account_name,
@@ -1429,7 +1433,7 @@ router.get('/budgets/ai-plan', async (req, res) => {
         for (const r of (is.sections?.[type] || [])) {
           let a = acc.get(r.account_id);
           if (!a) { a = { account_id: r.account_id, account_number: r.account_number, account_name: r.account_name, account_type: type === 'revenue' ? 'revenue' : 'expense', fund_id: r.fund_id || null, fund_code: r.fund_code || null, fy2: 0, fy1: 0, ytd_annualized: 0 }; acc.set(r.account_id, a); }
-          a[key] = Math.round((r.ytd_amount_cents || 0) * mult);
+          a[key] = Math.round(ytdOf(r) * mult);
         }
       }
     };
@@ -1542,7 +1546,11 @@ router.get('/budgets/living-lines', async (req, res) => {
     // than elapsed months; dividing partial data by elapsed months understates
     // every line. Count the distinct months that actually have postings.
     let coverageMonths = monthsElapsed;
-    try {
+    // A converted community's YTD already includes the opening YTD carryforward
+    // (Jan through the cutoff, lib/accounting/statement_periods.js), so it covers every
+    // elapsed month: annualize by months elapsed, never by the months with postings.
+    const ytdCoversYear = !!(isYtd.availability && isYtd.availability.ytd && isYtd.availability.ytd.carryforward_included.length);
+    if (!ytdCoversYear) try {
       const jeCov = await fetchAllQuery(() => supabase.from('journal_entries')
         .select('posting_date').eq('community_id', community_id)
         .gte('posting_date', `${cy}-01-01`).lte('posting_date', `${cy}-12-31`), { orderBy: 'posting_date' });
@@ -1562,8 +1570,8 @@ router.get('/budgets/living-lines', async (req, res) => {
         for (const r of (is.sections?.[type] || [])) {
           let a = acc.get(r.account_id);
           if (!a) { a = { account_id: r.account_id, account_number: r.account_number, account_name: r.account_name, account_type: type === 'revenue' ? 'revenue' : 'expense', fund_id: r.fund_id || null, fund_code: r.fund_code || null, fy2: 0, fy1: 0, ytd_actual: 0, forecast: 0 }; acc.set(r.account_id, a); }
-          if (key === 'ytd') { a.ytd_actual = Math.round(r.ytd_amount_cents || 0); a.forecast = Math.round((r.ytd_amount_cents || 0) * mult); }
-          else a[key] = Math.round(r.ytd_amount_cents || 0);
+          if (key === 'ytd') { a.ytd_actual = Math.round(ytdOf(r)); a.forecast = Math.round(ytdOf(r) * mult); }
+          else a[key] = Math.round(ytdOf(r));
         }
       }
     };

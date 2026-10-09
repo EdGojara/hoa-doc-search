@@ -817,12 +817,15 @@ router.get('/community/:id/budget', async (req, res) => {
         ...r,
         annual_budget_cents: -Number(r.annual_budget_cents || 0),
         ytd_budget_cents: -Number(r.ytd_budget_cents || 0),
-        ytd_actual_cents: -Number(r.ytd_actual_cents || 0),
+        ytd_actual_cents: r.ytd_actual_cents === null ? null : -Number(r.ytd_actual_cents || 0),
         is_contribution: true,
       };
     };
 
-    const sumKey = (rows, key) => rows.reduce((s, r) => s + Number(r[key] || 0), 0);
+    // Null-sticky: YTD actuals not available in trustEd (a period end before a conversion
+    // cutover; lib/accounting/statement_periods.js) stay null, never a board-facing $0.
+    const sumKey = (rows, key) => rows.reduce((s, r) => (s === null || r[key] === null ? null : s + Number(r[key] || 0)), 0);
+    const subN = (a, b) => (a === null || b === null ? null : a - b);
     const funds = [];
     const orderedCodes = [...byFund.keys()].sort((a, b) => {
       const ia = fundOrder.indexOf(a), ib = fundOrder.indexOf(b);
@@ -855,7 +858,7 @@ router.get('/community/:id/budget', async (req, res) => {
           ytd_budget_expense_cents: expYtdB,
           ytd_actual_expense_cents: expYtdA,
           ytd_budget_net_cents: revYtdB - expYtdB,
-          ytd_actual_net_cents: revYtdA - expYtdA,
+          ytd_actual_net_cents: subN(revYtdA, expYtdA),
           noncash_ytd_actual_cents: sumKey(noncash, 'ytd_actual_cents'),
         },
       });
@@ -867,6 +870,9 @@ router.get('/community/:id/budget', async (req, res) => {
       period_end: periodEnd,
       as_of: todayISO,
       has_budget: bva.has_budget,
+      // false: the period end is before the conversion cutover; YTD actuals are not available in trustEd.
+      ytd_available: !(bva.availability && bva.availability.ytd && bva.availability.ytd.status === 'not_available'),
+      ytd_note: (bva.availability && bva.availability.ytd && bva.availability.ytd.note) || null,
       funds,
     });
   } catch (err) {

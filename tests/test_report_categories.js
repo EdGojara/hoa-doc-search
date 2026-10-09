@@ -24,7 +24,10 @@ const SEED = JSON.parse(fs.readFileSync(path.join(ROOT, 'lib/accounting/report_s
 const KEYS = ['mtd_budget_cents', 'mtd_actual_cents', 'mtd_variance_cents', 'ytd_budget_cents', 'ytd_actual_cents', 'ytd_variance_cents', 'annual_budget_cents'];
 const IS_KEYS6 = ['mtd_actual_cents', 'mtd_budget_cents', 'mtd_variance_cents', 'ytd_actual_cents', 'ytd_budget_cents', 'ytd_variance_cents'];
 const DATES = ['2026-01-31', '2026-03-31', '2026-06-30', '2026-07-31', '2026-08-31', '2026-09-25'];
-const sum = (rows, k) => rows.reduce((s, r) => s + Number(r[k] || 0), 0);
+// Null-sticky like the statements (lib/accounting/statement_periods.js): a "not available in
+// trustEd" amount (null) makes the total not available, never zero.
+const sum = (rows, k) => rows.reduce((s, r) => (s === null || r[k] === null ? null : s + Number(r[k] || 0)), 0);
+const sub = (a, b) => (a === null || b === null ? null : a - b);
 
 // Build a mapping object from the seed file + the community's accounts (ids are synthetic).
 function mappingFromSeed(coa, seed = SEED, dropAccounts = []) {
@@ -56,6 +59,8 @@ function pageFns(names) {
     'const esc = (s) => String(s==null?\'\':s).replace(/[&<>"]/g,(c)=>({\'&\':\'&amp;\',\'<\':\'&lt;\',\'>\':\'&gt;\',\'"\':\'&quot;\'}[c]));',
     html.slice(html.indexOf('  const _FUND_TITLES'), html.indexOf('\n', html.indexOf('  const _FUND_TITLES'))),
     html.slice(html.indexOf('  const _BVA_KEYS'), html.indexOf('\n', html.indexOf('  const _BVA_KEYS'))),
+    // PR B: statement amounts render null as "Not available in TrustEd" (fmtNA / stmtNotes).
+    ...['  const NA_HTML', '  const fmtNA', '  const stmtNotes', '  const carryNote'].map((tok) => html.slice(html.indexOf(tok), html.indexOf('\n', html.indexOf(tok)))),
     grab('function _bvaVarCell('), grab('function _bvaSum('),
   ];
   const src = consts.join('\n') + '\n' + names.map((n) => grab('function ' + n + '(')).join('\n') + `\nreturn { ${names.join(', ')} };`;
@@ -116,13 +121,18 @@ function pageFns(names) {
   });
 
   // ---- static: flat view untouched ----
-  await t('flat Budget vs Actual renderer and request are byte-identical to main', () => {
-    const { execSync } = require('child_process');
-    let mainHtml; try { mainHtml = execSync('git show main:public/accounting.html', { cwd: ROOT, maxBuffer: 64e6 }).toString(); } catch (_) { return console.log('      (skipped: main not available)'); }
-    const cur = fs.readFileSync(path.join(ROOT, 'public/accounting.html'), 'utf8');
-    const fnText = (h) => { h = h.replace(/\r\n/g, '\n'); const i = h.indexOf('  function bvaHTML('); return h.slice(i, h.indexOf('\n  }\n', i)); };
-    assert.strictEqual(fnText(cur), fnText(mainHtml), 'bvaHTML changed');
-    assert.ok(/budget-vs-actual\?community_id=\$\{CID\}&period_end=\$\{e\}\$\{mode==='grouped'\?'&grouped=1':''\}/.test(cur), 'flat request adds nothing');
+  // The Phase 1 lock ("flat renderer byte-identical to main") is retired by PR B, which
+  // deliberately changes the flat renderer: favorable-positive variance colours and
+  // "Not available in TrustEd" for months before a conversion cutover. What it protected
+  // (the flat request carries nothing grouped) stays pinned, and the new rendering is pinned too.
+  await t('flat Budget vs Actual request adds nothing; renderer is favorable-positive and never prints a fake zero', () => {
+    const cur = fs.readFileSync(path.join(ROOT, 'public/accounting.html'), 'utf8').replace(/\r\n/g, '\n');
+    assert.ok(cur.includes("/api/books/budget-vs-actual?community_id=${CID}&period_end=${e}${mode==='grouped'?'&grouped=1':''}"), 'flat request adds nothing');
+    const { bvaHTML } = pageFns(['bvaHTML']);
+    const out = bvaHTML({ has_budget: true, rows: [{ account_number: '4000', account_name: 'Assessments', account_type: 'revenue', mtd_budget_cents: 900, mtd_actual_cents: null, mtd_variance_cents: null, ytd_budget_cents: 900, ytd_actual_cents: 1100, ytd_variance_cents: 200, annual_budget_cents: 10800 }] });
+    assert.ok(out.includes('Not available in TrustEd'), 'a null month actual reads Not available in TrustEd');
+    assert.ok(!out.includes('$0.00'), 'no fake $0.00');
+    assert.ok(out.includes('#166534'), 'revenue over budget (+) is green');
   });
 
   // ---- write access: admin/owner only (Ed 2026-09-25) ----
@@ -219,7 +229,7 @@ function pageFns(names) {
         assert.strictEqual(all.totals.revenue[k], sum(flat.rows.filter((r) => r.account_type === 'revenue'), k), `${d} revenue ${k}`);
         assert.strictEqual(all.totals.expense[k], sum(flat.rows.filter((r) => r.account_type === 'expense'), k), `${d} expense ${k}`);
         for (const sec of all.sections) {
-          const catSum = sec.categories.reduce((s, c) => s + c.totals[k], 0) + sec.unmapped.totals[k];
+          const catSum = [...sec.categories.map((c) => c.totals[k]), sec.unmapped.totals[k]].reduce((s, v) => (s === null || v === null ? null : s + v), 0);
           assert.strictEqual(catSum, sec.totals[k], `${d} ${sec.section} categories ${k}`);
           for (const c of sec.categories) {
             assert.strictEqual(c.totals[k], sum([...c.rows, ...c.subcategories.flatMap((s) => s.rows)], k), `${d} ${c.name} ${k}`);
@@ -230,8 +240,8 @@ function pageFns(names) {
         let fundSum = 0;
         for (const [fc, tree] of Object.entries(grouped.by_fund)) {
           const fr = flat.rows.filter((r) => (r.fund_code || '—') === fc);
-          assert.strictEqual(tree.totals.net[k], sum(fr.filter((r) => r.account_type === 'revenue'), k) - sum(fr.filter((r) => r.account_type === 'expense'), k), `${d} ${fc} net ${k}`);
-          fundSum += tree.totals.net[k];
+          assert.strictEqual(tree.totals.net[k], sub(sum(fr.filter((r) => r.account_type === 'revenue'), k), sum(fr.filter((r) => r.account_type === 'expense'), k)), `${d} ${fc} net ${k}`);
+          fundSum = fundSum === null || tree.totals.net[k] === null ? null : fundSum + tree.totals.net[k];
         }
         assert.strictEqual(fundSum, all.totals.net[k], `${d} funds add to whole ${k}`);
       }
@@ -249,7 +259,7 @@ function pageFns(names) {
     const g = (await FS.budgetVsActualGrouped({ community_id: cid, period_end: d, _mapping: partial })).grouped.all;
     const um = g.sections.flatMap((s) => s.unmapped.rows.map((r) => r.account_number)).sort();
     assert.deepStrictEqual(um, ['4100', '5300'], 'active accounts show as Unmapped (5126 has no activity, so no row)');
-    for (const k of KEYS) assert.strictEqual(g.totals.net[k], sum(flat.rows.filter((r) => r.account_type === 'revenue'), k) - sum(flat.rows.filter((r) => r.account_type === 'expense'), k), k);
+    for (const k of KEYS) assert.strictEqual(g.totals.net[k], sub(sum(flat.rows.filter((r) => r.account_type === 'revenue'), k), sum(flat.rows.filter((r) => r.account_type === 'expense'), k)), k);
   });
 
   await t('grouped Income Statement: fund totals equal the current statement; unmapped communities keep today\'s groups', async () => {

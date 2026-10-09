@@ -117,31 +117,13 @@ const sum = (m) => m.reduce((s, v) => s + v, 0);
       const b = block(r); assert.ok(!/\.(insert|update|upsert|delete)\(|rpc\(/.test(b), r + ' writes');
     }
   });
-  await t('Budget vs Actual and the statements are untouched by Phase 2', () => {
-    const { execSync } = require('child_process');
-    let d; try { d = execSync('git diff --stat main -- lib/accounting/financial_statements.js lib/accounting/report_categories.js', { cwd: path.join(__dirname, '..') }).toString(); } catch (_) { return console.log('      (skipped: main not available)'); }
-    assert.strictEqual(d.trim(), '', 'statement code changed: ' + d);
-    // api/gl.js also serves the Trial Balance (Ed 2026-09-28: TB drill-down). The
-    // statements must stay untouched, so every changed line in api/gl.js must sit
-    // inside the Trial Balance section, never in a statement route.
-    const root = path.join(__dirname, '..');
-    const src = require('fs').readFileSync(path.join(root, 'api', 'gl.js'), 'utf8').split(/\r?\n/);
-    const from = src.findIndex((l) => l.includes("router.get('/:communityId/trial-balance'")) + 1;
-    const to = src.findIndex((l) => l.includes('// Per-homeowner ledgers')) + 1;
-    // The AR aging section (Ed 2026-10-08: the aging reconciles explicitly to GL 1300)
-    // is also allowed: from the current-tenure map through the AR drill-down, plus the
-    // test-export line at the end of the file. Every statement route stays off limits.
-    const arFrom = src.findIndex((l) => l.includes('async function _currentTenureMap(')) + 1;
-    const arTo = src.findIndex((l) => l.includes('// AR drill-down')) + 1;
-    const testExport = src.findIndex((l) => l.startsWith('module.exports._test')) + 1;
-    const inside = (s, e) => (from > 0 && to > from && s >= from && e < to) || (arFrom > 0 && arTo > arFrom && s >= arFrom && e < arTo) || (s === testExport && e === testExport);
-    const hunks = execSync('git diff -U0 main -- api/gl.js', { cwd: root }).toString().split(/\r?\n/).filter((l) => l.startsWith('@@'));
-    for (const h of hunks) {
-      const m = h.match(/\+(\d+)(?:,(\d+))?/); const startLine = Number(m[1]); const count = m[2] === undefined ? 1 : Number(m[2]);
-      const endLine = startLine + Math.max(count, 1) - 1;
-      // A pure deletion (count 0) is checked at the line it was removed after, like any other change.
-      assert.ok(inside(startLine, endLine), `api/gl.js changed outside the Trial Balance and AR aging sections: ${h}`);
-    }
+  // The Phase 2 lock ("statements untouched": no diff vs main in the statement modules or the
+  // statement routes of api/gl.js) protected the budget-plan PR. PR B (Ed 2026-10-09, cutover-safe
+  // statement numbers) deliberately changes those statements; their behavior is now pinned by
+  // tests/test_statement_periods.js (monthly / YTD / rolling / BvA / balance sheet / greenfield).
+  await t('statement behavior is pinned by test_statement_periods (Phase 2 lock retired by PR B)', () => {
+    const list = require('fs').readFileSync(path.join(__dirname, '..', 'scripts', 'run_all_tests.js'), 'utf8');
+    assert.ok(list.includes("'tests/test_statement_periods.js'"), 'test_statement_periods must run in npm test');
   });
 
   // ---- live ----

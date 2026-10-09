@@ -69,6 +69,13 @@
 <script>
   const $ = (id) => document.getElementById(id);
   const fmt = (cents) => '$' + (Number(cents||0)/100).toLocaleString(undefined,{minimumFractionDigits:2, maximumFractionDigits:2});
+  // Statement amounts: null = not available in trustEd (monthly detail before a conversion cutover
+  // lives in the prior system; lib/accounting/statement_periods.js). Never shown as $0.00.
+  const NA_HTML = '<span class="muted" style="font-size:11.5px;" title="Monthly detail before the conversion cutover is in the prior system">Not available in TrustEd</span>';
+  const fmtNA = (cents) => (cents === null ? NA_HTML : fmt(cents));
+  // One banner for a statement's availability notes and the opening YTD carryforward.
+  const stmtNotes = (notes) => notes.filter(Boolean).length ? `<div style="margin:0 0 10px; padding:9px 12px; border-radius:8px; background:#f5f8fc; border:1px solid var(--rule); font-size:12.5px;">${notes.filter(Boolean).map((n)=>`<div>${esc(n)}</div>`).join('')}</div>` : '';
+  const carryNote = (label, c) => (c && (c.revenue_cents || c.expenses_cents)) ? `${label}: revenue ${fmt(c.revenue_cents)}, expenses ${fmt(c.expenses_cents)} (included in the year-to-date figures).` : null;
   const esc = (s) => String(s==null?'':s).replace(/[&<>"]/g,(c)=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
   // Five workflow groups — daily work (Homeowners, Bills) first; technical
   // setup (chart, journal entries, policy) tucked into Setup at the end.
@@ -281,12 +288,16 @@
   // variance can't be read across funds in one row. Each section shows Month
   // (Actual / Budget / Variance) then Year to Date (Actual / Budget / Variance).
   const _FUND_TITLES = { OPR:'Operating Fund', RES:'Reserve Fund', SAV:'Savings Fund' };
+  // Variance is favorable-positive for revenue AND expense, the same convention as the
+  // server (lib/accounting/variance.js): revenue actual − budget, expense budget − actual.
+  // No actual (not available in trustEd) = no variance, never a fake one.
   function _bvaVarCell(actualC, budgetC, type){
-    const v = (Number(actualC)||0) - (Number(budgetC)||0);      // Actual − Budget (over/under)
-    const fav = type === 'revenue' ? v >= 0 : v <= 0;           // revenue over = good; expense under = good
-    return `<td class="num ${fav?'fav':'unfav'}">${fmt(v)}</td>`;
+    if (actualC === null) return `<td class="num">${NA_HTML}</td>`;
+    const a = Number(actualC)||0, b = Number(budgetC)||0;
+    const v = type === 'revenue' ? a - b : b - a;
+    return `<td class="num ${v>=0?'fav':'unfav'}">${fmt(v)}</td>`;
   }
-  function _bvaSum(list, field){ return (list||[]).reduce((s,r)=>s+(Number(r[field])||0),0); }
+  function _bvaSum(list, field){ return (list||[]).reduce((s,r)=>(s===null||r[field]===null?null:s+(Number(r[field])||0)),0); }
   function _budgetISBody(rows, fiscalYear, hasBudget, grouped){
     if (!hasBudget) {
       return `<div class="muted" style="padding:14px 0;">No approved budget is on file for ${esc(String(fiscalYear||''))}. Load the annual budget in the <strong>Budget</strong> tab, then this statement will show budget vs actual.</div>`;
@@ -304,14 +315,14 @@
       <tr><th class="num">Actual</th><th class="num">Budget</th><th class="num">Variance</th>
           <th class="num">Actual</th><th class="num">Budget</th><th class="num">Variance</th></tr></thead>`;
     const dataRow = (r)=>`<tr><td class="mono">${esc(r.account_number||'')}</td><td>${esc(r.account_name||'')}</td>
-      <td class="num">${fmt(r.mtd_actual_cents)}</td><td class="num">${fmt(r.mtd_budget_cents)}</td>${_bvaVarCell(r.mtd_actual_cents,r.mtd_budget_cents,r.account_type)}
-      <td class="num">${fmt(r.ytd_actual_cents)}</td><td class="num">${fmt(r.ytd_budget_cents)}</td>${_bvaVarCell(r.ytd_actual_cents,r.ytd_budget_cents,r.account_type)}
+      <td class="num">${fmtNA(r.mtd_actual_cents)}</td><td class="num">${fmt(r.mtd_budget_cents)}</td>${_bvaVarCell(r.mtd_actual_cents,r.mtd_budget_cents,r.account_type)}
+      <td class="num">${fmtNA(r.ytd_actual_cents)}</td><td class="num">${fmt(r.ytd_budget_cents)}</td>${_bvaVarCell(r.ytd_actual_cents,r.ytd_budget_cents,r.account_type)}
       <td class="num">${fmt(r.annual_budget_cents)}</td></tr>`;
     const subtot = (label, list, type, cls)=>{
       const ma=_bvaSum(list,'mtd_actual_cents'), mb=_bvaSum(list,'mtd_budget_cents'), ya=_bvaSum(list,'ytd_actual_cents'), yb=_bvaSum(list,'ytd_budget_cents'), an=_bvaSum(list,'annual_budget_cents');
       return `<tr class="${cls||'subtot'}"><td></td><td>${esc(label)}</td>
-        <td class="num">${fmt(ma)}</td><td class="num">${fmt(mb)}</td>${_bvaVarCell(ma,mb,type)}
-        <td class="num">${fmt(ya)}</td><td class="num">${fmt(yb)}</td>${_bvaVarCell(ya,yb,type)}
+        <td class="num">${fmtNA(ma)}</td><td class="num">${fmt(mb)}</td>${_bvaVarCell(ma,mb,type)}
+        <td class="num">${fmtNA(ya)}</td><td class="num">${fmt(yb)}</td>${_bvaVarCell(ya,yb,type)}
         <td class="num">${fmt(an)}</td></tr>`;
     };
     // Category blocks for a mapped community (Phase 1). The tree comes from the
@@ -329,11 +340,12 @@
       const exp = fr.filter((r)=>r.account_type==='expense');
       const title = _FUND_TITLES[code] || code;
       // Net income = revenue − expenses, per column
-      const nMa=_bvaSum(rev,'mtd_actual_cents')-_bvaSum(exp,'mtd_actual_cents');
+      const nsub=(a,b)=>(a===null||b===null?null:a-b);
+      const nMa=nsub(_bvaSum(rev,'mtd_actual_cents'),_bvaSum(exp,'mtd_actual_cents'));
       const nMb=_bvaSum(rev,'mtd_budget_cents')-_bvaSum(exp,'mtd_budget_cents');
-      const nYa=_bvaSum(rev,'ytd_actual_cents')-_bvaSum(exp,'ytd_actual_cents');
+      const nYa=nsub(_bvaSum(rev,'ytd_actual_cents'),_bvaSum(exp,'ytd_actual_cents'));
       const nYb=_bvaSum(rev,'ytd_budget_cents')-_bvaSum(exp,'ytd_budget_cents');
-      const netVar = (a,b)=>{ const v=a-b; return `<td class="num ${v>=0?'fav':'unfav'}">${fmt(v)}</td>`; };
+      const netVar = (a,b)=>{ if (a===null) return `<td class="num">${NA_HTML}</td>`; const v=a-b; return `<td class="num ${v>=0?'fav':'unfav'}">${fmt(v)}</td>`; };
       const nAn=_bvaSum(rev,'annual_budget_cents')-_bvaSum(exp,'annual_budget_cents');
       const tree = grouped && grouped.has_mapping && grouped.by_fund ? grouped.by_fund[code] : null;
       html += `<div class="fundsec">${esc(title)}</div>
@@ -345,8 +357,8 @@
           ${!exp.length ? `<tr><td colspan="9" class="muted">— none —</td></tr>` : (tree ? catBlock(tree.sections[1], 'expense') : exp.map(dataRow).join(''))}
           ${subtot('Total Expenses', exp, 'expense')}
           <tr class="netrow"><td></td><td>Net Income — ${esc(title)}</td>
-            <td class="num">${fmt(nMa)}</td><td class="num">${fmt(nMb)}</td>${netVar(nMa,nMb)}
-            <td class="num">${fmt(nYa)}</td><td class="num">${fmt(nYb)}</td>${netVar(nYa,nYb)}
+            <td class="num">${fmtNA(nMa)}</td><td class="num">${fmt(nMb)}</td>${netVar(nMa,nMb)}
+            <td class="num">${fmtNA(nYa)}</td><td class="num">${fmt(nYb)}</td>${netVar(nYa,nYb)}
             <td class="num">${fmt(nAn)}</td></tr>
         </tbody></table>`;
     }
@@ -437,19 +449,21 @@
     // fund columns and drifting the amounts off the OPR/RES/SAV headers).
     const NUMW = 104;
     const colgroup = `<colgroup><col style="width:56px"><col>${funds.map(()=>`<col style="width:${NUMW}px">`).join('')}<col style="width:${NUMW+8}px"></colgroup>`;
-    const rowCells = (r) => funds.map((f)=>`<td class="num">${r.fund_code===f.fund_code?fmt(r.ytd_amount_cents):''}</td>`).join('');
+    const rowCells = (r) => funds.map((f)=>`<td class="num">${r.fund_code===f.fund_code?fmtNA(r.ytd_amount_cents):''}</td>`).join('');
     const head = `<thead><tr><th>Acct</th><th>Account</th>${funds.map((f)=>`<th class="num" title="${esc(f.fund_name||f.fund_code)}">${esc(f.fund_code)}</th>`).join('')}<th class="num">Total YTD</th></tr></thead>`;
     const sec = (title,rows,subKey,grand) => `<h3 class="sec" style="font-size:14px; margin:16px 0 6px;">${esc(title)}</h3>
-      <table style="table-layout:fixed;">${colgroup}${head}<tbody>${(rows||[]).length ? rows.map((r)=>`<tr><td style="font-family:ui-monospace,monospace; color:var(--ink-soft);">${esc(r.account_number||'')}</td><td>${esc(r.account_name||'')}</td>${rowCells(r)}<td class="num">${fmt(r.ytd_amount_cents)}</td></tr>`).join('') : `<tr><td colspan="${ncol}" class="muted">— none —</td></tr>`}
-        <tr class="total"><td colspan="2">Total ${esc(title)}</td>${funds.map((f)=>`<td class="num">${fmt((j.fund_totals[f.fund_code]||{}).ytd?.[subKey]||0)}</td>`).join('')}<td class="num">${fmt(grand)}</td></tr></tbody></table>`;
+      <table style="table-layout:fixed;">${colgroup}${head}<tbody>${(rows||[]).length ? rows.map((r)=>`<tr><td style="font-family:ui-monospace,monospace; color:var(--ink-soft);">${esc(r.account_number||'')}</td><td>${esc(r.account_name||'')}</td>${rowCells(r)}<td class="num">${fmtNA(r.ytd_amount_cents)}</td></tr>`).join('') : `<tr><td colspan="${ncol}" class="muted">— none —</td></tr>`}
+        <tr class="total"><td colspan="2">Total ${esc(title)}</td>${funds.map((f)=>`<td class="num">${fmtNA((j.fund_totals[f.fund_code]||{}).ytd?.[subKey] ?? 0)}</td>`).join('')}<td class="num">${fmtNA(grand)}</td></tr></tbody></table>`;
     const ni = j.totals.period.net_income_cents, col = ni>=0?'#166534':'#991b1b';
-    const niCells = funds.map((f)=>`<td class="num" style="font-weight:700; color:${col};">${fmt((j.fund_totals[f.fund_code]||{}).ytd?.net_income_cents||0)}</td>`).join('');
-    return `<div class="muted" style="margin-bottom:8px;">${fmtDate(j.period_start)} — ${fmtDate(j.period_end)} · YTD by fund</div>
+    const niCells = funds.map((f)=>`<td class="num" style="font-weight:700; color:${col};">${fmtNA((j.fund_totals[f.fund_code]||{}).ytd?.net_income_cents ?? 0)}</td>`).join('');
+    const av = j.availability || {}; const cfw = (j.carryforward && j.carryforward.windows && j.carryforward.windows[0]) || null;
+    const notes = stmtNotes([av.period && av.period.note ? 'Period: ' + av.period.note : null, av.ytd && av.ytd.note ? 'Year to date: ' + av.ytd.note : null, cfw ? carryNote(cfw.label, j.carryforward.ytd) : null]);
+    return `<div class="muted" style="margin-bottom:8px;">${fmtDate(j.period_start)} — ${fmtDate(j.period_end)} · YTD by fund</div>${notes}
       ${sec('Revenue',j.sections.revenue,'revenue_cents',j.totals.ytd.revenue_cents)}
       ${sec('Expenses',j.sections.expenses,'expenses_cents',j.totals.ytd.expenses_cents)}
-      <table style="margin-top:6px;"><tbody><tr class="total"><td colspan="2" style="font-weight:700;">NET INCOME (YTD)</td>${niCells}<td class="num" style="font-weight:700; color:${col};">${fmt(j.totals.ytd.net_income_cents)}</td></tr></tbody></table>
+      <table style="margin-top:6px;"><tbody><tr class="total"><td colspan="2" style="font-weight:700;">NET INCOME (YTD)</td>${niCells}<td class="num" style="font-weight:700; color:${col};">${fmtNA(j.totals.ytd.net_income_cents)}</td></tr></tbody></table>
       <div style="margin-top:12px; padding:12px; border-radius:8px; background:#f5f8fc; border:2px solid ${col};">
-        <div style="display:flex; justify-content:space-between; font-weight:700;"><span>NET INCOME</span><span style="color:${col};">Period ${fmt(ni)} · YTD ${fmt(j.totals.ytd.net_income_cents)}</span></div></div>`;
+        <div style="display:flex; justify-content:space-between; font-weight:700;"><span>NET INCOME</span><span style="color:${col};">Period ${fmtNA(ni)} · YTD ${fmtNA(j.totals.ytd.net_income_cents)}</span></div></div>`;
   }
 
   async function renderEquity() {
@@ -473,7 +487,7 @@
       return `<tr><td style="font-weight:600;">${esc(code==='consolidated'?'Unsegregated':code)}</td><td class="num">${fmt(b.total)}</td><td class="num">${fmt(e.total-b.total)}</td><td class="num" style="font-weight:600;">${fmt(e.total)}</td></tr>`; }).join('');
     return `<div class="muted" style="margin-bottom:8px;">${fmtDate(j.period_start)} — ${fmtDate(j.period_end)}</div>
       <table><thead><tr><th>Fund</th><th class="num">Beginning</th><th class="num">Net Change</th><th class="num">Ending</th></tr></thead><tbody>${rows}</tbody></table>
-      <div style="margin-top:12px; padding:10px 12px; background:#f5f8fc; border-radius:8px;">Period Net Income: <strong>${fmt(j.period_net_income_cents)}</strong></div>`;
+      <div style="margin-top:12px; padding:10px 12px; background:#f5f8fc; border-radius:8px;">Period Net Income: <strong>${fmtNA(j.period_net_income_cents)}</strong></div>`;
   }
 
   // ── Undeposited Funds — received checks held until they hit the bank ───────
@@ -550,15 +564,16 @@
   }
   function bvaHTML(j) {
     if (!j.has_budget) return `<div class="muted" style="padding:24px; text-align:center;">No budget loaded for fiscal year ${esc(String(j.fiscal_year||''))}. Use the <strong>Budget</strong> tab to upload one.</div>`;
-    // variance = budget - actual (unchanged). Expense under budget is good; revenue
-    // under budget (actual > budget gives a negative variance) is ALSO good, so the
-    // favourable sign flips for revenue.
-    const vc = (v, r) => { if (Math.abs(v)<=1) return 'var(--ink-soft)'; const fav = r && r.account_type==='revenue' ? v<=0 : v>=0; return fav?'#166534':'#991b1b'; };
+    // Variance is favorable-positive for revenue AND expense (lib/accounting/variance.js):
+    // revenue actual - budget, expense budget - actual. Positive is good, always.
+    const vc = (v) => { if (v === null || Math.abs(v)<=1) return 'var(--ink-soft)'; return v>=0?'#166534':'#991b1b'; };
+    const av = j.availability || {}; const cfw = (j.carryforward && j.carryforward.windows && j.carryforward.windows[0]) || null;
+    const notes = stmtNotes([av.mtd && av.mtd.note ? 'Month: ' + av.mtd.note : null, av.ytd && av.ytd.note ? 'Year to date: ' + av.ytd.note : null, cfw && av.ytd && av.ytd.carryforward_included && av.ytd.carryforward_included.length ? `Year-to-date actuals include ${cfw.label}.` : null]);
     const rows = (j.rows||[]).map((r)=>`<tr><td style="font-family:ui-monospace,monospace; color:var(--ink-soft);">${esc(r.account_number)}</td><td>${esc(r.account_name)}</td>
-      <td class="num">${fmt(r.mtd_budget_cents)}</td><td class="num">${fmt(r.mtd_actual_cents)}</td><td class="num" style="color:${vc(r.mtd_variance_cents, r)};">${fmt(r.mtd_variance_cents)}</td>
-      <td class="num">${fmt(r.ytd_budget_cents)}</td><td class="num">${fmt(r.ytd_actual_cents)}</td><td class="num" style="color:${vc(r.ytd_variance_cents, r)};">${fmt(r.ytd_variance_cents)}</td>
+      <td class="num">${fmt(r.mtd_budget_cents)}</td><td class="num">${fmtNA(r.mtd_actual_cents)}</td><td class="num" style="color:${vc(r.mtd_variance_cents)};">${fmtNA(r.mtd_variance_cents)}</td>
+      <td class="num">${fmt(r.ytd_budget_cents)}</td><td class="num">${fmtNA(r.ytd_actual_cents)}</td><td class="num" style="color:${vc(r.ytd_variance_cents)};">${fmtNA(r.ytd_variance_cents)}</td>
       <td class="num">${fmt(r.annual_budget_cents)}</td></tr>`).join('');
-    return `<table><thead><tr><th>#</th><th>Account</th><th class="num">MTD Bud</th><th class="num">MTD Act</th><th class="num">MTD Var</th><th class="num">YTD Bud</th><th class="num">YTD Act</th><th class="num">YTD Var</th><th class="num">Annual</th></tr></thead><tbody>${rows}</tbody></table>`;
+    return `${notes}<table><thead><tr><th>#</th><th>Account</th><th class="num">MTD Bud</th><th class="num">MTD Act</th><th class="num">MTD Var</th><th class="num">YTD Bud</th><th class="num">YTD Act</th><th class="num">YTD Var</th><th class="num">Annual</th></tr></thead><tbody>${rows}</tbody></table>`;
   }
 
   // Grouped Budget vs Actual (Reporting categories Phase 1). Same columns and the
@@ -573,9 +588,9 @@
     }
     const t = g.all;
     const multiFund = new Set((j.rows||[]).map((r)=>r.fund_code||'')).size > 1;
-    // variance = budget - actual (unchanged). Revenue: favourable when <= 0; expense: >= 0.
-    const vcol = (v, section) => { if (Math.abs(v)<=1) return 'var(--ink-soft)'; const fav = section==='revenue' ? v<=0 : v>=0; return fav?'#166534':'#991b1b'; };
-    const nums = (o, section) => _BVA_KEYS.map((k)=>`<td class="num"${/variance/.test(k)?` style="color:${vcol(o[k]||0, section)};"`:''}>${fmt(o[k]||0)}</td>`).join('');
+    // Variance is favorable-positive for revenue AND expense (lib/accounting/variance.js).
+    const vcol = (v) => { if (v === null || Math.abs(v)<=1) return 'var(--ink-soft)'; return v>=0?'#166534':'#991b1b'; };
+    const nums = (o, section) => _BVA_KEYS.map((k)=>`<td class="num"${/variance/.test(k)?` style="color:${vcol(o[k] ?? 0)};"`:''}>${fmtNA(o[k] ?? 0)}</td>`).join('');
     const ncol = 2 + (multiFund?1:0) + _BVA_KEYS.length;
     const acct = (r, pad) => `<tr><td style="font-family:ui-monospace,monospace; color:var(--ink-soft); padding-left:${pad}px;">${esc(r.account_number)}</td><td>${esc(r.account_name)}</td>${multiFund?`<td class="muted" style="font-size:11.5px;">${esc(r.fund_code||'')}</td>`:''}${nums(r, r.account_type)}</tr>`;
     const hdr = (txt, style) => `<tr><td colspan="${ncol}" style="${style}">${esc(txt)}</td></tr>`;
@@ -1040,7 +1055,7 @@
     const o = opts || {};
     const cells = months.map((v,i)=> o.edit
       ? `<td><input class="mp-m" data-scope="${o.scope}" data-i="${i}" value="${mpD(v)}" style="width:100%; min-width:62px; padding:3px 4px; border:1px solid var(--rule); border-radius:5px; text-align:right; font-variant-numeric:tabular-nums; font-size:12px;"></td>`
-      : `<td class="num" style="font-size:12px;">${Number(v)?mpD(v):'<span class="muted">·</span>'}</td>`).join('');
+      : `<td class="num" style="font-size:12px;">${v===null?'<span class="muted" title="Not available in TrustEd: before the conversion cutover">n/a</span>':Number(v)?mpD(v):'<span class="muted">·</span>'}</td>`).join('');
     return `<tr${o.style?` style="${o.style}"`:''}><td style="font-size:12px; white-space:nowrap; padding-right:8px;">${label}</td>${cells}<td class="num" style="font-weight:700; font-size:12px;">${mpD(mpSum(months))}</td></tr>`;
   }
 
