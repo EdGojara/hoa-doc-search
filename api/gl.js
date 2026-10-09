@@ -777,9 +777,7 @@ router.post('/:communityId/late-fee-reverse', express.json(), async (req, res) =
     const r = await reverseLateFeesAndInterest({ supabase, communityId: req.params.communityId, runMonth: req.body.runMonth });
     res.json(r);
   } catch (err) {
-    console.error('[gl] late-fee-reverse failed:', err.code || '', err.message);
-    // clear_entry errors carry a staff-safe .detail saying what was and wasn't changed.
-    if (err.detail) return res.status(err.code === 'lines_restore_failed' ? 500 : 409).json({ error: err.code, detail: err.detail });
+    console.error('[gl] late-fee-reverse failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
   }
 });
