@@ -1597,7 +1597,10 @@ router.get('/budgets/living-lines', async (req, res) => {
       if (mErr) throw mErr;
       for (const m of (metas || [])) {
         if (!['revenue', 'expense'].includes(m.account_type)) continue;
-        acc.set(m.id, { account_id: m.id, account_number: m.account_number, account_name: m.account_name, account_type: m.account_type, fund_id: m.fund_id || null, fund_code: (m.account_funds && m.account_funds.fund_code) || null, fy2: 0, fy1: 0, ytd_actual: 0, forecast: 0 });
+        acc.set(m.id, { account_id: m.id, account_number: m.account_number, account_name: m.account_name, account_type: m.account_type, fund_id: m.fund_id || null, fund_code: (m.account_funds && m.account_funds.fund_code) || null,
+          // A prior year not available in trustEd (converted-community pre-history) is null, never $0,
+          // exactly like the rows with activity above. A year that IS available and had no activity is a real 0.
+          fy2: yearNA(is2) ? null : 0, fy1: yearNA(is1) ? null : 0, ytd_actual: 0, forecast: 0 });
       }
     }
 
