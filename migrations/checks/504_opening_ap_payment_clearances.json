@@ -1,0 +1,107 @@
+{
+  "migration": "504_opening_ap_payment_clearances.sql",
+  "summary": "Conversion opening AP is a liability carried through the cutoff, not a payment instruction (Canyon Gate: 12 opening items, $7,992.75, appeared in Bills ready to pay; 9, $2,134.19, were already paid by ACH). Adds opening_ap_payment_clearances (append-only decisions: cleared_for_payment with check/ach and a basis, or revoked; latest per invoice wins), which the application guard reads before any payment of an opening AP invoice. ap_invoices.status gains 'conversion_review', the review state future conversions write opening AP in. A BEFORE INSERT trigger makes any invoice born posted by a conversion opening entry carry its vendor's auto-pay flag and start in 'conversion_review'. Changes no existing row; writes no clearance.",
+  "requires": [
+    "267_vendor_ach_autopay.sql",
+    "488_onboarding_execute.sql"
+  ],
+  "preflight": [
+    {
+      "name": "the status CHECK being replaced is named ap_invoices_status_check (177 inline default)",
+      "sql": "SELECT count(*)::int FROM pg_constraint WHERE conrelid = 'ap_invoices'::regclass AND conname = 'ap_invoices_status_check'",
+      "expect": 1
+    },
+    {
+      "name": "every existing invoice status is one the widened CHECK still allows",
+      "sql": "SELECT count(*)::int FROM ap_invoices WHERE status NOT IN ('awaiting_approval', 'approved', 'partially_paid', 'paid', 'voided', 'disputed', 'on_hold', 'conversion_review')",
+      "expect": 0
+    },
+    {
+      "name": "opening_ap_payment_clearances does not exist yet",
+      "sql": "SELECT count(*)::int FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'opening_ap_payment_clearances'",
+      "expect": 0
+    },
+    {
+      "name": "vendors.auto_pay_ach exists (267)",
+      "sql": "SELECT count(*)::int FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'vendors' AND column_name = 'auto_pay_ach'",
+      "expect": 1
+    },
+    {
+      "name": "no onboarding batch is mid-execute",
+      "sql": "SELECT count(*)::int FROM conversion_batches WHERE onboarding_stage = 'execute' AND status <> 'posted'",
+      "expect": 0
+    }
+  ],
+  "expected_changes": [
+    "Creates opening_ap_payment_clearances (invoice, community, decision cleared_for_payment / revoked, payment_method check / ach required on a clearance and absent on a revocation, basis of 10+ characters, evidence jsonb, decided_by, created_at). FKs RESTRICT; index (invoice_id, created_at); a guard trigger refuses UPDATE and DELETE and a decision whose community differs from the invoice's. RLS on; nothing for anon / authenticated; SELECT, INSERT to service_role.",
+    "Replaces ap_invoices_status_check: same name, the existing seven values plus conversion_review.",
+    "Adds ap_invoices_opening_ap_defaults + trg_ap_invoices_opening_ap_defaults (BEFORE INSERT on ap_invoices): an invoice whose posting entry has source_module 'opening_entry' gets is_ach_autopay OR its vendor's auto_pay_ach, and 'approved' / 'awaiting_approval' becomes 'conversion_review'. Inserts only; no existing row is touched.",
+    "No ap_invoices, journal_entries or vendors row changes; no clearance is written."
+  ],
+  "objects": {
+    "added": [
+      "column:opening_ap_payment_clearances.basis",
+      "column:opening_ap_payment_clearances.community_id",
+      "column:opening_ap_payment_clearances.created_at",
+      "column:opening_ap_payment_clearances.decided_by",
+      "column:opening_ap_payment_clearances.decision",
+      "column:opening_ap_payment_clearances.evidence",
+      "column:opening_ap_payment_clearances.id",
+      "column:opening_ap_payment_clearances.invoice_id",
+      "column:opening_ap_payment_clearances.payment_method",
+      "constraint:opening_ap_payment_clearances.opening_ap_payment_clearances_basis_check",
+      "constraint:opening_ap_payment_clearances.opening_ap_payment_clearances_community_fk",
+      "constraint:opening_ap_payment_clearances.opening_ap_payment_clearances_decision_check",
+      "constraint:opening_ap_payment_clearances.opening_ap_payment_clearances_invoice_fk",
+      "constraint:opening_ap_payment_clearances.opening_ap_payment_clearances_method_check",
+      "constraint:opening_ap_payment_clearances.opening_ap_payment_clearances_pkey",
+      "function:ap_invoices_opening_ap_defaults",
+      "function:opening_ap_payment_clearances_guard",
+      "index:idx_opening_ap_payment_clearances_invoice",
+      "index:opening_ap_payment_clearances_pkey",
+      "table:opening_ap_payment_clearances",
+      "trigger:ap_invoices.trg_ap_invoices_opening_ap_defaults",
+      "trigger:opening_ap_payment_clearances.trg_opening_ap_payment_clearances_guard"
+    ],
+    "changed": [
+      "constraint:ap_invoices.ap_invoices_status_check"
+    ],
+    "removed": []
+  },
+  "row_changes": {
+    "ap_invoices": 0,
+    "journal_entries": 0,
+    "vendors": 0
+  },
+  "protected": [
+    { "table": "ap_invoices", "order_by": "id" },
+    { "table": "vendors", "order_by": "id" }
+  ],
+  "verify": [
+    {
+      "name": "the widened status CHECK allows conversion_review",
+      "sql": "SELECT count(*)::int FROM pg_constraint WHERE conrelid = 'ap_invoices'::regclass AND conname = 'ap_invoices_status_check' AND pg_get_constraintdef(oid) LIKE '%conversion_review%'",
+      "expect": 1
+    },
+    {
+      "name": "clearances are append-only (guard trigger present)",
+      "sql": "SELECT count(*)::int FROM pg_trigger WHERE tgname = 'trg_opening_ap_payment_clearances_guard'",
+      "expect": 1
+    },
+    {
+      "name": "opening AP insert backstop present",
+      "sql": "SELECT count(*)::int FROM pg_trigger WHERE tgname = 'trg_ap_invoices_opening_ap_defaults'",
+      "expect": 1
+    },
+    {
+      "name": "no clearance written",
+      "sql": "SELECT count(*)::int FROM opening_ap_payment_clearances",
+      "expect": 0
+    },
+    {
+      "name": "service_role can read and insert clearances; anon and authenticated cannot read them",
+      "sql": "SELECT (CASE WHEN has_table_privilege('service_role', 'opening_ap_payment_clearances', 'SELECT') AND has_table_privilege('service_role', 'opening_ap_payment_clearances', 'INSERT') AND NOT has_table_privilege('anon', 'opening_ap_payment_clearances', 'SELECT') AND NOT has_table_privilege('authenticated', 'opening_ap_payment_clearances', 'SELECT') THEN 1 ELSE 0 END)::int",
+      "expect": 1
+    }
+  ]
+}

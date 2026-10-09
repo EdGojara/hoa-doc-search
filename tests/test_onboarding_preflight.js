@@ -113,6 +113,23 @@ check('AP: open invoices resolve to one vendor, post by the opening entry, tie t
   const t = trustedBase(); t.ap_invoices.push({ id: 'I0', vendor_id: 'v1', vendor_invoice_number: 'X1', voided_at: null });
   const p2 = build({ trusted: t }); assert.strictEqual(status(p2, 'preflight.restored_ap_carried_once'), 'BLOCKED'); assert.ok(!p2.writes.ap_opening_invoices.some((a) => a.vendor_invoice_number === 'X1'), 'never a second invoice');
 });
+check('opening AP is a carried liability, not a payment instruction (Canyon Gate 2026-10-09): written in conversion_review (never approved), carries the vendor auto-pay flag, and two same-vendor/date/amount items with no invoice number keep distinct keys', () => {
+  const p = build(); const a = p.writes.ap_opening_invoices[0];
+  assert.strictEqual(a.status, 'conversion_review', 'never approved/payable at birth');
+  assert.strictEqual(a.amount_paid_cents, 0);
+  assert.strictEqual(a.is_ach_autopay, false, 'vendor is not auto-pay');
+  const c = ctxBase(); c.vendors = [{ id: 'v1', name: 'Acme LLC', auto_pay_ach: true }];
+  assert.strictEqual(build({ ctx: c }).writes.ap_opening_invoices[0].is_ach_autopay, true, 'an auto-drafted vendor stays auto-drafted');
+  // CINCO MUD 8 at Canyon Gate: two $37.18 bills of 3/17, no invoice number, one bank draft each.
+  const snap = snapshotBase(); snap.lines = snap.lines.filter((l) => l.kind !== 'ap_detail');
+  snap.lines.push({ line_no: 9, kind: 'ap_detail', account_code: '2000', amount_cents: -100, detail: { source_vendor_key: 'ACME LLC', invoice_number: null, invoice_date: '2026-03-17' } });
+  snap.lines.push({ line_no: 10, kind: 'ap_detail', account_code: '2000', amount_cents: -100, detail: { source_vendor_key: 'ACME LLC', invoice_number: null, invoice_date: '2026-03-17' } });
+  const p2 = build({ snapshot: snap }); const keys = p2.writes.ap_opening_invoices.map((x) => x.idempotency_key);
+  assert.strictEqual(keys.length, 2); assert.notStrictEqual(keys[0], keys[1], 'two items, two keys');
+  assert.ok(keys[0].endsWith('|2026-03-17|L9|1.00') && keys[1].endsWith('|2026-03-17|L10|1.00'), keys.join(' '));
+  assert.strictEqual(status(p2, 'preflight.ap_invoice_keys_unique'), 'PASS');
+  assert.ok(p.writes.ap_opening_invoices[0].idempotency_key.endsWith('|X1|2.00'), 'an invoice-numbered key is unchanged');
+});
 check('determinism: the same inputs build the same plan', () => {
   assert.strictEqual(JSON.stringify(build()), JSON.stringify(build()));
 });

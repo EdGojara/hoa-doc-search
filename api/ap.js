@@ -1211,6 +1211,7 @@ router.post('/invoices/:id/mark-paid', express.json(), async (req, res) => {
     });
     res.json({ ok: true, method, amount_cents: amt, ...result });
   } catch (err) {
+    if (err.code === 'opening_ap_not_cleared') return res.status(409).json({ error: err.message, code: err.code, invoices: err.invoices || [] });
     if (err.code === 'invalid_input' || err.code === 'invalid_state' || err.code === 'before_gl_cutover') return res.status(400).json({ error: err.message, code: err.code });
     console.error('[ap] mark-paid failed:', err); res.status(500).json({ error: safeErrorMessage(err) });
   }
@@ -1820,6 +1821,7 @@ router.post('/payments', express.json(), async (req, res) => {
     const result = await recordPayment(req.body || {});
     res.json(result);
   } catch (err) {
+    if (err.code === 'opening_ap_not_cleared') return res.status(409).json({ error: err.message, code: err.code, invoices: err.invoices || [] });
     if (err.code === 'invalid_input' || err.code === 'invalid_state' || err.code === 'before_gl_cutover') {
       return res.status(400).json({ error: err.message, code: err.code });
     }
