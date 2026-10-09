@@ -22,6 +22,7 @@ const { safeErrorMessage } = require('./_safe_error');
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 const { BEDROCK_MGMT_CO_ID } = require('../lib/company');
+const TP = require('../lib/accounting/transfer_proration');
 
 const router = express.Router();
 
@@ -92,6 +93,25 @@ router.post('/:id/approve', express.json({ limit: '16kb' }), async (req, res) =>
       return res.status(400).json({ error: 'settlement_date_required' });
     }
 
+    // Assessment proration (issue #94, Still Creek / Lennar only): shown and
+    // confirmed before the transfer runs. Other transfers pass straight through.
+    const { data: pend, error: pErr } = await supabase.from('ownership_change_proposals')
+      .select('property_id, proposed_owner_name, status').eq('id', req.params.id).maybeSingle();
+    if (pErr) throw pErr;
+    let prorationGate = null;
+    if (pend && pend.status === 'pending') {
+      const { data: openT, error: tErr } = await supabase.from('ownership_tenures').select('id')
+        .eq('property_id', pend.property_id).eq('kind', 'owner').is('end_date', null).maybeSingle();
+      if (tErr) throw tErr;
+      if (openT) {
+        prorationGate = await TP.gateTransferProration(supabase, {
+          propertyId: pend.property_id, sellerTenureId: openT.id, settlementDate: settlement_date,
+          buyerName: pend.proposed_owner_name, confirmed: (req.body || {}).proration_confirmed, blockedAck: (req.body || {}).proration_blocked_ack,
+        });
+        if (!prorationGate.proceed) return res.status(prorationGate.status).json(prorationGate.body);
+      }
+    }
+
     const { data, error } = await supabase.rpc('approve_ownership_proposal', {
       p_proposal_id: req.params.id,
       p_reviewed_by: String(reviewed_by).trim(),
@@ -103,7 +123,8 @@ router.post('/:id/approve', express.json({ limit: '16kb' }), async (req, res) =>
       if (error.code === 'P0001') return res.status(409).json({ error: error.message });
       throw error;
     }
-    res.json(data);
+    const proration = await TP.afterTransfer(supabase, prorationGate, { proposalId: req.params.id, postedBy: String(reviewed_by).trim() });
+    res.json({ ...data, proration });
   } catch (err) {
     console.error('[ownership-proposals] approve failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });

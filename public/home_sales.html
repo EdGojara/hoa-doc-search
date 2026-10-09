@@ -69,6 +69,7 @@
   <div id="list"><div class="muted" style="padding:30px; text-align:center;">Loading…</div></div>
 </div>
 
+<script src="/transfer-proration.js"></script>
 <script>
   const $ = (id) => document.getElementById(id);
   const fmt = (cents) => '$' + (Number(cents||0)/100).toLocaleString(undefined,{minimumFractionDigits:2, maximumFractionDigits:2});
@@ -155,6 +156,18 @@
   function currentCommunityName(){ const c = COMMS.find((x) => x.id === CID); return c ? c.name : 'this association'; }
 
   // ── The lifecycle list ────────────────────────────────────────────────────
+  // Builder transfer prorations not yet posted (issue #94): Staged / Ready to Post / Blocked.
+  async function loadProrationQueue() {
+    const host = $('tp-queue'); if (!host || !CID) return;
+    try {
+      const r = await fetch('/api/assessment-proration/transfer/queue?community_id=' + encodeURIComponent(CID));
+      const j = await r.json(); if (!r.ok || j.error) throw new Error(j.error || ('HTTP ' + r.status));
+      host.innerHTML = TransferProration.queueHtml(j.queue || []);
+      TransferProration.wireQueue(host, loadList);
+    } catch (e) { host.innerHTML = '<div class="card" style="color:var(--err)">Couldn\'t load builder transfer prorations: ' + esc(e.message) + '</div>'; }
+  }
+  window.loadProrationQueue = loadProrationQueue;
+
   async function loadList() {
     $('list').innerHTML = '<div class="muted" style="padding:30px; text-align:center;">Loading…</div>';
     try {
@@ -163,7 +176,8 @@
       const j = await r.json(); if (j.error) throw new Error(j.error);
       const sales = j.sales || [];
       if (!sales.length) {
-        $('list').innerHTML = '<div class="card muted" style="padding:24px;">No home sales tracked yet. Log a resale request when HomeWise emails, or scan a closing packet when the title mail arrives.</div>';
+        $('list').innerHTML = '<div id="tp-queue"></div><div class="card muted" style="padding:24px;">No home sales tracked yet. Log a resale request when HomeWise emails, or scan a closing packet when the title mail arrives.</div>';
+        loadProrationQueue();
         return;
       }
       const rows = sales.map((s)=>{
@@ -191,11 +205,12 @@
           <td>${packet}</td>
         </tr>`;
       }).join('');
-      $('list').innerHTML = `<div class="card">
+      $('list').innerHTML = `<div id="tp-queue"></div><div class="card">
         <h2 class="sec">Sales &amp; resale requests</h2>
         <div class="muted" style="margin-bottom:10px; font-size:12.5px;">Click a property for its full ownership history.</div>
         <table><thead><tr><th>Property</th><th>Stage</th><th>Seller → Buyer</th><th>Closing / Request</th><th>DRV</th><th class="num">Balance</th><th class="num">Transfer fee</th><th>Welcome</th></tr></thead>
         <tbody>${rows}</tbody></table></div>`;
+      loadProrationQueue();
     } catch (e) { $('list').innerHTML = '<div class="card" style="color:var(--err)">Couldn\'t load: '+esc(e.message)+'</div>'; }
   }
 
@@ -466,6 +481,22 @@
     } catch (e) { el.innerHTML = '<span class="badge err">Payoff still pending: ' + esc(e.message) + '</span> <a class="link" onclick="retryPayoff(\'' + saleId + '\')">Retry</a>'; }
   }
   window.retryPayoff = retryPayoff;
+  async function retryProration(saleId, confirmed) {
+    const el = $('sc-proration-result'); el.innerHTML = '<span class="muted">Posting…</span>';
+    try {
+      const r = await fetch('/api/home-sales/proration-retry', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ home_sale_id: saleId, confirmed: confirmed === true }) });
+      const j = await r.json();
+      if (r.status === 409 && j.proration) {
+        // A staged proration after the conversion: show the recomputed numbers first.
+        el.innerHTML = '';
+        el.appendChild(TransferProration.confirmPanel(j, { onConfirm: () => retryProration(saleId, true), onAck: () => {} }));
+        return;
+      }
+      if (!r.ok || j.error) throw new Error(j.error || ('HTTP ' + r.status));
+      el.innerHTML = TransferProration.resultHtml(j.proration, "retryProration('" + saleId + "')");
+    } catch (e) { el.innerHTML = '<span class="badge err">Assessment proration still not posted: ' + esc(e.message) + '</span> <a class="link" onclick="retryProration(\'' + saleId + '\')">Retry</a>'; }
+  }
+  window.retryProration = retryProration;
   function payoffResultHtml(p, saleId) {
     if (!p) return '';
     if (p.status === 'pending') return '<span class="badge err">Seller payoff NOT posted yet</span> ' + esc(p.error || '') + ' <a class="link" onclick="retryPayoff(\'' + saleId + '\')">Retry</a>';
@@ -492,20 +523,36 @@
       buyer_mailing_address: $('sc-bmail').value || null,
       checks: window._scanChecks || [],
       payoff_confirmed: !!(payoffCheck() && $('sc-payoff-ok') && $('sc-payoff-ok').checked),
+      // Assessment proration (issue #94): set only by the staff's click on the calculation panel.
+      proration_confirmed: window._tpConfirm === true,
+      proration_blocked_ack: window._tpAck === true,
       property_label: window._scanSnap && window._scanSnap.property ? window._scanSnap.property.street_address : null,
       source_document_name: window._scanFileName || null,
       title_company_name: window._scanTitle || null,
       raw_extraction: window._scanRaw || null,
     };
+    window._tpConfirm = false; window._tpAck = false;   // one click, one request
     try {
       const r = await fetch('/api/home-sales/record-closing', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
-      const j = await r.json(); if (j.error) throw new Error(j.error);
+      const j = await r.json();
+      if (r.status === 409 && j.proration) {
+        // Builder-to-homeowner proration: show the calculation; nothing was written.
+        $('sc-out').innerHTML = '';
+        $('sc-out').appendChild(TransferProration.confirmPanel(j, {
+          onConfirm: () => { window._tpConfirm = true; recordClosing(); },
+          onAck: () => { window._tpAck = true; recordClosing(); },
+        }));
+        $('sc-record').disabled = false;
+        return;
+      }
+      if (j.error) throw new Error(j.error);
       const cleared = j.seller_cleared;
       $('sc-out').innerHTML = `<div class="${cleared?'result-ok':'result-warn'}">
         <b>Ownership updated.</b> ${esc(buyer)} is now the owner of record as of ${fmtDate(closing)}; the prior owner moved into history.
         <div style="margin-top:8px;">Seller's final balance: ${balBadge(j.seller_balance_status==='UNKNOWN'?null:j.seller_final_balance_cents, '$0.00 — cleared at closing', ' — NOT zero, review before deposit')}</div>
         <div class="muted" style="margin-top:4px;">Seller's account stays with the seller (owned through ${esc(j.seller_end_date||'')}). The buyer starts a new account with a $0.00 balance.</div>
         ${j.payoff ? '<div id="sc-payoff-result" style="margin-top:8px;">' + payoffResultHtml(j.payoff, j.sale && j.sale.id) + '</div>' : ''}
+        ${j.proration ? '<div id="sc-proration-result" style="margin-top:8px;">' + TransferProration.resultHtml(j.proration, "retryProration('" + (j.sale && j.sale.id) + "')") + '</div>' : ''}
         ${(j.transfer_exceptions||[]).length ? `<div style="margin-top:8px;"><b>Needs accounting review:</b> ${j.transfer_exceptions.length} item(s) dated on or after closing are still on the seller and were not moved: ${j.transfer_exceptions.map(x=>esc(x.date+' '+(x.description||'')+' $'+(Number(x.amount_cents||0)/100).toFixed(2))).join('; ')}</div>` : ''}
         <div style="margin-top:14px; padding-top:12px; border-top:1px solid #e7e3d8;">
           <b>Next: welcome the new owner.</b>

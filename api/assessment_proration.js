@@ -7,12 +7,19 @@
 //   POST /preview                            compute a proration (no write)
 //   POST /post                               post the prorated charge + log it
 //   GET  /history?community_id[&property_id] the proration audit trail
+//   GET  /transfer/queue?community_id        transfer prorations not yet posted,
+//                                            recalculated: Staged / Ready to Post / Blocked
+//   POST /transfer/:proposalId/post          post one (recomputed; 409 with the
+//                                            numbers until { confirmed: true })
 // ============================================================================
 const express = require('express');
 const { safeErrorMessage } = require('./_safe_error');
 const {
   computeProration, postProration, listRates, upsertRate, listHistory,
 } = require('../lib/accounting/assessment_proration');
+const { createClient } = require('@supabase/supabase-js');
+const TP = require('../lib/accounting/transfer_proration');
+const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 
 const router = express.Router();
 
@@ -42,7 +49,7 @@ router.post('/preview', express.json(), async (req, res) => {
 router.post('/post', express.json(), async (req, res) => {
   try {
     const out = await postProration({ ...(req.body || {}), posted_by: (req.body && req.body.posted_by) || 'staff' });
-    if (!out.ok) return res.status(out.error === 'already_prorated' ? 409 : 400).json(out);
+    if (!out.ok) return res.status(['already_prorated', 'proration_runs_at_transfer'].includes(out.error) ? 409 : 400).json(out);
     res.json(out);
   } catch (err) { fail(res, 'post', err); }
 });
@@ -52,6 +59,25 @@ router.get('/history', async (req, res) => {
     if (!req.query.community_id) return res.status(400).json({ error: 'community_id_required' });
     res.json({ history: await listHistory({ community_id: req.query.community_id, property_id: req.query.property_id || null }) });
   } catch (err) { fail(res, 'history', err); }
+});
+
+router.get('/transfer/queue', async (req, res) => {
+  try { res.json({ queue: await TP.listTransferQueue(supabase, req.query.community_id || null) }); }
+  catch (err) { fail(res, 'transfer-queue', err); }
+});
+
+router.post('/transfer/:proposalId/post', express.json(), async (req, res) => {
+  try {
+    const b = req.body || {};
+    const r = await TP.postStagedProration(supabase, { proposalId: req.params.proposalId, postedBy: b.posted_by || 'staff', confirmed: b.confirmed });
+    if (r.status === 'confirmation_required') {
+      return res.status(409).json({ error: 'proration_confirmation_required: review the recomputed assessment proration, then confirm', code: 'proration_confirmation_required', proration: r.plan });
+    }
+    res.json({ proration: r });
+  } catch (err) {
+    if (err.code === 'P0001') return res.status(409).json({ error: err.message });
+    fail(res, 'transfer-post', err);
+  }
 });
 
 module.exports = router;

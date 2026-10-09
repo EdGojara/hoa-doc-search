@@ -25,6 +25,7 @@ const { safeErrorMessage } = require('./_safe_error');
 const { getLegalFlag } = require('../lib/enforcement/legal_flag');
 const { resolveCurrentAR } = require('../lib/ar/resolve_current_ar');
 const { planTenurePayment, postTenurePayment } = require('../lib/accounting/homeowner_payment');
+const TP = require('../lib/accounting/transfer_proration');
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -487,6 +488,15 @@ router.post('/record-closing', express.json({ limit: '256kb' }), async (req, res
       if (Number(payoffPlan.applied_cents) !== Number(checkPlan.payoff.amount_cents)) return res.status(409).json({ error: 'payoff_does_not_tie' });
     }
 
+    // Assessment proration (issue #94, Still Creek / Lennar only): staff see the
+    // calculation and confirm it before anything is written. Every other
+    // community and seller passes straight through, unchanged.
+    const prorationGate = await TP.gateTransferProration(supabase, {
+      propertyId: b.property_id, sellerTenureId: sellerTenureBefore, settlementDate: b.closing_date,
+      buyerName: String(b.buyer_name).trim(), confirmed: b.proration_confirmed, blockedAck: b.proration_blocked_ack,
+    });
+    if (!prorationGate.proceed) return res.status(prorationGate.status).json(prorationGate.body);
+
     // 1) The sale row, with everything staff entered, still open (requested/disclosed).
     const saleFields = {
       seller_contact_id: snap.owner.owner_contact_id,
@@ -585,6 +595,11 @@ router.post('/record-closing', express.json({ limit: '256kb' }), async (req, res
       }
     }
 
+    // Assessment proration: builder adjustment on the seller tenure, homeowner
+    // charge on the buyer tenure, GL entry, all keyed to this transfer. A failure
+    // does not undo the transfer; it is pending and retried (POST /proration-retry).
+    const proration = await TP.afterTransfer(supabase, prorationGate, { proposalId: prop.id, postedBy: b.reviewed_by || 'home_sales' });
+
     const { data: sale, error: sErr } = await supabase.from('home_sales').select('*').eq('id', saleId).maybeSingle();
     if (sErr) throw sErr;
     const sellerFinalCents = t.seller_balance_cents;
@@ -601,6 +616,7 @@ router.post('/record-closing', express.json({ limit: '256kb' }), async (req, res
       transfer_exceptions: t.transfer_exceptions || [],
       seller_tenure_id: t.seller_tenure_id,
       payoff,
+      proration,
       warning: sellerCleared ? null : (snap.balance_status === 'UNKNOWN' ? 'seller_balance_unknown' : 'seller_balance_not_zero'),
     });
   } catch (err) {
@@ -672,6 +688,57 @@ router.post('/payoff-preview', express.json({ limit: '32kb' }), async (req, res)
       seller_balance_cents: snap.balance_cents, plan, ties: !plan.already_posted && Number(plan.applied_cents) === Math.round(Number(b.amount_cents)) });
   } catch (err) {
     console.error('[home-sales] payoff-preview failed:', err.message);
+    res.status(err.code === 'P0001' ? 409 : 500).json({ error: err.code === 'P0001' ? err.message : safeErrorMessage(err) });
+  }
+});
+
+// ----------------------------------------------------------------------------
+// POST /api/home-sales/proration-preview — the assessment proration a closing
+// would post (issue #94). No writes.
+//   body: { community_id, property_id, closing_date, buyer_name }
+// ----------------------------------------------------------------------------
+router.post('/proration-preview', express.json({ limit: '8kb' }), async (req, res) => {
+  try {
+    const b = req.body || {};
+    for (const k of ['community_id', 'property_id', 'closing_date']) if (!b[k]) return res.status(400).json({ error: k + '_required' });
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(b.closing_date))) return res.status(400).json({ error: 'closing_date_invalid' });
+    const snap = await propertySnapshot(b.community_id, b.property_id);
+    if (!snap) return res.status(404).json({ error: 'property_not_found' });
+    if (!snap.owner || !snap.owner.tenure_id) return res.status(409).json({ error: 'seller_required' });
+    const proration = await TP.previewTransferProration(supabase, {
+      propertyId: b.property_id, sellerTenureId: snap.owner.tenure_id, settlementDate: b.closing_date, buyerName: b.buyer_name || null,
+    });
+    res.json({ proration });
+  } catch (err) {
+    console.error('[home-sales] proration-preview failed:', err.message);
+    res.status(err.code === 'P0001' ? 409 : 500).json({ error: err.code === 'P0001' ? err.message : safeErrorMessage(err) });
+  }
+});
+
+// ----------------------------------------------------------------------------
+// POST /api/home-sales/proration-retry — finish an assessment proration that
+// did not post after the transfer, post one that was blocked once the ledger is
+// fixed, or post a STAGED one once the community's accounting conversion is
+// posted (recomputed and shown first: 409 proration_confirmation_required until
+// confirmed: true). Idempotent: a transfer is prorated once.
+//   body: { home_sale_id, reviewed_by?, confirmed? }
+// ----------------------------------------------------------------------------
+router.post('/proration-retry', express.json({ limit: '8kb' }), async (req, res) => {
+  try {
+    const b = req.body || {};
+    if (!b.home_sale_id) return res.status(400).json({ error: 'home_sale_id_required' });
+    const { data: sale, error } = await supabase.from('home_sales')
+      .select('id, status, ownership_proposal_id').eq('id', b.home_sale_id).maybeSingle();
+    if (error) throw error;
+    if (!sale) return res.status(404).json({ error: 'home_sale_not_found' });
+    if (sale.status !== 'closed' || !sale.ownership_proposal_id) return res.status(409).json({ error: 'sale_not_closed' });
+    const r = await TP.postStagedProration(supabase, { proposalId: sale.ownership_proposal_id, postedBy: b.reviewed_by || 'home_sales', confirmed: b.confirmed });
+    if (r.status === 'confirmation_required') {
+      return res.status(409).json({ error: 'proration_confirmation_required: review the recomputed assessment proration, then confirm', code: 'proration_confirmation_required', proration: r.plan });
+    }
+    res.json({ proration: r });
+  } catch (err) {
+    console.error('[home-sales] proration-retry failed:', err.message);
     res.status(err.code === 'P0001' ? 409 : 500).json({ error: err.code === 'P0001' ? err.message : safeErrorMessage(err) });
   }
 });
