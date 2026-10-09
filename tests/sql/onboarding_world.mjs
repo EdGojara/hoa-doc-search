@@ -29,7 +29,7 @@ const GL_STUBS = `
     CREATE TABLE account_funds (id uuid PRIMARY KEY, community_id uuid, fund_code text);
     CREATE TABLE chart_of_accounts (id uuid PRIMARY KEY, community_id uuid, account_number text, fund_id uuid, vantaca_account_number text);
     CREATE TABLE bank_accounts (id uuid PRIMARY KEY);
-    CREATE TABLE vendors (id uuid PRIMARY KEY, name text, management_company_id uuid);
+    CREATE TABLE vendors (id uuid PRIMARY KEY, name text, management_company_id uuid, auto_pay_ach boolean NOT NULL DEFAULT false);
     CREATE TABLE accounting_periods (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), community_id uuid NOT NULL REFERENCES communities(id), fiscal_year int NOT NULL, period_number int NOT NULL,
       period_start date NOT NULL, period_end date NOT NULL, status text NOT NULL DEFAULT 'open' CHECK (status IN ('open','closed','locked','reopened')), UNIQUE (community_id, fiscal_year, period_number));
     CREATE TABLE journal_entries (
@@ -74,6 +74,7 @@ const GL_STUBS = `
       total_cents bigint NOT NULL CHECK (total_cents > 0), amount_paid_cents bigint NOT NULL DEFAULT 0 CHECK (amount_paid_cents >= 0 AND amount_paid_cents <= total_cents),
       status text NOT NULL DEFAULT 'awaiting_approval' CHECK (status IN ('awaiting_approval','approved','partially_paid','paid','voided','disputed','on_hold')),
       posting_journal_entry_id uuid REFERENCES journal_entries(id), voided_at timestamptz, notes text, created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
+      is_ach_autopay boolean NOT NULL DEFAULT false,
       UNIQUE (community_id, vendor_id, vendor_invoice_number));`;
 
 export async function onboardingWorld(PGlite, { through = 485, gl = false } = {}) {
@@ -97,6 +98,10 @@ export async function onboardingWorld(PGlite, { through = 485, gl = false } = {}
   if (through >= 491) { await db.exec(lf(`${REPO}/migrations/491_onboarding_batches_complete_result.sql`)); await db.exec(`INSERT INTO schema_migrations (filename, sha256) VALUES ('491_onboarding_batches_complete_result.sql', 'recorded')`); }
   if (through >= 497) { await db.exec(lf(`${REPO}/migrations/497_onboarding_bridge_refresh_at_preflight.sql`)); await db.exec(`INSERT INTO schema_migrations (filename, sha256) VALUES ('497_onboarding_bridge_refresh_at_preflight.sql', 'recorded')`); }
   if (through >= 498) { await db.exec(lf(`${REPO}/migrations/498_onboarding_execute_neutralize_counted.sql`)); await db.exec(`INSERT INTO schema_migrations (filename, sha256) VALUES ('498_onboarding_execute_neutralize_counted.sql', 'recorded')`); }
+  // 504 (opening AP review state + clearances) is an accounting-table migration, independent of the
+  // onboarding chain: production's ap_invoices has it before any further conversion executes, so the
+  // GL world always carries it (a conversion now writes opening AP as 'conversion_review').
+  if (gl) { await db.exec(lf(`${REPO}/migrations/504_opening_ap_payment_clearances.sql`)); await db.exec(`INSERT INTO schema_migrations (filename, sha256) VALUES ('504_opening_ap_payment_clearances.sql', 'recorded')`); }
   const client = { query: async (sql, params) => {
     if (params) { const r = await db.query(sql, params.map((v) => (v && typeof v === 'object' ? JSON.stringify(v) : v))); return { rows: r.rows, rowCount: r.affectedRows ?? r.rows.length }; }
     const rs = await db.exec(sql); const last = rs[rs.length - 1] || { rows: [] }; return { rows: last.rows, rowCount: last.affectedRows ?? 0 };

@@ -2744,14 +2744,20 @@
       <div><div style="${lbl}">Next check #</div><div style="font-weight:700; font-family:ui-monospace,monospace; font-size:18px;">${cpv.next_check_number!=null?esc(cpv.next_check_number):'—'}</div></div>
     </div>` : '';
     const invs = j.invoices||[];
-    if (!invs.length) { $('chkPay').innerHTML = (excBanner||'') + cashBanner + '<div class="card muted" style="padding:20px;">No approved bills waiting to be paid. Enter and approve bills in Bills (AP), then come back to print checks.</div>'; return; }
+    // Conversion opening AP is held from payment until it is reviewed and cleared
+    // (lib/accounting/opening_ap_guard.js). Say so, so the list never looks short for no reason.
+    const ho = j.held_opening_ap || {};
+    const heldBanner = ho.count ? `<div class="card" style="margin-bottom:12px; background:#fffbeb; border:1px solid #fbbf24; font-size:12.5px;">
+      <b style="color:#92400e;">${ho.count} conversion opening bill${ho.count===1?'':'s'} (${fmt(ho.total_cents||0)}) held from payment</b>
+      <div class="muted" style="margin-top:3px;">These are liabilities carried over at the conversion cutoff, not new bills. Each one stays off this list until it is confirmed as still owed, not already paid, and its payment method is set.</div></div>` : '';
+    if (!invs.length) { $('chkPay').innerHTML = (excBanner||'') + heldBanner + cashBanner + '<div class="card muted" style="padding:20px;">No approved bills waiting to be paid. Enter and approve bills in Bills (AP), then come back to print checks.</div>'; return; }
     const rows = invs.map((i)=>`<tr>
       <td><input type="checkbox" class="chk-inv" value="${i.id}" data-amt="${i.balance_cents}" checked onchange="chkUpdateBar()"></td>
       <td>${esc(i.vendor_name)}${i.w9_needed ? ` <span title="${esc(i.w9_reason||'')} Payment can proceed; request the W-9." style="font-size:11px; font-weight:700; color:#92400e; background:#fef3c7; border:1px solid #fcd34d; border-radius:6px; padding:1px 6px;">W-9 needed</span>` : ''}</td><td>${esc(i.vendor_invoice_number||'—')}</td>
       <td>${esc(fmtDate(i.invoice_date))}</td><td>${esc(i.description||'')}</td>
       <td>${i.support_doc_url?`<a href="${i.support_doc_url}" target="_blank" rel="noopener" title="Open the invoice">📎 View</a>`:'<span class="muted">—</span>'}</td>
       <td class="num">${fmt(i.balance_cents)}</td></tr>`).join('');
-    $('chkPay').innerHTML = (excBanner||'') + cashBanner + `<div class="card" style="margin-bottom:14px;">
+    $('chkPay').innerHTML = (excBanner||'') + heldBanner + cashBanner + `<div class="card" style="margin-bottom:14px;">
       <h2 class="sec" style="margin-bottom:8px;">Bills ready to pay</h2>
       <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-bottom:10px;">
         <span class="muted" style="font-size:12px;">Payment date</span>${dateInput('chk-date',dToday())}
