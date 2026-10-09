@@ -446,6 +446,88 @@ const link = () => db.journal_entry_corrections[db.journal_entry_corrections.len
     await assert.rejects(() => voidLiveEntry({ supabase: fakeClient(), journal_entry_id: 'je-169', void_reason: 'x' }), (e) => e.code === 'entry_partially_reversed');
   });
 
+  // ================================================================ entries that are not one bill's own accrual
+  // Ed 2026-10-09: a conversion opening AP bill points at the community's opening entry, which carries the
+  // WHOLE opening trial balance (Canyon Gate CONV-CGACR-20260731-OPEN-OPR: 74 lines, $1.26M, 12 bills).
+  // Re-coding one attached bill must never reverse it; nor any entry more than one bill points at.
+  const OPENING_LINES = 74;
+  const seedOpening = ({ bills = 12 } = {}) => {
+    seed();
+    db.communities[0].gl_cutover_date = '2026-08-01';
+    je('je-open', { reference: 'CONV-CGACR-20260731-OPEN-OPR', period_id: 'p-07', posting_date: '2026-07-31', total_debits_cents: 37 * 100000, total_credits_cents: 37 * 100000, source_module: 'opening_entry' });
+    for (let i = 0; i < OPENING_LINES; i++) jl('je-open', i + 1, i % 2 ? A.x2000 : A.x5205, i % 2 ? 0 : 100000, i % 2 ? 100000 : 0, `opening line ${i + 1}`);
+    for (let b = 1; b <= bills; b++) {
+      db.ap_invoices.push({ id: `op-${b}`, community_id: C, vendor_id: V, vendor_invoice_number: null, invoice_date: '2026-03-17', total_cents: 3718, tax_cents: 0, status: 'approved', paid_at: null, posting_journal_entry_id: 'je-open', coded_gl_account_id: null });
+    }
+    db.ap_invoice_lines.push(
+      { id: 'opl-1', invoice_id: 'op-1', line_number: 1, description: 'Water service', amount_cents: 1859, gl_account_id: A.x5205 },
+      { id: 'opl-2', invoice_id: 'op-1', line_number: 2, description: '2603 - Outstanding Invoice - February', amount_cents: 1859, gl_account_id: A.x5205 });
+  };
+  const ROUTES = [
+    ['invoice re-code', '/api/ap/invoices/op-1/code', { gl_account_id: A.x5120, reason: REASON }],
+    ['line re-code', '/api/ap/invoices/op-1/lines/opl-1/code', { gl_account_id: A.x5120, reason: REASON }],
+    ['hold-prior-periods', '/api/ap/invoices/op-1/hold-prior-periods', { reason: REASON }],
+  ];
+  for (const [name, url, body] of ROUTES) {
+    await t(`Canyon Gate-style opening entry (${OPENING_LINES} lines, 12 bills): ${name} of ONE attached bill is refused; the opening entry is not reversed; nothing changes`, async () => {
+      seedOpening();
+      const before = JSON.stringify(db);
+      const r = await post(url, body);
+      assert.strictEqual(r.status, 409, JSON.stringify(r.body));
+      assert.strictEqual(r.body.error, 'opening_entry_not_recodable', JSON.stringify(r.body));
+      assert.ok(/opening-balance correction/.test(r.body.detail) && /not by re-coding the bill/.test(r.body.detail), r.body.detail);
+      assert.strictEqual(headerOf('je-open').status, 'posted');
+      assert.strictEqual(linesOf('je-open').length, OPENING_LINES);
+      assert.strictEqual(db.journal_entries.filter((j) => j.reverses_je_id === 'je-open').length, 0, 'no reversal of the opening entry');
+      assert.strictEqual(JSON.stringify(db), before, 'database byte-identical: no line, pointer, coding or link changed');
+      assert.deepStrictEqual(violations, []);
+    });
+  }
+
+  await t('an opening entry with a SINGLE attached bill is still refused (the rule is the entry kind, not just sharing)', async () => {
+    seedOpening({ bills: 1 });
+    const before = JSON.stringify(db);
+    const r = await post('/api/ap/invoices/op-1/code', { gl_account_id: A.x5120, reason: REASON });
+    assert.strictEqual(r.body.error, 'opening_entry_not_recodable', JSON.stringify(r.body));
+    assert.strictEqual(JSON.stringify(db), before);
+  });
+
+  const seedShared = () => {
+    seed(); seedLopfBill({ neut: false, period: 'p-09', date: '2026-09-10' });
+    // a second bill posted by the SAME ordinary accrual entry
+    db.ap_invoices.push({ ...db.ap_invoices[0], id: 'inv-2', vendor_invoice_number: '29354488' });
+    db.ap_invoice_lines.push(
+      { id: 'sh1', invoice_id: 'inv-1', line_number: 5, description: 'September service', amount_cents: 1423000, gl_account_id: A.x5205 },
+      { id: 'sh2', invoice_id: 'inv-1', line_number: 6, description: '2608 - Outstanding Invoice - August', amount_cents: 1423000, gl_account_id: A.x5205 });
+  };
+  for (const [name, url, body] of [
+    ['invoice re-code', '/api/ap/invoices/inv-1/code', { gl_account_id: A.x5120, reason: REASON }],
+    ['line re-code', '/api/ap/invoices/inv-1/lines/il-3/code', { gl_account_id: A.x5120, reason: REASON }],
+    ['hold-prior-periods', '/api/ap/invoices/inv-1/hold-prior-periods', { reason: REASON }],
+  ]) {
+    await t(`an ordinary entry shared by two bills: ${name} is refused; nothing changes`, async () => {
+      seedShared();
+      const before = JSON.stringify(db);
+      const r = await post(url, body);
+      assert.strictEqual(r.status, 409, JSON.stringify(r.body));
+      assert.strictEqual(r.body.error, 'entry_shared_by_bills', JSON.stringify(r.body));
+      assert.ok(/more than one bill/.test(r.body.detail), r.body.detail);
+      assert.strictEqual(headerOf('je-169').status, 'posted');
+      assert.strictEqual(JSON.stringify(db), before);
+    });
+  }
+
+  await t('control: the same ordinary bill, NOT shared, still corrects by reversal + replacement + link', async () => {
+    seed(); seedLopfBill({ neut: false, period: 'p-09', date: '2026-09-10' });
+    const before = snapshotLines();
+    const r = await post('/api/ap/invoices/inv-1/code', { gl_account_id: A.x5120, reason: REASON });
+    assert.strictEqual(r.status, 200, JSON.stringify(r.body));
+    assertPostedLinesUntouched(before);
+    assert.strictEqual(headerOf('je-169').status, 'voided');
+    assert.strictEqual(link().kind, 'ap_recode');
+    assert.deepStrictEqual(net(), { 5120: 47025, 2000: -47025 });
+  });
+
   // ================================================================ the invariant, statically
   await t('INVARIANT (static): no application code (api/, lib/, server.js) deletes or rewrites journal entry lines', () => {
     const { run } = require('../scripts/check_posted_lines_immutable');
