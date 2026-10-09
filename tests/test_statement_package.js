@@ -134,23 +134,53 @@ const find = (model, num) => { for (const s of model.sections) for (const g of s
   check('the owner records an override bound to this exact snapshot, listing the accounts', ov.status === 200 && db.statement_mapping_overrides.length === 1 && db.statement_mapping_overrides[0].snapshot_sha256 === stored.snapshot_sha256 && db.statement_mapping_overrides[0].unmapped_accounts.length === 2);
   const toFinal2 = await call('patch', '/:id', { id: 'pk-1' }, { status: 'final' });
   check('with the owner override the packet can be marked final', toFinal2.status === 200 && db.board_packets[0].status === 'final');
-  // Pulling the section again makes a new snapshot: the old override no longer applies.
+  console.log('stable snapshot hash: statement content only');
   db.board_packets[0].status = 'in_review';
-  const repulled = await SNAP.buildSectionSnapshot(sb, { community_id: F.CID, section_key: 'balance_sheet', cutoff: '2026-09-30', now: new Date('2026-10-10T09:00:00Z') });
-  db.board_packet_sections[0].input_data = JSON.parse(JSON.stringify(repulled));
+  const later = await SNAP.buildSectionSnapshot(sb, { community_id: F.CID, section_key: 'balance_sheet', cutoff: '2026-09-30', now: new Date('2026-10-12T09:00:00Z') });
+  check('a re-pull of unchanged books at a later time hashes the same (generation time excluded)', later.snapshot_sha256 === stored.snapshot_sha256 && later.generated_at !== stored.generated_at && later.models[0].generated_at !== stored.models[0].generated_at);
+  const noisy = JSON.parse(JSON.stringify(stored.models[0]));
+  noisy.generated_at = '2030-01-01T00:00:00Z'; noisy.rendered_at = '2030-01-01T00:00:00Z';
+  Object.assign(noisy.sections[0].groups[0].lines[0], { signed_url: 'https://x.test/sig?token=abc', expires_at: '2030-01-01', href: '/api/documents/1/preview', access_token: 'abc', source_document_url: 'https://x.test/doc' });
+  Object.assign(noisy.sections[0].groups[0].lines[0].drill, { url: '/api/financial-statements/x/drill/account?account_id=1', token: 't' });
+  check('volatile values (signed URLs, tokens, links, expiries, render times) do not move the hash', M.modelSha(noisy) === stored.models[0].snapshot_sha256);
+  const nonVol = JSON.parse(JSON.stringify(stored.models[0])); nonVol.sections[0].groups[0].lines[0].account_name = 'Renamed';
+  check('a content change (even a label) does move the hash', M.modelSha(nonVol) !== stored.models[0].snapshot_sha256);
+  check('the stored model carries no link- or credential-shaped key at all', (() => { const bad = []; const walk = (v, path) => { if (Array.isArray(v)) v.forEach((x, i) => walk(x, `${path}[${i}]`)); else if (v && typeof v === 'object') for (const k of Object.keys(v)) { if (k !== 'generated_at' && k !== 'snapshot_sha256' && M.isVolatileKey(k)) bad.push(`${path}.${k}`); walk(v[k], `${path}.${k}`); } }; walk(stored, ''); return bad.length === 0 || console.log(bad) || false; })());
+  db.board_packet_sections[0].input_data = JSON.parse(JSON.stringify(later));
+  const toFinalSame = await call('patch', '/:id', { id: 'pk-1' }, { status: 'final' });
+  check('the override still applies to a re-pull of the SAME statement (same content, same hash)', toFinalSame.status === 200);
+  // A financial change makes a different statement: the old override no longer applies.
+  db.board_packets[0].status = 'in_review';
+  db.journal_entries.push({ id: 'je-late', community_id: F.CID, reference: 'SEP-LATE', posting_date: '2026-09-29', source_module: 'manual', status: 'posted', void_reversal_je_id: null, reverses_je_id: null, description: 'Late utility bill' });
+  db.journal_entry_lines.push({ id: 'jl-late-1', journal_entry_id: 'je-late', line_number: 1, account_id: F.aid(5300), fund_id: 'f-opr', debit_cents: 12345, credit_cents: 0, memo: null, vendor_id: null, property_id: null },
+    { id: 'jl-late-2', journal_entry_id: 'je-late', line_number: 2, account_id: F.aid(1000), fund_id: 'f-opr', debit_cents: 0, credit_cents: 12345, memo: null, vendor_id: null, property_id: null });
+  const changed = await SNAP.buildSectionSnapshot(sb, { community_id: F.CID, section_key: 'balance_sheet', cutoff: '2026-09-30', now: NOW });
+  db.board_packet_sections[0].input_data = JSON.parse(JSON.stringify(changed));
   const toFinal3 = await call('patch', '/:id', { id: 'pk-1' }, { status: 'final' });
-  check('an override does not carry to a re-pulled statement (new snapshot = blocked again)', repulled.snapshot_sha256 !== stored.snapshot_sha256 && toFinal3.status === 409);
+  check('an override does not carry to a statement whose numbers changed (new hash = blocked again)', changed.snapshot_sha256 !== stored.snapshot_sha256 && toFinal3.status === 409);
+  db.journal_entries = db.journal_entries.filter((j) => j.id !== 'je-late'); db.journal_entry_lines = db.journal_entry_lines.filter((l) => l.journal_entry_id !== 'je-late');
   db.board_packet_sections[0].input_data = tampered;
   const toFinal4 = await call('patch', '/:id', { id: 'pk-1' }, { status: 'final' });
   check('an altered snapshot blocks finalizing', toFinal4.status === 409 && toFinal4.body.blockers.some((b) => b.problem === 'snapshot_altered'));
-  // Mapping approved -> no blocker.
+
+  console.log('the gate reads the STORED snapshot, not live mappings');
+  db.statement_mapping_overrides = [];   // no override in play
+  const oldSnap = JSON.parse(JSON.stringify(stored));
+  db.board_packet_sections[0].input_data = oldSnap;
+  // Map and approve every account LIVE, after the snapshot was taken.
   for (const m of db.account_report_map) if (m.statement === 'balance_sheet' && m.approval_status !== 'approved') { m.approval_status = 'approved'; m.approved_by = 'Ed'; m.approved_at = '2026-10-10T00:00:00Z'; }
   const cat1415 = db.report_categories.find((c) => c.statement === 'balance_sheet' && c.section === 'asset');
   if (!db.account_report_map.some((m) => m.account_id === F.aid(1415) && m.statement === 'balance_sheet')) db.account_report_map.push({ community_id: F.CID, account_id: F.aid(1415), statement: 'balance_sheet', category_id: cat1415.id, approval_status: 'approved', approved_by: 'Ed', approved_at: '2026-10-10T00:00:00Z' });
+  const liveNow = await M.buildBalanceSheetModel(sb, { community_id: F.CID, as_of: '2026-09-30', now: NOW });
+  const toFinalOld = await call('patch', '/:id', { id: 'pk-1' }, { status: 'final' });
+  check('live mapping is now complete, yet the OLD snapshot (with unmapped accounts) still blocks final', liveNow.mapping.final_ready === true && toFinalOld.status === 409 && toFinalOld.body.blockers[0].unmapped.length === 2);
+  check('the refusal says to pull the section again', /pull the section again/i.test(toFinalOld.body.message));
+  const distOld = await call('post', '/:id/distribute', { id: 'pk-1' }, { recipients: ['board@example.test'], method: 'email' });
+  check('distribute is refused on the old snapshot too', distOld.status === 409);
   const mapped = await SNAP.buildSectionSnapshot(sb, { community_id: F.CID, section_key: 'balance_sheet', cutoff: '2026-09-30', now: NOW });
   db.board_packet_sections[0].input_data = JSON.parse(JSON.stringify(mapped));
   const toFinal5 = await call('patch', '/:id', { id: 'pk-1' }, { status: 'final' });
-  check('once every account is mapped and approved, final needs no override', mapped.models[0].mapping.final_ready === true && toFinal5.status === 200);
+  check('after the re-pull (new snapshot, every account mapped) final needs no override', mapped.models[0].mapping.final_ready === true && mapped.snapshot_sha256 !== stored.snapshot_sha256 && toFinal5.status === 200);
 
   console.log('board-packet section renders through the shared renderer');
   const html = bp.renderSectionStandaloneHtml({ packet: { community: { name: 'Drama Creek Estates' }, period_label: 'September 2026' }, section: { section_key: 'balance_sheet', input_data: stored }, embed: true });

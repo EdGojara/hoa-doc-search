@@ -1,7 +1,8 @@
 // tests/sql/505_balance_sheet_categories_e2e.mjs — balance-sheet report categories (PR C) on the REAL SQL.
 // The real 463 (report categories, minus its LOPF-only seed) is applied, an income-statement mapping
 // is written the 463 way, then 505 is applied through the single-migration tool with its real checks
-// file, and: existing mappings keep their meaning ('approved' by column default, no row changed); the
+// file, and: existing mappings are grandfathered explicitly (who / when recorded, audited, category
+// unchanged); new mappings default to 'proposed' and nothing is approved by omission; the
 // statement / section / account-type rules; proposed vs approved (who and when); the approve path and
 // its audit trail; the assign path returning 463's keys; and the owner override being append-only,
 // snapshot-bound and closed to anon / authenticated.
@@ -58,7 +59,14 @@ const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mig505-'));
 fs.mkdirSync(path.join(dir, 'checks'));
 const F = '505_balance_sheet_report_categories.sql';
 fs.writeFileSync(path.join(dir, F), lf(`${REPO}/migrations/${F}`));
-fs.writeFileSync(path.join(dir, 'checks', '505_balance_sheet_report_categories.json'), lf(`${REPO}/migrations/checks/505_balance_sheet_report_categories.json`));
+// The real checks file, with its two production-specific counts (54 income-statement mappings to
+// grandfather, 54 audit rows) set to this world's: one mapping.
+const checks505 = JSON.parse(lf(`${REPO}/migrations/checks/505_balance_sheet_report_categories.json`));
+const pin = checks505.preflight.find((x) => /mappings to grandfather/.test(x.name));
+check('the checks file pins the production count it grandfathers, and declares one audit row per mapping', pin && pin.expect === 54 && checks505.row_changes.report_mapping_events === 54);
+const worldN = Number((await one(`SELECT count(*)::int AS n FROM account_report_map WHERE statement = 'income_statement'`)).n);
+pin.expect = worldN; checks505.row_changes.report_mapping_events = worldN;
+fs.writeFileSync(path.join(dir, 'checks', '505_balance_sheet_report_categories.json'), JSON.stringify(checks505, null, 2));
 const reqs = JSON.parse(lf(`${REPO}/migrations/checks/505_balance_sheet_report_categories.json`)).requires;
 check('every prerequisite named by the 505 checks file is a real migration file', reqs.every((x) => fs.existsSync(`${REPO}/migrations/${x}`)));
 const ctxA = { client: world.client, user: { id: 'o', email: 'owner@example.test' }, deployedCommit: 'deadbeefcafe', migrationsDir: dir, secret: 'e2e' };
@@ -68,10 +76,16 @@ if (PRINT) { console.log(JSON.stringify((applied.detail || {}).objects || applie
 check('505 planned (preflight passes) and applied + verified through the tool with its real checks file', plan.status === 'ready' && applied.status === 'applied',
   JSON.stringify({ plan: plan.status, pre: plan.preflight, err: plan.error, r: applied.status, e: applied.error }).slice(0, 2000));
 if (applied.status !== 'applied') { console.log(`\n${pass} passed, ${fail} failed`); process.exit(1); }
-check('no existing row changed (protected tables unchanged; row deltas 0)', applied.detail.protected.every((p) => p.unchanged) && Object.values(applied.detail.row_changes).every((v) => v === 0));
-const after = await one(`SELECT to_jsonb(m) - 'approval_status' - 'approved_by' - 'approved_at' AS j, approval_status FROM account_report_map m WHERE account_id = $1`, [A4000]);
-check('the existing income-statement mapping keeps every value and reads approved (column default)', (await one(`SELECT $1::jsonb = $2::jsonb AS same`, [JSON.stringify(after.j), JSON.stringify(before.j)])).same && after.approval_status === 'approved',
-  JSON.stringify({ before: before.j, after: after.j }));
+check('protected tables unchanged; no mapping, category or account added or removed; one audit row per grandfathered mapping', applied.detail.protected.every((p) => p.unchanged)
+  && ['report_categories', 'account_report_map', 'chart_of_accounts'].every((t) => applied.detail.row_changes[t] === 0) && applied.detail.row_changes.report_mapping_events === worldN, JSON.stringify(applied.detail.row_changes));
+const after = await one(`SELECT to_jsonb(m) AS j FROM account_report_map m WHERE account_id = $1`, [A4000]);
+const keep = ['id', 'community_id', 'account_id', 'statement', 'category_id', 'display_order', 'updated_by', 'created_at'];
+check('grandfathering: the pre-505 mapping keeps its account, statement and category', keep.every((k) => JSON.stringify(after.j[k]) === JSON.stringify(before.j[k])), JSON.stringify({ before: before.j, after: after.j }));
+check('grandfathering: approved EXPLICITLY, with who (its recorded setter, marked) and when (when it was last set)', after.j.approval_status === 'approved'
+  && after.j.approved_by === 'ed (grandfathered by migration 505)' && new Date(after.j.approved_at).getTime() === new Date(before.j.updated_at).getTime(), JSON.stringify(after.j));
+const gev = await one(`SELECT actor, new_row->>'approval_status' AS n FROM report_mapping_events WHERE account_id = $1 AND action = 'update' ORDER BY created_at DESC LIMIT 1`, [A4000]);
+check('grandfathering: logged by the 463 audit trail, attributed to the migration', gev && gev.n === 'approved' && /migration 505/.test(gev.actor), JSON.stringify(gev));
+check('the column default is proposed (not approved)', /proposed/.test((await one(`SELECT column_default AS d FROM information_schema.columns WHERE table_name = 'account_report_map' AND column_name = 'approval_status'`)).d));
 
 // ------------------------------------------------------------------- categories
 const cat = async (statement, section, name) => (await one(`INSERT INTO report_categories (community_id, statement, section, name, updated_by) VALUES ($1, $2, $3, $4, 'ed') RETURNING id`, [C, statement, section, name])).id;
@@ -86,11 +100,19 @@ check('an unknown statement is refused', /statement_check|section_check/.test(aw
 // ------------------------------------------------------------------- mappings
 const map = (acct, catId, status, by = null, at = null) => db.query(`INSERT INTO account_report_map (community_id, account_id, statement, category_id, updated_by, approval_status, approved_by, approved_at) VALUES ($1, $2, 'balance_sheet', $3, 'system', $4, $5, $6)`, [C, acct, catId, status, by, at]);
 check('a PROPOSED balance-sheet mapping needs no approver', !(await code(() => map(A1405, other, 'proposed'))));
+await db.query(`INSERT INTO account_report_map (community_id, account_id, statement, category_id, updated_by) VALUES ($1, $2, 'balance_sheet', $3, 'system')`, [C, A2000, ap]);
+check('an insert that omits approval_status is PROPOSED, never approved', (await one(`SELECT approval_status AS s, approved_by AS b FROM account_report_map WHERE account_id = $1 AND statement = 'balance_sheet'`, [A2000])).s === 'proposed');
+const revOther = (await one(`INSERT INTO report_categories (community_id, section, name, updated_by) VALUES ($1, 'revenue', 'Other revenue', 'ed') RETURNING id`, [C])).id;
+await db.query(`INSERT INTO chart_of_accounts (id, community_id, account_number, account_type, account_name) VALUES ('00000000-0000-0000-0000-0000000a4100', $1, '4100', 'revenue', 'Late Fees')`, [C]);
+await db.query(`INSERT INTO account_report_map (community_id, account_id, statement, category_id) VALUES ($1, '00000000-0000-0000-0000-0000000a4100', 'income_statement', $2)`, [C, revOther]);
+check('the same holds for a new income-statement mapping (defaults to proposed)', (await one(`SELECT approval_status AS s FROM account_report_map WHERE account_id = '00000000-0000-0000-0000-0000000a4100'`)).s === 'proposed');
+check('an APPROVED income-statement mapping without who / when is refused too', /who approved it/.test(await code(() => db.query(`UPDATE account_report_map SET approval_status = 'approved' WHERE account_id = '00000000-0000-0000-0000-0000000a4100'`)) || ''));
+check('an approved mapping cannot lose its approver', /who approved it/.test(await code(() => db.query(`UPDATE account_report_map SET approved_by = NULL WHERE account_id = $1`, [A4000])) || ''));
 check('an APPROVED balance-sheet mapping without who / when is refused', /who approved it/.test(await code(() => map(A1000, cash, 'approved')) || ''));
 check('a revenue account cannot present on the balance sheet', /cannot present/.test(await code(() => map(A4000, cash, 'proposed')) || ''));
 check('an asset account cannot present under a liability category', /cannot present/.test(await code(() => map(A1000, ap, 'proposed')) || ''));
 check('an equity account cannot present under an asset category', /cannot present/.test(await code(() => map(A3050, cash, 'proposed')) || ''));
-check('an unknown approval status is refused', /approval_status_check/.test(await code(() => map(A2000, ap, 'maybe')) || ''));
+check('an unknown approval status is refused', /approval_status_check/.test(await code(() => db.query(`UPDATE account_report_map SET approval_status = 'maybe' WHERE account_id = $1 AND statement = 'balance_sheet'`, [A2000])) || ''));
 check('another community\'s account cannot map to this community\'s category', /same community/.test(await code(() => db.query(`INSERT INTO account_report_map (community_id, account_id, statement, category_id, approval_status) VALUES ($1, $2, 'balance_sheet', $3, 'proposed')`, [C, B1000, cash])) || ''));
 check('approve: anon and authenticated cannot execute approve_account_report_map', (await one(`SELECT has_function_privilege('anon', 'approve_account_report_map(uuid, uuid[], text, text)', 'EXECUTE') AS a, has_function_privilege('authenticated', 'approve_account_report_map(uuid, uuid[], text, text)', 'EXECUTE') AS b`)).a === false);
 check('approve: an approval needs who is making it', /who is making it/.test(await code(() => rpc('approve_account_report_map', { p_community_id: C, p_account_ids: `{${A1405}}`, p_actor: ' ' })) || ''));

@@ -7,20 +7,25 @@
 -- 1. report_categories / account_report_map: the statement CHECK gains
 --    'balance_sheet'; a category's section may be asset / liability / equity
 --    for that statement (revenue / expense stay income-statement only).
--- 2. account_report_map gains an approval state: 'proposed' (seeded by the
---    system from durable roles, NOT shown as mapped) or 'approved' (a person's
---    decision). Existing income-statement rows are already people's decisions,
---    so the column defaults to 'approved' and no existing row changes meaning.
---    An admin assigning a category is an approval; approve_account_report_map()
---    approves proposals as they stand. Every change is already logged by the
---    463 audit trigger.
+-- 2. account_report_map gains an approval state: 'proposed' (NOT shown as
+--    mapped) or 'approved' (a person's affirmative decision, with who and when).
+--    New mappings DEFAULT TO 'proposed': no insert becomes approved by leaving
+--    approval_status out, and an approved row of either statement must carry
+--    approved_by and approved_at (validation trigger). The existing pre-505
+--    income-statement mappings were people's decisions under 463; they are
+--    grandfathered EXPLICITLY below (approved_by = their recorded updated_by,
+--    marked "grandfathered by migration 505"; approved_at = when they were last
+--    set), and the 463 audit trigger logs each one. An admin assigning a
+--    category (set_account_report_category) is an approval;
+--    approve_account_report_map() approves proposals as they stand.
 -- 3. statement_mapping_overrides: an OWNER's written decision to let a board
 --    statement be marked final while some balance-sheet accounts are still
 --    unmapped, bound to the exact statement snapshot (sha256) it was made on.
 --    Append-only. Record ownership: association_record.
 --
--- Changes no existing row. Seeds nothing (proposals are a separate, reviewed
--- step: scripts/propose_balance_sheet_mapping.js).
+-- Row changes: only the explicit grandfathering of existing income-statement
+-- mappings (approval columns set; category unchanged). Seeds nothing (proposals
+-- are a separate, reviewed step: scripts/propose_balance_sheet_mapping.js).
 -- ============================================================================
 BEGIN;
 
@@ -36,7 +41,10 @@ ALTER TABLE account_report_map DROP CONSTRAINT IF EXISTS account_report_map_stat
 ALTER TABLE account_report_map ADD CONSTRAINT account_report_map_statement_check CHECK (statement IN ('income_statement', 'balance_sheet'));
 
 -- ---------------------------------------------------------- 2. approval state
-ALTER TABLE account_report_map ADD COLUMN IF NOT EXISTS approval_status text NOT NULL DEFAULT 'approved';
+-- Added with the non-permissive default: every row (existing ones included)
+-- starts 'proposed' until the explicit grandfathering below.
+ALTER TABLE account_report_map ADD COLUMN IF NOT EXISTS approval_status text NOT NULL DEFAULT 'proposed';
+ALTER TABLE account_report_map ALTER COLUMN approval_status SET DEFAULT 'proposed';
 ALTER TABLE account_report_map ADD COLUMN IF NOT EXISTS approved_by text;
 ALTER TABLE account_report_map ADD COLUMN IF NOT EXISTS approved_at timestamptz;
 ALTER TABLE account_report_map DROP CONSTRAINT IF EXISTS account_report_map_approval_status_check;
@@ -66,12 +74,22 @@ BEGIN
   IF NEW.statement = 'balance_sheet' AND (a.account_type NOT IN ('asset', 'liability', 'equity') OR a.account_type <> c.section) THEN
     RAISE EXCEPTION 'account % is %; it cannot present under the % category "%"', a.account_number, a.account_type, c.section, c.name;
   END IF;
-  IF NEW.approval_status = 'approved' AND (coalesce(btrim(NEW.approved_by), '') = '' OR NEW.approved_at IS NULL) AND NEW.statement = 'balance_sheet' THEN
-    RAISE EXCEPTION 'an approved balance-sheet mapping records who approved it and when';
+  IF NEW.approval_status = 'approved' AND (coalesce(btrim(NEW.approved_by), '') = '' OR NEW.approved_at IS NULL) THEN
+    RAISE EXCEPTION 'an approved mapping records who approved it and when';
   END IF;
   RETURN NEW;
 END;
 $fn$;
+
+-- Explicit grandfathering of the pre-505 income-statement mappings (463 had no
+-- approval state; every row was set by a person through the audited path).
+SELECT set_config('trusted.actor', 'migration 505 (grandfathered pre-505 mapping)', true);
+UPDATE account_report_map
+   SET approval_status = 'approved',
+       approved_by = coalesce(nullif(btrim(updated_by), ''), 'unrecorded') || ' (grandfathered by migration 505)',
+       approved_at = coalesce(updated_at, created_at)
+ WHERE statement = 'income_statement' AND approval_status = 'proposed' AND approved_at IS NULL;
+SELECT set_config('trusted.actor', '', true);
 
 -- A person assigning a category IS the approval (same signature as 463).
 CREATE OR REPLACE FUNCTION set_account_report_category(p_community_id uuid, p_account_ids uuid[], p_category_id uuid, p_actor text, p_statement text DEFAULT 'income_statement')
