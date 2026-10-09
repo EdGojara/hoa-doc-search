@@ -487,7 +487,7 @@
       return `<tr><td style="font-weight:600;">${esc(code==='consolidated'?'Unsegregated':code)}</td><td class="num">${fmt(b.total)}</td><td class="num">${fmt(e.total-b.total)}</td><td class="num" style="font-weight:600;">${fmt(e.total)}</td></tr>`; }).join('');
     return `<div class="muted" style="margin-bottom:8px;">${fmtDate(j.period_start)} — ${fmtDate(j.period_end)}</div>
       <table><thead><tr><th>Fund</th><th class="num">Beginning</th><th class="num">Net Change</th><th class="num">Ending</th></tr></thead><tbody>${rows}</tbody></table>
-      <div style="margin-top:12px; padding:10px 12px; background:#f5f8fc; border-radius:8px;">Period Net Income: <strong>${fmt(j.period_net_income_cents)}</strong></div>`;
+      <div style="margin-top:12px; padding:10px 12px; background:#f5f8fc; border-radius:8px;">Period Net Income: <strong>${fmtNA(j.period_net_income_cents)}</strong></div>`;
   }
 
   // ── Undeposited Funds — received checks held until they hit the bank ───────

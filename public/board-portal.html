@@ -680,6 +680,7 @@
   const _bMoney = (c) => (Number(c || 0) < 0 ? '-' : '') + '$' + Math.abs(Number(c || 0) / 100).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
   // A favorable variance is green: expenses under budget, or revenue over budget.
   function _varCell(row) {
+    if (row.ytd_actual_cents === null) return '<span style="color:#94a3b8;">—</span>';   // not available in trustEd: no variance
     const fav = row.account_type === 'revenue'
       ? (Number(row.ytd_actual_cents || 0) - Number(row.ytd_budget_cents || 0))   // over-collected = good
       : (Number(row.ytd_budget_cents || 0) - Number(row.ytd_actual_cents || 0));  // under-spent = good
@@ -691,7 +692,8 @@
     if (!rows.length) return '<tr><td colspan="4" style="padding:10px 12px;color:#94a3b8;font-size:12.5px;">—</td></tr>';
     return rows.map((r) => {
       const annual = Number(r.annual_budget_cents || 0);
-      const actual = Number(r.ytd_actual_cents || 0);
+      const na = r.ytd_actual_cents === null;   // not available in trustEd (before the conversion cutover)
+      const actual = na ? 0 : Number(r.ytd_actual_cents || 0);
       const pct = annual !== 0 ? Math.min(100, Math.round((actual / annual) * 100)) : 0;
       const over = annual !== 0 && actual > annual;
       const barColor = over ? '#b42318' : r.account_type === 'revenue' ? '#2D7956' : '#0B1D34';
@@ -703,7 +705,7 @@
           </div>
         </td>
         <td class="bnum">${_bMoney(annual)}</td>
-        <td class="bnum">${_bMoney(actual)}</td>
+        <td class="bnum">${na ? '<span style="color:#94a3b8;font-size:12px;">Not available</span>' : _bMoney(actual)}</td>
         <td class="bnum">${_varCell(r)}</td>
       </tr>`;
     }).join('');
@@ -743,13 +745,14 @@
               ${revBlock}
               ${expBlock}
               ${(() => {
-                const netFav = Number(t.ytd_actual_net_cents || 0) - Number(t.ytd_budget_net_cents || 0); // higher net than planned = good
+                const naNet = t.ytd_actual_net_cents === null;
+                const netFav = naNet ? 0 : Number(t.ytd_actual_net_cents || 0) - Number(t.ytd_budget_net_cents || 0); // higher net than planned = good
                 const c = netFav > 0 ? '#2D7956' : netFav < 0 ? '#b42318' : '#94a3b8';
                 return `<tr class="btotal">
                 <td style="padding:11px 12px;">Net (income − expenses)</td>
                 <td class="bnum">${_bMoney(netAnnual)}</td>
-                <td class="bnum">${_bMoney(t.ytd_actual_net_cents)}</td>
-                <td class="bnum" style="color:${c};">${netFav > 0 ? '+' : ''}${_bMoney(netFav)}</td>
+                <td class="bnum">${naNet ? '<span style="color:#94a3b8;font-size:12px;">Not available</span>' : _bMoney(t.ytd_actual_net_cents)}</td>
+                <td class="bnum" style="color:${c};">${naNet ? '—' : (netFav > 0 ? '+' : '') + _bMoney(netFav)}</td>
               </tr>`;
               })()}
               ${ncBlock}
@@ -766,7 +769,8 @@
     const asOf = j.period_end ? new Date(j.period_end + 'T00:00:00').toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }) : '';
     const header = `<div class="properties-header">FY ${esc(String(j.fiscal_year))} Budget</div>
       <div style="color:#64748b;font-size:13px;margin:-6px 0 16px;">Adopted budget vs. actuals through ${esc(asOf)}. Green means favorable — expenses under plan or income ahead of plan.</div>`;
-    return header + (j.funds || []).map(_budgetFundSection).join('');
+    const naNote = j.ytd_available === false ? `<div style="margin:0 0 14px;padding:10px 12px;border-radius:8px;background:#f8fafc;border:1px solid #e2e8f0;color:#475569;font-size:13px;">Year-to-date actuals through this date are not available in TrustEd: the months before the books moved to TrustEd are in the prior system. Choose a later date to compare against actuals.</div>` : '';
+    return header + naNote + (j.funds || []).map(_budgetFundSection).join('');
   }
 
   // ARC — read-only board oversight. Summary + comfort first; anything PENDING
