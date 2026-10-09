@@ -139,7 +139,8 @@ const sum = (m) => m.reduce((s, v) => s + v, 0);
     for (const h of hunks) {
       const m = h.match(/\+(\d+)(?:,(\d+))?/); const startLine = Number(m[1]); const count = m[2] === undefined ? 1 : Number(m[2]);
       const endLine = startLine + Math.max(count, 1) - 1;
-      assert.ok(count === 0 || inside(startLine, endLine), `api/gl.js changed outside the Trial Balance and AR aging sections: ${h}`);
+      // A pure deletion (count 0) is checked at the line it was removed after, like any other change.
+      assert.ok(inside(startLine, endLine), `api/gl.js changed outside the Trial Balance and AR aging sections: ${h}`);
     }
   });
 
