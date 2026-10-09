@@ -131,5 +131,26 @@
     return '';
   }
 
-  window.TransferProration = { breakdown, books, confirmPanel, resultHtml, money, queueHtml, wireQueue };
+  // Builder assessment coverage (issue #96): one status line. s = GET /api/assessment-proration/builder-coverage.
+  // Shows nothing for a community with no builder rule; before the conversion it says so.
+  const SEV = { ok: 'background:#e3f4e6; color:#1d6b2f;', amber: 'background:#fff3dc; color:#8a5a00;', red: 'background:#fde7e7; color:#a12828;' };
+  function coverageHtml(s) {
+    if (!s || !s.applies) return '';
+    if (!s.converted) return '<div class="card" style="font-size:13px;"><b>Builder assessments</b> <span class="muted">· billed from the conversion forward; this community is not converted yet.</span></div>';
+    const lots = s.lots || []; const c = s.counts || {};
+    const minThru = lots.map((l) => l.covered_through).filter(Boolean).sort()[0] || null;
+    const bad = lots.filter((l) => l.severity !== 'ok');
+    const items = s.open_reconciling_items || [];
+    const lines = bad.slice(0, 6).map((l) => esc(l.street_address) + ': ' + (l.covered_through ? 'through ' + day(l.covered_through) : 'no coverage') + (l.reason && l.reason !== 'behind' ? ' (' + esc(String(l.reason).replace(/_/g, ' ')) + ')' : ''));
+    return '<div class="card" style="font-size:13px;"><b>Builder assessments</b> <span class="badge" style="' + (SEV[s.status] || '') + '">' + esc(s.status === 'ok' ? 'Current' : s.status === 'red' ? 'Exception' : 'Behind') + '</span>'
+      + (s.accrual_active === false ? '<div style="margin-top:4px; color:#8a5a00;">The periodic builder billing has not been activated since the conversion; lots fall behind until it is.</div>' : '')
+      + '<div class="muted" style="margin-top:4px;">' + (c.lots || 0) + ' builder lot' + (c.lots === 1 ? '' : 's') + ' · covered through ' + (minThru ? day(minThru) : '—') + ' (expected ' + day(s.expected_through) + ')'
+      + (c.red ? ' · <span style="color:#a12828;">' + c.red + ' exception' + (c.red === 1 ? '' : 's') + '</span>' : '') + (c.amber ? ' · ' + c.amber + ' behind' : '')
+      + (s.staged_run ? ' · <span style="color:#a12828;">an accrual run stopped part-way; run it again to finish</span>' : '') + '</div>'
+      + (lines.length ? '<div style="margin-top:4px; color:#5b6472;">' + lines.join('<br>') + (bad.length > 6 ? '<br>…' : '') + '</div>' : '')
+      + (items.length ? '<div style="margin-top:6px; color:#5b6472;">Open conversion reconciling items: ' + items.map((i) => esc(i.kind === 'deferral_residue' ? money(i.amount_cents) + ' in ' + i.account_number : ((i.detail && i.detail.lot) || 'builder lot') + ' (no resolved builder position)')).join('; ') + '</div>' : '')
+      + '</div>';
+  }
+
+  window.TransferProration = { breakdown, books, confirmPanel, resultHtml, money, queueHtml, wireQueue, coverageHtml };
 })();
