@@ -1141,6 +1141,12 @@ app.get('/admin/master-plan-submissions', (req, res) => {
 // homeowner ledgers, journal entries).
 const glRouter = require('./api/gl');
 app.use('/api/gl', glRouter);
+// Financial statement package (PR C): one statement model + one renderer for web,
+// PDF, XLSX, CSV and board packets; drill-down; balance-sheet mapping.
+app.use('/api/financial-statements', require('./api/financial_statements'));
+app.get('/admin/financial-statements', (req, res) => {
+  res.sendFile(require('path').join(__dirname, 'public', 'financial-statements.html'));
+});
 app.get('/admin/accounting', (req, res) => {
   res.sendFile(require('path').join(__dirname, 'public', 'accounting.html'));
 });

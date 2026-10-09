@@ -1,0 +1,114 @@
+{
+  "migration": "505_balance_sheet_report_categories.sql",
+  "summary": "Explicit balance-sheet presentation categories for the statement package (PR C). report_categories / account_report_map accept statement 'balance_sheet' with sections asset / liability / equity (revenue / expense stay income-statement only). account_report_map gains approval_status ('proposed' | 'approved', default 'approved' so every existing income-statement mapping keeps its meaning), approved_by and approved_at; an approved balance-sheet mapping must say who approved it and when. approve_account_report_map() approves proposals as they stand (service_role only); set_account_report_category() records the assigning person as the approver. statement_mapping_overrides holds an owner's written decision to finalize a board statement that still has unmapped balance-sheet accounts, bound to the statement snapshot sha256; append-only. Changes no existing row; seeds nothing.",
+  "requires": [
+    "463_report_categories.sql"
+  ],
+  "preflight": [
+    {
+      "name": "the CHECKs being replaced carry their default names (463 inline)",
+      "sql": "SELECT count(*)::int FROM pg_constraint WHERE (conrelid = 'report_categories'::regclass AND conname IN ('report_categories_statement_check', 'report_categories_section_check')) OR (conrelid = 'account_report_map'::regclass AND conname = 'account_report_map_statement_check')",
+      "expect": 3
+    },
+    {
+      "name": "every existing category and mapping is income-statement with a revenue / expense section",
+      "sql": "SELECT ((SELECT count(*) FROM report_categories WHERE statement <> 'income_statement' OR section NOT IN ('revenue', 'expense')) + (SELECT count(*) FROM account_report_map WHERE statement <> 'income_statement'))::int",
+      "expect": 0
+    },
+    {
+      "name": "account_report_map has no approval columns yet",
+      "sql": "SELECT count(*)::int FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'account_report_map' AND column_name IN ('approval_status', 'approved_by', 'approved_at')",
+      "expect": 0
+    },
+    {
+      "name": "statement_mapping_overrides does not exist yet",
+      "sql": "SELECT count(*)::int FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'statement_mapping_overrides'",
+      "expect": 0
+    },
+    {
+      "name": "board_packets exists (the override's packet FK)",
+      "sql": "SELECT count(*)::int FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'board_packets'",
+      "expect": 1
+    }
+  ],
+  "expected_changes": [
+    "Replaces report_categories_statement_check (income_statement, balance_sheet) and report_categories_section_check (revenue / expense for the income statement; asset / liability / equity for the balance sheet), and account_report_map_statement_check (income_statement, balance_sheet). Same names.",
+    "Adds account_report_map.approval_status (NOT NULL DEFAULT 'approved', CHECK proposed / approved), approved_by, approved_at. Existing rows read 'approved' through the column default; no row is updated.",
+    "Replaces account_report_map_validate() (balance-sheet account types; an approved balance-sheet mapping records who and when) and set_account_report_category() (same signature and return keys; the assigner is the approver). Adds approve_account_report_map(uuid, uuid[], text, text), EXECUTE to service_role only.",
+    "Creates statement_mapping_overrides (community, optional board packet, section key, snapshot sha256, unmapped accounts, reason 10+ characters, owner actor, created_at). FKs RESTRICT; index on snapshot_sha256; a guard trigger refuses UPDATE and DELETE. RLS on; nothing for anon / authenticated; SELECT, INSERT to service_role.",
+    "No report_categories, account_report_map or chart_of_accounts row changes."
+  ],
+  "objects": {
+    "added": [
+      "column:account_report_map.approval_status",
+      "column:account_report_map.approved_at",
+      "column:account_report_map.approved_by",
+      "column:statement_mapping_overrides.community_id",
+      "column:statement_mapping_overrides.created_at",
+      "column:statement_mapping_overrides.id",
+      "column:statement_mapping_overrides.owner_actor",
+      "column:statement_mapping_overrides.owner_user_id",
+      "column:statement_mapping_overrides.packet_id",
+      "column:statement_mapping_overrides.reason",
+      "column:statement_mapping_overrides.section_key",
+      "column:statement_mapping_overrides.snapshot_sha256",
+      "column:statement_mapping_overrides.unmapped_accounts",
+      "constraint:account_report_map.account_report_map_approval_status_check",
+      "constraint:statement_mapping_overrides.statement_mapping_overrides_community_fk",
+      "constraint:statement_mapping_overrides.statement_mapping_overrides_packet_fk",
+      "constraint:statement_mapping_overrides.statement_mapping_overrides_pkey",
+      "constraint:statement_mapping_overrides.statement_mapping_overrides_reason_check",
+      "constraint:statement_mapping_overrides.statement_mapping_overrides_sha_check",
+      "function:approve_account_report_map",
+      "function:statement_mapping_overrides_guard",
+      "index:idx_statement_mapping_overrides_snapshot",
+      "index:statement_mapping_overrides_pkey",
+      "table:statement_mapping_overrides",
+      "trigger:statement_mapping_overrides.trg_statement_mapping_overrides_guard"
+    ],
+    "changed": [
+      "constraint:account_report_map.account_report_map_statement_check",
+      "constraint:report_categories.report_categories_section_check",
+      "constraint:report_categories.report_categories_statement_check",
+      "function:account_report_map_validate",
+      "function:set_account_report_category"
+    ],
+    "removed": []
+  },
+  "row_changes": {
+    "report_categories": 0,
+    "account_report_map": 0,
+    "chart_of_accounts": 0
+  },
+  "protected": [
+    { "table": "report_categories", "order_by": "id" },
+    { "table": "chart_of_accounts", "order_by": "id" }
+  ],
+  "verify": [
+    {
+      "name": "the statement CHECKs allow balance_sheet",
+      "sql": "SELECT count(*)::int FROM pg_constraint WHERE conname IN ('report_categories_statement_check', 'account_report_map_statement_check') AND pg_get_constraintdef(oid) LIKE '%balance_sheet%'",
+      "expect": 2
+    },
+    {
+      "name": "every existing mapping reads approved (column default, no update)",
+      "sql": "SELECT count(*)::int FROM account_report_map WHERE approval_status <> 'approved'",
+      "expect": 0
+    },
+    {
+      "name": "overrides are append-only (guard trigger present)",
+      "sql": "SELECT count(*)::int FROM pg_trigger WHERE tgname = 'trg_statement_mapping_overrides_guard'",
+      "expect": 1
+    },
+    {
+      "name": "no override written; no balance-sheet category or mapping seeded",
+      "sql": "SELECT ((SELECT count(*) FROM statement_mapping_overrides) + (SELECT count(*) FROM report_categories WHERE statement = 'balance_sheet') + (SELECT count(*) FROM account_report_map WHERE statement = 'balance_sheet'))::int",
+      "expect": 0
+    },
+    {
+      "name": "service_role can read and insert overrides and approve mappings; anon and authenticated cannot",
+      "sql": "SELECT (CASE WHEN has_table_privilege('service_role', 'statement_mapping_overrides', 'SELECT') AND has_table_privilege('service_role', 'statement_mapping_overrides', 'INSERT') AND NOT has_table_privilege('anon', 'statement_mapping_overrides', 'SELECT') AND NOT has_table_privilege('authenticated', 'statement_mapping_overrides', 'SELECT') AND has_function_privilege('service_role', 'approve_account_report_map(uuid, uuid[], text, text)', 'EXECUTE') AND NOT has_function_privilege('anon', 'approve_account_report_map(uuid, uuid[], text, text)', 'EXECUTE') AND NOT has_function_privilege('authenticated', 'approve_account_report_map(uuid, uuid[], text, text)', 'EXECUTE') THEN 1 ELSE 0 END)::int",
+      "expect": 1
+    }
+  ]
+}

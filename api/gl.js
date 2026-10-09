@@ -261,8 +261,8 @@ ${totRow('NET INCOME', 'net_cents', 'net')}
 });
 
 // ----------------------------------------------------------------------------
-// Printed income statement — by fund, category-grouped, Current-Period + YTD
-// with budget (Ed's print layout). ?format=html for the report.
+// Printed income statement. JSON = the engine's per-fund statement; ?format=html
+// renders through the shared statement renderer (/api/financial-statements).
 //   GET /:communityId/income-statement-print?period_end=2026-06-30&format=html
 // ----------------------------------------------------------------------------
 router.get('/:communityId/income-statement-print', async (req, res) => {
@@ -280,34 +280,13 @@ router.get('/:communityId/income-statement-print', async (req, res) => {
       const ok = await canRenderFinancials(req.params.communityId);
       if (!ok.allowed) return res.status(409).json({ error: "books_not_here", detail: ok.reason });
     }
-    const { perFundIncomeStatement } = require('../lib/accounting/financial_statements');
     const period_end = req.query.period_end || _today();
-    const data = await perFundIncomeStatement({ community_id: req.params.communityId, period_end });
-    if (req.query.format !== 'html') return res.json(data);
-    const { data: comm } = await supabase.from('communities').select('name').eq('id', req.params.communityId).maybeSingle();
-    const monthName = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'][Number(period_end.slice(5, 7)) - 1];
-    // null = not available in trustEd (a month before a conversion cutover; lib/accounting/statement_periods.js).
-    const fmt = (c) => { if (c === null) return '<span class="dot" title="Not available in TrustEd">n/a</span>'; const n = Number(c || 0) / 100; if (Math.round(n) === 0) return '<span class="dot">·</span>'; return (n < 0 ? '(' : '') + '$' + Math.abs(Math.round(n)).toLocaleString('en-US') + (n < 0 ? ')' : ''); };
-    const esc = (x) => String(x == null ? '' : x).replace(/&/g, '&amp;').replace(/</g, '&lt;');
-    const K = data.amount_keys;
-    const cells = (o) => K.map((k, i) => `<td class="num${i === 0 || i === 3 || i === 6 ? ' a' : ''}">${fmt(o[k])}</td>`).join('');
-    const acctRow = (r) => `<tr><td class="acct">${esc(r.account_number)} ${esc(r.account_name)}</td>${cells(r)}</tr>`;
-    // Reporting categories (Phase 1): a mapped community's groups carry subgroups
-    // (subcategories) and possibly an Unmapped group; others keep the flat group.
-    const subBlock = (sg) => `<tr class="grp3"><td class="acct">${esc(sg.group)}</td><td colspan="7"></td></tr>` + sg.rows.map(acctRow).join('') + (sg.rows.length > 1 ? `<tr class="sub3"><td class="acct">Total ${esc(sg.group)}</td>${cells(sg.totals)}</tr>` : '');
-    const grpBlock = (g) => `<tr class="grp${g.unmapped ? ' unm' : ''}"><td class="acct">${esc(g.group)}</td><td colspan="7"></td></tr>`
-      + (g.subgroups ? (g.direct_rows || []).map(acctRow).join('') + g.subgroups.map(subBlock).join('') : g.rows.map(acctRow).join(''))
-      + `<tr class="sub"><td class="acct">Total ${esc(g.group)}</td>${cells(g.totals)}</tr>`;
-    const totRow = (label, o, cls) => `<tr class="${cls}"><td class="acct">${label}</td>${cells(o)}</tr>`;
-    const fundBlock = (f) => `<tr class="fund"><td class="acct" colspan="8">${esc(f.fund_name)} Fund</td></tr>`
-      + `<tr class="section"><td class="acct">Revenue</td><td colspan="7"></td></tr>${f.revenue_groups.map(grpBlock).join('')}${totRow('Total Revenue', f.revenue_totals, 'sub2')}`
-      + (f.expense_groups.length ? `<tr class="section"><td class="acct">Expense</td><td colspan="7"></td></tr>${f.expense_groups.map(grpBlock).join('')}${totRow('Total Expense', f.expense_totals, 'sub2')}` : '')
-      + totRow(`${esc(f.fund_name)} Net Income`, f.net_totals, 'net');
-    const style = _printStyle() + '<style>td.a{border-left:1px solid var(--rule)}tr.grp3 td{font-weight:600;font-style:italic;padding-left:14px}tr.sub3 td{font-style:italic;border-top:1px dotted var(--rule)}tr.unm td{color:#92400e;background:#fef3c7}thead tr.grp2 th{background:#16304d;font-size:10px;letter-spacing:.05em;text-align:center}tr.fund td{background:var(--navy);color:#fff;font-weight:800;text-transform:uppercase;letter-spacing:.04em}tr.sub2 td{font-weight:800;background:#e8eef6;border-top:1px solid var(--navy)}@media(prefers-color-scheme:dark){tr.sub2 td{background:#1b2c40}}</style>';
-    const head = `<thead><tr class="grp2"><th class="acct"></th><th class="num a" colspan="3">Current Period (${monthName})</th><th class="num" colspan="3">Year to Date</th><th class="num a"></th></tr>`
-      + `<tr><th class="acct">Account</th><th class="num a">Actual</th><th class="num">Budget</th><th class="num">Variance</th><th class="num a">Actual</th><th class="num">Budget</th><th class="num">Variance</th><th class="num a">Annual Budget</th></tr></thead>`;
-    const html = `${style}<div class="doc"><h1>${esc(comm ? comm.name : '')}</h1><p class="sub">Statement of Revenues and Expenses — by fund · ${monthName} ${period_end.slice(0, 4)} &amp; Year-to-Date</p>${(() => { const av = data.availability || {}; const w = data.carryforward && data.carryforward.windows && data.carryforward.windows[0]; const n = [av.mtd && av.mtd.note ? 'Current period: ' + av.mtd.note : null, av.ytd && av.ytd.note ? 'Year to date: ' + av.ytd.note : null, w && av.ytd && av.ytd.carryforward_included && av.ytd.carryforward_included.length ? 'Year-to-date actuals include ' + w.label + '.' : null, 'Variance: favorable is positive (revenue above budget, expense below budget).'].filter(Boolean); return `<p class="sub" style="font-size:11px;">${n.map(esc).join('<br>')}</p>`; })()}<table>${head}<tbody>${data.funds.map(fundBlock).join('')}</tbody></table></div>`;
-    res.set('Content-Type', 'text/html').send(html);
+    if (req.query.format === 'html') {
+      // One renderer for every printed statement (lib/statements/render.js, PR C).
+      return res.redirect(302, `/api/financial-statements/${encodeURIComponent(req.params.communityId)}/render?format=print&statements=income_budget&period_end=${encodeURIComponent(period_end)}&fund=${encodeURIComponent(req.query.fund || 'OPR')}`);
+    }
+    const { perFundIncomeStatement } = require('../lib/accounting/financial_statements');
+    res.json(await perFundIncomeStatement({ community_id: req.params.communityId, period_end }));
   } catch (err) {
     console.error('[gl] income-statement-print failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
@@ -315,8 +294,8 @@ router.get('/:communityId/income-statement-print', async (req, res) => {
 });
 
 // ----------------------------------------------------------------------------
-// Printed balance sheet — fund columns (Operating/Reserve/Savings/Total),
-// grouped into Cash / AR / Other Assets with subtotals. ?format=html.
+// Printed balance sheet. JSON = the engine's balance sheet; ?format=html renders
+// the fund-column view through the shared statement renderer.
 //   GET /:communityId/balance-sheet-print?as_of=2026-06-30&format=html
 // ----------------------------------------------------------------------------
 router.get('/:communityId/balance-sheet-print', async (req, res) => {
@@ -334,51 +313,18 @@ router.get('/:communityId/balance-sheet-print', async (req, res) => {
       const ok = await canRenderFinancials(req.params.communityId);
       if (!ok.allowed) return res.status(409).json({ error: "books_not_here", detail: ok.reason });
     }
-    const { balanceSheet, groupRows, _BS_ASSET_ORDER, _BS_LIAB_ORDER } = require('../lib/accounting/financial_statements');
     const as_of = req.query.as_of || _today();
-    const bs = await balanceSheet({ community_id: req.params.communityId, as_of_date: as_of });
-    if (req.query.format !== 'html') return res.json(bs);
-    const { data: comm } = await supabase.from('communities').select('name').eq('id', req.params.communityId).maybeSingle();
-    const FUNDS = ['OPR', 'RES', 'SAV', 'ADO'];
-    const fmt = (c) => { const n = Number(c || 0) / 100; if (c === 0) return '<span class="dot">·</span>'; return (n < 0 ? '(' : '') + '$' + Math.abs(Math.round(n)).toLocaleString('en-US') + (n < 0 ? ')' : ''); };
-    const esc = (x) => String(x == null ? '' : x).replace(/&/g, '&amp;').replace(/</g, '&lt;');
-    const usedFunds = FUNDS.filter((f) => [...bs.sections.assets, ...bs.sections.liabilities, ...bs.sections.equity].some((r) => r.fund_code === f));
-    const pivot = (rows) => { const m = new Map(); for (const r of rows) { const k = r.account_number; if (!m.has(k)) m.set(k, { account_number: r.account_number, account_name: r.account_name, group: r.group, by: {}, total: 0 }); const o = m.get(k); o.by[r.fund_code] = (o.by[r.fund_code] || 0) + Number(r.balance_cents || 0); o.total += Number(r.balance_cents || 0); } return [...m.values()]; };
-    const cols = (o) => usedFunds.map((f) => `<td class="num">${o.by && o.by[f] ? fmt(o.by[f]) : '<span class="dot">·</span>'}</td>`).join('') + `<td class="num tot">${fmt(o.total)}</td>`;
-    const grpTot = (rows) => { const t = { by: {}, total: 0 }; for (const r of rows) { t.total += r.total; for (const f of usedFunds) t.by[f] = (t.by[f] || 0) + (r.by[f] || 0); } return t; };
-    const acctRow = (r) => `<tr><td class="acct">${esc(r.account_number)} ${esc(r.account_name)}</td>${cols(r)}</tr>`;
-    const grpBlock = (g) => `<tr class="grp"><td class="acct">${esc(g.group)}</td><td colspan="${usedFunds.length + 1}"></td></tr>` + g.rows.map(acctRow).join('') + `<tr class="sub"><td class="acct">Total ${esc(g.group)}</td>${cols(grpTot(g.rows))}</tr>`;
-    const totRow = (label, rows, cls) => `<tr class="${cls}"><td class="acct">${label}</td>${cols(grpTot(rows))}</tr>`;
-    const assets = pivot(bs.sections.assets), liab = pivot(bs.sections.liabilities), eq = pivot(bs.sections.equity.filter((r) => !r.is_computed));
-    const style = _printStyle() + '<style>td.tot{font-weight:700;background:var(--sub)}tr.section td{background:var(--navy);color:#fff;font-weight:800;text-transform:uppercase;font-size:11px;letter-spacing:.04em}</style>';
-    const head = `<thead><tr><th class="acct">Balance Sheet — as of ${as_of}</th>${usedFunds.map((f) => `<th class="num">${({ OPR: 'Operating', RES: 'Reserve', SAV: 'Savings', ADO: 'Adopt-A-School' })[f] || f}</th>`).join('')}<th class="num tot">Total</th></tr></thead>`;
-    const html = `${style}<div class="doc"><h1>${esc(comm ? comm.name : '')}</h1><p class="sub">Balance Sheet by fund · as of ${as_of}</p><table>${head}<tbody>`
-      + `<tr class="section"><td class="acct">Assets</td><td colspan="${usedFunds.length + 1}"></td></tr>${groupRows(assets, _BS_ASSET_ORDER, 'total').map(grpBlock).join('')}${totRow('Total Assets', assets, 'net')}`
-      + `<tr class="section"><td class="acct">Liabilities</td><td colspan="${usedFunds.length + 1}"></td></tr>${groupRows(liab, _BS_LIAB_ORDER, 'total').map(grpBlock).join('')}${totRow('Total Liabilities', liab, 'sub')}`
-      + `<tr class="section"><td class="acct">Equity</td><td colspan="${usedFunds.length + 1}"></td></tr>${eq.map(acctRow).join('')}${totRow('Total Equity', eq, 'sub')}`
-      + `</tbody></table></div>`;
-    res.set('Content-Type', 'text/html').send(html);
+    if (req.query.format === 'html') {
+      // One renderer for every printed statement (lib/statements/render.js, PR C).
+      return res.redirect(302, `/api/financial-statements/${encodeURIComponent(req.params.communityId)}/render?format=print&statements=balance_sheet&as_of=${encodeURIComponent(as_of)}&view=${req.query.view === 'consolidated' ? 'consolidated' : 'fund'}`);
+    }
+    const { balanceSheet } = require('../lib/accounting/financial_statements');
+    res.json(await balanceSheet({ community_id: req.params.communityId, as_of_date: as_of }));
   } catch (err) {
     console.error('[gl] balance-sheet-print failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
   }
 });
-
-// Shared print stylesheet (theme-aware) for the printed statement reports.
-function _printStyle() {
-  return `<style>:root{--ink:#0B1D34;--muted:#5b6b7f;--rule:#e3e8ef;--navy:#0B1D34;--gold:#D4AF37;--panel:#fff;--sub:#f5f8fc;--net:#eef4ff;}
-@media(prefers-color-scheme:dark){:root{--ink:#e8eef6;--muted:#93a2b5;--rule:#243244;--navy:#0e2136;--panel:#12202f;--sub:#17273a;--net:#132a44;}}
-:root[data-theme="dark"]{--ink:#e8eef6;--muted:#93a2b5;--rule:#243244;--navy:#0e2136;--panel:#12202f;--sub:#17273a;--net:#132a44;}
-*{box-sizing:border-box}body{margin:0}.doc{font:12.5px/1.42 -apple-system,Arial,sans-serif;color:var(--ink);max-width:940px;margin:0 auto;padding:24px 18px}
-h1{font-size:19px;margin:0 0 2px}.sub{color:var(--muted);font-size:12.5px;margin:0 0 16px}
-table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums;border:1px solid var(--rule);border-radius:10px;overflow:hidden}
-th,td{padding:6px 10px;border-bottom:1px solid var(--rule);font-size:12px}td.num,th.num{text-align:right;white-space:nowrap}th.acct{text-align:left}
-thead th{background:var(--navy);color:#fff;font-size:11px}thead th.acct{border-bottom:2px solid var(--gold)}
-td.acct{padding-left:26px}tr.grp td.acct,tr.sub td.acct,tr.sub2 td.acct,tr.section td.acct,tr.fund td.acct,tr.net td.acct{padding-left:12px}
-tr.section td{background:var(--sub);font-weight:800;font-size:10.5px;text-transform:uppercase;color:var(--muted)}
-tr.grp td.acct{font-weight:700;padding-top:8px}tr.sub td{font-weight:700;background:var(--sub)}
-tr.net td{font-weight:800;background:var(--net);border-top:2px solid var(--navy);border-bottom:2px solid var(--navy)}.dot{color:var(--muted)}</style>`;
-}
 
 // ----------------------------------------------------------------------------
 // Aging helper — days past due → bucket. Shared by AR + AP.

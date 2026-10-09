@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Financial Statements · Bedrock</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@600&family=Inter:wght@400;500;600;700&display=swap">
+<style>
+  :root { --navy:#0B1D34; --gold:#D4AF37; --gold-ink:#B8952B; --ink:#1A2233; --ink2:#4A5468; --ink3:#7B8394; --rule:#E4E1D7; --bg:#FBFAF6; --sheet:#fff; --warnbg:#FFF5DD; --warn:#7A5408; --err:#8E2A22; }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --navy:#C9D6EA; --ink:#E7EBF2; --ink2:#B4BDCC; --ink3:#8790A1; --rule:#2A3444; --bg:#0E141D; --sheet:#141C28; --warnbg:#2E2410; --warn:#F0CF84; --err:#F0A096; } }
+  :root[data-theme="dark"] { --navy:#C9D6EA; --ink:#E7EBF2; --ink2:#B4BDCC; --ink3:#8790A1; --rule:#2A3444; --bg:#0E141D; --sheet:#141C28; --warnbg:#2E2410; --warn:#F0CF84; --err:#F0A096; }
+  * { box-sizing:border-box; }
+  [hidden] { display:none !important; }
+  body { margin:0; background:var(--bg); color:var(--ink); font-family:Inter,system-ui,-apple-system,sans-serif; font-size:14px; }
+  .bar { position:sticky; top:0; z-index:5; background:#0B1D34; color:#fff; padding:10px 16px; display:flex; flex-wrap:wrap; gap:10px; align-items:center; border-bottom:2px solid var(--gold); }
+  .bar a.home { color:#fff; text-decoration:none; font-family:'Cormorant Garamond',Georgia,serif; font-size:20px; margin-right:6px; }
+  .bar label { font-size:11px; letter-spacing:.06em; text-transform:uppercase; color:#C9D6EA; display:flex; flex-direction:column; gap:3px; }
+  .bar select, .bar input { font:inherit; font-size:13px; padding:5px 8px; border-radius:6px; border:1px solid #2B4466; background:#12263F; color:#fff; min-width:0; }
+  .bar .sp { flex:1; }
+  .btn { font:inherit; font-size:13px; padding:6px 12px; border-radius:6px; border:1px solid var(--rule); background:var(--sheet); color:var(--ink); cursor:pointer; text-decoration:none; display:inline-block; }
+  .bar .btn { background:transparent; color:#fff; border-color:#2B4466; }
+  .btn.gold { background:var(--gold); color:#0B1D34; border-color:var(--gold); font-weight:600; }
+  .wrap { max-width:1120px; margin:0 auto; padding:18px 16px 60px; }
+  .card { background:var(--sheet); border:1px solid var(--rule); border-radius:12px; padding:4px 24px 22px; margin-bottom:20px; }
+  .msg { padding:14px 16px; border-radius:8px; background:var(--sheet); border:1px solid var(--rule); color:var(--ink2); }
+  .msg.err { color:var(--err); }
+  .tstmt [data-drill] { outline:none; }
+  .tstmt .dl:hover { color:var(--gold-ink); }
+  /* drill drawer */
+  #drawer { position:fixed; top:0; right:0; bottom:0; width:min(560px,100%); background:var(--sheet); border-left:1px solid var(--rule); box-shadow:-8px 0 24px rgba(0,0,0,.12); transform:translateX(102%); transition:transform .18s; z-index:20; display:flex; flex-direction:column; }
+  #drawer.open { transform:none; }
+  #drawer header { padding:14px 18px 10px; border-bottom:1px solid var(--rule); display:flex; gap:10px; align-items:flex-start; }
+  #drawer header h2 { margin:0; font-family:'Cormorant Garamond',Georgia,serif; font-size:22px; color:var(--navy); flex:1; line-height:1.15; }
+  #drawer .crumbs { font-size:11.5px; color:var(--ink3); margin-top:3px; font-family:Inter,sans-serif; }
+  #drawer .body { padding:12px 18px 30px; overflow-y:auto; overflow-x:hidden; flex:1; }
+  .dt { width:100%; border-collapse:collapse; font-variant-numeric:tabular-nums; font-size:12.5px; }
+  .dt th { text-align:left; font-size:10.5px; letter-spacing:.06em; text-transform:uppercase; color:var(--ink3); border-bottom:1px solid var(--ink3); padding:6px 6px 5px 0; }
+  .dt td { padding:6px 6px 6px 0; border-bottom:1px solid var(--rule); vertical-align:top; overflow-wrap:anywhere; }
+  .dt.tx { table-layout:fixed; } .dt.tx col.d { width:86px; } .dt.tx col.a { width:112px; } .dt.tx td.dte { white-space:nowrap; }
+  .dt td.n, .dt th.n { text-align:right; white-space:nowrap; }
+  .dt tr.click { cursor:pointer; } .dt tr.click:hover td { background:rgba(212,175,55,.08); }
+  .dt tr.tot td { font-weight:700; border-top:1px solid var(--navy); border-bottom:3px double var(--navy); }
+  .pill { font-size:10px; font-weight:700; letter-spacing:.05em; text-transform:uppercase; border:1px solid currentColor; border-radius:4px; padding:0 4px; color:var(--ink3); white-space:nowrap; }
+  .seg { display:inline-flex; border:1px solid var(--rule); border-radius:6px; overflow:hidden; margin:4px 0 10px; }
+  .seg button { font:inherit; font-size:12.5px; border:0; background:var(--sheet); color:var(--ink2); padding:5px 12px; cursor:pointer; }
+  .seg button.on { background:var(--navy); color:var(--sheet); }
+  .kv { display:grid; grid-template-columns:140px 1fr; gap:4px 12px; font-size:13px; margin:8px 0 12px; }
+  .kv div:nth-child(odd) { color:var(--ink3); }
+  .note { font-size:12px; color:var(--ink3); margin:8px 0; }
+  .gap { font-size:12.5px; color:var(--warn); background:var(--warnbg); padding:6px 10px; border-radius:6px; margin:6px 0; }
+  h3 { font-size:11.5px; letter-spacing:.12em; text-transform:uppercase; color:var(--ink2); margin:18px 0 6px; }
+  /* mapping panel */
+  #mapping .row { display:flex; flex-wrap:wrap; gap:8px; align-items:center; padding:8px 0; border-bottom:1px solid var(--rule); }
+  #mapping .row .an { color:var(--ink3); font-size:12px; min-width:44px; }
+  #mapping .row .nm { flex:1; min-width:160px; }
+  #mapping select { font:inherit; font-size:13px; padding:4px 6px; border-radius:6px; border:1px solid var(--rule); background:var(--sheet); color:var(--ink); max-width:100%; }
+  @media (max-width:640px) { .bar label { flex:1 1 40%; } .card { padding:2px 12px 16px; } .kv { grid-template-columns:110px 1fr; } }
+  @media print { .bar, #drawer, #mapping { display:none !important; } .card { border:0; } }
+</style>
+</head>
+<body>
+<div class="bar">
+  <a class="home" href="/admin/accounting" title="Accounting">trustEd</a>
+  <label>Community<select id="comm"></select></label>
+  <label>Statement<select id="kind">
+    <option value="balance_sheet">Balance sheet</option>
+    <option value="balance_sheet_fund">Balance sheet by fund</option>
+    <option value="income_budget">Revenues &amp; expenses vs budget</option>
+  </select></label>
+  <label id="fundWrap" hidden>Fund<select id="fund"></select></label>
+  <label>Month ending<input id="month" type="month"></label>
+  <span class="sp"></span>
+  <a class="btn" id="xPdf" target="_blank" rel="noopener">PDF</a>
+  <a class="btn" id="xXlsx">Excel</a>
+  <a class="btn" id="xCsv">Detail CSV</a>
+</div>
+<div class="wrap">
+  <div id="out"><div class="msg">Loading…</div></div>
+  <div class="card" id="mapping" hidden></div>
+</div>
+<aside id="drawer" aria-hidden="true">
+  <header><div style="flex:1"><h2 id="dTitle"></h2><div class="crumbs" id="dCrumbs"></div></div><button class="btn" id="dBack" hidden>Back</button><button class="btn" id="dClose">Close</button></header>
+  <div class="body" id="dBody"></div>
+</aside>
+<script>
+(function () {
+  const $ = (id) => document.getElementById(id);
+  const esc = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  const money = (c) => { if (c === null || c === undefined) return '<span class="pill" title="Not available in TrustEd">n/a</span>'; const n = Number(c) || 0; if (n === 0) return '–'; const s = (Math.abs(n) / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); return n < 0 ? '(' + s + ')' : s; };
+  const lastDay = (ym) => { const [y, m] = ym.split('-').map(Number); return new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10); };
+  const S = { cid: null, kind: 'balance_sheet', fund: 'OPR', month: null, models: [], admin: false, stack: [] };
+
+  // Admin JWT (mapping changes are admin-only on the server; this is visibility).
+  window.supa = null;
+  async function authHeader() { try { if (window.supa) { const { data: { session } } = await window.supa.auth.getSession(); if (session && session.access_token) return { Authorization: 'Bearer ' + session.access_token }; } } catch (_) {} return {}; }
+  (async function boot() {
+    try {
+      const cfg = await fetch('/api/auth/config').then((r) => r.json());
+      if (!cfg.enabled) return;
+      if (!window.supabase) await new Promise((res, rej) => { const s = document.createElement('script'); s.src = 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4'; s.onload = res; s.onerror = rej; document.head.appendChild(s); });
+      window.supa = window.supabase.createClient(cfg.supabase_url, cfg.supabase_anon_key);
+      const me = await fetch('/api/me', { headers: await authHeader() }).then((r) => r.json()).catch(() => null);
+      S.admin = !!(me && me.user && me.user.role === 'admin');
+      if (S.admin && S.models.length) renderMapping();
+    } catch (e) { console.warn('[statements] admin bootstrap failed:', e.message); }
+  })();
+
+  function params(extra) {
+    const date = lastDay(S.month);
+    const p = new URLSearchParams();
+    if (S.kind === 'income_budget') { p.set('statements', 'income_budget'); p.set('period_end', date); p.set('fund', S.fund); }
+    else { p.set('statements', 'balance_sheet'); p.set('as_of', date); p.set('view', S.kind === 'balance_sheet_fund' ? 'fund' : 'consolidated'); }
+    for (const k in (extra || {})) p.set(k, extra[k]);
+    return p;
+  }
+  function syncUrl() {
+    const q = new URLSearchParams({ community_id: S.cid, statement: S.kind, month: S.month });
+    if (S.kind === 'income_budget') q.set('fund', S.fund);
+    history.replaceState(null, '', '?' + q.toString());
+  }
+  function setExports() {
+    const base = '/api/financial-statements/' + encodeURIComponent(S.cid);
+    $('xPdf').href = base + '/render?' + params({ format: 'pdf' });
+    $('xXlsx').href = base + '/render?' + params({ format: 'xlsx' });
+    const p = params(); p.set('statement', S.kind === 'income_budget' ? 'income_budget' : 'balance_sheet');
+    $('xCsv').href = base + '/detail.csv?' + p;
+  }
+
+  async function load() {
+    if (!S.cid || !S.month) return;
+    $('fundWrap').hidden = S.kind !== 'income_budget';
+    syncUrl(); setExports(); closeDrawer();
+    $('out').innerHTML = '<div class="msg">Building the statement…</div>';
+    try {
+      const r = await fetch('/api/financial-statements/' + encodeURIComponent(S.cid) + '/render?' + params({ format: 'html' }));
+      const j = await r.json();
+      if (!r.ok) { $('out').innerHTML = '<div class="msg err">' + esc(j.error === 'books_not_here' ? (j.detail || 'This community’s books are not kept in trustEd.') : (j.error || 'The statement could not be built.')) + '</div>'; $('mapping').hidden = true; return; }
+      S.models = j.models;
+      $('out').innerHTML = '<style>' + j.css + '</style><div class="card">' + j.html + '</div>';
+      wireStatement();
+      renderMapping();
+    } catch (e) { $('out').innerHTML = '<div class="msg err">The statement could not be loaded. ' + esc(e.message) + '</div>'; }
+  }
+
+  function wireStatement() {
+    $('out').querySelectorAll('button.tg').forEach((b) => b.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      const open = b.getAttribute('aria-expanded') !== 'true';
+      b.setAttribute('aria-expanded', String(open));
+      $('out').querySelectorAll('[data-of="' + b.dataset.g + '"]').forEach((tr) => { tr.hidden = !open; });
+    }));
+    $('out').querySelectorAll('[data-drill]').forEach((el) => {
+      const go = (ev) => { if (ev.target.closest('button.tg')) return; S.stack = []; drill(JSON.parse(el.dataset.drill), el.textContent.trim()); };
+      el.addEventListener('click', go);
+      el.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') go(ev); });
+    });
+  }
+
+  // ---------------------------------------------------------------- drill-down
+  function openDrawer() { $('drawer').classList.add('open'); $('drawer').setAttribute('aria-hidden', 'false'); }
+  function closeDrawer() { $('drawer').classList.remove('open'); $('drawer').setAttribute('aria-hidden', 'true'); S.stack = []; }
+  $('dClose').addEventListener('click', closeDrawer);
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeDrawer(); });
+  $('dBack').addEventListener('click', () => { S.stack.pop(); const prev = S.stack.pop(); if (prev) prev(); });
+  function show(title, crumbs, html, again) {
+    S.stack.push(again);
+    $('dTitle').textContent = title; $('dCrumbs').textContent = crumbs || ''; $('dBody').innerHTML = html;
+    $('dBack').hidden = S.stack.length < 2; openDrawer();
+  }
+  const isBS = () => S.kind !== 'income_budget';
+  const longDay = (iso) => { const [y, m, d] = iso.split('-').map(Number); return new Date(Date.UTC(y, m - 1, d)).toLocaleDateString('en-US', { timeZone: 'UTC', month: 'long', day: 'numeric', year: 'numeric' }); };
+  const scopeLabel = (sc) => (isBS() ? 'Balance through ' + longDay(lastDay(S.month)) : sc === 'mtd' ? 'Month of ' + longDay(lastDay(S.month)).replace(/ \d+,/, '') : 'Year to date through ' + longDay(lastDay(S.month)));
+
+  function drill(d, label, scope) {
+    if (d.level === 'account') return drillAccount(d, label, scope || 'mtd');
+    if (d.level === 'category') return drillCategory(d, label, scope || 'mtd');
+    if (d.level === 'current_year_activity') {
+      return show('Current-year activity', 'Balance sheet › Fund balance', '<p>This is the year’s revenue less expense, straight from the statement engine (for a converted community it includes the activity carried from the prior system).</p><p><button class="btn gold" id="toIS">Open revenues &amp; expenses for this month</button></p>', () => drill(d, label, scope));
+    }
+  }
+  function scopeArgs(sc) {
+    const end = lastDay(S.month);
+    if (isBS()) return { kind: 'balance_sheet', as_of: end };
+    return { kind: 'income_budget', period_start: sc === 'mtd' ? S.month + '-01' : S.month.slice(0, 4) + '-01-01', period_end: end };
+  }
+  async function fetchAccount(a, sc) {
+    const q = new URLSearchParams({ account_id: a.account_id, ...scopeArgs(sc) });
+    if (a.fund_id) q.set('fund_id', a.fund_id);
+    const r = await fetch('/api/financial-statements/' + encodeURIComponent(S.cid) + '/drill/account?' + q);
+    const j = await r.json(); if (!r.ok) throw new Error(j.error || 'drill failed'); return j;
+  }
+  const segHtml = (sc) => isBS() ? '' : '<div class="seg"><button data-sc="mtd" class="' + (sc === 'mtd' ? 'on' : '') + '">Month</button><button data-sc="ytd" class="' + (sc === 'ytd' ? 'on' : '') + '">Year to date</button></div>';
+  function wireSeg(fn) { $('dBody').querySelectorAll('.seg button').forEach((b) => b.addEventListener('click', () => { S.stack.pop(); fn(b.dataset.sc); })); }
+
+  async function drillCategory(d, label, sc) {
+    show(label, 'Statement line › GL accounts', '<div class="note">Loading accounts…</div>', () => drillCategory(d, label, sc));
+    try {
+      const accts = await Promise.all(d.accounts.map((a) => fetchAccount(a, sc).then((x) => ({ a, x }))));
+      const tot = accts.reduce((t, r) => t + r.x.total_cents, 0);
+      $('dBody').innerHTML = segHtml(sc) + '<div class="note">' + esc(scopeLabel(sc)) + '. Select an account to see its transactions.</div><table class="dt"><thead><tr><th>Account</th><th class="n">Amount</th></tr></thead><tbody>'
+        + accts.map((r, i) => '<tr class="click" data-i="' + i + '"><td>' + esc(r.x.account.number) + ' ' + esc(r.x.account.name) + '</td><td class="n">' + money(r.x.total_cents) + '</td></tr>').join('')
+        + '<tr class="tot"><td>Total</td><td class="n">' + money(tot) + '</td></tr></tbody></table>';
+      wireSeg((s) => drillCategory(d, label, s));
+      $('dBody').querySelectorAll('tr.click').forEach((tr) => tr.addEventListener('click', () => { const r = accts[Number(tr.dataset.i)]; drillAccount({ level: 'account', account_id: r.a.account_id, fund_id: r.a.fund_id }, r.x.account.number + ' ' + r.x.account.name, sc); }));
+    } catch (e) { $('dBody').innerHTML = '<div class="msg err">' + esc(e.message) + '</div>'; }
+  }
+
+  async function drillAccount(d, label, sc) {
+    show(label, 'Statement line › GL account › transactions', '<div class="note">Loading transactions…</div>', () => drillAccount(d, label, sc));
+    try {
+      const x = await fetchAccount(d, sc);
+      $('dTitle').textContent = x.account.number + ' ' + x.account.name;
+      const cov = x.coverage && x.coverage.status && x.coverage.status !== 'covers' ? '<div class="gap">' + esc(x.coverage.note || 'Part of this period is not available in TrustEd.') + '</div>' : '';
+      const carried = x.transactions.some((t) => t.is_opening_carryforward) ? '<div class="note">Lines marked Carried are the opening activity carried from the prior system at conversion.</div>' : '';
+      let bank = '';
+      if (x.bank_evidence && x.bank_evidence.statements && x.bank_evidence.statements.length) {
+        bank = '<h3>Bank statements</h3><table class="dt"><thead><tr><th>Account</th><th>Period</th><th class="n">Ending balance</th></tr></thead><tbody>'
+          + x.bank_evidence.statements.map((s) => { const b = x.bank_evidence.accounts.find((a) => a.id === s.bank_account_id) || {}; return '<tr><td>' + esc(b.account_nickname || 'Bank') + (b.account_last4 ? ' ••' + esc(b.account_last4) : '') + '</td><td>' + esc(s.statement_period_start) + ' – ' + esc(s.statement_period_end) + '</td><td class="n">' + money(s.ending_balance_cents) + '</td></tr>'; }).join('') + '</tbody></table>';
+      }
+      $('dBody').innerHTML = segHtml(sc) + '<div class="note">' + esc(scopeLabel(sc)) + '. ' + x.transactions.length + ' transaction' + (x.transactions.length === 1 ? '' : 's') + '; select one to see its source.</div>' + cov + carried
+        + '<table class="dt tx"><colgroup><col class="d"><col><col class="a"></colgroup><thead><tr><th>Date</th><th>Transaction</th><th class="n">Amount</th></tr></thead><tbody>'
+        + x.transactions.map((t, i) => '<tr class="click" data-i="' + i + '"><td class="dte">' + esc(t.posting_date) + '</td><td>' + esc(t.reference) + (t.is_opening_carryforward ? ' <span class="pill">Carried</span>' : '') + (t.description && t.description !== t.reference ? '<div>' + esc(t.description) + '</div>' : '') + '<div class="note" style="margin:2px 0 0">' + esc(t.origin) + '</div></td><td class="n">' + money(t.amount_cents) + '</td></tr>').join('')
+        + '<tr class="tot"><td colspan="2">Total</td><td class="n">' + money(x.total_cents) + '</td></tr></tbody></table>' + bank;
+      wireSeg((s) => drillAccount(d, label, s));
+      $('dBody').querySelectorAll('tr.click').forEach((tr) => tr.addEventListener('click', () => drillEntry(x.transactions[Number(tr.dataset.i)].journal_entry_id)));
+    } catch (e) { $('dBody').innerHTML = '<div class="msg err">' + esc(e.message) + '</div>'; }
+  }
+
+  async function drillEntry(jeId) {
+    show('Transaction', 'GL account › transaction › source', '<div class="note">Loading…</div>', () => drillEntry(jeId));
+    try {
+      const r = await fetch('/api/financial-statements/' + encodeURIComponent(S.cid) + '/drill/entry/' + encodeURIComponent(jeId));
+      const x = await r.json(); if (!r.ok) throw new Error(x.error || 'not found');
+      $('dTitle').textContent = (x.headline && x.headline.title) || x.reference;
+      const facts = (x.facts || []).map((f) => '<div>' + esc(f.label) + '</div><div>' + esc(f.value) + '</div>').join('');
+      $('dBody').innerHTML = '<div class="kv"><div>Entry</div><div>' + esc(x.reference) + ' · ' + esc(x.status) + '</div><div>Origin</div><div>' + esc(x.origin.label) + (x.origin.posted_by ? ' · ' + esc(x.origin.posted_by) : '') + '</div>'
+        + (x.headline && x.headline.counterparty ? '<div>Party</div><div>' + esc(x.headline.counterparty) + '</div>' : '') + facts + '</div>'
+        + ((x.documents || []).length ? '<h3>Source documents</h3>' + x.documents.map((d) => d.href ? '<div><a href="' + esc(d.href) + '" target="_blank" rel="noopener">' + esc(d.label) + '</a></div>' : '').join('') : '')
+        + (x.gaps || []).map((g) => '<div class="gap">' + esc(g) + '</div>').join('')
+        + '<h3>Accounting</h3><table class="dt"><thead><tr><th>Account</th><th class="n">Debit</th><th class="n">Credit</th></tr></thead><tbody>'
+        + (x.accounting || []).map((l) => '<tr><td>' + esc(l.account) + (l.memo ? '<div class="note" style="margin:2px 0 0">' + esc(l.memo) + '</div>' : '') + '</td><td class="n">' + (l.debit_cents ? money(l.debit_cents) : '') + '</td><td class="n">' + (l.credit_cents ? money(l.credit_cents) : '') + '</td></tr>').join('') + '</tbody></table>'
+        + ((x.links || []).length ? '<h3>Related entries</h3>' + x.links.map((l, i) => '<div><a href="#" data-l="' + i + '">' + esc(l.label) + '</a></div>').join('') : '');
+      $('dBody').querySelectorAll('a[data-l]').forEach((a) => a.addEventListener('click', (ev) => { ev.preventDefault(); drillEntry(x.links[Number(a.dataset.l)].journal_entry_id); }));
+    } catch (e) { $('dBody').innerHTML = '<div class="msg err">' + esc(e.message) + '</div>'; }
+  }
+  document.addEventListener('click', (ev) => { if (ev.target && ev.target.id === 'toIS') { S.kind = 'income_budget'; $('kind').value = 'income_budget'; load(); } });
+
+  // --------------------------------------------------- balance-sheet mapping (admin)
+  async function renderMapping() {
+    const bs = S.models.find((m) => m.kind === 'balance_sheet');
+    const panel = $('mapping');
+    if (!bs || !S.admin || (bs.mapping && bs.mapping.final_ready)) { panel.hidden = true; return; }
+    panel.hidden = false;
+    panel.innerHTML = '<h3>Balance-sheet mapping</h3><div class="note">Loading…</div>';
+    const r = await fetch('/api/financial-statements/' + encodeURIComponent(S.cid) + '/balance-sheet-mapping');
+    const j = await r.json();
+    if (!r.ok || !j.available) { panel.innerHTML = '<h3>Balance-sheet mapping</h3><div class="note">' + esc(j.message || j.error || 'Balance-sheet categories are not set up yet.') + '</div>'; return; }
+    const cats = j.categories.filter((c) => c.is_active);
+    const todo = j.accounts.filter((a) => a.status !== 'approved');
+    const opts = (sec, sel) => '<option value="">Choose a category…</option>' + cats.filter((c) => c.section === sec).sort((a, b) => a.name.localeCompare(b.name)).map((c) => '<option value="' + c.id + '"' + (c.id === sel ? ' selected' : '') + '>' + esc(c.report_label || c.name) + '</option>').join('');
+    panel.innerHTML = '<h3>Balance-sheet mapping</h3><div class="note">' + j.counts.approved + ' approved · ' + j.counts.proposed + ' proposed · ' + j.counts.unmapped + ' unmapped. Unmapped accounts stay in every total; a final board statement needs each one mapped (or an owner override).</div>'
+      + todo.map((a) => '<div class="row" data-a="' + a.id + '"><span class="an">' + esc(a.account_number) + '</span><span class="nm">' + esc(a.account_name) + ' <span class="pill">' + esc(a.status) + '</span></span><select data-sec="' + a.account_type + '">' + opts(a.account_type, a.category_id) + '</select>'
+        + (a.status === 'proposed' ? '<button class="btn" data-act="approve">Approve proposal</button>' : '') + '<button class="btn gold" data-act="set">Save</button></div>').join('')
+      + '<div class="row"><span class="nm">New category</span><select id="ncSec"><option value="asset">Asset</option><option value="liability">Liability</option><option value="equity">Fund balance</option></select><input id="ncName" placeholder="Category name" style="font:inherit;padding:4px 8px;border:1px solid var(--rule);border-radius:6px;background:var(--sheet);color:var(--ink)"><button class="btn" id="ncAdd">Add</button></div>';
+    panel.querySelectorAll('.row[data-a] button').forEach((b) => b.addEventListener('click', async () => {
+      const row = b.closest('.row'); const id = row.dataset.a;
+      const body = b.dataset.act === 'approve' ? { account_ids: [id] } : { account_ids: [id], category_id: row.querySelector('select').value || null };
+      if (b.dataset.act === 'set' && !body.category_id) { alert('Choose a category first.'); return; }
+      b.disabled = true;
+      const rr = await fetch('/api/financial-statements/' + encodeURIComponent(S.cid) + '/balance-sheet-mapping/' + b.dataset.act, { method: 'POST', headers: { 'Content-Type': 'application/json', ...(await authHeader()) }, body: JSON.stringify(body) });
+      const jj = await rr.json().catch(() => ({}));
+      if (!rr.ok) { b.disabled = false; alert(jj.detail || jj.error || 'Could not save the mapping.'); return; }
+      load();
+    }));
+    const add = $('ncAdd');
+    if (add) add.addEventListener('click', async () => {
+      const name = $('ncName').value.trim(); if (!name) return;
+      const rr = await fetch('/api/financial-statements/' + encodeURIComponent(S.cid) + '/balance-sheet-categories', { method: 'POST', headers: { 'Content-Type': 'application/json', ...(await authHeader()) }, body: JSON.stringify({ section: $('ncSec').value, name }) });
+      const jj = await rr.json().catch(() => ({}));
+      if (!rr.ok) { alert(jj.detail || jj.error || 'Could not add the category.'); return; }
+      renderMapping();
+    });
+  }
+
+  // ------------------------------------------------------------------- init
+  async function init() {
+    const q = new URLSearchParams(location.search);
+    const now = new Date(); const prev = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 0));
+    S.month = /^\d{4}-\d{2}$/.test(q.get('month') || '') ? q.get('month') : prev.toISOString().slice(0, 7);
+    S.kind = ['balance_sheet', 'balance_sheet_fund', 'income_budget'].includes(q.get('statement')) ? q.get('statement') : 'balance_sheet';
+    S.fund = q.get('fund') || 'OPR';
+    $('month').value = S.month; $('kind').value = S.kind;
+    try {
+      const j = await fetch('/api/gl/communities').then((r) => r.json());
+      const comms = (j.communities || []).slice().sort((a, b) => a.name.localeCompare(b.name));
+      $('comm').innerHTML = comms.map((c) => '<option value="' + c.id + '">' + esc(c.name) + '</option>').join('') || '<option value="">No books in trustEd</option>';
+      S.cid = comms.some((c) => c.id === q.get('community_id')) ? q.get('community_id') : (comms[0] && comms[0].id);
+      if (S.cid) $('comm').value = S.cid;
+    } catch (e) { $('out').innerHTML = '<div class="msg err">Communities could not be loaded.</div>'; return; }
+    await loadFunds();
+    load();
+  }
+  async function loadFunds() {
+    try {
+      const j = await fetch('/api/gl/' + encodeURIComponent(S.cid) + '/chart-of-accounts').then((r) => r.json());
+      const codes = [...new Set((j.accounts || j.chart || []).map((a) => a.account_funds && a.account_funds.fund_code).filter(Boolean))].sort((a, b) => (a === 'OPR' ? -1 : b === 'OPR' ? 1 : a.localeCompare(b)));
+      const list = codes.length ? codes : ['OPR'];
+      $('fund').innerHTML = list.map((c) => '<option value="' + c + '">' + esc(c) + '</option>').join('') + '<option value="all">All funds</option>';
+      if (![...list, 'all'].includes(S.fund)) S.fund = list[0];
+      $('fund').value = S.fund;
+    } catch (_) { $('fund').innerHTML = '<option value="OPR">OPR</option><option value="all">All funds</option>'; }
+  }
+  $('comm').addEventListener('change', async () => { S.cid = $('comm').value; await loadFunds(); load(); });
+  $('kind').addEventListener('change', () => { S.kind = $('kind').value; load(); });
+  $('fund').addEventListener('change', () => { S.fund = $('fund').value; load(); });
+  $('month').addEventListener('change', () => { if ($('month').value) { S.month = $('month').value; load(); } });
+  init();
+})();
+</script>
+</body>
+</html>

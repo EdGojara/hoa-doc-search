@@ -1688,6 +1688,7 @@
           </div>
           <button class="secondary-btn" onclick="bkLoadBalanceSheet()" style="font-size:12.5px;">⟳ Refresh</button>
           <button class="secondary-btn" onclick="bkPrintFS('balance-sheet')" style="font-size:12.5px;">🖨️ Print</button>
+          <button class="secondary-btn" onclick="bkOpenStatementPackage('balance_sheet', 'bk-bs-asof')" style="font-size:12.5px;" title="Board-ready statement with drill-down, PDF and Excel">Statement package</button>
         </div>
         <div id="bk-bs-container" style="font-size:13px;">Pick a date.</div>
       </div>
@@ -1707,6 +1708,7 @@
           </div>
           <button class="secondary-btn" onclick="bkLoadIncomeStatement()" style="font-size:12.5px;">⟳ Refresh</button>
           <button class="secondary-btn" onclick="bkPrintFS('income-statement')" style="font-size:12.5px;">🖨️ Print</button>
+          <button class="secondary-btn" onclick="bkOpenStatementPackage('income_budget', 'bk-is-end')" style="font-size:12.5px;" title="Board-ready statement vs budget with drill-down, PDF and Excel">Statement package</button>
         </div>
         <div id="bk-is-container" style="font-size:13px;">Pick a period.</div>
       </div>
@@ -46102,6 +46104,17 @@ ${questionsPage}
         alert(`Saved budget — ${j.line_items_count} lines, status: ${j.budget.status}.`);
         bkLoadBudgetView();
       } catch (e) { alert('Save failed: ' + e.message); }
+    };
+
+    // The financial statement package (one model + one renderer, PR C): the
+    // month of the date picked on this tab, same community.
+    window.bkOpenStatementPackage = function (statement, dateInputId) {
+      const el = document.getElementById(dateInputId);
+      const month = el && el.value ? el.value.slice(0, 7) : '';
+      const q = new URLSearchParams({ statement });
+      if (typeof bkCommunityId !== 'undefined' && bkCommunityId) q.set('community_id', bkCommunityId);
+      if (month) q.set('month', month);
+      window.open('/admin/financial-statements?' + q.toString(), '_blank', 'noopener');
     };
 
     // -------- PRINT FS --------
