@@ -51,6 +51,7 @@ function fakeClient() {
     rpc: async (fn, args) => {
       if (faults.no_reference) return { data: null, error: { message: 'injected: reference sequence unavailable' } };
       if (fn === 'next_je_reference') return { data: `JE-${args.p_fiscal_year}-T${String(++seq).padStart(4, '0')}`, error: null };
+      if (fn === 'close_closed_through') return { data: null, error: null };   // #101 (mig 502): nothing is closed through a date in these fixtures
       return { data: null, error: { message: `rpc ${fn} not faked` } };
     },
     from(table) {
