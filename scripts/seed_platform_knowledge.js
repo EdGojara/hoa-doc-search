@@ -136,6 +136,10 @@ const FEATURES = [
     response: 'A homeowner’s balance shows on their 360. Owner Receivables (Owner AR) ingests Vantaca AR aging PDFs into per-property balance snapshots. The general ledger / accounting lives at /admin/accounting (Finance). Vantaca is still the live ledger; trustEd mirrors it until the GL cutover for each community.',
   },
   {
+    situation: 'Why doesn’t the AR aging total equal Accounts Receivable (1300) on the trial balance? How does the aging tie to the general ledger?',
+    response: 'The AR Aging screen (Accounting) shows what each owner owes after their own credits, and an owner who is in credit shows nothing in the aging. The general ledger keeps the gross picture: receivables in 1300 and owner credits in 2400 Prepaid Owners. Both are right. The "Ties to the general ledger" card on the aging walks from one to the other: open charges aged, minus the owners who are in credit (listed, with each owner’s receivables and credits), equals the owners’ net position; add back the owner credits recorded in 2400, and the result is the receivables recorded in 1300, compared with GL 1300 as of the same date. Charges billed in trustEd itself (for example certified-letter fees) are included. If anything does not match, the card shows NOT TIED and the exact difference; nothing is ever reclassified just to make the two agree.',
+  },
+  {
     situation: 'How do I see a community map with each house and its violations, owner, and balance?',
     response: 'The Community Map shows every house in a community as a clickable tile. Click a house to see its open violations, ACC, AR, and owner — the same data as Homeowner 360, on the map. Field crews also use it to locate properties on a drive.',
   },

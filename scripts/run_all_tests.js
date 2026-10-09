@@ -266,6 +266,8 @@ const CHECKS = [
   'tests/test_vantaca_ap_gl_layouts.js',
   'tests/onboarding_cg_normalize_local.js',
   'tests/test_vantaca_ar_aging_detail_governs.js',
+  'tests/test_ar_aging_reconciliation.js',
+  'tests/test_board_financials_gate.js',
   'tests/test_source_controls_owner_model.js',
   'tests/test_onboarding_api.js',
   'tests/test_onboarding_snapshot.js',

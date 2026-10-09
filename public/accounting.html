@@ -1921,6 +1921,25 @@
     </div>`;
   }
 
+  // How the aging ties to GL 1300 (Ed 2026-10-08): the aging shows each owner's
+  // net position; the GL keeps receivables in 1300 and owner credits in 2400.
+  // Every step is shown; a difference is named, never hidden or reclassified.
+  function renderArRecon(j) {
+    const r = j.reconciliation; if (!r) return '';
+    const lines = (r.lines || []).map((l) => `<tr${l.subtotal ? ' class="total"' : ''}><td>${esc(l.label)}${l.count ? ` <span class="muted">(${l.count})</span>` : ''}</td><td class="num">${fmt(l.cents)}</td></tr>`).join('');
+    const gl = r.gl_ar_cents == null ? '<tr><td>GL 1300 Accounts Receivable</td><td class="num muted">no account 1300</td></tr>'
+      : `<tr><td>GL 1300 Accounts Receivable, as of ${esc(r.as_of || '')}</td><td class="num">${fmt(r.gl_ar_cents)}</td></tr>
+         <tr class="total"><td>Difference</td><td class="num" style="color:${r.tied ? '#15803d' : '#b91c1c'};">${r.tied ? 'Tied (0.00)' : fmt(r.difference_cents)}</td></tr>`;
+    const credits = (r.owners_in_credit || []).length ? `<details style="margin-top:10px;"><summary class="sub" style="cursor:pointer;">Owners in credit (${r.owners_in_credit.length})</summary>
+        <table style="margin-top:6px;"><thead><tr><th>Property</th><th>Owner</th><th class="num">Receivable rows (1300)</th><th class="num">Credits (2400)</th><th class="num">Net</th></tr></thead><tbody>
+        ${r.owners_in_credit.map((o) => `<tr><td>${esc(o.street_address || '')}</td><td>${esc(o.owner_name || '')}</td><td class="num">${fmt(o.receivable_cents)}</td><td class="num">${fmt(o.credit_cents)}</td><td class="num">${fmt(o.net_cents)}</td></tr>`).join('')}
+        </tbody></table></details>` : '';
+    const warn = r.aging_matches_ledger === false ? '<div style="color:#b91c1c; margin-top:6px;">The aged open charges do not equal the ledger\'s open charges; this needs review.</div>' : '';
+    return `<div class="card" style="margin-bottom:16px; border-color:${r.tied ? '#bbf7d0' : '#fecaca'};"><h2 class="sec" style="margin-bottom:4px;">Ties to the general ledger</h2>
+      <div class="sub" style="margin-bottom:10px;">The aging shows what each owner owes after their credits. The ledger keeps receivables in 1300 and owner credits in 2400. Nothing is reclassified to make these agree.</div>
+      <table style="max-width:640px;"><tbody>${lines}${gl}</tbody></table>${warn}${r.note ? `<div class="sub" style="margin-top:6px;">${esc(r.note)}</div>` : ''}${credits}</div>`;
+  }
+
   async function renderArAging() {
     const j = await (await fetch(`/api/gl/${CID}/ar-aging`)).json();
     const cats = j.summary.by_category || [];
@@ -1950,6 +1969,7 @@
         <table><thead><tr><th>Category</th>${BUCKETS.map(([,l])=>`<th class="num">${l}</th>`).join('')}<th class="num">Total</th></tr></thead>
         <tbody>${catRows}<tr class="total"><td>Total</td>${BUCKETS.map(([k])=>`<td class="num">${fmt(sb[k]||0)}</td>`).join('')}<td class="num">${fmt(j.summary.total_cents)}</td></tr></tbody></table>
       </div>
+      ${renderArRecon(j)}
       ${renderFormerOwners(j)}
       <div class="card"><h2 class="sec" style="margin-bottom:4px;">Homeowner ledgers</h2>
         <div class="sub" style="margin-bottom:10px;">Click a row to see every open charge for that homeowner.</div>

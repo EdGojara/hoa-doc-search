@@ -433,13 +433,21 @@ function _categorizeVantacaCharge(desc) {
 // rows so the aging endpoint's aggregation is identical for both sources.
 // Scope: current owners only (property_id present) — the aging screen is the
 // live roster; sold/inactive stale balances are a separate write-off track.
-async function _openChargesFromTransactions(cid, propertyId = null) {
-  // The CURRENT OWNER's tenure only (v_current_owner_ledger: committed batches,
-  // on the lot's current tenure and current account), in a stable order. A
-  // prior owner's rows and legacy accounts are former-owner money and appear
-  // only in the former-owner section, never in a current owner's aging.
-  // propertyId narrows to one owner (fast path for the account-detail screen).
+async function _openChargesFromTransactions(cid, propertyId = null, asOf = null) {
+  return _openChargesFromRows(await _currentOwnerRows(cid, propertyId, asOf));
+}
+// The CURRENT OWNER's tenure only (v_current_owner_ledger: committed batches,
+// on the lot's current tenure and current account), in a stable order. A
+// prior owner's rows and legacy accounts are former-owner money and appear
+// only in the former-owner section, never in a current owner's aging.
+// propertyId narrows to one owner (fast path for the account-detail screen).
+// asOf (optional) keeps only rows dated on or before it, so an aging as of a
+// past date ages that date's ledger and can tie to the GL as of that date.
+async function _currentOwnerRows(cid, propertyId = null, asOf = null) {
   const txns = await currentOwnerLedgerForCommunity(supabase, cid, propertyId);
+  return asOf ? txns.filter((t) => String(t.transaction_date || '').slice(0, 10) <= asOf) : txns;
+}
+function _openChargesFromRows(txns) {
   const byOwner = new Map();
   for (const t of txns) {
     if (!t.property_id) continue; // current-owner roster only
@@ -471,15 +479,35 @@ async function _openChargesFromTransactions(cid, propertyId = null) {
   return open;
 }
 
+// A GL account's balance (debit +) as of a date: counted entries only (posted,
+// or voided with its reversal), the same rule as the trial balance. null when the
+// community has no such account.
+async function _glBalanceAsOf(cid, accountNumber, asOf) {
+  const tbd = require('../lib/accounting/trial_balance_detail');
+  const { data: accts, error } = await supabase.from('chart_of_accounts').select('id').eq('community_id', cid).eq('account_number', accountNumber);
+  if (error) throw error;
+  if (!accts || !accts.length) return null;
+  let bal = 0;
+  for (const a of accts) {
+    for (const l of await tbd.loadAccountLines(supabase, cid, a.id)) {
+      const x = tbd.flatten(l);
+      if (!tbd.counted(x) || (asOf && String(x.posting_date || '').slice(0, 10) > asOf)) continue;
+      bal += Number(x.debit_cents || 0) - Number(x.credit_cents || 0);
+    }
+  }
+  return bal;
+}
+
 // ----------------------------------------------------------------------------
 // AR aging — per homeowner, broken out by charge CATEGORY (assessment, late
 // fee, interest, certified/attorney fees, etc.) and aged by due date.
 // ----------------------------------------------------------------------------
 async function computeArAging(cid, asOf) {
     asOf = asOf || _today();
-    const charges = await _fetchAll('ar_charges',
-      'property_id, tenure_id, charge_type_id, balance_remaining_cents, due_date, status, ar_charge_types:charge_type_id(category, display_name)',
-      { community_id: cid, status: 'open' });
+    const charges = (await _fetchAll('ar_charges',
+      'property_id, tenure_id, charge_type_id, balance_remaining_cents, due_date, charge_date, status, source_module, ar_charge_types:charge_type_id(category, display_name)',
+      { community_id: cid, status: 'open' }))
+      .filter((c) => !asOf || String(c.charge_date || c.due_date || '').slice(0, 10) <= asOf);
     // Current owner's tenure only (an unstamped charge is on the lot's current
     // owner until the writers stamp tenure_id).
     const owners0 = await _fetchAll('v_current_property_owners', 'property_id, tenure_id', { community_id: cid });
@@ -490,10 +518,23 @@ async function computeArAging(cid, asOf) {
     // (homeowner_transactions) + the GL, not the native ar_charges table. When
     // ar_charges is empty, compute the aging from that migrated subledger so the
     // AR that's already reconciled to the GL actually shows.
+    // WHERE THE AR LIVES (Ed 2026-10-08). A community whose receivables were
+    // migrated into the native table (source 'vantaca_migration', Quail Ridge)
+    // ages ar_charges. Every other community keeps its receivables in the migrated
+    // homeowner ledger; charges trustEd bills natively there (e.g. certified-letter
+    // fees, posted to GL 1300 but not mirrored into the ledger) are aged ON TOP of
+    // it. Before this, a handful of native charges made the aging ignore the
+    // ledger entirely (Waterview showed $350 against $273k in GL 1300).
     let ar_source = 'ar_charges';
-    if (open.length === 0) {
-      const fromTxns = await _openChargesFromTransactions(cid);
-      if (fromTxns.length) { open = fromTxns; ar_source = 'homeowner_transactions'; }
+    let ledgerRows = null; let nativeOpenCents = 0;
+    if (!open.some((c) => c.source_module === 'vantaca_migration')) {
+      ledgerRows = await _currentOwnerRows(cid, null, asOf);
+      const fromTxns = _openChargesFromRows(ledgerRows);
+      if (fromTxns.length || ledgerRows.length) {
+        nativeOpenCents = open.reduce((s, c) => s + Number(c.balance_remaining_cents), 0);
+        open = fromTxns.concat(open);
+        ar_source = nativeOpenCents ? 'homeowner_transactions+ar_charges' : 'homeowner_transactions';
+      }
     }
 
     const categories = new Set();
@@ -562,9 +603,33 @@ async function computeArAging(cid, asOf) {
       .map((r) => ({ ...r, balance_cents: Number(r.balance_cents), property_address: r.property_id ? (ownerAddr[r.property_id] || null) : null }))
       .sort((a, b) => Math.abs(b.balance_cents) - Math.abs(a.balance_cents));
 
+    // Reconciliation to GL 1300 as of the date (Ed 2026-10-08): the aging is each
+    // owner's NET position; the GL keeps receivable rows in 1300 and owner credits
+    // in 2400. Shown explicitly, from the same rows; never reclassified to tie.
+    const glAr = await _glBalanceAsOf(cid, '1300', asOf);
+    const glPrepaid = await _glBalanceAsOf(cid, '2400', asOf);
+    let reconciliation;
+    if (ledgerRows && ar_source !== 'ar_charges') {
+      const { reconcileAgingToGl } = require('../lib/ar/aging_reconciliation');
+      reconciliation = reconcileAgingToGl({ rows: ledgerRows, asOf, agingOpenCents: grandTotal, nativeOpenCents,
+        glArCents: glAr, glPrepaidCents: glPrepaid == null ? null : -glPrepaid });
+      for (const o of reconciliation.owners_in_credit) {
+        const w = ownerByProp[o.property_id] || {};
+        o.street_address = w.street_address || '—'; o.owner_name = w.owner_name || '—';
+      }
+    } else {
+      // Native ar_charges: the open charges are compared with GL 1300 as they stand;
+      // a difference is shown (credits held as unapplied payments are not netted here).
+      const diff = glAr == null ? null : grandTotal - glAr;
+      reconciliation = { as_of: asOf, lines: [{ key: 'open_charges', label: 'Open charges aged', cents: grandTotal }],
+        gl_ar_cents: glAr, difference_cents: diff, tied: diff === 0, aging_matches_ledger: null, owners_in_credit: [],
+        note: 'Open native charges compared with GL 1300; any difference is shown, not explained here.' };
+    }
+
     return {
       as_of: asOf,
       ar_source,
+      reconciliation,
       categories: [...categories],
       summary: { total_cents: grandTotal, by_bucket: totalBuckets, by_category: Object.values(byCategory).sort((a, b) => b.total - a.total) },
       collection_summary: collectionSummary,
@@ -1074,4 +1139,4 @@ router.computeArAging = computeArAging;
 router.computeApAging = computeApAging;
 
 module.exports = router;
-module.exports._test = { computeArAging, _openChargesFromTransactions };
+module.exports._test = { computeArAging, _openChargesFromTransactions, _openChargesFromRows };
