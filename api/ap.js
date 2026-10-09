@@ -27,7 +27,7 @@ const { createClient } = require('@supabase/supabase-js');
 const Anthropic = require('../lib/ai/anthropic');
 const { createInvoice, attachSourceAndRecode, approveInvoice, recordPayment, autoCodeGlAccount } = require('../lib/accounting/ap_engine');
 const { safeErrorMessage } = require('./_safe_error');
-const { clearPostedEntry, describeClear } = require('../lib/accounting/clear_entry');
+const { voidLiveEntry, assertCorrectionLogReady, recordCorrection, describeCorrection } = require('../lib/accounting/correct_entry');
 const { captureServerError } = require('../lib/capture_error');
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
@@ -36,6 +36,14 @@ const { BEDROCK_MGMT_CO_ID } = require('../lib/company');
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 15 * 1024 * 1024 } });
 const router = express.Router();
+
+// Reference of a journal entry, for audit notes (null-safe; never throws).
+async function jeReference(id) {
+  if (!id) return null;
+  const { data, error } = await supabase.from('journal_entries').select('reference').eq('id', id).maybeSingle();
+  if (error) { console.warn('[ap] jeReference:', error.message); return null; }
+  return data ? data.reference : null;
+}
 
 // ---------------------------------------------------------------------------
 // Invoice extraction prompt — Claude binary PDF read
@@ -1328,21 +1336,18 @@ router.post('/invoices/:id/code', express.json(), async (req, res) => {
       });
     }
 
-    const isRecode = !!(inv.coded_gl_account_id && inv.posting_journal_entry_id);
-    // A bill that hasn't been PAID is not a committed cash transaction — its posted
-    // accrual is just the system's coding (Emma's auto-guess or a staff pick), so a
-    // wrong account there is a system misinterpretation to REPLACE, not a real entry
-    // to reverse. A reversal would litter the ledger with offsetting entries that
-    // never reflected real business activity for this bill — and make the platform
-    // look like it posts things wrong. Once paid (cash out, reconciles to the bank),
-    // a correction becomes a real reclass with an audit trail.
-    // (Ed 2026-07-31; broadened approval->payment 2026-09-04.)
+    // A POSTED accrual is permanent, paid or not, open period or closed (Ed
+    // 2026-10-09). Changing its account posts an explicit correcting entry (a
+    // reversal of the live entry + a replacement) and records who, when, why and
+    // which entries in journal_entry_corrections. The original is never deleted.
+    // Scar: LOPF JE-2026-00169..00172, 2026-09-28 (lines deleted, header kept).
+    const isRecode = !!inv.posting_journal_entry_id;
     const notYetPaid = !inv.paid_at;
     let ctx = null;
     if (isRecode) {
-      // Reversing a PAID (committed-cash) entry must say why; correcting a
-      // not-yet-paid mis-coding is routine and needs no ceremony.
-      if (!reason && !notYetPaid) return res.status(400).json({ error: 'reason_required', detail: 'This bill has been paid, so its accrual is committed. Changing the account reverses that entry and posts a new one — say why.' });
+      if (!reason) return res.status(400).json({ error: 'reason_required', detail: notYetPaid
+        ? 'This bill is already posted. Changing the account posts a correcting entry; the original stays on the books. Say why.'
+        : 'This bill has been paid, so its accrual is committed. Changing the account posts a correcting entry; the original stays on the books. Say why.' });
       const { resolveUserRole } = require('./users');
       ctx = await resolveUserRole(req);
       if (!ctx || !ctx.supabaseUserId) return res.status(401).json({ error: 'sign_in_required', detail: 'Sign in to change the account on a posted bill.' });
@@ -1354,26 +1359,21 @@ router.post('/invoices/:id/code', express.json(), async (req, res) => {
       : { data: null };
     const prevLabel = prevAcct ? `${prevAcct.account_number} ${prevAcct.account_name}` : '(uncoded)';
 
-    // Clear the old accrual before re-posting. HOW depends on whether it's a
-    // committed cash transaction: not-yet-paid it's a coding mistake to DELETE;
-    // once paid it's a real entry corrected by REVERSAL (audit trail). An entry
-    // that is already reversed (a conversion NEUT), in a period that isn't open,
-    // or before the GL cutover is never deleted. lib/accounting/clear_entry.js
-    // makes that call and checks every write. Scar: LOPF JE-2026-00169..00172
-    // (2026-09-28), where a try/catch around supabase deletes caught nothing and
-    // left four posted headers with no lines. If it throws, the old entry is
-    // still on the books and re-posting would double-count. Stop.
-    let jeId = inv.posting_journal_entry_id;
-    let cleared = null;
-    if (jeId) {
-      const voidReason = isRecode
-        ? `Re-coded ${prevLabel} -> ${acct.account_number} ${acct.account_name} by ${who}${reason ? ': ' + reason : ''}`
-        : 'Re-coded expense account';
+    // lib/accounting/correct_entry.js reverses the LIVE entry (never deletes; never
+    // reverses an entry a conversion already neutralized a second time). If it
+    // throws, the old entry is still on the books and re-posting would
+    // double-count. Stop.
+    const originalJeId = inv.posting_journal_entry_id;
+    let jeId = originalJeId;
+    let corrected = null;
+    if (isRecode) {
       try {
-        cleared = await clearPostedEntry({ supabase, journal_entry_id: jeId, void_reason: voidReason, allow_delete: notYetPaid, posted_by_user_id: (ctx && ctx.user && ctx.user.id) || null });
+        await assertCorrectionLogReady(supabase);
+        corrected = await voidLiveEntry({ supabase, journal_entry_id: originalJeId, uncommitted: notYetPaid, posted_by_user_id: (ctx && ctx.user && ctx.user.id) || null,
+          void_reason: `Re-coded ${prevLabel} -> ${acct.account_number} ${acct.account_name} by ${who}: ${reason}` });
       } catch (e) {
-        console.error('[ap] recode: clearing the old accrual FAILED, refusing to re-post:', e.code || '', e.message);
-        return res.status(e.code === 'lines_restore_failed' ? 500 : 409).json({ error: e.code || 'replace_failed', detail: `${e.detail || 'Could not take the existing entry off the books.'} The account was not changed (re-posting would double-count the expense).` });
+        console.error('[ap] recode: correcting the posted accrual FAILED, refusing to re-post:', e.code || '', e.message);
+        return res.status(409).json({ error: e.code || 'correction_failed', detail: `${e.detail || 'Could not reverse the existing entry.'} The account was not changed.` });
       }
       jeId = null;
     }
@@ -1404,18 +1404,24 @@ router.post('/invoices/:id/code', express.json(), async (req, res) => {
     // after posting, by whom, and why, without digging into the GL.
     let auditWarning = null;
     if (isRecode) {
+      const replacementRef = await jeReference(jeId);
+      auditWarning = await recordCorrection(supabase, {
+        kind: 'ap_recode', community_id: inv.community_id, invoice_id: id, original_je_id: originalJeId,
+        corrected_je_id: corrected.corrected_je_id, correcting_je_id: corrected.reversal_je_id, replacement_je_id: jeId || null,
+        actor_user_id: (ctx.user && ctx.user.id) || null, actor_name: who,
+        reason: `${prevLabel} -> ${acct.account_number} ${acct.account_name}: ${reason}`,
+      });
+      if (!jeId) auditWarning = [auditWarning, 'The original entry was reversed but the replacement could not be posted; the bill is not on the books until it is re-posted.'].filter(Boolean).join(' ');
       const { error: audErr } = await supabase.from('ap_invoice_approvals').insert({
         invoice_id: id, action: 'recoded', user_id: (ctx.user && ctx.user.id) || null, user_name: who,
         amount_at_time_cents: inv.total_cents,
-        notes: notYetPaid
-          ? `Expense account corrected from ${prevLabel} to ${acct.account_number} ${acct.account_name} before payment. ${describeClear(cleared)}${reason ? ' Reason: ' + reason : ''}`
-          : `Expense account changed from ${prevLabel} to ${acct.account_number} ${acct.account_name} after the bill was paid. ${describeClear(cleared)} Replacement posted. Reason: ${reason}`,
+        notes: `Expense account changed from ${prevLabel} to ${acct.account_number} ${acct.account_name} ${notYetPaid ? 'before' : 'after'} payment. ${describeCorrection(corrected, replacementRef)} Reason: ${reason}`,
       });
       if (audErr) {
         // Never let this fail silently — an unrecorded exception is the whole
         // problem this endpoint is trying to solve.
         console.error('[ap] recode audit insert FAILED:', audErr.message);
-        auditWarning = 'The account was changed and the journal entry adjusted, but the audit note could not be saved. Tell Ed — migration 300 may not be applied yet.';
+        auditWarning = [auditWarning, 'The audit note on the bill could not be saved. Tell Ed.'].filter(Boolean).join(' ');
       }
     }
 
@@ -1454,10 +1460,13 @@ router.post('/invoices/:id/lines/:lineId/code', express.json(), async (req, res)
     const notYetPaid = !inv.paid_at;
     let ctx = null;
     if (posted) {
-      if (!notYetPaid && !reason) return res.status(400).json({ error: 'reason_required', detail: 'This bill has been paid, so its accrual is committed. Changing a line reverses that entry and posts a new one — say why.' });
+      // Posted = permanent, paid or not (Ed 2026-10-09): a correcting entry, with a reason.
+      if (!reason) return res.status(400).json({ error: 'reason_required', detail: 'This bill is already posted. Changing a line posts a correcting entry; the original stays on the books. Say why.' });
       const { resolveUserRole } = require('./users');
       ctx = await resolveUserRole(req);
       if (!ctx || !ctx.supabaseUserId) return res.status(401).json({ error: 'sign_in_required' });
+      try { await assertCorrectionLogReady(supabase); }
+      catch (e) { return res.status(409).json({ error: e.code, detail: e.detail }); }
     }
     const who = (ctx && ctx.user && (ctx.user.full_name || ctx.user.email)) || 'Staff';
     const { data: prev } = line.gl_account_id
@@ -1465,26 +1474,27 @@ router.post('/invoices/:id/lines/:lineId/code', express.json(), async (req, res)
       : { data: null };
     const prevLabel = prev ? `${prev.account_number} ${prev.account_name}` : '(uncoded)';
 
-    await supabase.from('ap_invoice_lines').update({ gl_account_id, notes: (posted && !notYetPaid) ? `Re-coded by ${who}: ${reason}`.slice(0, 500) : line.notes }).eq('id', lineId);
+    await supabase.from('ap_invoice_lines').update({ gl_account_id, notes: posted ? `Re-coded by ${who}: ${reason}`.slice(0, 500) : line.notes }).eq('id', lineId);
 
     // Re-post the whole split from the (now updated) lines.
     const { data: lines } = await supabase.from('ap_invoice_lines').select('*').eq('invoice_id', id).order('line_number');
     const allCoded = (lines || []).length > 0 && lines.every((l) => l.gl_account_id);
-    let jeId = inv.posting_journal_entry_id;
-    let cleared = null;
+    const originalJeId = inv.posting_journal_entry_id;
+    let jeId = originalJeId;
+    let corrected = null;
     if (posted) {
-      // Unpaid mis-code -> remove the old accrual; paid -> reverse it. Same shared
-      // rule as the invoice-level control above (lib/accounting/clear_entry.js).
+      // Same shared rule as the invoice-level control above
+      // (lib/accounting/correct_entry.js): reverse the live entry, never delete.
       try {
-        cleared = await clearPostedEntry({
-          supabase, journal_entry_id: jeId, allow_delete: notYetPaid, posted_by_user_id: (ctx && ctx.user && ctx.user.id) || null,
-          void_reason: `Line ${line.line_number} re-coded ${prevLabel} -> ${acct.account_number} ${acct.account_name} by ${who}${reason ? ': ' + reason : ''}`,
+        corrected = await voidLiveEntry({
+          supabase, journal_entry_id: originalJeId, uncommitted: notYetPaid, posted_by_user_id: (ctx && ctx.user && ctx.user.id) || null,
+          void_reason: `Line ${line.line_number} re-coded ${prevLabel} -> ${acct.account_number} ${acct.account_name} by ${who}: ${reason}`,
         });
       } catch (e) {
-        console.error('[ap] line recode: clearing the old accrual FAILED, refusing to re-post:', e.code || '', e.message);
+        console.error('[ap] line recode: correcting the posted accrual FAILED, refusing to re-post:', e.code || '', e.message);
         const { error: backErr } = await supabase.from('ap_invoice_lines').update({ gl_account_id: line.gl_account_id, notes: line.notes }).eq('id', lineId);   // put it back
         if (backErr) console.error('[ap] line recode: could not put the line account back:', backErr.message);
-        return res.status(e.code === 'lines_restore_failed' ? 500 : 409).json({ error: e.code || 'replace_failed', detail: `${e.detail || 'Could not take the existing entry off the books.'} Nothing was changed (re-posting would double-count the expense).${backErr ? ' The line\'s account could not be put back; re-check it.' : ''}` });
+        return res.status(409).json({ error: e.code || 'correction_failed', detail: `${e.detail || 'Could not reverse the existing entry.'} The line was not changed.${backErr ? ' Its account could not be put back; re-check it.' : ''}` });
       }
       jeId = null;
     }
@@ -1504,14 +1514,19 @@ router.post('/invoices/:id/lines/:lineId/code', express.json(), async (req, res)
 
     let auditWarning = null;
     if (posted) {
+      auditWarning = await recordCorrection(supabase, {
+        kind: 'ap_line_recode', community_id: inv.community_id, invoice_id: id, original_je_id: originalJeId,
+        corrected_je_id: corrected.corrected_je_id, correcting_je_id: corrected.reversal_je_id, replacement_je_id: jeId || null,
+        actor_user_id: (ctx.user && ctx.user.id) || null, actor_name: who,
+        reason: `Line ${line.line_number} ${prevLabel} -> ${acct.account_number} ${acct.account_name}: ${reason}`,
+      });
+      if (!jeId) auditWarning = [auditWarning, 'The original entry was reversed but no replacement was posted (every line must be coded, and the lines must add up to the bill); the bill is not on the books until it is re-posted.'].filter(Boolean).join(' ');
       const { error: audErr } = await supabase.from('ap_invoice_approvals').insert({
         invoice_id: id, action: 'recoded', user_id: (ctx.user && ctx.user.id) || null, user_name: who,
         amount_at_time_cents: line.amount_cents,
-        notes: notYetPaid
-          ? `Line ${line.line_number} ("${String(line.description || '').slice(0, 120)}") corrected from ${prevLabel} to ${acct.account_number} ${acct.account_name} before payment. ${describeClear(cleared)}${reason ? ' Reason: ' + reason : ''}`
-          : `Line ${line.line_number} ("${String(line.description || '').slice(0, 120)}") re-coded from ${prevLabel} to ${acct.account_number} ${acct.account_name} after the bill was paid. ${describeClear(cleared)} Re-posted. Reason: ${reason}`,
+        notes: `Line ${line.line_number} ("${String(line.description || '').slice(0, 120)}") re-coded from ${prevLabel} to ${acct.account_number} ${acct.account_name} ${notYetPaid ? 'before' : 'after'} payment. ${describeCorrection(corrected, await jeReference(jeId))} Reason: ${reason}`,
       });
-      if (audErr) { console.error('[ap] line recode audit FAILED:', audErr.message); auditWarning = 'The line was re-coded and the journal entry adjusted, but the audit note could not be saved.'; }
+      if (audErr) { console.error('[ap] line recode audit FAILED:', audErr.message); auditWarning = [auditWarning, 'The audit note on the bill could not be saved.'].filter(Boolean).join(' '); }
     }
     res.json({ ok: true, gl_account: `${acct.account_number} ${acct.account_name}`, posting_journal_entry_id: jeId, posted: !!jeId, previous_gl_account: prevLabel, warning: auditWarning });
   } catch (err) { console.error('[ap] line code failed:', err); res.status(500).json({ error: safeErrorMessage(err) }); }
@@ -1589,15 +1604,19 @@ router.post('/invoices/:id/hold-prior-periods', express.json(), async (req, res)
     if (!glLines.length && inv.coded_gl_account_id) glLines.push({ accountId: inv.coded_gl_account_id, cents: r.current_cents, memo: 'Current month' });
     if (!glLines.length) return res.status(400).json({ error: 'current_line_uncoded', detail: 'Code the current-month line to an expense account first.' });
 
-    // Replace the over-stated accrual (unpaid → delete + repost, no reversal).
-    if (inv.posting_journal_entry_id) {
-      // Shared rule (lib/accounting/clear_entry.js): deleted only if nothing
-      // references it and its period is open; every write checked.
+    // Correct the over-stated accrual: a posted entry is permanent (Ed
+    // 2026-10-09), so it is reversed (lib/accounting/correct_entry.js) and the
+    // current month posted as its replacement, with the link recorded below.
+    const originalJeId = inv.posting_journal_entry_id;
+    const holdReason = `Prior-period restatement: ${r.prior_period_count} prior invoice(s)${r.has_adjustment ? ' + re-listed adjustment' : ''} held; current month ${(r.current_cents / 100).toFixed(2)} only.${(req.body || {}).reason ? ' ' + String(req.body.reason).trim() : ''}`;
+    let corrected = null;
+    if (originalJeId) {
       try {
-        await clearPostedEntry({ supabase, journal_entry_id: inv.posting_journal_entry_id, allow_delete: true, posted_by_user_id: (ctx.user && ctx.user.id) || null, void_reason: `Prior-period restatement held; current month re-posted (${who})` });
+        await assertCorrectionLogReady(supabase);
+        corrected = await voidLiveEntry({ supabase, journal_entry_id: originalJeId, uncommitted: true, posted_by_user_id: (ctx.user && ctx.user.id) || null, void_reason: `${holdReason} (${who})` });
       } catch (e) {
-        console.error('[ap] hold-prior: clearing the over-stated accrual FAILED, refusing to re-post:', e.code || '', e.message);
-        return res.status(e.code === 'lines_restore_failed' ? 500 : 409).json({ error: e.code || 'replace_failed', detail: `${e.detail || 'Could not take the over-stated entry off the books.'} Nothing was changed.` });
+        console.error('[ap] hold-prior: correcting the over-stated accrual FAILED, refusing to re-post:', e.code || '', e.message);
+        return res.status(409).json({ error: e.code || 'correction_failed', detail: `${e.detail || 'Could not reverse the over-stated entry.'} Nothing was changed.` });
       }
       const { error: ptrErr } = await supabase.from('ap_invoices').update({ posting_journal_entry_id: null }).eq('id', id);
       if (ptrErr) console.warn('[ap] hold-prior: could not clear the old posting pointer (it is replaced below):', ptrErr.message);
@@ -1610,7 +1629,13 @@ router.post('/invoices/:id/hold-prior-periods', express.json(), async (req, res)
       classificationReason: `Prior-period restatement — current month only; ${r.prior_period_count} prior invoice(s)${r.has_adjustment ? ' + re-listed adjustment' : ''} held (${who})`,
       sourceDocumentPath: inv.source_storage_path || null,
     });
-    if (!newJe) return res.status(500).json({ error: 'repost_failed', detail: 'Could not re-post the current-month accrual; nothing was changed.' });
+    if (!newJe) {
+      if (corrected) {
+        const w = await recordCorrection(supabase, { kind: 'ap_hold_prior_periods', community_id: inv.community_id, invoice_id: id, original_je_id: originalJeId, corrected_je_id: corrected.corrected_je_id, correcting_je_id: corrected.reversal_je_id, replacement_je_id: null, actor_user_id: (ctx.user && ctx.user.id) || null, actor_name: who, reason: holdReason });
+        return res.status(500).json({ error: 'repost_failed', detail: `The over-stated entry was reversed, but the current-month accrual could not be posted, so this bill is not on the books. Nothing else changed; re-post it.${w ? ' ' + w : ''}` });
+      }
+      return res.status(500).json({ error: 'repost_failed', detail: 'Could not post the current-month accrual; nothing was changed.' });
+    }
 
     // Hold the prior-period + adjustment lines: zero the amount, keep the record.
     let heldCount = 0;
@@ -1627,14 +1652,21 @@ router.post('/invoices/:id/hold-prior-periods', express.json(), async (req, res)
     const singleAcct = new Set(glLines.map((g) => g.accountId)).size === 1 ? glLines[0].accountId : (inv.coded_gl_account_id || null);
     await supabase.from('ap_invoices').update({ total_cents: r.current_cents, coded_gl_account_id: singleAcct, posting_journal_entry_id: newJe, updated_at: new Date().toISOString() }).eq('id', id);
 
-    // Audit trail on the bill.
+    // The correction link (data) and the audit trail on the bill.
     let auditWarning = null;
+    if (corrected) {
+      auditWarning = await recordCorrection(supabase, {
+        kind: 'ap_hold_prior_periods', community_id: inv.community_id, invoice_id: id, original_je_id: originalJeId,
+        corrected_je_id: corrected.corrected_je_id, correcting_je_id: corrected.reversal_je_id, replacement_je_id: newJe,
+        actor_user_id: (ctx.user && ctx.user.id) || null, actor_name: who, reason: holdReason,
+      });
+    }
     const { error: audErr } = await supabase.from('ap_invoice_approvals').insert({
       invoice_id: id, action: 'recoded', user_id: (ctx.user && ctx.user.id) || null, user_name: who,
       amount_at_time_cents: inv.total_cents,
-      notes: `Prior-period restatement corrected: payable reduced from ${(inv.total_cents / 100).toLocaleString('en-US', { style: 'currency', currency: 'USD' })} to ${(r.current_cents / 100).toLocaleString('en-US', { style: 'currency', currency: 'USD' })} (current month only). ${heldCount} line(s) held (prior invoices${r.has_adjustment ? ' + re-listed adjustment' : ''}); accrual re-posted, no reversal (unpaid).`,
+      notes: `Prior-period restatement corrected: payable reduced from ${(inv.total_cents / 100).toLocaleString('en-US', { style: 'currency', currency: 'USD' })} to ${(r.current_cents / 100).toLocaleString('en-US', { style: 'currency', currency: 'USD' })} (current month only). ${heldCount} line(s) held (prior invoices${r.has_adjustment ? ' + re-listed adjustment' : ''}). ${corrected ? describeCorrection(corrected, await jeReference(newJe)) : 'Accrual posted.'}`,
     });
-    if (audErr) { console.error('[ap] hold-prior audit FAILED:', audErr.message); auditWarning = 'Adjusted, but the audit note could not be saved.'; }
+    if (audErr) { console.error('[ap] hold-prior audit FAILED:', audErr.message); auditWarning = [auditWarning, 'Adjusted, but the audit note could not be saved.'].filter(Boolean).join(' '); }
 
     res.json({ ok: true, held_count: heldCount, current_cents: r.current_cents, previous_total_cents: inv.total_cents, posting_journal_entry_id: newJe, warning: auditWarning });
   } catch (err) { console.error('[ap] hold-prior-periods failed:', err); res.status(500).json({ error: safeErrorMessage(err) }); }
