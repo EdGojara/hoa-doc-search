@@ -1147,6 +1147,11 @@ app.use('/api/financial-statements', require('./api/financial_statements'));
 app.get('/admin/financial-statements', (req, res) => {
   res.sendFile(require('path').join(__dirname, 'public', 'financial-statements.html'));
 });
+// Financial Intelligence slice 1: next-year working (management) forecast with driver bridges.
+app.use('/api/working-forecast', require('./api/working_forecast'));
+app.get('/admin/working-forecast', (req, res) => {
+  res.sendFile(require('path').join(__dirname, 'public', 'working-forecast.html'));
+});
 app.get('/admin/accounting', (req, res) => {
   res.sendFile(require('path').join(__dirname, 'public', 'accounting.html'));
 });

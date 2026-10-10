@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Working Forecast · Bedrock</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@600&family=Inter:wght@400;500;600;700&display=swap">
+<style>
+  :root { --navy:#0B1D34; --gold:#D4AF37; --gold-ink:#B8952B; --ink:#1A2233; --ink2:#4A5468; --ink3:#7B8394; --rule:#E4E1D7; --rule2:#EFEDE6; --bg:#FBFAF6; --sheet:#fff;
+          --warnbg:#FFF5DD; --warn:#7A5408; --badbg:#FBEDEB; --bad:#8E2A22; --okbg:#EAF3EE; --ok:#1F5F43; --na:#7A6F55; --nabg:#F4F0E4; --chip:#F3F1EA; }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --navy:#C9D6EA; --ink:#E7EBF2; --ink2:#B4BDCC; --ink3:#8790A1; --rule:#2A3444; --rule2:#212B3A; --bg:#0E141D; --sheet:#141C28; --warnbg:#2E2410; --warn:#F0CF84; --badbg:#2D1715; --bad:#F0A096; --okbg:#13261C; --ok:#7FC8A3; --na:#C4B48F; --nabg:#262619; --chip:#1C2533; } }
+  :root[data-theme="dark"] { --navy:#C9D6EA; --ink:#E7EBF2; --ink2:#B4BDCC; --ink3:#8790A1; --rule:#2A3444; --rule2:#212B3A; --bg:#0E141D; --sheet:#141C28; --warnbg:#2E2410; --warn:#F0CF84; --badbg:#2D1715; --bad:#F0A096; --okbg:#13261C; --ok:#7FC8A3; --na:#C4B48F; --nabg:#262619; --chip:#1C2533; }
+  * { box-sizing:border-box; } [hidden] { display:none !important; }
+  body { margin:0; background:var(--bg); color:var(--ink); font-family:Inter,system-ui,-apple-system,sans-serif; font-size:13px; }
+  .bar { position:sticky; top:0; z-index:5; background:#0B1D34; color:#fff; padding:10px 16px; display:flex; flex-wrap:wrap; gap:12px; align-items:center; border-bottom:2px solid var(--gold); }
+  .bar a.home { color:#fff; text-decoration:none; font-family:'Cormorant Garamond',Georgia,serif; font-size:20px; }
+  .bar label { font-size:11px; letter-spacing:.06em; text-transform:uppercase; color:#C9D6EA; display:flex; flex-direction:column; gap:3px; }
+  .bar select, .bar input { font:inherit; font-size:13px; padding:5px 8px; border-radius:6px; border:1px solid #2B4466; background:#12263F; color:#fff; }
+  .wrap { max-width:1440px; margin:0 auto; padding:18px 16px 60px; }
+  h1 { font-family:'Cormorant Garamond',Georgia,serif; font-size:30px; color:var(--navy); margin:4px 0 2px; font-weight:600; }
+  .sub { color:var(--ink3); font-size:12.5px; }
+  .kind { display:inline-block; font-size:10.5px; font-weight:700; letter-spacing:.1em; text-transform:uppercase; color:var(--gold-ink); border:1px solid var(--gold-ink); border-radius:4px; padding:1px 6px; margin-left:8px; vertical-align:middle; }
+  .distinct { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin:12px 0; }
+  .distinct div { background:var(--sheet); border:1px solid var(--rule); border-radius:8px; padding:9px 12px; font-size:12.5px; color:var(--ink2); }
+  .distinct b { color:var(--navy); display:block; font-size:12px; letter-spacing:.06em; text-transform:uppercase; margin-bottom:2px; }
+  .distinct .on { border-color:var(--gold-ink); box-shadow:inset 3px 0 0 var(--gold); }
+  .status { border-radius:10px; padding:12px 16px; margin:10px 0 14px; border:1px solid; }
+  .status.incomplete { background:var(--badbg); border-color:#E9C8C3; color:var(--bad); } .status.partial { background:var(--warnbg); border-color:#EAD9A8; color:var(--warn); } .status.supported { background:var(--okbg); border-color:#BFD9CA; color:var(--ok); }
+  .status h3 { margin:0 0 6px; font-size:12px; letter-spacing:.1em; text-transform:uppercase; }
+  .status ul { margin:0; padding-left:18px; color:var(--ink2); } .status li { margin:3px 0; }
+  .cards { display:grid; grid-template-columns:repeat(6, minmax(0,1fr)); gap:10px; margin-bottom:14px; }
+  .card { background:var(--sheet); border:1px solid var(--rule); border-radius:10px; padding:11px 13px; }
+  .card .l { font-size:10.5px; letter-spacing:.08em; text-transform:uppercase; color:var(--ink3); font-weight:600; }
+  .card .v { font-size:20px; font-weight:600; color:var(--navy); margin-top:4px; font-variant-numeric:tabular-nums; }
+  .card .s { font-size:11.5px; color:var(--ink3); margin-top:3px; font-variant-numeric:tabular-nums; }
+  .twocol { display:grid; grid-template-columns:1.2fr 1fr; gap:10px; margin-bottom:14px; }
+  .panel { background:var(--sheet); border:1px solid var(--rule); border-radius:10px; padding:11px 14px; }
+  .panel h4 { margin:0 0 6px; font-size:11px; letter-spacing:.1em; text-transform:uppercase; color:var(--ink2); }
+  .drv { display:flex; justify-content:space-between; gap:10px; padding:5px 0; border-bottom:1px solid var(--rule2); font-size:12.5px; }
+  .drv:last-child { border-bottom:0; } .drv span.k { color:var(--ink3); font-size:11.5px; }
+  .confbar { display:flex; height:10px; border-radius:5px; overflow:hidden; margin:6px 0; background:var(--rule2); }
+  .confbar i { display:block; } .c-high{background:#1F5F43} .c-medium{background:#6E9C82} .c-low{background:#C99A2E} .c-unknown{background:#A9A39A}
+  .tools { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin:6px 0 8px; }
+  .seg { display:inline-flex; border:1px solid var(--rule); border-radius:6px; overflow:hidden; }
+  .seg button { font:inherit; font-size:12px; border:0; background:var(--sheet); color:var(--ink2); padding:5px 11px; cursor:pointer; }
+  .seg button.on { background:var(--navy); color:var(--sheet); }
+  .tools input { font:inherit; font-size:12.5px; padding:5px 9px; border:1px solid var(--rule); border-radius:6px; background:var(--sheet); color:var(--ink); min-width:200px; }
+  .gridwrap { background:var(--sheet); border:1px solid var(--rule); border-radius:10px; overflow:auto; }
+  table.g { border-collapse:collapse; width:100%; font-variant-numeric:tabular-nums; min-width:1280px; }
+  table.g th { position:sticky; top:0; background:var(--sheet); z-index:1; font-size:10px; letter-spacing:.06em; text-transform:uppercase; color:var(--ink3); font-weight:600; text-align:right; padding:10px 8px 7px; border-bottom:1px solid var(--ink3); line-height:1.25; vertical-align:bottom; }
+  table.g th:first-child, table.g th:nth-child(2) { text-align:left; }
+  table.g th.model { color:var(--gold-ink); }
+  table.g td { padding:6px 8px; border-bottom:1px solid var(--rule2); text-align:right; white-space:nowrap; }
+  table.g td:first-child { text-align:left; white-space:normal; min-width:220px; }
+  table.g td:nth-child(2) { text-align:left; color:var(--ink3); font-size:11.5px; }
+  table.g tr.sec td { font-family:'Cormorant Garamond',Georgia,serif; font-size:17px; color:var(--navy); font-weight:600; padding-top:14px; text-align:left; border-bottom:1px solid var(--rule); }
+  table.g tr.ln { cursor:pointer; } table.g tr.ln:hover td { background:rgba(212,175,55,.07); }
+  table.g tr.tot td { font-weight:700; color:var(--navy); border-top:1px solid var(--navy); border-bottom:2px solid var(--navy); }
+  table.g td.model { font-weight:600; color:var(--navy); } table.g td.final { font-weight:600; }
+  .an { color:var(--ink3); font-size:11px; margin-right:6px; }
+  .chip { display:inline-block; font-size:10.5px; font-weight:600; padding:1px 6px; border-radius:4px; background:var(--chip); color:var(--ink3); letter-spacing:.02em; }
+  .chip.rev { background:var(--warnbg); color:var(--warn); } .chip.inc { background:var(--badbg); color:var(--bad); } .chip.ok { background:var(--okbg); color:var(--ok); } .chip.na { background:var(--nabg); color:var(--na); } .chip.ovr { background:#EEF0F8; color:#33427A; }
+  .dot { display:inline-block; width:7px; height:7px; border-radius:50%; margin-left:5px; vertical-align:middle; }
+  .conf { font-size:11px; font-weight:600; } .conf.medium{color:#4C7A62} .conf.low{color:#A07415} .conf.unknown{color:#8C857A} .conf.high{color:#1F5F43} .conf.mgmt{color:#33427A}
+  .neg { color:var(--ink); }
+  /* drawer */
+  #drawer { position:fixed; top:0; right:0; bottom:0; width:min(620px,100%); background:var(--sheet); border-left:1px solid var(--rule); box-shadow:-8px 0 24px rgba(0,0,0,.12); transform:translateX(102%); transition:transform .18s; z-index:20; display:flex; flex-direction:column; }
+  #drawer.open { transform:none; }
+  #drawer header { padding:14px 18px 10px; border-bottom:1px solid var(--rule); display:flex; gap:10px; align-items:flex-start; }
+  #drawer h2 { margin:0; font-family:'Cormorant Garamond',Georgia,serif; font-size:23px; color:var(--navy); flex:1; line-height:1.15; }
+  #drawer .body { padding:12px 18px 30px; overflow-y:auto; flex:1; }
+  .bridge { width:100%; border-collapse:collapse; font-variant-numeric:tabular-nums; margin:6px 0 10px; }
+  .bridge td { padding:7px 4px; border-bottom:1px solid var(--rule2); vertical-align:top; }
+  .bridge td.amt { text-align:right; white-space:nowrap; width:130px; font-weight:600; }
+  .bridge tr.start td, .bridge tr.end td { font-weight:700; color:var(--navy); }
+  .bridge tr.end td { border-top:1px solid var(--navy); border-bottom:3px double var(--navy); }
+  .bridge .op { color:var(--ink3); width:18px; font-weight:700; }
+  .bridge .note { font-size:11.5px; color:var(--ink3); margin-top:2px; line-height:1.4; }
+  .bridge .meta { font-size:10.5px; color:var(--ink3); margin-top:3px; }
+  .months { display:grid; grid-template-columns:repeat(12,1fr); gap:3px; align-items:end; height:70px; margin:6px 0 2px; }
+  .months i { display:block; background:#C9B37A; border-radius:2px 2px 0 0; min-height:1px; }
+  .mlab { display:grid; grid-template-columns:repeat(12,1fr); gap:3px; font-size:9.5px; color:var(--ink3); text-align:center; }
+  h5 { font-size:11px; letter-spacing:.1em; text-transform:uppercase; color:var(--ink2); margin:16px 0 6px; }
+  .form { border:1px solid var(--rule); border-radius:8px; padding:10px 12px; margin:8px 0; background:var(--bg); }
+  .form label { display:block; font-size:11px; color:var(--ink3); margin:6px 0 2px; }
+  .form input, .form select, .form textarea { font:inherit; font-size:13px; width:100%; padding:6px 8px; border:1px solid var(--rule); border-radius:6px; background:var(--sheet); color:var(--ink); }
+  .form textarea { min-height:52px; }
+  .btn { font:inherit; font-size:13px; padding:6px 12px; border-radius:6px; border:1px solid var(--rule); background:var(--sheet); color:var(--ink); cursor:pointer; }
+  .btn.gold { background:var(--gold); color:#0B1D34; border-color:var(--gold); font-weight:600; }
+  .msg { padding:12px 14px; border-radius:8px; background:var(--sheet); border:1px solid var(--rule); color:var(--ink2); }
+  .hist { font-size:12px; color:var(--ink2); border-left:2px solid var(--rule); padding-left:8px; margin:6px 0; }
+  .flag { font-size:12px; color:var(--warn); background:var(--warnbg); border-radius:6px; padding:6px 9px; margin:6px 0; }
+  .cblock { border:1px solid var(--rule); border-radius:8px; padding:8px 10px; margin:6px 0; background:var(--bg); font-size:12.5px; }
+  .calc { font-family:ui-monospace,Consolas,monospace; font-size:11px; color:var(--ink2); margin-top:3px; }
+  @media (max-width:1100px) { .cards { grid-template-columns:repeat(3,1fr); } .twocol, .distinct { grid-template-columns:1fr; } }
+  @media (max-width:640px) { .cards { grid-template-columns:1fr 1fr; } }
+</style>
+</head>
+<body>
+<div class="bar">
+  <a class="home" href="/admin/accounting">trustEd</a>
+  <label>Community<select id="comm"></select></label>
+  <label>Forecast year<select id="year"><option value="2027">2027</option></select></label>
+  <label>Actuals through<input id="asof" type="date"></label>
+</div>
+<div class="wrap">
+  <h1 id="title">Working Forecast</h1>
+  <div class="sub" id="subtitle"></div>
+  <div class="distinct">
+    <div class="on"><b>Management Forecast · this page</b>Our best current estimate of what will happen, built from drivers with the evidence behind every number. Overrides keep both the model and the reason.</div>
+    <div><b>Board Budget · later</b>The plan the board approves. It will be adopted from this forecast; nothing here approves or changes a budget.</div>
+  </div>
+  <div id="out"><div class="msg">Building the forecast…</div></div>
+</div>
+<aside id="drawer" aria-hidden="true">
+  <header><div style="flex:1"><h2 id="dTitle"></h2><div class="sub" id="dSub"></div></div><button class="btn" id="dClose">Close</button></header>
+  <div class="body" id="dBody"></div>
+</aside>
+<script>
+(function () {
+  const $ = (id) => document.getElementById(id);
+  const esc = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  const dol = (c, cents) => { if (c === null || c === undefined) return null; const n = Number(c) / 100; const t = Math.abs(n).toLocaleString('en-US', cents ? { minimumFractionDigits: 2, maximumFractionDigits: 2 } : { maximumFractionDigits: 0 }); return n < 0 ? `(${t})` : t; };
+  const m = (c, cents) => { const v = dol(c, cents); return v === null ? '<span class="chip na" title="Not available">n/a</span>' : (Number(c) === 0 ? '–' : v); };
+  const signed = (c) => (Number(c) > 0 ? '+' : '') + (Number(c) === 0 ? '0' : dol(c));
+  const S = { cid: null, year: 2027, asof: null, model: null, filter: 'all', q: '', admin: false };
+  window.supa = null;
+  async function authHeader() { try { if (window.supa) { const { data: { session } } = await window.supa.auth.getSession(); if (session && session.access_token) return { Authorization: 'Bearer ' + session.access_token }; } } catch (_) {} return {}; }
+  (async () => { try { const cfg = await fetch('/api/auth/config').then((r) => r.json()); if (!cfg.enabled) return; if (!window.supabase) await new Promise((res, rej) => { const s = document.createElement('script'); s.src = 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4'; s.onload = res; s.onerror = rej; document.head.appendChild(s); }); window.supa = window.supabase.createClient(cfg.supabase_url, cfg.supabase_anon_key); const me = await fetch('/api/me', { headers: await authHeader() }).then((r) => r.json()).catch(() => null); S.admin = !!(me && me.user && me.user.role === 'admin'); } catch (e) { console.warn('[forecast] auth bootstrap failed:', e.message); } })();
+
+  async function load() {
+    $('out').innerHTML = '<div class="msg">Building the forecast from the books…</div>';
+    const q = new URLSearchParams({ community_id: S.cid, year: S.year, as_of: S.asof }); history.replaceState(null, '', '?' + q);
+    try {
+      const r = await fetch(`/api/working-forecast/${encodeURIComponent(S.cid)}?year=${S.year}&as_of=${S.asof}`); const j = await r.json();
+      if (!r.ok) { $('out').innerHTML = `<div class="msg">${esc(j.detail || j.error || 'The forecast could not be built.')}</div>`; return; }
+      S.model = j; render();
+    } catch (e) { $('out').innerHTML = `<div class="msg">${esc(e.message)}</div>`; }
+  }
+
+  const confClass = (c) => (c === 'management decision' ? 'mgmt' : c);
+  const evChip = (l) => l.override ? '<span class="chip ovr">Override</span>' : l.evidence_status === 'incomplete_source_data' ? '<span class="chip inc">Incomplete data</span>' : l.evidence_status === 'needs_review' ? '<span class="chip rev">Needs review</span>' : '<span class="chip ok">Supported</span>';
+  function cellNorm(l) { if (l.columns.normalization_cents) return signed(l.columns.normalization_cents); return l.columns.normalization_status === 'needs_review' ? '<span class="chip rev">Review</span>' : '–'; }
+  const cellDrv = (v, status) => (v === null || v === undefined ? (status === 'none' ? '–' : '<span class="chip na">' + (status || 'none on file') + '</span>') : signed(v));
+
+  function render() {
+    const M = S.model, s = M.summary;
+    $('title').innerHTML = `${M.target_year} Working Forecast <span class="kind">Management forecast</span>`;
+    $('subtitle').textContent = `${M.community.legal_name || M.community.name} · built from the ${M.base_year} approved budget and actuals through ${M.as_of} · model ${M.model_version} · ${M.model_sha256.slice(0, 12)}`;
+    const ds = M.data_status;
+    const status = `<div class="status ${ds.status}"><h3>Forecast data status: ${ds.status === 'incomplete' ? 'Incomplete' : ds.status === 'partial' ? 'Partial' : 'Supported'}${ds.revenue_reliable ? '' : ' · revenue side not reliable yet'}</h3><ul>${ds.reasons.map((r) => `<li>${esc(r.text)}</li>`).join('')}<li>${esc(ds.expense_note)}</li></ul></div>`;
+    const card = (l, v, sub) => `<div class="card"><div class="l">${l}</div><div class="v">${v}</div><div class="s">${sub || ''}</div></div>`;
+    const cnt = s.confidence; const totalL = Object.values(cnt).reduce((a, b) => a + b, 0) || 1;
+    const cards = `<div class="cards">
+      ${card('TrustEd ' + M.target_year + ' model', m(s.model.expense), `expense · revenue ${m(s.model.revenue)} · net ${m(s.model.net)}`)}
+      ${card('Working total', m(s.working.expense), `${s.overrides} override${s.overrides === 1 ? '' : 's'} · net ${m(s.working.net)}`)}
+      ${card('vs ' + M.base_year + ' approved', signed(s.change_vs_approved.working.expense), `expense · approved ${m(s.approved_base_year.expense)}`)}
+      ${card('vs normalized ' + M.base_year, signed(s.change_vs_normalized.working.expense), `expense · normalized ${m(s.normalized_base_year.expense)}`)}
+      ${card('Needs evidence / review', s.needs_evidence.lines + ' lines', `${m(s.needs_evidence.model_cents)} of modeled value`)}
+      ${card('Model confidence', (cnt.medium || 0) + (cnt.high || 0) + ' of ' + totalL, `lines at medium or better<div class="confbar">${['high', 'medium', 'low', 'unknown'].map((k) => cnt[k] ? `<i class="c-${k}" style="width:${(cnt[k] / totalL) * 100}%" title="${k}: ${cnt[k]}"></i>` : '').join('')}</div>`)}
+    </div>`;
+    const drivers = `<div class="twocol"><div class="panel"><h4>Top forecast drivers</h4>${s.top_drivers.map((d) => `<div class="drv"><div>${esc(d.account)}<br><span class="k">${esc(d.label)}</span></div><div style="font-weight:600">${signed(d.amount_cents)}</div></div>`).join('') || '<div class="sub">None.</div>'}</div>
+      <div class="panel"><h4>Assumptions in this model</h4>${(s.assumptions || []).map((a) => `<div class="drv"><div>${esc(a.text)}<br><span class="k">${esc(a.source || '')}</span></div><div><span class="conf ${a.confidence}">${esc(a.confidence)} confidence</span></div></div>`).join('')}
+      <div class="drv"><div>Revenue is not inflated by the model<br><span class="k">Assessment changes are board decisions; revenue lines carry the ${M.base_year} level.</span></div><div></div></div>
+      <div class="drv"><div>Unknown is not zero<br><span class="k">Drivers without evidence show "needs evidence" and are excluded from the arithmetic, lowering confidence.</span></div><div></div></div></div></div>`;
+    const tools = `<div class="tools"><div class="seg">${[['all', 'All lines'], ['review', 'Needs review'], ['incomplete', 'Incomplete data'], ['override', 'Overridden']].map(([k, t]) => `<button data-f="${k}" class="${S.filter === k ? 'on' : ''}">${t}</button>`).join('')}</div><input id="q" placeholder="Find an account" value="${esc(S.q)}"></div>`;
+    const keep = (l) => (S.filter === 'all' || (S.filter === 'review' && l.evidence_status === 'needs_review') || (S.filter === 'incomplete' && l.evidence_status === 'incomplete_source_data') || (S.filter === 'override' && l.override))
+      && (!S.q || `${l.account_number} ${l.account_name}`.toLowerCase().includes(S.q.toLowerCase()));
+    const head = `<tr><th>Account</th><th>Fund</th><th>${M.base_year}<br>approved</th><th>${M.base_year}<br>YTD actual</th><th>${M.base_year}<br>forecast</th><th>Normal-<br>ization</th><th>Contract /<br>known</th><th>Inflation /<br>rate</th><th>Recurring<br>volatility</th><th class="model">TrustEd<br>${M.target_year}</th><th>Override</th><th>Final<br>${M.target_year}</th><th>Confidence</th><th>Evidence</th></tr>`;
+    const rows = [];
+    for (const [type, label] of [['revenue', 'Revenue'], ['expense', 'Expenses']]) {
+      const ls = M.lines.filter((l) => l.account_type === type); const vis = ls.filter(keep);
+      rows.push(`<tr class="sec"><td colspan="14">${label}</td></tr>`);
+      for (const l of vis) {
+        const b = l.base_year; const fb = l.base.choice === 'approved_budget';
+        const st = (d) => (l.bridge.find((x) => x.driver === d) || {}).status;
+        rows.push(`<tr class="ln" data-k="${esc(l.account_id + '|' + (l.fund_id || ''))}"><td><span class="an">${esc(l.account_number)}</span>${esc(l.account_name)}</td><td>${esc(l.fund_code || '')}</td>
+          <td>${m(b.approved_budget_cents)}</td><td>${m(b.ytd_actual_cents)}</td><td>${m(b.current_forecast_cents)}${fb ? '<span class="dot" style="background:#C99A2E" title="Base uses the approved budget: this year’s actual is incomplete"></span>' : ''}</td>
+          <td>${cellNorm(l)}</td><td>${cellDrv(l.columns.contract_cents, 'none on file')}</td><td>${cellDrv(l.columns.rate_cents, st('rate') === 'not_applicable' ? 'n/a' : 'not set')}</td><td>${cellDrv(l.columns.volatility_cents, 'n/a')}</td>
+          <td class="model">${m(l.recommendation_cents)}</td><td>${l.override ? m(l.override.amount_cents) : '–'}</td><td class="final">${m(l.final_cents)}</td>
+          <td><span class="conf ${confClass(l.confidence.final)}">${esc(l.confidence.final)}</span></td><td>${evChip(l)}</td></tr>`);
+      }
+      const t = (f) => ls.reduce((a, l) => a + Number(f(l) || 0), 0);
+      rows.push(`<tr class="tot"><td>Total ${label.toLowerCase()}</td><td></td><td>${m(t((l) => l.base_year.approved_budget_cents))}</td><td>${m(t((l) => l.base_year.ytd_actual_cents))}</td><td>${m(t((l) => l.base_year.current_forecast_cents))}</td><td></td><td></td><td>${m(t((l) => l.columns.rate_cents))}</td><td></td><td class="model">${m(t((l) => l.recommendation_cents))}</td><td></td><td class="final">${m(t((l) => l.final_cents))}</td><td></td><td></td></tr>`);
+    }
+    $('out').innerHTML = status + cards + drivers + tools + `<div class="gridwrap"><table class="g"><thead>${head}</thead><tbody>${rows.join('')}</tbody></table></div>`;
+    document.querySelectorAll('.seg button').forEach((b) => b.addEventListener('click', () => { S.filter = b.dataset.f; render(); }));
+    $('q').addEventListener('input', (e) => { S.q = e.target.value; const pos = e.target.selectionStart; render(); const q = $('q'); q.focus(); q.setSelectionRange(pos, pos); });
+    document.querySelectorAll('tr.ln').forEach((tr) => tr.addEventListener('click', () => openLine(tr.dataset.k)));
+  }
+
+  // ---------------------------------------------------------------- bridge drawer
+  $('dClose').addEventListener('click', () => $('drawer').classList.remove('open'));
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') $('drawer').classList.remove('open'); });
+  const OP = { one_time: '−', omitted_recurring: '+', contract: '+', rate: '+', volatility: '+' };
+  const XSTAT = { verified_executed: '<span class="chip ok">Verified executed</span>', likely_executed: '<span class="chip rev">Likely executed · not verified</span>', detected: '<span class="chip na">Detected · not verified</span>' };
+  const rateTxt = (r) => (r ? `${dol(r.cents, true)} ${esc(r.freq)}` : 'n/a');
+  function contractBlock(ev) {
+    if (!ev || !ev.contract) return '';
+    const c = ev.contract; const d = c.document || {};
+    return `<div class="cblock"><div><b>${esc(c.vendor || 'Contract')}</b> ${XSTAT[c.execution_status] || ''}</div>
+      <div class="note">Term ${esc(c.effective_date || '?')} to ${esc(c.end_date || 'open')}${c.service ? ' · ' + esc(c.service) : ''}</div>
+      <div class="note">Source: ${esc(d.file_path ? d.file_path.split('/').pop() : 'document')} · version ${esc(d.document_version ?? 1)} · sha256 ${esc((d.file_hash || '').slice(0, 12))}${d.source_message_id ? ' · email ' + esc(d.source_message_id) : ''}</div>
+      ${ev.old_rate || ev.new_rate ? `<div class="note">Rate: ${rateTxt(ev.old_rate)} → ${rateTxt(ev.new_rate)}</div>` : ''}
+      ${(ev.calculation || []).map((x) => `<div class="calc">${esc(x)}</div>`).join('')}
+      ${ev.contract_cost_cents != null ? `<div class="note">Contract cost ${dol(ev.contract_cost_cents, true)} − ${dol(ev.base_share_cents, true)} of the base for those months</div>` : ''}
+      ${ev.would_be_cost_cents != null ? `<div class="note">Would price the year at ${dol(ev.would_be_cost_cents, true)} once verified (not applied).</div>` : ''}
+      ${c.execution_status === 'verified_executed' ? `<div class="note">Verified by ${esc(c.verified_by)} · ${esc(String(c.verified_at).slice(0, 16).replace('T', ' '))} · ${esc(c.verification_source)}</div>` : `<div class="note">Machine triage: ${esc(c.execution_reason || 'n/a')}${c.execution_confidence != null ? ` (score ${esc(c.execution_confidence)})` : ''}</div>`}
+    </div>`;
+  }
+  const STATUS = { applied: '', needs_verification: '<span class="chip rev">Needs verification</span>', needs_review: '<span class="chip rev">Needs review</span>', needs_evidence: '<span class="chip rev">Needs evidence</span>', no_evidence: '<span class="chip na">None on file</span>', not_available: '<span class="chip na">Not available</span>', not_applicable: '<span class="chip na">Not applicable</span>', none: '<span class="chip">None</span>' };
+  function openLine(k) {
+    const M = S.model; const l = M.lines.find((x) => `${x.account_id}|${x.fund_id || ''}` === k); if (!l) return;
+    $('dTitle').textContent = `${l.account_number} ${l.account_name}`;
+    $('dSub').textContent = `${l.fund_code || ''} · ${l.account_type} · ${M.target_year} forecast bridge`;
+    const b = l.base_year;
+    const bridgeRows = [`<tr class="start"><td class="op"></td><td>${M.base_year} expected spend (base)<div class="note">${esc(l.base.note)}</div></td><td class="amt">${dol(l.base.cents, true)}</td></tr>`];
+    for (const i of l.bridge) {
+      const amt = i.status === 'applied' ? (Number(i.amount_cents) < 0 ? `(${dol(-i.amount_cents, true)})` : dol(i.amount_cents, true)) : STATUS[i.status] || esc(i.status);
+      const meta = i.status === 'applied' ? `<div class="meta">${esc(i.source || '')}${i.actor ? ' · ' + esc(i.actor) : ''}${i.at ? ' · ' + esc(String(i.at).slice(0, 16).replace('T', ' ')) : ''} · ${esc(i.confidence || '')} confidence</div>` : '';
+      bridgeRows.push(`<tr><td class="op">${OP[i.driver] || ''}</td><td>${esc(i.label)}${i.assumption ? `<div class="note">${esc(i.assumption)}</div>` : ''}${i.note ? `<div class="note">${esc(i.note)}</div>` : ''}${i.driver === 'contract' ? contractBlock(i.evidence) : ''}${meta}</td><td class="amt">${amt}</td></tr>`);
+    }
+    bridgeRows.push(`<tr class="end"><td class="op">=</td><td>TrustEd ${M.target_year} model recommendation<div class="note">Model confidence: ${esc(l.confidence.model)}. Items marked needs evidence / not available are excluded, not counted as zero.</div></td><td class="amt">${dol(l.recommendation_cents, true)}</td></tr>`);
+    const ov = l.override ? `<div class="hist"><b>Override ${dol(l.override.amount_cents, true)}</b> vs model ${dol(l.override.model_recommendation_cents, true)} at the time (${signed(l.override.delta_vs_recorded_model_cents)})${l.override.model_changed_since_override ? ` · <b>the model has changed since</b> (now ${dol(l.recommendation_cents, true)})` : ''}<br>${esc(l.override.reason)}<br><span class="sub">${esc(l.override.actor)} · ${esc(String(l.override.at).slice(0, 16).replace('T', ' '))}</span></div>` : '';
+    const maxM = Math.max(1, ...l.months_2027.map((v) => Math.abs(v)));
+    const months = `<div class="months">${l.months_2027.map((v) => `<i style="height:${(Math.abs(v) / maxM) * 100}%" title="${dol(v, true)}"></i>`).join('')}</div><div class="mlab">${['J', 'F', 'M', 'A', 'M', 'J', 'J', 'A', 'S', 'O', 'N', 'D'].map((x) => `<span>${x}</span>`).join('')}</div><div class="sub">${esc(l.phasing)}</div>`;
+    const flags = l.flags.map((f) => `<div class="flag">${esc(f.text)}</div>`).join('');
+    const hist = [...(l.history.adjustments || []).map((a) => ({ at: a.created_at, t: `${a.driver.replace('_', ' ')} ${signed(a.amount_cents)}: ${a.assumption} (${a.confidence}, ${a.source})`, who: a.actor })), ...(l.history.overrides || []).map((o) => ({ at: o.created_at, t: o.override_cents === null ? `override cleared: ${o.reason}` : `override ${dol(o.override_cents, true)} (model then ${dol(o.model_recommendation_cents, true)}): ${o.reason}`, who: o.actor }))].sort((a, c) => String(c.at).localeCompare(String(a.at)));
+    const canWrite = S.admin && M.persistence && M.persistence.available;
+    const writeNote = !M.persistence || !M.persistence.available ? '<div class="flag">Saving decisions needs migration 506 (pending review). The model is read-only until then.</div>' : !S.admin ? '<div class="flag">Only admins can record forecast decisions.</div>' : '';
+    const cstat = M.contract_evidence || {};
+    const contractsSec = `<h5>Contracts on this line</h5>${(l.contracts || []).length ? l.contracts.map((c) => `<div class="cblock"><b>${esc(c.vendor || 'Contract')}</b> ${XSTAT[c.execution_status] || ''}<div class="note">${esc(c.effective_date || '?')} to ${esc(c.end_date || 'open')} · version ${esc((c.document || {}).document_version ?? 1)} · sha256 ${esc(((c.document || {}).file_hash || '').slice(0, 12))}</div>
+        ${c.execution_status !== 'verified_executed' ? `<div class="form"><b>Verify execution</b><div class="sub">Confirm you checked this exact document (version ${esc((c.document || {}).document_version ?? 1)}). Signatures alone are not treated as proof.</div><label>What you checked (required)</label><textarea class="vBasis" data-id="${esc(c.vendor_contract_id)}" data-hash="${esc((c.document || {}).file_hash || '')}" placeholder="Signed by board president and vendor, dated…, page…"></textarea><div style="margin-top:8px"><button class="btn gold vSave" data-id="${esc(c.vendor_contract_id)}" ${canWrite ? '' : 'disabled'}>Verify executed</button></div></div>` : ''}</div>`).join('') : '<div class="sub">No contract is bound to this line.</div>'}
+      <div class="form"><b>Attach a contract</b><div class="sub">Upload the signed contract. trustEd extracts the terms as written and triages execution; it stays unverified until a person verifies it.${cstat.available === false ? ' Needs migration 506 (pending review).' : ''}</div><input type="file" id="cFile" accept="application/pdf,.pdf"><div style="margin-top:8px"><button class="btn gold" id="cSave" ${canWrite && cstat.available !== false ? '' : 'disabled'}>Attach to this line</button></div></div>`;
+    const forms = `${contractsSec}<h5>Record a decision</h5>${writeNote}
+      <div class="form"><b>Driver adjustment</b><label>Driver</label><select id="fDriver"><option value="one_time">One-time / abnormal (remove)</option><option value="omitted_recurring">Recurring cost omitted from ${M.base_year}</option><option value="contract">Contract / known change</option><option value="rate">Inflation / rate (replace model)</option><option value="volatility">Expected recurring volatility</option></select>
+        <label>Effect on ${M.target_year} ($; a removal is negative)</label><input id="fAmt" type="number" step="0.01" placeholder="-12000">
+        <label>Assumption (required)</label><textarea id="fAssume" placeholder="What is it, and why"></textarea>
+        <label>Evidence (link or reference)</label><input id="fEv" placeholder="Invoice, contract, board minute…">
+        <label>Confidence</label><select id="fConf"><option>medium</option><option>high</option><option>low</option></select>
+        <div style="margin-top:8px"><button class="btn gold" id="fSave" ${canWrite ? '' : 'disabled'}>Record adjustment</button></div></div>
+      <div class="form"><b>Override the model</b><div class="sub">The model's ${dol(l.recommendation_cents, true)} is kept; your number and reason are recorded beside it.</div>
+        <label>Override amount ($; empty clears)</label><input id="oAmt" type="number" step="0.01" value="${l.override ? (l.override.amount_cents / 100).toFixed(2) : ''}">
+        <label>Reason (required)</label><textarea id="oWhy"></textarea>
+        <div style="margin-top:8px"><button class="btn gold" id="oSave" ${canWrite ? '' : 'disabled'}>Record override</button></div></div>`;
+    $('dBody').innerHTML = `<table class="bridge">${bridgeRows.join('')}</table>${ov}${flags}
+      <h5>${M.base_year} reference</h5><div class="sub">Approved ${m(b.approved_budget_cents, true)} · YTD actual ${m(b.ytd_actual_cents, true)} · current forecast ${m(b.current_forecast_cents, true)}${b.post_cutover ? ` · post-cutover (${b.post_cutover.months.join('-')}) actual ${m(b.post_cutover.actual_cents, true)} vs budget ${m(b.post_cutover.budget_cents, true)}` : ''}</div>
+      <h5>${M.target_year} monthly phasing</h5>${months}
+      ${forms}
+      <h5>Decision history</h5>${hist.length ? hist.map((h) => `<div class="hist">${esc(h.t)}<br><span class="sub">${esc(h.who)} · ${esc(String(h.at).slice(0, 16).replace('T', ' '))}</span></div>`).join('') : '<div class="sub">No decisions recorded for this line.</div>'}`;
+    $('drawer').classList.add('open');
+    const post = async (path, body) => { const r = await fetch(`/api/working-forecast/${encodeURIComponent(S.cid)}/${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...(await authHeader()) }, body: JSON.stringify({ year: S.year, as_of: S.asof, account_id: l.account_id, fund_id: l.fund_id, ...body }) }); const j = await r.json().catch(() => ({})); if (!r.ok) { alert(j.message || j.error || 'Could not record it.'); return false; } await load(); openLine(k); return true; };
+    const fs = $('fSave'); if (fs) fs.addEventListener('click', () => { const amt = Math.round(Number($('fAmt').value) * 100); if (!Number.isFinite(amt) || amt === 0) { alert('Enter the effect in dollars.'); return; } post('adjustments', { driver: $('fDriver').value, amount_cents: amt, assumption: $('fAssume').value, evidence: $('fEv').value ? { reference: $('fEv').value } : null, confidence: $('fConf').value }); });
+    document.querySelectorAll('.vSave').forEach((btn) => btn.addEventListener('click', async () => {
+      const ta = document.querySelector(`.vBasis[data-id="${btn.dataset.id}"]`);
+      const r = await fetch(`/api/working-forecast/${encodeURIComponent(S.cid)}/contracts/${encodeURIComponent(btn.dataset.id)}/verify`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...(await authHeader()) }, body: JSON.stringify({ file_hash: ta.dataset.hash, basis: ta.value }) });
+      const j = await r.json().catch(() => ({})); if (!r.ok) { alert(j.message || j.error || 'Could not verify.'); return; } await load(); openLine(k);
+    }));
+    const cs = $('cSave'); if (cs) cs.addEventListener('click', async () => {
+      const f = $('cFile').files[0]; if (!f) { alert('Choose the contract PDF.'); return; }
+      const fd = new FormData(); fd.append('file', f); fd.append('account_id', l.account_id); if (l.fund_id) fd.append('fund_id', l.fund_id);
+      cs.disabled = true; cs.textContent = 'Reading the contract…';
+      const r = await fetch(`/api/working-forecast/${encodeURIComponent(S.cid)}/contracts`, { method: 'POST', headers: { ...(await authHeader()) }, body: fd });
+      const j = await r.json().catch(() => ({})); if (!r.ok) { cs.disabled = false; cs.textContent = 'Attach to this line'; alert(j.message || j.error || 'Could not attach.'); return; } await load(); openLine(k);
+    });
+    const os = $('oSave'); if (os) os.addEventListener('click', () => { const v = $('oAmt').value; post('overrides', { override_cents: v === '' ? null : Math.round(Number(v) * 100), reason: $('oWhy').value }); });
+  }
+
+  // ---------------------------------------------------------------- init
+  (async () => {
+    const q = new URLSearchParams(location.search);
+    S.year = Number(q.get('year') || 2027); S.asof = q.get('as_of') || `${S.year - 1}-09-30`; $('asof').value = S.asof;
+    const j = await fetch('/api/gl/communities').then((r) => r.json()).catch(() => ({ communities: [] }));
+    const comms = (j.communities || []).slice().sort((a, b) => a.name.localeCompare(b.name));
+    $('comm').innerHTML = comms.map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join('');
+    const cg = comms.find((c) => /Canyon Gate/i.test(c.name));
+    S.cid = comms.some((c) => c.id === q.get('community_id')) ? q.get('community_id') : (cg ? cg.id : (comms[0] && comms[0].id));
+    $('comm').value = S.cid;
+    $('comm').addEventListener('change', () => { S.cid = $('comm').value; load(); });
+    $('asof').addEventListener('change', () => { if ($('asof').value) { S.asof = $('asof').value; load(); } });
+    load();
+  })();
+})();
+</script>
+</body>
+</html>

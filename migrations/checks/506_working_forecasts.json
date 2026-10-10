@@ -1,0 +1,213 @@
+{
+  "migration": "506_working_forecasts.sql",
+  "summary": "Persistence for the next-year working forecast (management forecast, not the board budget). Adds working_forecasts (one working forecast per community / target year from an approved base-year budget, with policy assumptions), working_forecast_adjustments (human driver entries: one-time, omitted recurring, contract, rate, volatility, each with a written assumption, evidence, confidence, source and actor) and working_forecast_overrides (human / board override of a line, storing the model recommendation and model hash at the time, the override, reason, actor and time). Decisions are append-only and same-community guarded. RLS on; anon / authenticated get nothing. Additive: changes no existing row. Extends vendor_contracts (executed-contract evidence: execution status detected / likely_executed / verified_executed with confidence and reason, verification provenance, source email message / library document / version, notice date, periodic amount + frequency, dated rate schedule, unit pricing, one-time fees, extracted assumptions, forecast GL account / fund, intake source). verified_executed only through verify_vendor_contract() by a named person against the exact document hash; replacing the document resets verification and bumps the version; vendor_contract_events is the append-only history.",
+  "requires": [
+    "171_budgets_and_fs.sql",
+    "015_vendor_storage_benchmarking.sql"
+  ],
+  "preflight": [
+    {
+      "name": "none of the three tables exists yet",
+      "sql": "SELECT count(*)::int FROM information_schema.tables WHERE table_schema = 'public' AND table_name IN ('working_forecasts', 'working_forecast_adjustments', 'working_forecast_overrides')",
+      "expect": 0
+    },
+    {
+      "name": "community_budgets exists (the base budget FK)",
+      "sql": "SELECT count(*)::int FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'community_budgets'",
+      "expect": 1
+    },
+    {
+      "name": "vendor_contracts has none of the new evidence columns yet",
+      "sql": "SELECT count(*)::int FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'vendor_contracts' AND column_name IN ('execution_status', 'verified_by', 'rate_schedule', 'forecast_account_id', 'source_message_id')",
+      "expect": 0
+    },
+    {
+      "name": "library_documents exists (contract source document FK)",
+      "sql": "SELECT count(*)::int FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'library_documents'",
+      "expect": 1
+    },
+    {
+      "name": "vendor_contract_events does not exist yet",
+      "sql": "SELECT count(*)::int FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'vendor_contract_events'",
+      "expect": 0
+    }
+  ],
+  "expected_changes": [
+    "Creates working_forecasts with a one-working-forecast unique index, an updated_at trigger and a guard (base budget must be the community's approved base-year budget; identity fields immutable; no deletes).",
+    "Creates working_forecast_adjustments and working_forecast_overrides with FKs (RESTRICT), CHECKs (driver set, 10+ character assumption / reason, confidence, source, 64-hex model hash), line indexes and an append-only + same-community guard trigger.",
+    "RLS on all three; nothing for anon / authenticated; service_role SELECT, INSERT (and UPDATE on working_forecasts for policy).",
+    "Adds nullable evidence columns to vendor_contracts (document_version defaults to 1; rate_schedule / one_time_fees default to an empty array), FKs (library_documents, chart_of_accounts, account_funds; RESTRICT), CHECKs (execution status set, confidence 0-1, frequency, intake source, verified provenance), an index on forecast_account_id, a guard trigger (verified only via verify_vendor_contract(); document replacement resets verification and logs it; GL binding stays in the community), verify_vendor_contract() (service_role only) and the append-only vendor_contract_events table.",
+    "No existing table or row changes."
+  ],
+  "objects": {
+    "added": [
+      "column:vendor_contract_events.actor",
+      "column:vendor_contract_events.created_at",
+      "column:vendor_contract_events.detail",
+      "column:vendor_contract_events.document_version",
+      "column:vendor_contract_events.event",
+      "column:vendor_contract_events.file_hash",
+      "column:vendor_contract_events.from_status",
+      "column:vendor_contract_events.id",
+      "column:vendor_contract_events.to_status",
+      "column:vendor_contract_events.vendor_contract_id",
+      "column:vendor_contracts.document_version",
+      "column:vendor_contracts.execution_confidence",
+      "column:vendor_contracts.execution_reason",
+      "column:vendor_contracts.execution_status",
+      "column:vendor_contracts.extracted_assumptions",
+      "column:vendor_contracts.forecast_account_id",
+      "column:vendor_contracts.forecast_fund_id",
+      "column:vendor_contracts.intake_source",
+      "column:vendor_contracts.one_time_fees",
+      "column:vendor_contracts.periodic_amount",
+      "column:vendor_contracts.periodic_frequency",
+      "column:vendor_contracts.rate_schedule",
+      "column:vendor_contracts.source_document_id",
+      "column:vendor_contracts.source_message_id",
+      "column:vendor_contracts.termination_notice_date",
+      "column:vendor_contracts.unit_pricing",
+      "column:vendor_contracts.verification_source",
+      "column:vendor_contracts.verified_at",
+      "column:vendor_contracts.verified_by",
+      "column:working_forecast_adjustments.account_id",
+      "column:working_forecast_adjustments.actor",
+      "column:working_forecast_adjustments.amount_cents",
+      "column:working_forecast_adjustments.assumption",
+      "column:working_forecast_adjustments.community_id",
+      "column:working_forecast_adjustments.confidence",
+      "column:working_forecast_adjustments.created_at",
+      "column:working_forecast_adjustments.driver",
+      "column:working_forecast_adjustments.evidence",
+      "column:working_forecast_adjustments.forecast_id",
+      "column:working_forecast_adjustments.fund_id",
+      "column:working_forecast_adjustments.id",
+      "column:working_forecast_adjustments.source",
+      "column:working_forecast_overrides.account_id",
+      "column:working_forecast_overrides.actor",
+      "column:working_forecast_overrides.community_id",
+      "column:working_forecast_overrides.created_at",
+      "column:working_forecast_overrides.forecast_id",
+      "column:working_forecast_overrides.fund_id",
+      "column:working_forecast_overrides.id",
+      "column:working_forecast_overrides.model_recommendation_cents",
+      "column:working_forecast_overrides.model_sha256",
+      "column:working_forecast_overrides.override_cents",
+      "column:working_forecast_overrides.reason",
+      "column:working_forecasts.base_budget_id",
+      "column:working_forecasts.base_fiscal_year",
+      "column:working_forecasts.community_id",
+      "column:working_forecasts.created_at",
+      "column:working_forecasts.created_by",
+      "column:working_forecasts.fiscal_year",
+      "column:working_forecasts.id",
+      "column:working_forecasts.kind",
+      "column:working_forecasts.policy",
+      "column:working_forecasts.status",
+      "column:working_forecasts.updated_at",
+      "column:working_forecasts.updated_by",
+      "constraint:vendor_contract_events.vendor_contract_events_contract_fk",
+      "constraint:vendor_contract_events.vendor_contract_events_event_check",
+      "constraint:vendor_contract_events.vendor_contract_events_pkey",
+      "constraint:vendor_contracts.vendor_contracts_execution_confidence_check",
+      "constraint:vendor_contracts.vendor_contracts_execution_status_check",
+      "constraint:vendor_contracts.vendor_contracts_forecast_account_fk",
+      "constraint:vendor_contracts.vendor_contracts_forecast_fund_fk",
+      "constraint:vendor_contracts.vendor_contracts_intake_source_check",
+      "constraint:vendor_contracts.vendor_contracts_periodic_frequency_check",
+      "constraint:vendor_contracts.vendor_contracts_source_document_fk",
+      "constraint:vendor_contracts.vendor_contracts_verified_provenance_check",
+      "constraint:working_forecast_adjustments.working_forecast_adjustments_account_fk",
+      "constraint:working_forecast_adjustments.working_forecast_adjustments_assumption_check",
+      "constraint:working_forecast_adjustments.working_forecast_adjustments_community_fk",
+      "constraint:working_forecast_adjustments.working_forecast_adjustments_confidence_check",
+      "constraint:working_forecast_adjustments.working_forecast_adjustments_driver_check",
+      "constraint:working_forecast_adjustments.working_forecast_adjustments_forecast_fk",
+      "constraint:working_forecast_adjustments.working_forecast_adjustments_fund_fk",
+      "constraint:working_forecast_adjustments.working_forecast_adjustments_pkey",
+      "constraint:working_forecast_adjustments.working_forecast_adjustments_source_check",
+      "constraint:working_forecast_overrides.working_forecast_overrides_account_fk",
+      "constraint:working_forecast_overrides.working_forecast_overrides_community_fk",
+      "constraint:working_forecast_overrides.working_forecast_overrides_forecast_fk",
+      "constraint:working_forecast_overrides.working_forecast_overrides_fund_fk",
+      "constraint:working_forecast_overrides.working_forecast_overrides_pkey",
+      "constraint:working_forecast_overrides.working_forecast_overrides_reason_check",
+      "constraint:working_forecast_overrides.working_forecast_overrides_sha_check",
+      "constraint:working_forecasts.working_forecasts_budget_fk",
+      "constraint:working_forecasts.working_forecasts_community_fk",
+      "constraint:working_forecasts.working_forecasts_kind_check",
+      "constraint:working_forecasts.working_forecasts_pkey",
+      "constraint:working_forecasts.working_forecasts_status_check",
+      "constraint:working_forecasts.working_forecasts_years_check",
+      "function:vendor_contract_events_append_only",
+      "function:vendor_contracts_execution_guard",
+      "function:verify_vendor_contract",
+      "function:working_forecast_decisions_guard",
+      "function:working_forecasts_guard",
+      "index:idx_vendor_contract_events_contract",
+      "index:idx_vendor_contracts_forecast_account",
+      "index:idx_working_forecast_adjustments_line",
+      "index:idx_working_forecast_overrides_line",
+      "index:uq_working_forecasts_one",
+      "index:vendor_contract_events_pkey",
+      "index:working_forecast_adjustments_pkey",
+      "index:working_forecast_overrides_pkey",
+      "index:working_forecasts_pkey",
+      "table:vendor_contract_events",
+      "table:working_forecast_adjustments",
+      "table:working_forecast_overrides",
+      "table:working_forecasts",
+      "trigger:vendor_contract_events.trg_vendor_contract_events_append_only",
+      "trigger:vendor_contracts.trg_vendor_contracts_execution_guard",
+      "trigger:working_forecast_adjustments.trg_working_forecast_adjustments_guard",
+      "trigger:working_forecast_overrides.trg_working_forecast_overrides_guard",
+      "trigger:working_forecasts.trg_working_forecasts_guard",
+      "trigger:working_forecasts.trg_working_forecasts_updated_at"
+    ],
+    "changed": [],
+    "removed": []
+  },
+  "row_changes": {
+    "community_budgets": 0,
+    "budget_line_items": 0,
+    "journal_entries": 0,
+    "vendor_contracts": 0
+  },
+  "protected": [
+    { "table": "community_budgets", "order_by": "id" },
+    { "table": "budget_line_items", "order_by": "id" },
+    { "table": "vendor_contracts", "order_by": "id" }
+  ],
+  "verify": [
+    {
+      "name": "the three tables exist and are empty",
+      "sql": "SELECT ((SELECT count(*) FROM working_forecasts) + (SELECT count(*) FROM working_forecast_adjustments) + (SELECT count(*) FROM working_forecast_overrides))::int",
+      "expect": 0
+    },
+    {
+      "name": "decisions are append-only (guard triggers present)",
+      "sql": "SELECT count(*)::int FROM pg_trigger WHERE tgname IN ('trg_working_forecast_adjustments_guard', 'trg_working_forecast_overrides_guard')",
+      "expect": 2
+    },
+    {
+      "name": "service_role can read and insert; anon and authenticated cannot read",
+      "sql": "SELECT (CASE WHEN has_table_privilege('service_role', 'working_forecast_overrides', 'INSERT') AND has_table_privilege('service_role', 'working_forecast_adjustments', 'SELECT') AND NOT has_table_privilege('anon', 'working_forecasts', 'SELECT') AND NOT has_table_privilege('authenticated', 'working_forecast_overrides', 'SELECT') AND NOT has_table_privilege('service_role', 'working_forecast_overrides', 'UPDATE') THEN 1 ELSE 0 END)::int",
+      "expect": 1
+    },
+    {
+      "name": "contract verification guard and verify function present",
+      "sql": "SELECT ((SELECT count(*) FROM pg_trigger WHERE tgname = 'trg_vendor_contracts_execution_guard') + (SELECT count(*) FROM pg_proc WHERE proname = 'verify_vendor_contract'))::int",
+      "expect": 2
+    },
+    {
+      "name": "no contract is marked verified by the migration",
+      "sql": "SELECT count(*)::int FROM vendor_contracts WHERE execution_status = 'verified_executed'",
+      "expect": 0
+    },
+    {
+      "name": "only service_role may verify a contract",
+      "sql": "SELECT (CASE WHEN has_function_privilege('service_role', 'verify_vendor_contract(uuid, text, text, text)', 'EXECUTE') AND NOT has_function_privilege('anon', 'verify_vendor_contract(uuid, text, text, text)', 'EXECUTE') AND NOT has_function_privilege('authenticated', 'verify_vendor_contract(uuid, text, text, text)', 'EXECUTE') THEN 1 ELSE 0 END)::int",
+      "expect": 1
+    }
+  ]
+}
