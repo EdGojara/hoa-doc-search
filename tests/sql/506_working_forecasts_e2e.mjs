@@ -33,7 +33,8 @@ await db.exec(`
   CREATE TABLE vendor_contracts (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), management_company_id uuid, community_id uuid REFERENCES communities(id), vendor_name_raw text,
     service_category text, effective_date date, end_date date, file_path text, file_hash text, status text NOT NULL DEFAULT 'active', notes text,
     created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now());
-  ALTER TABLE chart_of_accounts ADD COLUMN IF NOT EXISTS account_type text, ADD COLUMN IF NOT EXISTS account_subtype text;   -- production columns (170) the rehearsal world omits
+  ALTER TABLE chart_of_accounts ADD COLUMN IF NOT EXISTS account_type text, ADD COLUMN IF NOT EXISTS account_subtype text;
+  ALTER TABLE chart_of_accounts ADD CONSTRAINT chart_of_accounts_fund_id_fkey FOREIGN KEY (fund_id) REFERENCES account_funds(id);   -- production (170) has this FK   -- production columns (170) the rehearsal world omits
   INSERT INTO communities (id, name) VALUES ('${OTHER}', 'Other');
   INSERT INTO account_funds (id, community_id, fund_code) VALUES ('00000000-0000-0000-0000-00000000f0f1', '${C}', 'OPR');
   INSERT INTO chart_of_accounts (id, community_id, account_number, fund_id) VALUES ('00000000-0000-0000-0000-0000000a5770', '${C}', '5770', '00000000-0000-0000-0000-00000000f0f1'),
@@ -124,6 +125,19 @@ check('the same fund on both sides is refused', /interfund_config_check/.test(aw
 check('a fund of another community is refused', /community/.test(await code(() => cfg('interfund_transfer', OPR, XF)) || ''));
 check('explicit configuration (subtype + Operating -> Reserve) is accepted', !(await code(() => cfg('interfund_transfer', OPR, RES))));
 check('a configured transfer account cannot move to a fund outside its direction', /from or to fund/.test(await code(async () => { await db.query(`INSERT INTO account_funds (id, community_id, fund_code) VALUES ('00000000-0000-0000-0000-00000000f0f3', '${C}', 'ADO')`); await db.query(`UPDATE chart_of_accounts SET fund_id = '00000000-0000-0000-0000-00000000f0f3' WHERE id = $1`, [A4010]); }) || ''));
+
+// ---- 507: drop the two 506 interfund FKs (they made chart_of_accounts -> account_funds embeds ambiguous)
+check('after 506 there are three chart_of_accounts -> account_funds foreign keys (the regression)', (await one(`SELECT count(*)::int AS n FROM pg_constraint WHERE contype = 'f' AND conrelid = 'chart_of_accounts'::regclass AND confrelid = 'account_funds'::regclass`)).n === 3);
+const F7 = '507_coa_interfund_fk_embed_fix.sql';
+fs.writeFileSync(path.join(dir, F7), lf(`${REPO}/migrations/${F7}`));
+fs.writeFileSync(path.join(dir, 'checks', '507_coa_interfund_fk_embed_fix.json'), lf(`${REPO}/migrations/checks/507_coa_interfund_fk_embed_fix.json`));
+const plan7 = await A.planMigration({ ...ctxA, filename: F7 });
+const applied7 = await A.applyMigration({ ...ctxA, planToken: plan7.plan_token, log: { error() {} }, apiCheck: async () => ({ ok: true, count: 0 }) });
+check('507 planned and applied + verified through the tool with its real checks file', plan7.status === 'ready' && applied7.status === 'applied', JSON.stringify({ p: plan7.status, pre: plan7.preflight, e: plan7.error, r: applied7.status, err: applied7.error }).slice(0, 1200));
+check('507: exactly one chart_of_accounts -> account_funds foreign key remains (fund_id)', (await one(`SELECT count(*)::int AS n FROM pg_constraint WHERE contype = 'f' AND conrelid = 'chart_of_accounts'::regclass AND confrelid = 'account_funds'::regclass`)).n === 1);
+check('507: no row changed; the configured transfer is kept', applied7.status === 'applied' && Object.values(applied7.detail.row_changes).every((v) => v === 0) && (await one(`SELECT account_subtype FROM chart_of_accounts WHERE id = $1`, [A4010])).account_subtype === 'interfund_transfer');
+check('507: the guard still refuses a fund that does not exist', /community/.test(await code(() => cfg('interfund_transfer', OPR, '00000000-0000-0000-0000-00000000dead')) || ''));
+check('507: the guard still refuses a fund of another community', /community/.test(await code(() => cfg('interfund_transfer', OPR, XF)) || ''));
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

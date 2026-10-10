@@ -1,0 +1,58 @@
+{
+  "migration": "507_coa_interfund_fk_embed_fix.sql",
+  "summary": "Production regression fix for 506: drops the two foreign keys 506 added from chart_of_accounts to account_funds (interfund_from_fund_id, interfund_to_fund_id). Three relationships between the tables made every unhinted PostgREST embed of account_funds from chart_of_accounts fail (financial statements, board portal budget, living budget, working forecast). Restores the single fund_id relationship. The interfund columns, the CHECK and the guard trigger stay; no row changes.",
+  "requires": [
+    "506_working_forecasts.sql"
+  ],
+  "preflight": [
+    {
+      "name": "both 506 interfund foreign keys are present",
+      "sql": "SELECT count(*)::int FROM pg_constraint WHERE conrelid = 'public.chart_of_accounts'::regclass AND conname IN ('chart_of_accounts_interfund_from_fk', 'chart_of_accounts_interfund_to_fk')",
+      "expect": 2
+    },
+    {
+      "name": "the interfund guard trigger is present (it keeps validating the funds)",
+      "sql": "SELECT count(*)::int FROM pg_trigger WHERE tgname = 'trg_chart_of_accounts_interfund_guard'",
+      "expect": 1
+    }
+  ],
+  "expected_changes": [
+    "Drops constraints chart_of_accounts_interfund_from_fk and chart_of_accounts_interfund_to_fk.",
+    "Updates the comments on chart_of_accounts.interfund_from_fund_id / interfund_to_fund_id.",
+    "No existing row in any table is changed; the interfund columns, the CHECK and the guard trigger remain."
+  ],
+  "objects": {
+    "added": [],
+    "changed": [],
+    "removed": [
+      "constraint:chart_of_accounts.chart_of_accounts_interfund_from_fk",
+      "constraint:chart_of_accounts.chart_of_accounts_interfund_to_fk"
+    ]
+  },
+  "row_changes": {
+    "chart_of_accounts": 0,
+    "account_funds": 0
+  },
+  "protected": [
+    {
+      "table": "chart_of_accounts",
+      "order_by": "id"
+    },
+    {
+      "table": "account_funds",
+      "order_by": "id"
+    }
+  ],
+  "verify": [
+    {
+      "name": "exactly one foreign key from chart_of_accounts to account_funds (fund_id)",
+      "sql": "SELECT count(*)::int FROM pg_constraint WHERE contype = 'f' AND conrelid = 'public.chart_of_accounts'::regclass AND confrelid = 'public.account_funds'::regclass",
+      "expect": 1
+    },
+    {
+      "name": "the interfund CHECK and guard trigger remain",
+      "sql": "SELECT ((SELECT count(*) FROM pg_constraint WHERE conname = 'chart_of_accounts_interfund_config_check') + (SELECT count(*) FROM pg_trigger WHERE tgname = 'trg_chart_of_accounts_interfund_guard'))::int",
+      "expect": 2
+    }
+  ]
+}
