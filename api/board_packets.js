@@ -43,7 +43,7 @@ const puppeteer = require('puppeteer');
 const BRAND = require('../lib/brand');
 const { safeErrorMessage } = require('./_safe_error');
 const { nativeSectionKeys } = require('../lib/board_package/engine');
-const { STATEMENT_SECTIONS, isSnapshot: isStatementSnapshot, packetFinalizationGate, mappingBlockers } = require('../lib/statements/snapshot');
+const { STATEMENT_SECTIONS, isSnapshot: isStatementSnapshot, isStaleNative: isStaleNativeStatement, packetFinalizationGate, mappingBlockers } = require('../lib/statements/snapshot');
 const StatementRender = require('../lib/statements/render');
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
@@ -190,11 +190,11 @@ function renderSectionStandaloneHtml({ packet, section, embed = false }) {
   if (STATEMENT_SECTIONS.includes(section.section_key)) {
     const d = section.input_data || {};
     if (isStatementSnapshot(d)) return renderStatementSnapshotHtml({ packet, section, embed });
-    // A native fill from before the statement model stored the raw engine result
-    // ({ statement }), which no section renderer reads. Say so instead of
-    // rendering an empty statement that looks complete.
-    if (d.statement && d.source === 'trusted_gl') {
-      return renderStandalonePage({ packet, section, embed, bodyHtml: '<div class="table-h2">This statement needs to be pulled again</div><p style="color:#5b6b7f;">It was filled from trustEd before the current statement format. Use Auto-fill on this section to rebuild it from the books.</p>' });
+    // A native fill from before the statement model (the raw engine result),
+    // which no section renderer reads. Say so instead of rendering an empty
+    // statement that looks complete. The finalization gate blocks it too.
+    if (isStaleNativeStatement(section)) {
+      return renderStandalonePage({ packet, section, embed, bodyHtml: '<div class="table-h2">This statement needs to be pulled again</div><p style="color:#5b6b7f;">It was filled from trustEd before the current statement format. Use Auto-fill on this section to rebuild it from the books with the current statement model. The packet cannot be marked final or distributed until then.</p>' });
     }
   }
   // 'balance_sheet' + 'income_statement' are the split sections (migration 070).
@@ -3040,10 +3040,13 @@ const FINAL_STATUSES = ['final', 'distributed'];
 function _gateRefusal(gate) {
   const unmapped = gate.open.filter((b) => b.problem === 'unmapped_accounts');
   const altered = gate.open.filter((b) => b.problem === 'snapshot_altered');
+  const stale = gate.open.filter((b) => b.problem === 'stale_native_format');
+  const secName = (k) => (k === 'balance_sheet' ? 'balance sheet' : 'income statement');
   const n = unmapped.reduce((t, b) => t + b.unmapped.length, 0);
   const msg = [
     unmapped.length ? `The balance sheet has ${n} account${n === 1 ? '' : 's'} not mapped to an approved category${unmapped.some((b) => b.mapping_unavailable) ? ' (balance-sheet categories are not set up yet)' : ''}. Approve the mapping and pull the section again, or the owner can record an override for this exact statement.` : null,
     altered.length ? 'A statement snapshot no longer matches what was generated. Pull the section again from the books.' : null,
+    stale.length ? `The ${stale.map((x) => secName(x.section_key)).join(' and ')} section${stale.length === 1 ? ' was' : 's were'} filled in an older format and must be pulled again (Auto-fill) using the current native statement model before this packet can be marked final or distributed.` : null,
   ].filter(Boolean).join(' ');
   return { error: 'statement_not_final_ready', message: msg, blockers: gate.open };
 }
