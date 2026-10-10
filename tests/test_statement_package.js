@@ -297,6 +297,75 @@ const find = (model, num) => { for (const s of model.sections) for (const g of s
     check('Drama Creek (converted): balance sheet and income statement content hashes identical to main', bs.snapshot_sha256.startsWith('8433699045d6') && ib.snapshot_sha256.startsWith('79482666433a') && bs.period.books_start === '2026-01-01', `${bs.snapshot_sha256} ${ib.snapshot_sha256}`);
   }
 
+  console.log('balance-sheet subcategories and interfund elimination');
+  {
+    const IF = 'c-ifund';
+    db.communities.push({ id: IF, name: 'Interfund Test', legal_name: 'Interfund Test HOA', gl_cutover_date: null });
+    db.account_funds.push({ id: 'if-opr', community_id: IF, fund_code: 'OPR', fund_name: 'Operating', fund_type: 'operating', is_active: true, display_order: 1 },
+      { id: 'if-ado', community_id: IF, fund_code: 'ADO', fund_name: 'Adopt a School', fund_type: 'special', is_active: true, display_order: 2 });
+    const A = (n, t, name, f) => db.chart_of_accounts.push({ id: `if-${n}`, community_id: IF, account_number: String(n), account_name: name, account_type: t, normal_balance: ['asset', 'expense'].includes(t) ? 'debit' : 'credit', is_active: true, is_summary: false, fund_id: f, account_subtype: null, account_funds: { fund_code: f === 'if-opr' ? 'OPR' : 'ADO', fund_name: f === 'if-opr' ? 'Operating' : 'Adopt a School' } });
+    A(1000, 'asset', 'Operating Cash', 'if-opr'); A(1300, 'asset', 'Accounts Receivable', 'if-opr'); A(1305, 'asset', 'Allowance for Doubtful Accounts', 'if-opr'); A(1310, 'asset', 'Legacy Receivable - Previous Owners', 'if-opr');
+    A(1500, 'asset', 'Office Equipment', 'if-opr'); A(1505, 'asset', 'Accumulated Depreciation', 'if-opr');
+    A(1810, 'asset', 'Due from Adopt a School to Operating', 'if-opr'); A(2810, 'liability', 'Due to Adopt a School from Operating', 'if-opr');
+    A(1815, 'asset', 'Due from Operating to Adopt a School', 'if-ado'); A(2815, 'liability', 'Due to Operating from Adopt a School', 'if-ado');
+    A(2000, 'liability', 'Accounts Payable', 'if-opr'); A(3050, 'equity', 'Accumulated Fund Balance', 'if-opr'); A(3030, 'equity', 'Adopt a School Fund Balance', 'if-ado');
+    let k = 0;
+    const J = (date, lines) => { const id = `if-je-${++k}`; db.journal_entries.push({ id, community_id: IF, reference: `IF-${k}`, posting_date: date, source_module: 'manual', status: 'posted', void_reversal_je_id: null, reverses_je_id: null, description: `IF-${k}` });
+      lines.forEach(([a, f, d, c], i) => db.journal_entry_lines.push({ id: `${id}-${i}`, journal_entry_id: id, line_number: i + 1, account_id: `if-${a}`, fund_id: f, debit_cents: d, credit_cents: c, memo: null, vendor_id: null, property_id: null })); };
+    J('2025-01-15', [[1000, 'if-opr', 5000000, 0], [1300, 'if-opr', 2845000, 0], [1310, 'if-opr', 171600, 0], [1305, 'if-opr', 0, 626500], [1500, 'if-opr', 2069800, 0], [1505, 'if-opr', 0, 1406100], [2000, 'if-opr', 0, 1000000], [3050, 'if-opr', 0, 7053800]]);
+    J('2026-09-10', [[1810, 'if-opr', 50000, 0], [2815, 'if-ado', 0, 50000], [3050, 'if-opr', 0, 50000], [3030, 'if-ado', 50000, 0]]);   // matched pair: ADO owes OPR 500.00
+    const cat = (id, section, name, order, parent = null, label = null) => db.report_categories.push({ id, community_id: IF, statement: 'balance_sheet', section, name, report_label: label, parent_category_id: parent, display_order: order, is_active: true });
+    const map = (acct, catId) => db.account_report_map.push({ community_id: IF, account_id: `if-${acct}`, statement: 'balance_sheet', category_id: catId, display_order: null, approval_status: 'approved', approved_by: 'Ed', approved_at: '2026-10-10T00:00:00Z' });
+    cat('ic-cash', 'asset', 'Cash & cash equivalents', 10); cat('ic-ar', 'asset', 'Homeowner receivables', 30);
+    cat('ic-ar-cur', 'asset', 'Current owners', 1, 'ic-ar'); cat('ic-ar-for', 'asset', 'Former owners', 2, 'ic-ar'); cat('ic-ar-all', 'asset', 'Allowance for doubtful accounts', 3, 'ic-ar', 'Less: allowance for doubtful accounts');
+    cat('ic-oth', 'asset', 'Other assets', 50); cat('ic-oth-fa', 'asset', 'Fixed assets, net', 3, 'ic-oth');
+    cat('ic-ifr', 'asset', 'Interfund receivables', 90); cat('ic-ap', 'liability', 'Accounts payable', 10); cat('ic-ifp', 'liability', 'Interfund payables', 90); cat('ic-fb', 'equity', 'Fund balance', 10);
+    map(1000, 'ic-cash'); map(1300, 'ic-ar-cur'); map(1310, 'ic-ar-for'); map(1305, 'ic-ar-all'); map(1500, 'ic-oth-fa'); map(1505, 'ic-oth-fa');
+    map(1810, 'ic-ifr'); map(1815, 'ic-ifr'); map(2810, 'ic-ifp'); map(2815, 'ic-ifp'); map(2000, 'ic-ap'); map(3050, 'ic-fb'); map(3030, 'ic-fb');
+    const con = await M.buildBalanceSheetModel(sb, { community_id: IF, as_of: '2026-09-30', now: NOW });
+    const ar = con.sections[0].groups.find((g) => g.label === 'Homeowner receivables');
+    const sg = (g, label) => g.subgroups.find((x) => x.label === label);
+    check('subcategories: current-owner AR, former-owner AR and the allowance stay separate', ar && ar.subgroups && sg(ar, 'Current owners').values.current === 2845000 && sg(ar, 'Former owners').values.current === 171600
+      && sg(ar, 'Less: allowance for doubtful accounts').values.current === -626500 && ar.values.current === 2845000 + 171600 - 626500, JSON.stringify(ar && ar.subgroups && ar.subgroups.map((x) => [x.label, x.values.current])));
+    const oth = con.sections[0].groups.find((g) => g.label === 'Other assets');
+    check('subcategories: office equipment and accumulated depreciation stay separate with a net fixed-asset subtotal', sg(oth, 'Fixed assets, net').values.current === 663700 && sg(oth, 'Fixed assets, net').lines.map((l) => l.account_number).join() === '1500,1505');
+    const prt = R.renderHtml(con, { mode: 'print' }); const webh = R.renderHtml(con, { mode: 'web' });
+    check('print / PDF / board packet: subcategories are visible, never collapsed into one category total', ['Current owners', 'Former owners', 'Less: allowance for doubtful accounts', 'Office Equipment', 'Accumulated Depreciation', 'Fixed assets, net', 'Total homeowner receivables', 'Total other assets'].every((t) => prt.includes(t)));
+    check('the allowance renders as a contra line (parentheses) reducing receivables', /Less: allowance for doubtful accounts[\s\S]*?\(6,265\)/.test(prt) && /Total homeowner receivables[\s\S]*?23,901/.test(prt));
+    check('web shows the same subcategories, with drill targets', ['Current owners', 'Former owners', 'Fixed assets, net'].every((t) => webh.includes(t)) && /class="sgrow"/.test(webh));
+    const xr = R.xlsxRows(con).map((r) => (Array.isArray(r) ? r[0] : r.cells[0])).join('|');
+    check('XLSX keeps the subcategories and the net fixed-asset subtotal', /Current owners/.test(xr) && /Less: allowance for doubtful accounts/.test(xr) && /Fixed assets, net/.test(xr) && /1505 Accumulated Depreciation/.test(xr));
+    check('interfund pairs come from the posting resolver (1810/2815 and 1815/2810)', con.interfund && con.interfund.pairs.map((p) => `${p.receivable.number}/${p.payable.number}`).sort().join() === '1810/2815,1815/2810');
+    const elimA = con.sections[0].groups.find((g) => g.kind === 'elimination'); const elimL = con.sections[1].groups.find((g) => g.kind === 'elimination');
+    check('consolidated: the matched pair (500.00 both sides) is eliminated from assets and liabilities', elimA && elimA.values.current === -50000 && elimL && elimL.values.current === -50000 && con.interfund.eliminated.current === 50000);
+    const gross = con.sections[0].groups.filter((g) => g.kind !== 'elimination').reduce((t, g) => t + g.values.current, 0);
+    check('consolidated totals are after elimination, still balanced, and tie to the engine (engine - eliminated)', con.totals.assets.current === gross - 50000 && con.totals.balanced.current === true && con.engine_tie.every((t) => t.ties) && con.engine_tie[0].interfund_eliminated === 50000);
+    check('the elimination is visible in the PDF with an explanation', /Less: interfund eliminations/.test(prt) && /eliminated in this consolidated statement/.test(prt));
+    const fv2 = await M.buildBalanceSheetModel(sb, { community_id: IF, as_of: '2026-09-30', view: 'fund', now: NOW });
+    const ifr = fv2.sections[0].groups.find((g) => g.label === 'Interfund receivables');
+    check('by fund: interfund accounts show normally (no elimination line); funds still balance', !fv2.sections[0].groups.some((g) => g.kind === 'elimination') && ifr.values['fund:OPR'] === 50000
+      && fv2.sections[1].groups.find((g) => g.label === 'Interfund payables').values['fund:ADO'] === 50000 && Object.values(fv2.totals.balanced).every(Boolean) && fv2.engine_tie.every((t) => t.ties));
+    // An unmatched pair: ADO records a receivable from Operating with no reciprocal payable.
+    J('2026-09-20', [[1815, 'if-ado', 30000, 0], [3030, 'if-ado', 0, 30000]]);
+    const con2 = await M.buildBalanceSheetModel(sb, { community_id: IF, as_of: '2026-09-30', now: NOW });
+    const imb = con2.warnings.find((w) => w.code === 'interfund_imbalance');
+    check('an unmatched pair is NOT eliminated and raises an interfund imbalance warning', imb && /1815 shows 300\.00 but 2810 shows 0\.00/.test(imb.text) && con2.interfund.eliminated.current === 50000
+      && con2.interfund.pairs.find((p) => p.receivable.number === '1815').by_column.current.status === 'imbalance', imb && imb.text);
+    check('with the imbalance the statement still balances and ties (only the matched pair eliminated)', con2.totals.balanced.current === true && con2.engine_tie.every((t) => t.ties));
+    const fv3 = await M.buildBalanceSheetModel(sb, { community_id: IF, as_of: '2026-09-30', view: 'fund', now: NOW });
+    check('the by-fund view reports the same imbalance', fv3.warnings.some((w) => w.code === 'interfund_imbalance'));
+    check('prior year end (before any interfund activity) eliminates nothing', con2.interfund.eliminated.prior_year_end === 0);
+    // Hash content covers the new structure (schema completeness on this model too).
+    const paths2 = (v, pre, out) => { if (Array.isArray(v)) v.forEach((x) => paths2(x, pre, out)); else if (v && typeof v === 'object') for (const kk of Object.keys(v)) { const pth = pre ? `${pre}.${kk}` : kk; if (/(^|\.)(values|eliminated|by_column)$/.test(pre)) continue; out.add(pth); paths2(v[kk], pth, out); } return out; };
+    const c2 = paths2(M.statementContent(JSON.parse(JSON.stringify(con2))), '', new Set()); const k2 = paths2(JSON.parse(JSON.stringify(con2)), '', new Set());
+    const esc2 = [...k2].filter((x) => !c2.has(x) && !M.HASH_EXCLUDED.some((e) => x === e || x.startsWith(e + '.') || x.endsWith('.' + e) || x.includes('.' + e + '.'))
+      && !/^sections\.groups\.subgroups\.lines/.test(x) && !/^interfund\.(pairs\.(receivable|payable)\.|imbalances\.(receivable|payable|column_label))/.test(x));
+    check('hash schema completeness holds with subgroups and interfund (lines are hashed once, by account)', esc2.length === 0, JSON.stringify(esc2));
+    check('moving an account between subcategories changes the hash', (() => { const c = JSON.parse(JSON.stringify(con2)); const g = c.sections[0].groups.find((x) => x.label === 'Homeowner receivables'); const t = g.subgroups[0].lines.pop(); g.subgroups[1].lines.push(t); return M.modelSha(c) !== con2.snapshot_sha256; })());
+    const emb = bp.renderSectionStandaloneHtml({ packet: { community: { name: 'Interfund Test' } }, section: { section_key: 'balance_sheet', input_data: JSON.parse(JSON.stringify(await SNAP.buildSectionSnapshot(sb, { community_id: IF, section_key: 'balance_sheet', cutoff: '2026-09-30', now: NOW }))) }, embed: true });
+    check('board packet section shows the subcategories and the interfund handling', /Former owners/.test(emb) && /Fixed assets, net/.test(emb) && /Interfund imbalance/.test(emb));
+  }
+
   console.log('board-packet section renders through the shared renderer');
   const html = bp.renderSectionStandaloneHtml({ packet: { community: { name: 'Drama Creek Estates' }, period_label: 'September 2026' }, section: { section_key: 'balance_sheet', input_data: stored }, embed: true });
   check('native snapshot section = the shared renderer\'s statement (same snapshot id)', html.includes(`data-snapshot="${stored.models[0].snapshot_sha256}"`) && html.includes('class="tstmt print"'));
