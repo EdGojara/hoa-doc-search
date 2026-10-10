@@ -33,6 +33,8 @@
 //   npm test -- --only=board run just the checks whose name matches
 // ============================================================================
 const { spawnSync } = require('child_process');
+const fs = require('fs');
+const os = require('os');
 const path = require('path');
 
 const ROOT = path.resolve(__dirname, '..');
@@ -41,6 +43,7 @@ const ROOT = path.resolve(__dirname, '..');
 // fixtures, then the live-data checks.
 const CHECKS = [
   'scripts/check_constraint_values.js',
+  'scripts/check_test_network_guard.js',   // tests may not reach production (Issue #27 follow-up)
   // AI decision layer — all OFFLINE/deterministic (no API): the router safety
   // gate, the ACC contract semantics, the six adjudicated ACC fixtures, the
   // shadow no-execution/failure-isolation guarantees, and the eval-of-the-
@@ -294,16 +297,35 @@ const CHECKS = [
   'tests/test_onboarding_intake_ui.js',
 ];
 
+// ---------------------------------------------------------------------------
+// NO PRODUCTION FROM TESTS (Ed 2026-10-04, Issue #27 follow-up). Every check
+// runs with tests/_support/no_prod_network.js preloaded: loopback only, every
+// other connect/fetch/http request refused AND reported, and a refused call
+// fails the check even if the code swallowed it. The scar: a unit test wrote 8
+// permanent rows to production system_errors through lib/capture_error.js.
+// Exceptions live in ONE place, scripts/test_network_policy.js:
+//   LIVE_READ_CHECKS   run TEST_NO_PROD=readonly (Supabase GET/HEAD only)
+//   LIVE_WRITE_CHECKS  skipped unless --live (they write prod / call paid APIs)
+// ---------------------------------------------------------------------------
+const { LIVE_READ_CHECKS, LIVE_WRITE_CHECKS } = require('./test_network_policy');
+const LIVE_READ = new Set(LIVE_READ_CHECKS);
+const LIVE_WRITE = new Set(LIVE_WRITE_CHECKS);
+// Forward slashes: NODE_OPTIONS treats backslash as an escape on Windows.
+const GUARD = path.join(ROOT, 'tests', '_support', 'no_prod_network.js').split(path.sep).join('/');
+
 const args = process.argv.slice(2);
 const bail = args.includes('--bail');
+const live = args.includes('--live');
 const onlyArg = args.find((a) => a.startsWith('--only='));
 const only = onlyArg ? onlyArg.slice('--only='.length) : null;
 
-const queue = only ? CHECKS.filter((c) => c.includes(only)) : CHECKS;
-if (!queue.length) {
+const matched = only ? CHECKS.filter((c) => c.includes(only)) : CHECKS;
+if (!matched.length) {
   console.error(`No checks matched --only=${only}`);
   process.exit(1);
 }
+const liveSkipped = live ? [] : matched.filter((c) => LIVE_WRITE.has(c));
+const queue = matched.filter((c) => !liveSkipped.includes(c));
 
 const results = [];
 const started = Date.now();
@@ -312,12 +334,21 @@ for (const rel of queue) {
   const label = rel.replace(/^(tests|scripts)\//, '').replace(/\.js$/, '');
   process.stdout.write(`\n──────── ${label} ────────\n`);
   const t0 = Date.now();
-  const r = spawnSync(process.execPath, [path.join(ROOT, rel)], {
-    cwd: ROOT, stdio: 'inherit', env: process.env,
-  });
+  const report = path.join(os.tmpdir(), `no_prod_${process.pid}_${results.length}.jsonl`);
+  try { fs.unlinkSync(report); } catch (_) {}
+  const env = {
+    ...process.env,
+    TEST_NO_PROD: LIVE_WRITE.has(rel) ? '0' : LIVE_READ.has(rel) ? 'readonly' : '1',
+    TEST_NO_PROD_REPORT: report,
+    // NODE_OPTIONS (not argv) so node child processes a check spawns inherit it.
+    NODE_OPTIONS: `${process.env.NODE_OPTIONS || ''} --require "${GUARD}"`.trim(),
+  };
+  const r = spawnSync(process.execPath, [path.join(ROOT, rel)], { cwd: ROOT, stdio: 'inherit', env });
   const ms = Date.now() - t0;
-  const ok = r.status === 0;
-  results.push({ label, rel, ok, ms, status: r.status });
+  let refused = [];
+  try { refused = fs.readFileSync(report, 'utf8').trim().split(/\r?\n/).filter(Boolean).map((l) => JSON.parse(l)); fs.unlinkSync(report); } catch (_) {}
+  const ok = r.status === 0 && refused.length === 0;
+  results.push({ label, rel, ok, ms, status: r.status, refused });
   if (!ok && bail) {
     console.error(`\n--bail: stopping at first failure (${label}).`);
     break;
@@ -333,9 +364,20 @@ console.log(`  ${results.length - failed.length}/${results.length} checks passed
   `   ${((Date.now() - started) / 1000).toFixed(1)}s`);
 console.log('='.repeat(64));
 
+if (liveSkipped.length) {
+  console.log(`
+  NOT RUN: ${liveSkipped.length} live check(s) that write production or call paid APIs.`);
+  for (const c of liveSkipped) console.log(`    - ${c}`);
+  console.log('  Run them deliberately with: npm test -- --live   (see scripts/test_network_policy.js)');
+}
+
 if (failed.length) {
   console.log('\n  FAILED:');
-  for (const f of failed) console.log(`    ✗ ${f.label}   (exit ${f.status})   node ${f.rel}`);
+  for (const f of failed) {
+    console.log(`    ✗ ${f.label}   (exit ${f.status})   node ${f.rel}`);
+    const hosts = [...new Set((f.refused || []).map((b) => `${b.method || 'connect'} ${b.host}${b.path}`))];
+    for (const h of hosts.slice(0, 5)) console.log(`        TEST_NO_PROD refused: ${h}`);
+  }
   console.log('\n  Every other check still ran. A failure here no longer hides the ones behind it.\n');
   process.exit(1);
 }

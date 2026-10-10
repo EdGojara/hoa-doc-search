@@ -8,7 +8,7 @@
 // and every caller links it. A REUSED exception is never modified (the already
 // recovered Sweetie Pies record stays as it is). In-memory fakes only.
 // ============================================================================
-require('dotenv').config({ quiet: true });
+require('./_support/no_prod_network'); // unit test: loopback only, no production keys (Issue #27 follow-up)
 const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
