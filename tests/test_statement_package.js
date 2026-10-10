@@ -270,6 +270,10 @@ const find = (model, num) => { for (const s of model.sections) for (const g of s
     check('August Meadows: 12/31/2025 prior year end is n/a (books begin 5/21/2026), never zero', pyeCol.available === false && /5\/21\/2026/.test(pyeCol.reason)
       && amBS.totals.assets.prior_year_end === null && amBS.totals.liabilities_and_fund_balance.prior_year_end === null && amBS.totals.balanced.prior_year_end === null, JSON.stringify(pyeCol));
     check('August Meadows: n/a all the way down the prior-year-end column (no 0 anywhere)', amBS.sections.every((sec) => sec.groups.every((g) => g.values.prior_year_end === null && g.lines.every((l) => l.values.prior_year_end === null))));
+    const amEq = amBS.sections.find((x) => x.key === 'equity');
+    check('August Meadows: Beginning fund balance (no equity accounts at all) is n/a too, never an empty-sum zero; current stays a real zero', amEq.groups.length === 0
+      && amEq.fund_balance.beginning.values.prior_year_end === null && amEq.total.values.prior_year_end === null && amEq.fund_balance.beginning.values.current === 0, JSON.stringify(amEq.fund_balance.beginning.values));
+    check('the rendered prior-year-end column has no zero dash anywhere (every cell n/a)', (() => { const h = R.renderHtml(amBS, { mode: 'print' }); const rows = [...h.matchAll(/<tr[^>]*>([\s\S]*?)<\/tr>/g)].map((m) => m[1]).filter((r) => /<td/.test(r)); return rows.every((r) => { const cells = [...r.matchAll(/<td[^>]*>([\s\S]*?)<\/td>/g)].map((m) => m[1]); return cells.length < 4 || /n\/a/.test(cells[cells.length - 1]); }); })());
     const eng = await FS.balanceSheet({ community_id: AM, as_of_date: '2026-09-30' });
     check('August Meadows: the current 2026 balance sheet is unchanged (equals the engine: 10,310.14 assets; 8,431.40 prepaid)', amBS.totals.assets.current === eng.totals.assets_cents && amBS.totals.assets.current === 1031014
       && amBS.totals.liabilities.current === 843140 && amBS.totals.balanced.current === true && amBS.engine_tie.every((t) => t.ties));
