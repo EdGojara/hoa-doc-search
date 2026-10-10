@@ -876,7 +876,10 @@ router.get('/community/:id/budget', async (req, res) => {
         status: pstat.status, status_label: pstat.status_label, closed_through: pstat.closed_through,
         budget_to_date_through: pstat.month_end,
       },
-      completeness,
+      // Board members see material exceptions and a concise list of open close procedures;
+      // authorized staff (accounting, Kat, Amanda) also get every finding in full.
+      completeness: { available: completeness.available, note: completeness.note || null, material: completeness.material, procedures: completeness.procedures,
+        ...(viewer && viewer.kind === 'staff' ? { details: completeness.details } : {}) },
       warnings: cls.warnings.map((w) => w.text),
     });
   } catch (err) {

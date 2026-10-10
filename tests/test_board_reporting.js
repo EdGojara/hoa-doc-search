@@ -51,9 +51,27 @@ const fake = ({ counts = {}, period = null, closeRec = null, closedThrough = nul
     { code: 'DATA-05', group: 'Data completeness', label: 'Recurring vendors billed this month', status: 'WARNING', explanation: 'Splash Pools not billed.' },
     { code: 'AP-02', group: 'Bills', label: 'Held bills', status: 'WARNING', explanation: 'x' },
   ];
-  const items = BR.boardCompleteness(closeResults);
-  check('Canyon Gate: the incomplete homeowner billing (assessment revenue) finding reaches the board', items.some((i) => i.code === 'DATA-01' && i.severity === 'incomplete' && /homeowner/i.test(i.label)));
-  check('only data-completeness and recognition findings that did not pass; staff action text left out', items.map((i) => i.code).join() === 'DATA-01,DATA-03,DATA-05' && items.every((i) => !('action' in i)) && items.find((i) => i.code === 'DATA-05').severity === 'check');
+  const input = { period: { period_start: '2026-09-01', period_end: '2026-09-30' }, bank: {
+    accounts: [{ id: 'b1', account_nickname: 'Operating Checking', account_last4: '5313', gl_account_number: '1000' }, { id: 'b2', account_nickname: 'Old Savings', account_last4: '0000', gl_account_number: '1090' }],
+    gl_balances: { 1000: 12345600, 1090: 0 }, statements: [], recs: [] } };
+  const cashResults = [...closeResults,
+    { code: 'DATA-02', group: 'Data completeness', label: 'Bank and investment statements received', status: 'BLOCK', explanation: '2 of 2 accounts have no statement.' },
+    { code: 'CASH-01', group: 'Cash', label: 'Every bank and investment account reconciled to $0.00', status: 'BLOCK', explanation: '2 of 2 accounts not reconciled.' }];
+  const cf = BR.classifyFindings(cashResults, input);
+  const mcodes = cf.material.map((x) => x.code), pcodes = cf.procedures.map((x) => x.code);
+  check('Canyon Gate: incomplete homeowner billing (assessment revenue) is a MATERIAL exception', mcodes.includes('DATA-01') && /Assessment billing/.test(cf.material.find((x) => x.code === 'DATA-01').title));
+  check('unscheduled prepaid / deferred balances are material', mcodes.includes('DATA-03'));
+  check('missing bank statement on an account carrying cash is MATERIAL (cash unverified), with the balance shown', mcodes.includes('CASH') && /\$123,456\.00/.test(cf.material.find((x) => x.code === 'CASH').explanation) && /Operating Checking/.test(cf.material.find((x) => x.code === 'CASH').explanation));
+  check('the same gap on a zero-balance account is a routine close procedure, not dismissed', pcodes.includes('CASH-ZERO') && /Old Savings/.test(cf.procedures.find((x) => x.code === 'CASH-ZERO').explanation) && !/Old Savings/.test(cf.material.find((x) => x.code === 'CASH').explanation));
+  check('warning-level housekeeping (held bills, recurring bills to confirm) is listed as an outstanding procedure', pcodes.includes('AP-02') && pcodes.includes('DATA-05'));
+  const nonPass = cashResults.filter((r) => r.status !== 'PASS').map((r) => r.code);
+  const covered = new Set([...cf.material.flatMap((x) => x.codes || [x.code]), ...cf.procedures.flatMap((x) => x.codes || [x.code])]);
+  check('nothing is dropped: every non-passing finding is in one of the two lists', nonPass.every((c) => covered.has(c)));
+  const unknownBal = BR.classifyFindings([{ code: 'DATA-02', group: 'Data completeness', label: 'x', status: 'BLOCK', explanation: 'x' }], { ...input, bank: { ...input.bank, gl_balances: {} } });
+  check('an account whose balance is unknown is treated as carrying cash (material), never assumed empty', unknownBal.material.some((x) => x.code === 'CASH'));
+  const okBank = BR.classifyFindings([{ code: 'DATA-01', group: 'Data completeness', label: 'x', status: 'BLOCK', explanation: 'x' }], { ...input, bank: { ...input.bank, statements: [{ bank_account_id: 'b1', status: 'completed', statement_period_end: '2026-09-30' }, { bank_account_id: 'b2', status: 'completed', statement_period_end: '2026-09-30' }],
+    recs: [{ bank_account_id: 'b1', status: 'reconciled', difference_cents: 0, period_end: '2026-09-30' }, { bank_account_id: 'b2', status: 'reconciled', difference_cents: 0, period_end: '2026-09-30' }] } });
+  check('with statements and $0.00 reconciliations, no cash item appears', !okBank.material.some((x) => x.code === 'CASH') && !okBank.procedures.some((x) => x.code === 'CASH-ZERO'));
 
   console.log('interfund transfers: what the books show, never the budget line');
   const C = { account_type: 'revenue', recorded_leg: 'outgoing', from: '2026-01-01', to: '2026-09-30' };
@@ -102,6 +120,7 @@ const fake = ({ counts = {}, period = null, closeRec = null, closedThrough = nul
   const html = require('fs').readFileSync(require('path').join(__dirname, '..', 'public', 'board-portal.html'), 'utf8');
   check('explicit column labels; "Spent YTD" and "vs. plan" headings are gone', /Annual Budget<\/th>/.test(html) && /Actual YTD<\/th>/.test(html) && /Variance vs\. Budget to Date<\/th>/.test(html) && !/>Spent YTD</.test(html) && !/>vs\. plan</.test(html));
   check('the reporting period, status, budget-to-date basis and the bar basis are stated on the page', /Reporting period: January 1 through/.test(html) && /Bars show Actual YTD as a share of the <b>annual<\/b> budget/.test(html) && /budget for January through/.test(html));
+  check('material exceptions prominent, close procedures in a concise labelled section, Provisional explained in plain language, full detail for staff only', /Items that affect these financial statements/.test(html) && /Month-end close procedures still outstanding/.test(html) && /<b>Provisional<\/b> means Bedrock's accounting team has not yet formally closed/.test(html) && /Staff only: all close findings in full/.test(html));
   check('transfer rows show their status ("Needs reconciliation", "Offsetting entries", "None recorded", "Recorded")', ['Needs reconciliation', 'Offsetting entries', 'None recorded', "chip('Recorded'"].every((t) => html.includes(t)));
 
   console.log(`\n${pass} passed, ${fail} failed`);
