@@ -37,7 +37,7 @@ const find = (model, num) => { for (const s of model.sections) for (const g of s
   const unm = bs.sections[0].groups.find((g) => g.kind === 'unmapped');
   check('a proposed and an unmapped account present under Unmapped, included in totals', unm && unm.lines.length === 2 && unm.lines.some((l) => l.mapping.status === 'proposed' && l.mapping.proposed_category) && unm.lines.some((l) => l.mapping.status === 'unmapped'));
   check('assets total includes Unmapped', bs.totals.assets.current === bs.sections[0].groups.reduce((t, g) => t + g.values.current, 0));
-  check('unmapped accounts raise a warning; mapping is not final-ready', bs.warnings.some((w) => w.code === 'unmapped_accounts' && w.count === 2) && bs.mapping.final_ready === false && bs.mapping.unmapped.length === 2);
+  check('unmapped accounts raise a warning; mapping is not complete', bs.warnings.some((w) => w.code === 'unmapped_accounts' && w.count === 2) && bs.mapping.mapping_complete === false && bs.mapping.unmapped.length === 2);
   check('categories come only from APPROVED mappings (the proposal does not group)', !bs.sections[0].groups.some((g) => g.kind === 'category' && g.lines.some((l) => l.account_number === '1405')));
   check('lifecycle: September is DRAFT, closed through 8/31', bs.lifecycle.status === 'draft' && /DRAFT/.test(bs.lifecycle.label) && /8\/31\/2026/.test(bs.lifecycle.note));
   const aug = await M.buildBalanceSheetModel(sb, { community_id: F.CID, as_of: '2026-08-31', now: NOW });
@@ -95,17 +95,19 @@ const find = (model, num) => { for (const s of model.sections) for (const g of s
   check('CSV detail: header + a row per transaction behind the statement', csv.startsWith('section,category,account_number') && csv.split('\r\n').length > 20);
 
   console.log('board-packet snapshot');
-  const snap = await SNAP.buildSectionSnapshot(sb, { community_id: F.CID, section_key: 'balance_sheet', cutoff: '2026-09-30', now: NOW });
+  const snap = await SNAP.buildSectionSnapshot(sb, { community_id: F.CID, section_key: 'balance_sheet', cutoff: '2026-08-31', now: NOW });
   check('stores the versioned model, not HTML', snap.source === 'trusted_statement_model' && snap.model_version === 'trusted.statement.v1' && snap.models[0].kind === 'balance_sheet' && !/<table/.test(JSON.stringify(snap)));
   const stored = JSON.parse(JSON.stringify(snap));
   check('a stored snapshot re-verifies (intact after a JSON round trip)', SNAP.snapshotIntact(stored));
   const tampered = JSON.parse(JSON.stringify(snap)); tampered.models[0].totals.assets.current += 100;
   check('an altered snapshot is detected', !SNAP.snapshotIntact(tampered));
-  const isnap = await SNAP.buildSectionSnapshot(sb, { community_id: F.CID, section_key: 'income_statement', cutoff: '2026-09-30', now: NOW });
+  const isnap = await SNAP.buildSectionSnapshot(sb, { community_id: F.CID, section_key: 'income_statement', cutoff: '2026-08-31', now: NOW });
   check('income statement snapshot: one model per fund with activity, Operating first', isnap.models.length >= 1 && isnap.models[0].fund === 'OPR' && isnap.models.every((m) => m.kind === 'income_budget'));
   check('re-rendering a stored snapshot reproduces the same statement', R.renderHtml(stored.models[0], { mode: 'embed' }) === R.renderHtml(snap.models[0], { mode: 'embed' }));
 
   console.log('final / distribute gate (through the real board-packet routes)');
+  // These snapshots are pulled for August (CLOSED in the fixture), so they isolate the MAPPING rule;
+  // the closed-period rule has its own tests below.
   const { BEDROCK_MGMT_CO_ID } = require('../lib/company');
   const adm = require('../api/_require_admin');
   let ownerOk = false; adm.requireOwner = async (req, res) => { if (ownerOk) return { email: 'owner@example.test', full_name: 'Owner', user: { id: null } }; res.status(403).json({ error: 'owner_only' }); return null; };
@@ -120,7 +122,7 @@ const find = (model, num) => { for (const s of model.sections) for (const g of s
   const toReview = await call('patch', '/:id', { id: 'pk-1' }, { status: 'in_review' });
   check('a draft / in-review move is never blocked by unmapped accounts', toReview.status === 200 && db.board_packets[0].status === 'in_review');
   const toFinal = await call('patch', '/:id', { id: 'pk-1' }, { status: 'final' });
-  check('marking final with unmapped balance-sheet accounts is refused (409), naming them', toFinal.status === 409 && toFinal.body.error === 'statement_not_final_ready' && toFinal.body.blockers[0].unmapped.length === 2 && db.board_packets[0].status === 'in_review', JSON.stringify(toFinal.body).slice(0, 300));
+  check('marking final with unmapped balance-sheet accounts is refused (409), naming them', toFinal.status === 409 && toFinal.body.error === 'packet_not_finalizable' && toFinal.body.blockers[0].unmapped.length === 2 && db.board_packets[0].status === 'in_review', JSON.stringify(toFinal.body).slice(0, 300));
   const dist = await call('post', '/:id/distribute', { id: 'pk-1' }, { recipients: ['board@example.test'], method: 'email' });
   check('distributing is refused the same way (nothing logged, status unchanged)', dist.status === 409 && db.board_packet_distribution_log.length === 0 && db.board_packets[0].status === 'in_review');
   const gate = await call('get', '/:id/statement-gate', { id: 'pk-1' });
@@ -136,7 +138,7 @@ const find = (model, num) => { for (const s of model.sections) for (const g of s
   check('with the owner override the packet can be marked final', toFinal2.status === 200 && db.board_packets[0].status === 'final');
   console.log('stable snapshot hash: statement content only');
   db.board_packets[0].status = 'in_review';
-  const later = await SNAP.buildSectionSnapshot(sb, { community_id: F.CID, section_key: 'balance_sheet', cutoff: '2026-09-30', now: new Date('2026-10-12T09:00:00Z') });
+  const later = await SNAP.buildSectionSnapshot(sb, { community_id: F.CID, section_key: 'balance_sheet', cutoff: '2026-08-31', now: new Date('2026-10-12T09:00:00Z') });
   check('a re-pull of unchanged books at a later time hashes the same (generation time excluded)', later.snapshot_sha256 === stored.snapshot_sha256 && later.generated_at !== stored.generated_at && later.models[0].generated_at !== stored.models[0].generated_at);
   const base = stored.models[0]; const H = base.snapshot_sha256;
   const variant = (fn, m = base) => { const c = JSON.parse(JSON.stringify(m)); fn(c); return M.modelSha(c); };
@@ -171,10 +173,10 @@ const find = (model, num) => { for (const s of model.sections) for (const g of s
   check('the override still applies to a re-pull of the SAME statement (same content, same hash)', toFinalSame.status === 200);
   // A financial change makes a different statement: the old override no longer applies.
   db.board_packets[0].status = 'in_review';
-  db.journal_entries.push({ id: 'je-late', community_id: F.CID, reference: 'SEP-LATE', posting_date: '2026-09-29', source_module: 'manual', status: 'posted', void_reversal_je_id: null, reverses_je_id: null, description: 'Late utility bill' });
+  db.journal_entries.push({ id: 'je-late', community_id: F.CID, reference: 'SEP-LATE', posting_date: '2026-08-29', source_module: 'manual', status: 'posted', void_reversal_je_id: null, reverses_je_id: null, description: 'Late utility bill' });
   db.journal_entry_lines.push({ id: 'jl-late-1', journal_entry_id: 'je-late', line_number: 1, account_id: F.aid(5300), fund_id: 'f-opr', debit_cents: 12345, credit_cents: 0, memo: null, vendor_id: null, property_id: null },
     { id: 'jl-late-2', journal_entry_id: 'je-late', line_number: 2, account_id: F.aid(1000), fund_id: 'f-opr', debit_cents: 0, credit_cents: 12345, memo: null, vendor_id: null, property_id: null });
-  const changed = await SNAP.buildSectionSnapshot(sb, { community_id: F.CID, section_key: 'balance_sheet', cutoff: '2026-09-30', now: NOW });
+  const changed = await SNAP.buildSectionSnapshot(sb, { community_id: F.CID, section_key: 'balance_sheet', cutoff: '2026-08-31', now: NOW });
   db.board_packet_sections[0].input_data = JSON.parse(JSON.stringify(changed));
   const toFinal3 = await call('patch', '/:id', { id: 'pk-1' }, { status: 'final' });
   check('an override does not carry to a statement whose numbers changed (new hash = blocked again)', changed.snapshot_sha256 !== stored.snapshot_sha256 && toFinal3.status === 409);
@@ -193,14 +195,14 @@ const find = (model, num) => { for (const s of model.sections) for (const g of s
   if (!db.account_report_map.some((m) => m.account_id === F.aid(1415) && m.statement === 'balance_sheet')) db.account_report_map.push({ community_id: F.CID, account_id: F.aid(1415), statement: 'balance_sheet', category_id: cat1415.id, approval_status: 'approved', approved_by: 'Ed', approved_at: '2026-10-10T00:00:00Z' });
   const liveNow = await M.buildBalanceSheetModel(sb, { community_id: F.CID, as_of: '2026-09-30', now: NOW });
   const toFinalOld = await call('patch', '/:id', { id: 'pk-1' }, { status: 'final' });
-  check('live mapping is now complete, yet the OLD snapshot (with unmapped accounts) still blocks final', liveNow.mapping.final_ready === true && toFinalOld.status === 409 && toFinalOld.body.blockers[0].unmapped.length === 2);
+  check('live mapping is now complete, yet the OLD snapshot (with unmapped accounts) still blocks final', liveNow.mapping.mapping_complete === true && toFinalOld.status === 409 && toFinalOld.body.blockers[0].unmapped.length === 2);
   check('the refusal says to pull the section again', /pull the section again/i.test(toFinalOld.body.message));
   const distOld = await call('post', '/:id/distribute', { id: 'pk-1' }, { recipients: ['board@example.test'], method: 'email' });
   check('distribute is refused on the old snapshot too', distOld.status === 409);
-  const mapped = await SNAP.buildSectionSnapshot(sb, { community_id: F.CID, section_key: 'balance_sheet', cutoff: '2026-09-30', now: NOW });
+  const mapped = await SNAP.buildSectionSnapshot(sb, { community_id: F.CID, section_key: 'balance_sheet', cutoff: '2026-08-31', now: NOW });
   db.board_packet_sections[0].input_data = JSON.parse(JSON.stringify(mapped));
   const toFinal5 = await call('patch', '/:id', { id: 'pk-1' }, { status: 'final' });
-  check('after the re-pull (new snapshot, every account mapped) final needs no override', mapped.models[0].mapping.final_ready === true && mapped.snapshot_sha256 !== stored.snapshot_sha256 && toFinal5.status === 200);
+  check('after the re-pull (new snapshot, every account mapped) final needs no override', mapped.models[0].mapping.mapping_complete === true && mapped.snapshot_sha256 !== stored.snapshot_sha256 && toFinal5.status === 200);
 
   console.log('old-format native statement sections (pre trusted.statement.v1)');
   const oldBS = { as_of_date: '2026-07-31', statement: { sections: { assets: [], liabilities: [], equity: [] }, totals: {} }, source: 'trusted_gl' };
@@ -292,9 +294,10 @@ const find = (model, num) => { for (const s of model.sections) for (const g of s
   }
   console.log('converted communities unchanged');
   {
-    // bs / ib were built on the fresh fixture at the top of this file; these are the
-    // content hashes the same fixture produced on main before this change (PR #109/#110).
-    check('Drama Creek (converted): balance sheet and income statement content hashes identical to main', bs.snapshot_sha256.startsWith('8433699045d6') && ib.snapshot_sha256.startsWith('79482666433a') && bs.period.books_start === '2026-01-01', `${bs.snapshot_sha256} ${ib.snapshot_sha256}`);
+    // bs / ib were built on the fresh fixture at the top of this file. Pinned content hashes: the
+    // income statement is unchanged since #109; the balance sheet changed exactly once, when its
+    // mapping state key was renamed final_ready -> mapping_complete (Ed 2026-10-10).
+    check('Drama Creek (converted): statement content hashes are the pinned values (only the mapping_complete rename moved the balance sheet)', bs.snapshot_sha256.startsWith('87999b8f716a') && ib.snapshot_sha256.startsWith('79482666433a') && bs.period.books_start === '2026-01-01', `${bs.snapshot_sha256} ${ib.snapshot_sha256}`);
   }
 
   console.log('balance-sheet subcategories and interfund elimination');
@@ -364,6 +367,69 @@ const find = (model, num) => { for (const s of model.sections) for (const g of s
     check('moving an account between subcategories changes the hash', (() => { const c = JSON.parse(JSON.stringify(con2)); const g = c.sections[0].groups.find((x) => x.label === 'Homeowner receivables'); const t = g.subgroups[0].lines.pop(); g.subgroups[1].lines.push(t); return M.modelSha(c) !== con2.snapshot_sha256; })());
     const emb = bp.renderSectionStandaloneHtml({ packet: { community: { name: 'Interfund Test' } }, section: { section_key: 'balance_sheet', input_data: JSON.parse(JSON.stringify(await SNAP.buildSectionSnapshot(sb, { community_id: IF, section_key: 'balance_sheet', cutoff: '2026-09-30', now: NOW }))) }, embed: true });
     check('board packet section shows the subcategories and the interfund handling', /Former owners/.test(emb) && /Fixed assets, net/.test(emb) && /Interfund imbalance/.test(emb));
+  }
+
+  console.log('final requires a CLOSED financial period (mapping-complete is not final-ready)');
+  {
+    // Fixture: August CLOSED, September OPEN. All Drama Creek balance-sheet accounts are mapped by now.
+    const NOT_CLOSED = 'Financial period September 2026 is not closed. Close the period before finalizing or distributing this packet.';
+    const pk = (id, sections) => { db.board_packets.push({ id, community_id: F.CID, management_company_id: BEDROCK_MGMT_CO_ID, status: 'draft' });
+      for (const [key, d] of Object.entries(sections)) db.board_packet_sections.push({ id: `${id}-${key}`, packet_id: id, section_key: key, input_data: JSON.parse(JSON.stringify(d)), status: 'ready' }); };
+    const pull = (key, cutoff, client = sb) => SNAP.buildSectionSnapshot(client, { community_id: F.CID, section_key: key, cutoff, now: NOW });
+    const sepBS = await pull('balance_sheet', '2026-09-30'); const sepIS = await pull('income_statement', '2026-09-30');
+    check('September snapshots are mapping-complete but record the period as DRAFT', sepBS.models[0].mapping.mapping_complete === true && sepBS.models[0].lifecycle.status === 'draft');
+    pk('pk-sep', { balance_sheet: sepBS, income_statement: sepIS });
+    const f1 = await call('patch', '/:id', { id: 'pk-sep' }, { status: 'final' });
+    check('mapping complete + period OPEN: final blocked with the plain message', f1.status === 409 && f1.body.message.includes(NOT_CLOSED) && f1.body.blockers.every((b) => b.problem === 'period_not_closed') && db.board_packets.find((x) => x.id === 'pk-sep').status === 'draft', JSON.stringify(f1.body).slice(0, 300));
+    const logN = db.board_packet_distribution_log.length;
+    const d1 = await call('post', '/:id/distribute', { id: 'pk-sep' }, { recipients: ['board@example.test'], method: 'email' });
+    const d1b = await call('patch', '/:id', { id: 'pk-sep' }, { status: 'distributed' });
+    check('distribute (action and status) follows the same rule; nothing logged; packet stays DRAFT', d1.status === 409 && d1.body.message.includes(NOT_CLOSED) && d1b.status === 409 && db.board_packet_distribution_log.length === logN && db.board_packets.find((x) => x.id === 'pk-sep').status === 'draft');
+    const gate1 = await call('get', '/:id/statement-gate', { id: 'pk-sep' });
+    check('the gate reports the period blocker for the UI', gate1.body.ok === false && gate1.body.open.some((b) => b.problem === 'period_not_closed' && b.period_label === 'September 2026'));
+    const augBS = await pull('balance_sheet', '2026-08-31'); const augIS = await pull('income_statement', '2026-08-31');
+    pk('pk-aug', { balance_sheet: augBS, income_statement: augIS });
+    check('mapping complete + period CLOSED + closed-state snapshot: final allowed', augBS.models[0].lifecycle.status === 'closed' && (await call('patch', '/:id', { id: 'pk-aug' }, { status: 'final' })).status === 200);
+    pk('pk-aug2', { balance_sheet: augBS });
+    check('... and distribute is allowed', (await call('post', '/:id/distribute', { id: 'pk-aug2' }, { recipients: ['board@example.test'], method: 'email' })).status === 200);
+    // Mapping incomplete + period closed: the mapping blocker still applies.
+    const m1415 = db.account_report_map.find((m) => m.account_id === F.aid(1415) && m.statement === 'balance_sheet');
+    const saved = { ...m1415 }; Object.assign(m1415, { approval_status: 'proposed', approved_by: null, approved_at: null });
+    const augUnmapped = await pull('balance_sheet', '2026-08-31');
+    pk('pk-aug-unmapped', { balance_sheet: augUnmapped });
+    const f3 = await call('patch', '/:id', { id: 'pk-aug-unmapped' }, { status: 'final' });
+    check('mapping incomplete + period closed: the mapping blocker still applies (no period blocker)', f3.status === 409 && f3.body.blockers.length === 1 && f3.body.blockers[0].problem === 'unmapped_accounts');
+    // Owner mapping override does not bypass the period requirement.
+    const sepUnmapped = await pull('balance_sheet', '2026-09-30');
+    pk('pk-sep-ovr', { balance_sheet: sepUnmapped });
+    const ovr = await call('post', '/:id/statement-mapping-override', { id: 'pk-sep-ovr' }, { section_key: 'balance_sheet', reason: 'Escrow account classification pending CPA review' });
+    const f4 = await call('patch', '/:id', { id: 'pk-sep-ovr' }, { status: 'final' });
+    check('owner mapping override does not bypass the closed-period requirement', ovr.status === 200 && f4.status === 409 && f4.body.message.includes(NOT_CLOSED) && f4.body.blockers.every((b) => b.problem === 'period_not_closed'));
+    Object.assign(m1415, saved);
+    // A snapshot pulled while open stays blocked after the live period closes, until re-pulled.
+    const sepPer = db.accounting_periods.find((x) => x.community_id === F.CID && x.period_number === 9);
+    const sepSaved = { ...sepPer };
+    pk('pk-sep-late', { balance_sheet: sepBS });
+    Object.assign(sepPer, { status: 'closed', closed_at: '2026-10-11T15:00:00Z' });
+    db.period_closes.push({ id: 'pc-sep', community_id: F.CID, period_id: sepPer.id, status: 'closed', close_label: 'closed', closed_at: '2026-10-11T15:00:00Z', closed_by: 'Association Manager' });
+    const f5 = await call('patch', '/:id', { id: 'pk-sep-late' }, { status: 'final' });
+    const d5 = await call('post', '/:id/distribute', { id: 'pk-sep-late' }, { recipients: ['board@example.test'], method: 'email' });
+    check('snapshot pulled while OPEN stays blocked after the live period closes (final and distribute)', f5.status === 409 && f5.body.blockers.some((b) => b.problem === 'snapshot_pulled_open') && /pulled while it was still open\. Pull the section again/.test(f5.body.message) && d5.status === 409);
+    const closedClient = F.fakeClient({ closedThrough: '2026-09-30' });
+    const sepClosed = await pull('balance_sheet', '2026-09-30', closedClient);
+    db.board_packet_sections.find((x) => x.id === 'pk-sep-late-balance_sheet').input_data = JSON.parse(JSON.stringify(sepClosed));
+    check('after the re-pull (snapshot records the CLOSED period, new hash) final is allowed', sepClosed.models[0].lifecycle.status === 'closed' && sepClosed.models[0].lifecycle.closed_through === '2026-09-30'
+      && sepClosed.snapshot_sha256 !== sepBS.snapshot_sha256 && (await call('patch', '/:id', { id: 'pk-sep-late' }, { status: 'final' })).status === 200);
+    // A period reopened after a closed-state pull blocks again.
+    Object.assign(sepPer, { status: 'reopened' });
+    pk('pk-reopen', { balance_sheet: sepClosed });
+    const f6 = await call('patch', '/:id', { id: 'pk-reopen' }, { status: 'final' });
+    check('a period reopened after the pull blocks final (re-close and re-pull)', f6.status === 409 && f6.body.blockers.some((b) => b.problem === 'period_reopened') && /was reopened after this statement was pulled/.test(f6.body.message));
+    Object.assign(sepPer, sepSaved); db.period_closes = db.period_closes.filter((x) => x.id !== 'pc-sep');
+    // Uploaded Vantaca PDF sections keep their existing behavior (no native snapshot, no period rule).
+    pk('pk-pdf-open', { balance_sheet: { as_of_date: '2026-09-30', assets: [{ name: 'Operating', amount: 1 }], liabilities: [], equity: [], totals: {} }, income_statement: { current_period_label: 'September 2026', line_items: [{ name: 'x', actual: 1 }] } });
+    check('uploaded Vantaca PDF sections keep their existing behavior (allowed; the period rule is for native statements)', (await call('patch', '/:id', { id: 'pk-pdf-open' }, { status: 'final' })).status === 200);
+    check('a packet mixing an uploaded PDF with a native open-period statement is still blocked', (() => true)() && (await (async () => { pk('pk-mixed', { balance_sheet: sepBS, income_statement: { current_period_label: 'September 2026', line_items: [{ name: 'x', actual: 1 }] } }); return (await call('patch', '/:id', { id: 'pk-mixed' }, { status: 'final' })).status === 409; })()));
   }
 
   console.log('board-packet section renders through the shared renderer');
