@@ -202,6 +202,56 @@ const find = (model, num) => { for (const s of model.sections) for (const g of s
   const toFinal5 = await call('patch', '/:id', { id: 'pk-1' }, { status: 'final' });
   check('after the re-pull (new snapshot, every account mapped) final needs no override', mapped.models[0].mapping.final_ready === true && mapped.snapshot_sha256 !== stored.snapshot_sha256 && toFinal5.status === 200);
 
+  console.log('old-format native statement sections (pre trusted.statement.v1)');
+  const oldBS = { as_of_date: '2026-07-31', statement: { sections: { assets: [], liabilities: [], equity: [] }, totals: {} }, source: 'trusted_gl' };
+  const oldIS = { period_start: '2026-07-01', period_end: '2026-07-31', statement: { rows: [] }, source: 'trusted_gl' };
+  const pdfBS = { as_of_date: '2026-07-31', assets: [{ name: 'Operating', amount: 1000 }], liabilities: [], equity: [], totals: { total_assets: 1000 }, current_period_label: 'July 2026' };
+  const pdfIS = { current_period_label: 'July 2026', line_items: [{ name: 'Assessments', actual: 1000 }], total_revenue: 1000 };
+  const mkPacket = (id, sections) => {
+    db.board_packets.push({ id, community_id: F.CID, management_company_id: BEDROCK_MGMT_CO_ID, status: 'draft' });
+    for (const [k, d] of Object.entries(sections)) db.board_packet_sections.push({ id: `${id}-${k}`, packet_id: id, section_key: k, input_data: d === null ? null : JSON.parse(JSON.stringify(d)), status: 'ready' });
+  };
+  const sectionsOf = (id) => JSON.stringify(db.board_packet_sections.filter((x) => x.packet_id === id));
+  mkPacket('pk-oldbs', { balance_sheet: oldBS });
+  mkPacket('pk-oldis', { income_statement: oldIS });
+  mkPacket('pk-oldboth', { balance_sheet: oldBS, income_statement: oldIS });
+  const before = { bs: sectionsOf('pk-oldbs'), is: sectionsOf('pk-oldis'), both: sectionsOf('pk-oldboth') };
+  check('the stale-format test helper sees old native sections and nothing else', SNAP.isStaleNative({ section_key: 'balance_sheet', input_data: oldBS }) && SNAP.isStaleNative({ section_key: 'income_statement', input_data: oldIS })
+    && !SNAP.isStaleNative({ section_key: 'balance_sheet', input_data: pdfBS }) && !SNAP.isStaleNative({ section_key: 'income_statement', input_data: pdfIS })
+    && !SNAP.isStaleNative({ section_key: 'balance_sheet', input_data: {} }) && !SNAP.isStaleNative({ section_key: 'balance_sheet', input_data: null })
+    && !SNAP.isStaleNative({ section_key: 'balance_sheet', input_data: stored }) && !SNAP.isStaleNative({ section_key: 'ar_aging', input_data: { source: 'trusted_gl' } }));
+  const fBS = await call('patch', '/:id', { id: 'pk-oldbs' }, { status: 'final' });
+  check('old native balance sheet blocks final (409), naming the section and the fix', fBS.status === 409 && fBS.body.blockers.some((b) => b.section_key === 'balance_sheet' && b.problem === 'stale_native_format')
+    && /balance sheet section was filled in an older format and must be pulled again/.test(fBS.body.message) && /current native statement model/.test(fBS.body.message), JSON.stringify(fBS.body).slice(0, 400));
+  const fIS = await call('patch', '/:id', { id: 'pk-oldis' }, { status: 'final' });
+  check('old native income statement blocks final (409)', fIS.status === 409 && fIS.body.blockers.some((b) => b.section_key === 'income_statement' && b.problem === 'stale_native_format') && /income statement section/.test(fIS.body.message));
+  const fDist = await call('patch', '/:id', { id: 'pk-oldboth' }, { status: 'distributed' });
+  const logBefore = db.board_packet_distribution_log.length;
+  const dOld = await call('post', '/:id/distribute', { id: 'pk-oldboth' }, { recipients: ['board@example.test'], method: 'email' });
+  const dOldPrint = await call('post', '/:id/distribute', { id: 'pk-oldbs' }, { recipients: ['board@example.test'], method: 'print' });
+  check('old native sections block distribute (any method) and status "distributed"; nothing is logged', dOld.status === 409 && dOldPrint.status === 409 && fDist.status === 409
+    && db.board_packet_distribution_log.length === logBefore && /balance sheet and income statement sections were filled in an older format/.test(dOld.body.message));
+  check('old-format packets stay draft-able (in_review allowed)', (await call('patch', '/:id', { id: 'pk-oldboth' }, { status: 'in_review' })).status === 200);
+  const ovOld = await call('post', '/:id/statement-mapping-override', { id: 'pk-oldbs' }, { section_key: 'balance_sheet', reason: 'Trying to override a stale section' });
+  check('the owner override cannot bypass a stale section (re-pull is the only fix)', ovOld.status === 409 && (await call('patch', '/:id', { id: 'pk-oldbs' }, { status: 'final' })).status === 409);
+  check('existing packet sections are not modified or refilled by the gate', sectionsOf('pk-oldbs') === before.bs && sectionsOf('pk-oldis') === before.is && sectionsOf('pk-oldboth') === before.both);
+  mkPacket('pk-badmodel', { balance_sheet: { source: 'trusted_statement_model', model_version: 'trusted.statement.v1', models: [] } });
+  check('a section claiming the model source without a usable model also blocks', (await call('patch', '/:id', { id: 'pk-badmodel' }, { status: 'final' })).status === 409);
+  // trusted.statement.v1 snapshots continue through the existing mapping gate.
+  mkPacket('pk-v1-unmapped', { balance_sheet: stored, income_statement: isnap });
+  const v1u = await call('patch', '/:id', { id: 'pk-v1-unmapped' }, { status: 'final' });
+  check('v1 snapshot with unmapped accounts: still blocked by the mapping gate (not the stale rule)', v1u.status === 409 && v1u.body.blockers.every((b) => b.problem === 'unmapped_accounts'));
+  mkPacket('pk-v1-mapped', { balance_sheet: mapped, income_statement: isnap });
+  check('v1 snapshot fully mapped: final allowed, as before', (await call('patch', '/:id', { id: 'pk-v1-mapped' }, { status: 'final' })).status === 200);
+  // Uploaded PDF sections and empty sections: unchanged behavior.
+  mkPacket('pk-pdf', { balance_sheet: pdfBS, income_statement: pdfIS });
+  const pdfFinal = await call('patch', '/:id', { id: 'pk-pdf' }, { status: 'final' });
+  const pdfDist = await call('post', '/:id/distribute', { id: 'pk-pdf' }, { recipients: ['board@example.test'], method: 'email' });
+  check('uploaded Vantaca PDF sections remain allowed (final and distribute)', pdfFinal.status === 200 && pdfDist.status === 200);
+  check('uploaded PDF sections still render with their own renderer', !/needs to be pulled again/.test(bp.renderSectionStandaloneHtml({ packet: { community: {} }, section: { section_key: 'balance_sheet', input_data: pdfBS }, embed: true })));
+  mkPacket('pk-empty', { balance_sheet: {}, income_statement: null });
+  check('empty statement sections behave as today (do not block)', (await call('patch', '/:id', { id: 'pk-empty' }, { status: 'final' })).status === 200);
+
   console.log('board-packet section renders through the shared renderer');
   const html = bp.renderSectionStandaloneHtml({ packet: { community: { name: 'Drama Creek Estates' }, period_label: 'September 2026' }, section: { section_key: 'balance_sheet', input_data: stored }, embed: true });
   check('native snapshot section = the shared renderer\'s statement (same snapshot id)', html.includes(`data-snapshot="${stored.models[0].snapshot_sha256}"`) && html.includes('class="tstmt print"'));
