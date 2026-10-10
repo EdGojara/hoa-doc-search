@@ -771,81 +771,73 @@ router.get('/community/:id/budget', async (req, res) => {
     const { budgetVsActual } = require('../lib/accounting/financial_statements');
     const bva = await budgetVsActual({ community_id: communityId, period_end: periodEnd });
 
-    // Fund of each row → which section it belongs to. OPR = Operating, RES =
-    // Reserve; anything else (Adopt-A-School, Savings) gets its own section so a
-    // community's real fund set drives the view instead of a hard-coded list.
-    const FUND_TITLES = { OPR: 'Operating', RES: 'Reserve', SAV: 'Savings', ADO: 'Adopt-A-School' };
-    const fundOrder = ['OPR', 'RES', 'SAV', 'ADO'];
-    const byFund = new Map();
-    for (const r of (bva.rows || [])) {
-      const fc = r.fund_code || 'OPR';
-      if (!byFund.has(fc)) byFund.set(fc, []);
-      byFund.get(fc).push(r);
+    // By fund, with the ONE shared classification (lib/accounting/budget_fund_summary.js
+    // classifyByFund), the same as the budget tile, Ask Amanda and the working forecast:
+    // Operating is the operating fund alone; Reserve and other funds are separate; an
+    // interfund transfer (only by explicit account configuration) is shown as the
+    // from-fund's transfer out and the to-fund's transfer in, never as revenue and never
+    // twice. A negative revenue line that is NOT configured as a transfer is shown as
+    // budgeted in its fund (never flipped into a positive inflow) with a warning.
+    const BFS = require('../lib/accounting/budget_fund_summary');
+    const ids = [...new Set((bva.rows || []).map((r) => r.account_id).filter(Boolean))];
+    const accounts = [];
+    for (let i = 0; i < ids.length; i += 200) {
+      const { data: acc, error: aErr } = await supabase.from('chart_of_accounts')
+        .select('id, account_number, account_name, account_type, account_subtype, fund_id, interfund_from_fund_id, interfund_to_fund_id')
+        .eq('community_id', communityId).in('id', ids.slice(i, i + 200));
+      if (aErr) throw aErr;
+      accounts.push(...(acc || []));
     }
+    const { data: fundRows, error: fErr } = await supabase.from('account_funds').select('id, fund_code, fund_name, fund_type').eq('community_id', communityId).limit(50);
+    if (fErr) throw fErr;
+    const FUND_TITLES = { OPR: 'Operating', RES: 'Reserve', SAV: 'Savings', ADO: 'Adopt-A-School' };
 
     // Non-cash accounts (unrealized/realized market gains/losses) are NOT
     // spendable money — the board must never read a $63k mark-to-market as
     // reserve income. Same exclusion the living-budget engine applies. Shown
     // separately, muted, never inside the spendable net.
     const isNonCash = (r) => /unrealized|realized\s+(gain|loss)|market\s+(gain|loss)/i.test(r.account_name || '');
-    // A revenue line budgeted NEGATIVE is a contra/transfer (e.g. "Reserve
-    // Contribution" booked as a transfer out of operating). Flip it so the board
-    // reads it as a positive inflow into the fund. Flip budget AND actual so the
-    // variance stays honest.
-    const flipContribution = (r) => {
-      const neg = r.account_type === 'revenue'
-        && (Number(r.annual_budget_cents || 0) < 0 || Number(r.ytd_budget_cents || 0) < 0);
-      if (!neg) return r;
+    const allRows = (bva.rows || []).filter((r) => ['revenue', 'expense'].includes(r.account_type));
+    const MEASURES = ['annual_budget_cents', 'ytd_budget_cents', 'ytd_actual_cents'];
+    const cls = BFS.classifyByFund({ rows: allRows.filter((r) => !isNonCash(r)), accounts, funds: fundRows || [], measures: MEASURES });
+    const A = new Map(accounts.map((x) => [x.id, x]));
+    const fundOf = (r) => r.fund_id || (A.get(r.account_id) || {}).fund_id || null;
+    const byNum = (x, y) => String(x.account_number).localeCompare(String(y.account_number));
+    const funds = cls.funds.map((g) => {
+      const noncash = allRows.filter((r) => isNonCash(r) && (fundOf(r) || null) === (g.fund_id || null)).sort(byNum);
+      const t = g.totals;
       return {
-        ...r,
-        annual_budget_cents: -Number(r.annual_budget_cents || 0),
-        ytd_budget_cents: -Number(r.ytd_budget_cents || 0),
-        ytd_actual_cents: r.ytd_actual_cents === null ? null : -Number(r.ytd_actual_cents || 0),
-        is_contribution: true,
-      };
-    };
-
-    // Null-sticky: YTD actuals not available in trustEd (a period end before a conversion
-    // cutover; lib/accounting/statement_periods.js) stay null, never a board-facing $0.
-    const sumKey = (rows, key) => rows.reduce((s, r) => (s === null || r[key] === null ? null : s + Number(r[key] || 0)), 0);
-    const subN = (a, b) => (a === null || b === null ? null : a - b);
-    const funds = [];
-    const orderedCodes = [...byFund.keys()].sort((a, b) => {
-      const ia = fundOrder.indexOf(a), ib = fundOrder.indexOf(b);
-      return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
-    });
-    for (const fc of orderedCodes) {
-      const rows = byFund.get(fc);
-      const noncash = rows.filter(isNonCash)
-        .sort((a, b) => a.account_number.localeCompare(b.account_number));
-      const cash = rows.filter((r) => !isNonCash(r));
-      const revenue = cash.filter((r) => r.account_type === 'revenue').map(flipContribution)
-        .sort((a, b) => a.account_number.localeCompare(b.account_number));
-      const expense = cash.filter((r) => r.account_type === 'expense')
-        .sort((a, b) => a.account_number.localeCompare(b.account_number));
-      const revB = sumKey(revenue, 'annual_budget_cents'), revYtdB = sumKey(revenue, 'ytd_budget_cents'), revYtdA = sumKey(revenue, 'ytd_actual_cents');
-      const expB = sumKey(expense, 'annual_budget_cents'), expYtdB = sumKey(expense, 'ytd_budget_cents'), expYtdA = sumKey(expense, 'ytd_actual_cents');
-      funds.push({
-        fund_code: fc,
-        fund_title: FUND_TITLES[fc] || fc,
-        is_reserve: fc === 'RES',
-        revenue,
-        expense,
+        fund_code: g.fund_code,
+        fund_type: g.fund_type,
+        fund_title: FUND_TITLES[g.fund_code] || g.fund_name || g.fund_code || 'No fund',
+        is_reserve: g.fund_type === 'reserve',
+        is_operating: !!cls.operating && g.fund_id === cls.operating.fund_id,
+        revenue: g.revenue.slice().sort(byNum),
+        expense: g.expense.slice().sort(byNum),
+        transfers: g.transfers.map((x) => ({ account_name: x.account_name, account_number: x.account_number, direction: x.direction, label: x.label,
+          counterparty_fund_code: x.direction === 'out' ? x.to_fund_code : x.from_fund_code, annual_cents: x.annual_budget_cents, ytd_budget_cents: x.ytd_budget_cents, ytd_actual_cents: x.ytd_actual_cents })),
         noncash,
         totals: {
-          annual_revenue_cents: revB,
-          annual_expense_cents: expB,
-          annual_net_cents: revB - expB,
-          ytd_budget_revenue_cents: revYtdB,
-          ytd_actual_revenue_cents: revYtdA,
-          ytd_budget_expense_cents: expYtdB,
-          ytd_actual_expense_cents: expYtdA,
-          ytd_budget_net_cents: revYtdB - expYtdB,
-          ytd_actual_net_cents: subN(revYtdA, expYtdA),
-          noncash_ytd_actual_cents: sumKey(noncash, 'ytd_actual_cents'),
+          // before transfers (income − expenses); for Operating: before reserve funding
+          annual_revenue_cents: t.annual_budget_cents.revenue,
+          annual_expense_cents: t.annual_budget_cents.expense,
+          annual_net_cents: t.annual_budget_cents.net_before_transfers,
+          ytd_budget_revenue_cents: t.ytd_budget_cents.revenue,
+          ytd_actual_revenue_cents: t.ytd_actual_cents.revenue,
+          ytd_budget_expense_cents: t.ytd_budget_cents.expense,
+          ytd_actual_expense_cents: t.ytd_actual_cents.expense,
+          ytd_budget_net_cents: t.ytd_budget_cents.net_before_transfers,
+          ytd_actual_net_cents: t.ytd_actual_cents.net_before_transfers,
+          // interfund transfers and the result after them (for Operating: after reserve funding)
+          annual_transfers_in_cents: t.annual_budget_cents.transfers_in,
+          annual_transfers_out_cents: t.annual_budget_cents.transfers_out,
+          annual_net_after_transfers_cents: t.annual_budget_cents.net_after_transfers,
+          ytd_budget_net_after_transfers_cents: t.ytd_budget_cents.net_after_transfers,
+          ytd_actual_net_after_transfers_cents: t.ytd_actual_cents.net_after_transfers,
+          noncash_ytd_actual_cents: noncash.reduce((acc, r) => (acc === null || r.ytd_actual_cents === null ? null : acc + Number(r.ytd_actual_cents || 0)), 0),
         },
-      });
-    }
+      };
+    });
 
     res.json({
       community: { id: community.id, name: community.name },
@@ -857,6 +849,8 @@ router.get('/community/:id/budget', async (req, res) => {
       ytd_available: !(bva.availability && bva.availability.ytd && bva.availability.ytd.status === 'not_available'),
       ytd_note: (bva.availability && bva.availability.ytd && bva.availability.ytd.note) || null,
       funds,
+      operating_net_basis: cls.operating_net_basis,
+      warnings: cls.warnings.map((w) => w.text),
     });
   } catch (err) {
     console.error('[board_portal] budget failed:', err.message);

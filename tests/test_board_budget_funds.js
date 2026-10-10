@@ -1,5 +1,5 @@
 // tests/test_board_budget_funds.js  (Ed 2026-10-10)
-// Board portal budget tile + Ask Amanda budget context, by fund, with the same fund
+// Board portal budget tile, detailed budget view and Ask Amanda budget context, by fund, with the same fund
 // definitions as the financial statements and the working forecast. Scar: the tile
 // folded Adopt-a-School income into Operating (Canyon Gate operating net $145,668
 // instead of $140,718) and treated any Reserve revenue as the reserve contribution.
@@ -62,6 +62,51 @@ const nofund = BFS.summarizeBudgetByFund({ lines: [...LINES, { account_id: 'a999
 check('a line with no fund stays in its own group, never in Operating', nofund.operating.revenue_cents === 110579600 && nofund.funds.some((f) => f.fund_type === 'unassigned' && f.revenue_cents === 100000));
 const twoOp = BFS.summarizeBudgetByFund({ lines: LINES, accounts: ACCTS(), funds: [...FUNDS.slice(0, 2), { ...FUNDS[2], fund_type: 'operating' }] });
 check('two operating funds: no combined Operating figure is invented', twoOp.operating === null && BFS.budgetHeadline(B, twoOp).operating_net_cents === null && twoOp.warnings.some((w) => w.code === 'no_operating_fund'));
+
+console.log('Waterview: 4010 in RESERVE, configured Operating -> Reserve ($93,000)');
+const WVF = [{ id: 'wo', fund_code: 'OPR', fund_name: 'Operating', fund_type: 'operating' }, { id: 'wr', fund_code: 'RES', fund_name: 'Reserve', fund_type: 'reserve' }, { id: 'wa', fund_code: 'ADO', fund_name: 'Adopt A School', fund_type: 'other' }];
+const WVA = [acct('w4000', '4000', 'Assessments', 'revenue', 'wo'), acct('w5000', '5000', 'Operating expenses', 'expense', 'wo'),
+  acct('w4010', '4010', 'Reserve Contribution', 'revenue', 'wr', { account_subtype: 'interfund_transfer', interfund_from_fund_id: 'wo', interfund_to_fund_id: 'wr' })];
+const WVL = [{ account_id: 'w4000', fund_id: 'wo', annual_amount_cents: 121096500 }, { account_id: 'w5000', fund_id: 'wo', annual_amount_cents: 119688000 }, { account_id: 'w4010', fund_id: 'wr', annual_amount_cents: -9300000 }];
+const wv = BFS.budgetHeadline(B, BFS.summarizeBudgetByFund({ lines: WVL, accounts: WVA, funds: WVF }));
+check('Waterview: before reserve funding $14,085, funding $93,000, after ($78,915)', wv.operating_net_cents === 1408500 && wv.reserve_contribution_cents === 9300000 && wv.operating_net_after_reserve_funding_cents === -7891500 && wv.operating_net_basis === 'before_reserve_funding');
+check('Waterview: Reserve gets the $93,000 transfer in, no revenue; the totals reconcile to the approved ($78,915)', wv.funds.find((f) => f.fund_code === 'RES').transfers_in_cents === 9300000 && wv.funds.find((f) => f.fund_code === 'RES').revenue_cents === 0
+  && wv.funds.reduce((t, f) => t + f.net_before_transfers_cents, 0) + (-9300000) === 121096500 - 119688000 - 9300000);
+
+console.log('Lakes of Pine Forest: 4010 in OPERATING, configured Operating -> Reserve ($42,700)');
+const LPF = [{ id: 'lo', fund_code: 'OPR', fund_name: 'Operating', fund_type: 'operating' }, { id: 'lr', fund_code: 'RES', fund_name: 'Reserve', fund_type: 'reserve' }, { id: 'ls', fund_code: 'SAV', fund_name: 'Savings', fund_type: 'other' }];
+const LPA = [acct('l4000', '4000', 'Assessments', 'revenue', 'lo'), acct('l5000', '5000', 'Operating expenses', 'expense', 'lo'),
+  acct('l4010', '4010', 'Reserve Contribution', 'revenue', 'lo', { account_subtype: 'interfund_transfer', interfund_from_fund_id: 'lo', interfund_to_fund_id: 'lr' })];
+const LPL = [{ account_id: 'l4000', fund_id: 'lo', annual_amount_cents: 38969800 }, { account_id: 'l5000', fund_id: 'lo', annual_amount_cents: 38682800 }, { account_id: 'l4010', fund_id: 'lo', annual_amount_cents: -4270000 }];
+const lpS = BFS.summarizeBudgetByFund({ lines: LPL, accounts: LPA, funds: LPF });
+const lp = BFS.budgetHeadline(B, lpS);
+check('LOPF: the negative contribution in Operating is NOT operating revenue: revenue $389,698, before reserve funding $2,870', lp.operating_revenue_cents === 38969800 && lp.operating_net_cents === 287000 && lp.operating_net_basis === 'before_reserve_funding');
+check('LOPF: funding $42,700, after ($39,830) = the approved budget as recorded', lp.reserve_contribution_cents === 4270000 && lp.operating_net_after_reserve_funding_cents === -3983000 && -3983000 === 38969800 - 4270000 - 38682800);
+check('LOPF: Reserve gets the $42,700 transfer in; Savings stays separate at $0', lp.funds.find((f) => f.fund_code === 'RES').transfers_in_cents === 4270000 && lp.funds.find((f) => f.fund_code === 'SAV') === undefined);
+check('different placement, same economics: Canyon Gate (Reserve) and LOPF (Operating) both record the outgoing side', sum.transfers[0].amount_cents === 16400000 && lpS.transfers[0].amount_cents === 4270000);
+
+console.log('detailed budget view: the same classification over budget-vs-actual rows');
+const bvaRows = [{ account_id: 'a4000', fund_id: 'opr', annual_budget_cents: 102742500, ytd_budget_cents: 77056875, ytd_actual_cents: 77000000 },
+  { account_id: 'a4210', fund_id: 'opr', annual_budget_cents: 7837100, ytd_budget_cents: 5877825, ytd_actual_cents: 0 },
+  { account_id: 'a5000', fund_id: 'opr', annual_budget_cents: 96507800, ytd_budget_cents: 72380850, ytd_actual_cents: 80000000 },
+  { account_id: 'a4010', fund_id: 'res', annual_budget_cents: -16400000, ytd_budget_cents: -12300000, ytd_actual_cents: -12300000 },
+  { account_id: 'a4050', fund_id: 'ado', annual_budget_cents: 495000, ytd_budget_cents: 371250, ytd_actual_cents: 169000 }];
+const cls = BFS.classifyByFund({ rows: bvaRows, accounts: ACCTS(), funds: FUNDS, measures: ['annual_budget_cents', 'ytd_budget_cents', 'ytd_actual_cents'] });
+const cOp = cls.funds.find((f) => f.fund_code === 'OPR'), cRes = cls.funds.find((f) => f.fund_code === 'RES');
+check('detail view annual totals equal the tile (one calculation): before $140,718, out $164,000, after ($23,282)', cOp.totals.annual_budget_cents.net_before_transfers === h.operating_net_cents && cOp.totals.annual_budget_cents.transfers_out === h.reserve_contribution_cents && cOp.totals.annual_budget_cents.net_after_transfers === h.operating_net_after_reserve_funding_cents);
+check('detail view: 4010 is never a revenue row (not flipped into a positive inflow); it is a transfer in both funds', !cOp.revenue.some((r) => r.account_id === 'a4010') && !cRes.revenue.some((r) => r.account_id === 'a4010') && cOp.transfers[0].direction === 'out' && cRes.transfers[0].direction === 'in' && cOp.transfers[0].label === 'Planned reserve funding');
+check('detail view: YTD transfer actuals move with the same sign rule (positive $123,000 Operating -> Reserve)', cOp.totals.ytd_actual_cents.transfers_out === 12300000 && cRes.totals.ytd_actual_cents.transfers_in === 12300000 && cOp.totals.ytd_actual_cents.net_after_transfers === 77000000 - 80000000 - 12300000);
+const naRows = bvaRows.map((r) => ({ ...r, ytd_actual_cents: null }));
+const na = BFS.classifyByFund({ rows: naRows, accounts: ACCTS(), funds: FUNDS, measures: ['annual_budget_cents', 'ytd_budget_cents', 'ytd_actual_cents'] });
+check('detail view: YTD actuals not available stay null (never a $0), including the transfer and after-transfer net', na.funds.find((f) => f.fund_code === 'OPR').totals.ytd_actual_cents.net_after_transfers === null && na.funds.find((f) => f.fund_code === 'RES').totals.ytd_actual_cents.transfers_in === null
+  && na.funds.find((f) => f.fund_code === 'OPR').totals.annual_budget_cents.net_after_transfers === -2328200);
+const unf = BFS.classifyByFund({ rows: bvaRows, accounts: ACCTS({}), funds: FUNDS, measures: ['annual_budget_cents'] });
+check('detail view, unconfigured: the negative line stays negative in its fund (no sign flip) with a warning', unf.funds.find((f) => f.fund_code === 'RES').totals.annual_budget_cents.revenue === -16400000 && unf.transfers.length === 0 && unf.warnings.some((w) => w.code === 'negative_revenue_budget'));
+const lpCls = BFS.classifyByFund({ rows: LPL.map((l) => ({ account_id: l.account_id, fund_id: l.fund_id, annual_budget_cents: l.annual_amount_cents })), accounts: LPA, funds: LPF, measures: ['annual_budget_cents'] });
+check('detail view, LOPF: Operating revenue $389,698 (was $432,398 with the old sign flip), before $2,870, after ($39,830)', lpCls.operating.totals.annual_budget_cents.revenue === 38969800 && lpCls.operating.totals.annual_budget_cents.net_before_transfers === 287000 && lpCls.operating.totals.annual_budget_cents.net_after_transfers === -3983000);
+const fs = require('fs');
+const bp = fs.readFileSync(require('path').join(__dirname, '..', 'api', 'board_portal.js'), 'utf8');
+check('board portal source: no independent fund calculation or sign-flip remains (tile, Amanda and the detail view use the shared summary)', !/flipContribution/.test(bp) && !/fund_code \|\| 'OPR'/.test(bp) && (bp.match(/budget_fund_summary/g) || []).length >= 3);
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
