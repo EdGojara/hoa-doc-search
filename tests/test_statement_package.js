@@ -252,6 +252,47 @@ const find = (model, num) => { for (const s of model.sections) for (const g of s
   mkPacket('pk-empty', { balance_sheet: {}, income_statement: null });
   check('empty statement sections behave as today (do not block)', (await call('patch', '/:id', { id: 'pk-empty' }, { status: 'final' })).status === 200);
 
+  console.log('no conversion: history starts at the earliest posted entry (August Meadows shape)');
+  {
+    const FS = require('../lib/accounting/financial_statements');
+    const AM = 'c-am';
+    db.communities.push({ id: AM, name: 'August Meadows', legal_name: 'August Meadows Homeowners Association', gl_cutover_date: null });
+    db.account_funds.push({ id: 'f-am', community_id: AM, fund_code: 'OPR', fund_name: 'Operating', is_active: true, display_order: 1 });
+    const acct = (n, t, name) => db.chart_of_accounts.push({ id: `am-${n}`, community_id: AM, account_number: String(n), account_name: name, account_type: t, normal_balance: ['asset', 'expense'].includes(t) ? 'debit' : 'credit', is_active: true, is_summary: false, fund_id: 'f-am', account_subtype: null, account_funds: { fund_code: 'OPR', fund_name: 'Operating', fund_type: 'operating' } });
+    acct(1020, 'asset', 'Undeposited Funds'); acct(1300, 'asset', 'Accounts Receivable'); acct(2110, 'liability', 'Prepaid Assessments'); acct(4000, 'revenue', 'Assessment Income');
+    const amje = (id, ref, date, mod, lines) => { db.journal_entries.push({ id, community_id: AM, reference: ref, posting_date: date, source_module: mod, status: 'posted', void_reversal_je_id: null, reverses_je_id: null, description: ref });
+      lines.forEach(([a, d, c], i) => db.journal_entry_lines.push({ id: `${id}-${i}`, journal_entry_id: id, line_number: i + 1, account_id: `am-${a}`, fund_id: 'f-am', debit_cents: d, credit_cents: c, memo: null, vendor_id: null, property_id: null })); };
+    amje('am-1', 'JE-2026-00001', '2026-05-21', 'assessment_billing', [[1300, 1031014, 0], [2110, 0, 1031014]]);
+    amje('am-2', 'JE-2026-00002', '2026-05-26', 'payment_intake', [[1020, 1031014, 0], [1300, 0, 1031014]]);
+    amje('am-3', 'JE-2026-00003', '2026-06-30', 'system', [[2110, 187874, 0], [4000, 0, 187874]]);
+    const amBS = await M.buildBalanceSheetModel(sb, { community_id: AM, as_of: '2026-09-30', now: NOW });
+    const pyeCol = amBS.columns.find((c) => c.key === 'prior_year_end');
+    check('August Meadows: 12/31/2025 prior year end is n/a (books begin 5/21/2026), never zero', pyeCol.available === false && /5\/21\/2026/.test(pyeCol.reason)
+      && amBS.totals.assets.prior_year_end === null && amBS.totals.liabilities_and_fund_balance.prior_year_end === null && amBS.totals.balanced.prior_year_end === null, JSON.stringify(pyeCol));
+    check('August Meadows: n/a all the way down the prior-year-end column (no 0 anywhere)', amBS.sections.every((sec) => sec.groups.every((g) => g.values.prior_year_end === null && g.lines.every((l) => l.values.prior_year_end === null))));
+    const eng = await FS.balanceSheet({ community_id: AM, as_of_date: '2026-09-30' });
+    check('August Meadows: the current 2026 balance sheet is unchanged (equals the engine: 10,310.14 assets; 8,431.40 prepaid)', amBS.totals.assets.current === eng.totals.assets_cents && amBS.totals.assets.current === 1031014
+      && amBS.totals.liabilities.current === 843140 && amBS.totals.balanced.current === true && amBS.engine_tie.every((t) => t.ties));
+    check('August Meadows: prior month (8/31, after the first entry) stays available', amBS.columns.find((c) => c.key === 'prior_month').available === true && amBS.totals.assets.prior_month === 1031014);
+    const amIB = await M.buildIncomeBudgetModel(sb, { community_id: AM, period_end: '2026-09-30', fund: 'OPR', now: NOW });
+    check('August Meadows: YTD unchanged (plain sum, available, no not-available note); prior-year columns hidden as not in trustEd', amIB.net.values.ytd_actual === 187874
+      && !amIB.columns.some((c) => c.key.startsWith('py_')) && amIB.notes.some((n) => n.code === 'prior_year_hidden') && !amIB.notes.some((n) => n.code === 'ytd_availability'));
+    const am25 = await M.buildIncomeBudgetModel(sb, { community_id: AM, period_end: '2025-12-31', fund: 'OPR', now: NOW });
+    check('no downstream arithmetic treats the unavailable period as zero (actuals, variances, net all null)', ['mtd_actual', 'ytd_actual', 'mtd_var', 'ytd_var', 'mtd_var_pct', 'ytd_var_pct'].every((k) => am25.net.values[k] === null)
+      && am25.sections.every((sec) => sec.total.values.ytd_actual === null), JSON.stringify(am25.net.values));
+    const r12 = await FS.rollingIncomeStatement({ community_id: AM, end_date: '2026-09-30', months: 12 });
+    check('rolling 12: months before 5/21/2026 are n/a (null), later months real; the range total is the real activity', r12.not_available_months.join() === '2025-10,2025-11,2025-12,2026-01,2026-02,2026-03,2026-04'
+      && r12.monthly.filter((m) => m.month < '2026-05').every((m) => m.revenue_cents === null) && r12.monthly.find((m) => m.month === '2026-06').revenue_cents === 187874);
+    const dCash = await D.drillAccount(sb, { community_id: AM, kind: 'balance_sheet', account_id: 'am-1020', fund_id: 'f-am', as_of: '2026-09-30' });
+    check('August Meadows drill still ties to the current balance', dCash.total_cents === 1031014);
+  }
+  console.log('converted communities unchanged');
+  {
+    // bs / ib were built on the fresh fixture at the top of this file; these are the
+    // content hashes the same fixture produced on main before this change (PR #109/#110).
+    check('Drama Creek (converted): balance sheet and income statement content hashes identical to main', bs.snapshot_sha256.startsWith('8433699045d6') && ib.snapshot_sha256.startsWith('79482666433a') && bs.period.books_start === '2026-01-01', `${bs.snapshot_sha256} ${ib.snapshot_sha256}`);
+  }
+
   console.log('board-packet section renders through the shared renderer');
   const html = bp.renderSectionStandaloneHtml({ packet: { community: { name: 'Drama Creek Estates' }, period_label: 'September 2026' }, section: { section_key: 'balance_sheet', input_data: stored }, embed: true });
   check('native snapshot section = the shared renderer\'s statement (same snapshot id)', html.includes(`data-snapshot="${stored.models[0].snapshot_sha256}"`) && html.includes('class="tstmt print"'));
