@@ -79,12 +79,15 @@ if (applied.status !== 'applied') { console.log(`\n${pass} passed, ${fail} faile
 check('protected tables unchanged; no mapping, category or account added or removed; one audit row per grandfathered mapping', applied.detail.protected.every((p) => p.unchanged)
   && ['report_categories', 'account_report_map', 'chart_of_accounts'].every((t) => applied.detail.row_changes[t] === 0) && applied.detail.row_changes.report_mapping_events === worldN, JSON.stringify(applied.detail.row_changes));
 const after = await one(`SELECT to_jsonb(m) AS j FROM account_report_map m WHERE account_id = $1`, [A4000]);
-const keep = ['id', 'community_id', 'account_id', 'statement', 'category_id', 'display_order', 'updated_by', 'created_at'];
-check('grandfathering: the pre-505 mapping keeps its account, statement and category', keep.every((k) => JSON.stringify(after.j[k]) === JSON.stringify(before.j[k])), JSON.stringify({ before: before.j, after: after.j }));
-check('grandfathering: approved EXPLICITLY, with who (its recorded setter, marked) and when (when it was last set)', after.j.approval_status === 'approved'
-  && after.j.approved_by === 'ed (grandfathered by migration 505)' && new Date(after.j.approved_at).getTime() === new Date(before.j.updated_at).getTime(), JSON.stringify(after.j));
-const gev = await one(`SELECT actor, new_row->>'approval_status' AS n FROM report_mapping_events WHERE account_id = $1 AND action = 'update' ORDER BY created_at DESC LIMIT 1`, [A4000]);
-check('grandfathering: logged by the 463 audit trail, attributed to the migration', gev && gev.n === 'approved' && /migration 505/.test(gev.actor), JSON.stringify(gev));
+const keep = ['id', 'community_id', 'account_id', 'statement', 'category_id', 'display_order', 'updated_by', 'updated_at', 'created_at'];
+check('grandfathering: the historical setter and change metadata are preserved exactly (updated_by, updated_at, created_at), as are account, statement and category',
+  keep.every((k) => JSON.stringify(after.j[k]) === JSON.stringify(before.j[k])), JSON.stringify({ before: before.j, after: after.j }));
+check('grandfathering: the approval is recorded as an act of migration 505, not of the historical setter', after.j.approval_status === 'approved'
+  && after.j.approved_by === 'migration 505 (system): grandfathered by migration 505' && after.j.approved_by !== before.j.updated_by && after.j.approved_at && new Date(after.j.approved_at) > new Date(before.j.updated_at), JSON.stringify(after.j));
+const gev = await one(`SELECT actor, old_row->>'updated_by' AS ob, new_row->>'updated_by' AS nb, new_row->>'approved_by' AS ab, new_row->>'approval_status' AS n FROM report_mapping_events WHERE account_id = $1 AND action = 'update' ORDER BY created_at DESC LIMIT 1`, [A4000]);
+check('grandfathering: the audit trail names migration 505 as actor and says grandfathered, not an affirmative approval by the setter', gev && gev.n === 'approved'
+  && /^migration 505 \(system\)/.test(gev.actor) && /grandfathered by migration 505/.test(gev.actor) && /not an affirmative approval/.test(gev.actor) && gev.ob === 'ed' && gev.nb === 'ed', JSON.stringify(gev));
+check('grandfathering: the updated_at trigger is back on afterwards', (await one(`SELECT tgenabled AS e FROM pg_trigger WHERE tgname = 'trg_account_report_map_updated_at'`)).e === 'O');
 check('the column default is proposed (not approved)', /proposed/.test((await one(`SELECT column_default AS d FROM information_schema.columns WHERE table_name = 'account_report_map' AND column_name = 'approval_status'`)).d));
 
 // ------------------------------------------------------------------- categories

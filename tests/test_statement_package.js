@@ -138,14 +138,34 @@ const find = (model, num) => { for (const s of model.sections) for (const g of s
   db.board_packets[0].status = 'in_review';
   const later = await SNAP.buildSectionSnapshot(sb, { community_id: F.CID, section_key: 'balance_sheet', cutoff: '2026-09-30', now: new Date('2026-10-12T09:00:00Z') });
   check('a re-pull of unchanged books at a later time hashes the same (generation time excluded)', later.snapshot_sha256 === stored.snapshot_sha256 && later.generated_at !== stored.generated_at && later.models[0].generated_at !== stored.models[0].generated_at);
-  const noisy = JSON.parse(JSON.stringify(stored.models[0]));
-  noisy.generated_at = '2030-01-01T00:00:00Z'; noisy.rendered_at = '2030-01-01T00:00:00Z';
-  Object.assign(noisy.sections[0].groups[0].lines[0], { signed_url: 'https://x.test/sig?token=abc', expires_at: '2030-01-01', href: '/api/documents/1/preview', access_token: 'abc', source_document_url: 'https://x.test/doc' });
-  Object.assign(noisy.sections[0].groups[0].lines[0].drill, { url: '/api/financial-statements/x/drill/account?account_id=1', token: 't' });
-  check('volatile values (signed URLs, tokens, links, expiries, render times) do not move the hash', M.modelSha(noisy) === stored.models[0].snapshot_sha256);
-  const nonVol = JSON.parse(JSON.stringify(stored.models[0])); nonVol.sections[0].groups[0].lines[0].account_name = 'Renamed';
-  check('a content change (even a label) does move the hash', M.modelSha(nonVol) !== stored.models[0].snapshot_sha256);
-  check('the stored model carries no link- or credential-shaped key at all', (() => { const bad = []; const walk = (v, path) => { if (Array.isArray(v)) v.forEach((x, i) => walk(x, `${path}[${i}]`)); else if (v && typeof v === 'object') for (const k of Object.keys(v)) { if (k !== 'generated_at' && k !== 'snapshot_sha256' && M.isVolatileKey(k)) bad.push(`${path}.${k}`); walk(v[k], `${path}.${k}`); } }; walk(stored, ''); return bad.length === 0 || console.log(bad) || false; })());
+  const base = stored.models[0]; const H = base.snapshot_sha256;
+  const variant = (fn, m = base) => { const c = JSON.parse(JSON.stringify(m)); fn(c); return M.modelSha(c); };
+  const lineOf = (m, num) => { for (const sec of m.sections) for (const g of sec.groups) for (const l of g.lines) if (l.account_number === String(num)) return l; return null; };
+  check('hash = the statement content only: the same content at a later generation time hashes the same', variant((c) => { c.generated_at = '2031-05-05T05:05:05Z'; }) === H);
+  check('refreshed signed URLs / tokens / expiries / links anywhere in the model do not move the hash', variant((c) => {
+    c.signed_url = 'https://x.test/a?token=1'; c.access_token = 'tok-2'; c.expires_at = '2031-01-01';
+    Object.assign(lineOf(c, 1000), { signed_url: 'https://x.test/b?sig=9', document: { href: '/api/documents/7/preview', token: 'z', expires_at: '2031-01-02' } });
+    lineOf(c, 1000).drill.url = '/api/financial-statements/x/drill';
+  }) === H);
+  check('a changed amount changes the hash', variant((c) => { lineOf(c, 1000).values.current += 1; }) !== H);
+  check('a changed account label changes the hash', variant((c) => { lineOf(c, 1000).account_name = 'Operating Checking (renamed)'; }) !== H);
+  check('a changed category label changes the hash', variant((c) => { c.sections[0].groups[0].label = 'Cash'; }) !== H);
+  check('a changed mapping (account moved to another category) changes the hash', variant((c) => { const g = c.sections[0].groups; const l = g[0].lines.shift(); g[1].lines.push(l); }) !== H);
+  check('n/a changing to zero changes the hash', lineOf(base, 1000).values.prior_year_end === null && variant((c) => { lineOf(c, 1000).values.prior_year_end = 0; }) !== H);
+  check('an unmapped account becoming mapped changes the hash', variant((c) => { lineOf(c, 1415).mapping = { status: 'approved' }; c.mapping.unmapped = c.mapping.unmapped.filter((u) => u.account_number !== '1415'); }) !== H);
+  check('a different period changes the hash', variant((c) => { c.period.as_of = '2026-10-31'; }) !== H);
+  const ibm = isnap.models[0];
+  check('a different fund scope changes the hash', ibm.fund === 'OPR' && variant((c) => { c.fund = 'RES'; }, ibm) !== ibm.snapshot_sha256);
+  check('a budget / variance change changes the hash', variant((c) => { c.net.values.mtd_budget += 100; }, ibm) !== ibm.snapshot_sha256);
+  check('a carryforward change changes the hash', variant((c) => { c.carryforward.revenue += 1; }, ibm) !== ibm.snapshot_sha256);
+  check('a close-status change changes the hash', variant((c) => { c.lifecycle.status = 'closed'; c.lifecycle.label = 'Closed through 9/30/2026'; }) !== H);
+  // Schema completeness: every key the model carries is either hashed content or
+  // deliberately excluded, so new financial content can never escape the hash.
+  const paths = (v, pre, out) => { if (Array.isArray(v)) v.forEach((x) => paths(x, pre, out)); else if (v && typeof v === 'object') for (const k of Object.keys(v)) { const pth = pre ? `${pre}.${k}` : k; if (/(^|\.)values$/.test(pre)) continue; out.add(pth); paths(v[k], pth, out); } return out; };
+  const content = new Set(); for (const m of [base, ibm, fv]) paths(M.statementContent(JSON.parse(JSON.stringify(m))), '', content);
+  const modelKeys = new Set(); for (const m of [base, ibm, fv]) paths(JSON.parse(JSON.stringify(m)), '', modelKeys);
+  const escaped = [...modelKeys].filter((k) => !content.has(k) && !M.HASH_EXCLUDED.some((x) => k === x || k.startsWith(x + '.') || k.endsWith('.' + x) || k.includes('.' + x + '.')));
+  check('schema completeness: every model key is hashed content or explicitly excluded (generated_at, snapshot_sha256, drill, lifecycle.note)', escaped.length === 0, JSON.stringify(escaped));
   db.board_packet_sections[0].input_data = JSON.parse(JSON.stringify(later));
   const toFinalSame = await call('patch', '/:id', { id: 'pk-1' }, { status: 'final' });
   check('the override still applies to a re-pull of the SAME statement (same content, same hash)', toFinalSame.status === 200);

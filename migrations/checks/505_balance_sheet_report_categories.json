@@ -1,6 +1,6 @@
 {
   "migration": "505_balance_sheet_report_categories.sql",
-  "summary": "Explicit balance-sheet presentation categories for the statement package (PR C). report_categories / account_report_map accept statement 'balance_sheet' with sections asset / liability / equity (revenue / expense stay income-statement only). account_report_map gains approval_status ('proposed' | 'approved', DEFAULT 'proposed': no insert is approved by omitting it), approved_by and approved_at; every approved mapping must say who approved it and when. The existing income-statement mappings are grandfathered explicitly (approved_by = their recorded updated_by, marked 'grandfathered by migration 505'; approved_at = when last set), each logged by the 463 audit trigger. approve_account_report_map() approves proposals as they stand (service_role only); set_account_report_category() records the assigning person as the approver. statement_mapping_overrides holds an owner's written decision to finalize a board statement that still has unmapped balance-sheet accounts, bound to the statement snapshot sha256; append-only. Row changes: only that grandfathering (category unchanged); seeds nothing.",
+  "summary": "Explicit balance-sheet presentation categories for the statement package (PR C). report_categories / account_report_map accept statement 'balance_sheet' with sections asset / liability / equity (revenue / expense stay income-statement only). account_report_map gains approval_status ('proposed' | 'approved', DEFAULT 'proposed': no insert is approved by omitting it), approved_by and approved_at; every approved mapping must say who approved it and when. The 54 existing income-statement mappings are grandfathered explicitly as an act of this migration (approved_by = 'migration 505 (system): grandfathered by migration 505', approved_at = apply time); their historical updated_by / updated_at are preserved untouched; each is logged by the 463 audit trigger with the migration as actor. approve_account_report_map() approves proposals as they stand (service_role only); set_account_report_category() records the assigning person as the approver. statement_mapping_overrides holds an owner's written decision to finalize a board statement that still has unmapped balance-sheet accounts, bound to the statement snapshot sha256; append-only. Row changes: only that grandfathering (category unchanged); seeds nothing.",
   "requires": [
     "463_report_categories.sql"
   ],
@@ -38,7 +38,7 @@
   ],
   "expected_changes": [
     "Replaces report_categories_statement_check (income_statement, balance_sheet) and report_categories_section_check (revenue / expense for the income statement; asset / liability / equity for the balance sheet), and account_report_map_statement_check (income_statement, balance_sheet). Same names.",
-    "Adds account_report_map.approval_status (NOT NULL DEFAULT 'proposed', CHECK proposed / approved), approved_by, approved_at. The existing income-statement rows are then grandfathered by an explicit UPDATE (approved, approved_by '<updated_by> (grandfathered by migration 505)', approved_at = their updated_at); their category, account and statement do not change; the 463 audit trigger logs each. One report_mapping_events audit row per grandfathered mapping (54).",
+    "Adds account_report_map.approval_status (NOT NULL DEFAULT 'proposed', CHECK proposed / approved), approved_by, approved_at. The existing income-statement rows are then grandfathered by an explicit UPDATE recorded as the migration's own approval (approved_by 'migration 505 (system): grandfathered by migration 505', approved_at = now()), with the updated_at trigger held for that statement so updated_by / updated_at / created_at are unchanged; category, account and statement do not change. One report_mapping_events audit row per grandfathered mapping (54), actor = migration 505, stating it was grandfathered and is not an affirmative approval by the historical setter.",
     "Replaces account_report_map_validate() (balance-sheet account types; an approved mapping of either statement records who and when) and set_account_report_category() (same signature and return keys; the assigner is the approver). Adds approve_account_report_map(uuid, uuid[], text, text), EXECUTE to service_role only.",
     "Creates statement_mapping_overrides (community, optional board packet, section key, snapshot sha256, unmapped accounts, reason 10+ characters, owner actor, created_at). FKs RESTRICT; index on snapshot_sha256; a guard trigger refuses UPDATE and DELETE. RLS on; nothing for anon / authenticated; SELECT, INSERT to service_role.",
     "No report_categories or chart_of_accounts row changes; no account_report_map row added or removed."
@@ -99,6 +99,11 @@
     {
       "name": "every pre-505 mapping is grandfathered with who and when; new mappings default to proposed",
       "sql": "SELECT ((SELECT count(*) FROM account_report_map WHERE approval_status <> 'approved' OR coalesce(btrim(approved_by), '') = '' OR approved_at IS NULL) + (SELECT count(*) FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'account_report_map' AND column_name = 'approval_status' AND column_default NOT LIKE '%proposed%'))::int",
+      "expect": 0
+    },
+    {
+      "name": "grandfathered approvals are attributed to migration 505, never to a person",
+      "sql": "SELECT count(*)::int FROM account_report_map WHERE statement = 'income_statement' AND approved_by <> 'migration 505 (system): grandfathered by migration 505'",
       "expect": 0
     },
     {

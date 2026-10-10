@@ -12,10 +12,13 @@
 --    New mappings DEFAULT TO 'proposed': no insert becomes approved by leaving
 --    approval_status out, and an approved row of either statement must carry
 --    approved_by and approved_at (validation trigger). The existing pre-505
---    income-statement mappings were people's decisions under 463; they are
---    grandfathered EXPLICITLY below (approved_by = their recorded updated_by,
---    marked "grandfathered by migration 505"; approved_at = when they were last
---    set), and the 463 audit trigger logs each one. An admin assigning a
+--    income-statement mappings were set under 463, before any approval regime
+--    existed. They are grandfathered EXPLICITLY below, as an act of THIS
+--    MIGRATION, not of the person who last set them: approved_by = the
+--    migration's own identity, approved_at = when the migration runs. Their
+--    historical metadata (updated_by, updated_at, created_at) is preserved
+--    untouched, and the 463 audit trigger logs each one with the migration as
+--    actor and the words "grandfathered by migration 505". An admin assigning a
 --    category (set_account_report_category) is an approval;
 --    approve_account_report_map() approves proposals as they stand.
 -- 3. statement_mapping_overrides: an OWNER's written decision to let a board
@@ -81,15 +84,20 @@ BEGIN
 END;
 $fn$;
 
--- Explicit grandfathering of the pre-505 income-statement mappings (463 had no
--- approval state; every row was set by a person through the audited path).
-SELECT set_config('trusted.actor', 'migration 505 (grandfathered pre-505 mapping)', true);
+-- Explicit grandfathering of the pre-505 income-statement mappings. The approval
+-- is recorded as the MIGRATION's (system migration authority), never as an
+-- affirmative approval by the historical setter. The updated_at trigger is held
+-- for this one statement so each row's historical change metadata (updated_by,
+-- updated_at) stays exactly as it was; the audit trigger stays on.
+ALTER TABLE account_report_map DISABLE TRIGGER trg_account_report_map_updated_at;
+SELECT set_config('trusted.actor', 'migration 505 (system): grandfathered by migration 505; pre-505 mapping, not an affirmative approval by its historical setter', true);
 UPDATE account_report_map
    SET approval_status = 'approved',
-       approved_by = coalesce(nullif(btrim(updated_by), ''), 'unrecorded') || ' (grandfathered by migration 505)',
-       approved_at = coalesce(updated_at, created_at)
+       approved_by = 'migration 505 (system): grandfathered by migration 505',
+       approved_at = now()
  WHERE statement = 'income_statement' AND approval_status = 'proposed' AND approved_at IS NULL;
 SELECT set_config('trusted.actor', '', true);
+ALTER TABLE account_report_map ENABLE TRIGGER trg_account_report_map_updated_at;
 
 -- A person assigning a category IS the approval (same signature as 463).
 CREATE OR REPLACE FUNCTION set_account_report_category(p_community_id uuid, p_account_ids uuid[], p_category_id uuid, p_actor text, p_statement text DEFAULT 'income_statement')
