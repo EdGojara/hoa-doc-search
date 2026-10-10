@@ -62,10 +62,15 @@ const WF = (await mk(B26)).rows[0].id;
 check('one working forecast per community / year', /uq_working_forecasts_one|duplicate/.test(await code(() => mk(B26)) || ''));
 check('identity fields cannot change', /cannot change/.test(await code(() => db.query(`UPDATE working_forecasts SET fiscal_year = 2028 WHERE id = $1`, [WF])) || ''));
 check('policy can be updated (assumptions)', !(await code(() => db.query(`UPDATE working_forecasts SET policy = '{"expense_inflation_pct": 3.5}'::jsonb, updated_by = 'ed' WHERE id = $1`, [WF]))));
-const adj = (o = {}) => db.query(`INSERT INTO working_forecast_adjustments (forecast_id, community_id, account_id, driver, amount_cents, assumption, confidence, source, actor) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-  [WF, o.community || C, o.account || '00000000-0000-0000-0000-0000000a5770', o.driver || 'contract', o.amount ?? 705000, o.assumption || 'Allied Universal renewal 3% escalator per signed contract', o.confidence || 'high', o.source || 'contract', 'ed']);
+const adj = (o = {}) => db.query(`INSERT INTO working_forecast_adjustments (forecast_id, community_id, account_id, driver, amount_cents, assumption, confidence, source, actor, base_cents, base_as_of) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+  [WF, o.community || C, o.account || '00000000-0000-0000-0000-0000000a5770', o.driver || 'contract', o.amount ?? 705000, o.assumption || 'Allied Universal renewal 3% escalator per signed contract', o.confidence || 'high', o.source || 'contract', 'ed',
+    o.base === undefined ? null : o.base, o.base === undefined || o.base === null ? null : '2026-09-30']);
 check('a driver adjustment with a written assumption is recorded', !(await code(() => adj())));
 check('an adjustment without a real assumption is refused', /assumption_check/.test(await code(() => adj({ assumption: 'tbd' })) || ''));
+check('a one-time removal must be negative (sign rule in the database)', /sign_check/.test(await code(() => adj({ driver: 'one_time', amount: 4000000, base: 4766500, assumption: 'Saifee monument sign project is one-time' })) || ''));
+check('an omitted recurring amount must be positive (sign rule in the database)', /sign_check/.test(await code(() => adj({ driver: 'omitted_recurring', amount: -100, base: 4766500, assumption: 'Recurring pest control omitted from 2026' })) || ''));
+check('a normalization must record the base and as-of it was made against', /base_check/.test(await code(() => adj({ driver: 'one_time', amount: -4000000, assumption: 'Saifee monument sign project is one-time' })) || ''));
+check('a correctly signed normalization with its base is recorded', !(await code(() => adj({ driver: 'one_time', amount: -4000000, base: 4766500, assumption: 'Saifee monument sign project is one-time' }))));
 check('an unknown driver is refused', /driver_check/.test(await code(() => adj({ driver: 'guess' })) || ''));
 check('an account of another community is refused', /same community/.test(await code(() => adj({ account: '00000000-0000-0000-0000-0000000b5770' })) || ''));
 check('adjustments are append-only (no update)', /permanent/.test(await code(() => db.query(`UPDATE working_forecast_adjustments SET amount_cents = 0`)) || ''));

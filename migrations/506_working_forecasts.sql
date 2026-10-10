@@ -103,6 +103,12 @@ CREATE TABLE IF NOT EXISTS working_forecast_adjustments (
   confidence   text NOT NULL DEFAULT 'medium',
   source       text NOT NULL DEFAULT 'management',
   actor        text NOT NULL,
+  -- The line's base (cents) and the as-of date it was computed at, when a normalization
+  -- was recorded. If the books later change that base (for example a reclassification
+  -- to reserve), the engine flags the normalization for review instead of removing
+  -- the same cost twice.
+  base_cents   bigint,
+  base_as_of   date,
   created_at   timestamptz NOT NULL DEFAULT now(),
   CONSTRAINT working_forecast_adjustments_pkey PRIMARY KEY (id),
   CONSTRAINT working_forecast_adjustments_forecast_fk FOREIGN KEY (forecast_id) REFERENCES working_forecasts(id) ON DELETE RESTRICT,
@@ -112,7 +118,11 @@ CREATE TABLE IF NOT EXISTS working_forecast_adjustments (
   CONSTRAINT working_forecast_adjustments_driver_check CHECK (driver IN ('one_time', 'omitted_recurring', 'contract', 'rate', 'volatility')),
   CONSTRAINT working_forecast_adjustments_assumption_check CHECK (length(btrim(assumption)) >= 10 AND length(btrim(actor)) > 0),
   CONSTRAINT working_forecast_adjustments_confidence_check CHECK (confidence IN ('high', 'medium', 'low')),
-  CONSTRAINT working_forecast_adjustments_source_check CHECK (source IN ('management', 'board', 'contract', 'historical_model', 'system'))
+  CONSTRAINT working_forecast_adjustments_source_check CHECK (source IN ('management', 'board', 'contract', 'historical_model', 'system')),
+  -- Normalization signs (effect on the line amount): a one-time removal is never positive,
+  -- a recurring amount omitted from the base year is never negative.
+  CONSTRAINT working_forecast_adjustments_sign_check CHECK ((driver <> 'one_time' OR amount_cents <= 0) AND (driver <> 'omitted_recurring' OR amount_cents >= 0)),
+  CONSTRAINT working_forecast_adjustments_base_check CHECK (driver NOT IN ('one_time', 'omitted_recurring') OR (base_cents IS NOT NULL AND base_as_of IS NOT NULL))
 );
 COMMENT ON TABLE working_forecast_adjustments IS 'workpaper: human driver entries on working-forecast lines, with assumption, evidence, confidence, source and actor. Append-only; latest per line+driver applies.';
 CREATE INDEX IF NOT EXISTS idx_working_forecast_adjustments_line ON working_forecast_adjustments (forecast_id, account_id, created_at);

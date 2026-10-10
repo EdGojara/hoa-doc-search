@@ -150,18 +150,23 @@
     const ds = M.data_status;
     const status = `<div class="status ${ds.status}"><h3>Forecast data status: ${ds.status === 'incomplete' ? 'Incomplete' : ds.status === 'partial' ? 'Partial' : 'Supported'}${ds.revenue_reliable ? '' : ' · revenue side not reliable yet'}</h3><ul>${ds.reasons.map((r) => `<li>${esc(r.text)}</li>`).join('')}<li>${esc(ds.expense_note)}</li></ul></div>`;
     const card = (l, v, sub) => `<div class="card"><div class="l">${l}</div><div class="v">${v}</div><div class="s">${sub || ''}</div></div>`;
-    const cnt = s.confidence; const totalL = Object.values(cnt).reduce((a, b) => a + b, 0) || 1;
-    const cards = `<div class="cards">
-      ${card('TrustEd ' + M.target_year + ' model', m(s.model.expense), `expense · revenue ${m(s.model.revenue)} · net ${m(s.model.net)}`)}
+    const cnt = s.confidence || {}; const totalL = Object.values(cnt).reduce((a, b) => a + b, 0) || 1;
+    const fundName = (f) => `${f.fund_code || 'No fund'}${f.fund_type && f.fund_type !== 'unassigned' ? ` (${f.fund_type.replace('_', ' ')})` : ''}`;
+    // Headline cards are the OPERATING fund only; Reserve and other funds are never combined into it.
+    const opLabel = s.primary_fund ? `Operating fund ${esc(s.primary_fund.fund_code || '')}` : '';
+    const cards = s.model ? `<div class="sub" style="margin:4px 0 6px"><b>${opLabel}</b> · the board operating budget. Reserve and other funds are shown separately below and are not included.</div><div class="cards">
+      ${card('TrustEd ' + M.target_year + ' model', m(s.model.expense), `operating expense · revenue ${m(s.model.revenue)} · net ${m(s.model.net)}`)}
       ${card('Working total', m(s.working.expense), `${s.overrides} override${s.overrides === 1 ? '' : 's'} · net ${m(s.working.net)}`)}
-      ${card('vs ' + M.base_year + ' approved', signed(s.change_vs_approved.working.expense), `expense · approved ${m(s.approved_base_year.expense)}`)}
-      ${card('vs normalized ' + M.base_year, signed(s.change_vs_normalized.working.expense), `expense · normalized ${m(s.normalized_base_year.expense)}`)}
+      ${card('vs ' + M.base_year + ' approved', signed(s.change_vs_approved.working.expense), `operating expense · approved ${m(s.approved_base_year.expense)}`)}
+      ${card('vs normalized ' + M.base_year, signed(s.change_vs_normalized.working.expense), `operating expense · normalized ${m(s.normalized_base_year.expense)}`)}
       ${card('Needs evidence / review', s.needs_evidence.lines + ' lines', `${m(s.needs_evidence.model_cents)} of modeled value`)}
       ${card('Model confidence', (cnt.medium || 0) + (cnt.high || 0) + ' of ' + totalL, `lines at medium or better<div class="confbar">${['high', 'medium', 'low', 'unknown'].map((k) => cnt[k] ? `<i class="c-${k}" style="width:${(cnt[k] / totalL) * 100}%" title="${k}: ${cnt[k]}"></i>` : '').join('')}</div>`)}
-    </div>`;
-    const drivers = `<div class="twocol"><div class="panel"><h4>Top forecast drivers</h4>${s.top_drivers.map((d) => `<div class="drv"><div>${esc(d.account)}<br><span class="k">${esc(d.label)}</span></div><div style="font-weight:600">${signed(d.amount_cents)}</div></div>`).join('') || '<div class="sub">None.</div>'}</div>
+    </div>` : '<div class="status partial"><h3>No single operating fund identified</h3><ul><li>No operating budget can be shown. Each fund is listed separately below.</li></ul></div>';
+    const fundRows = (s.funds || []).map((f) => `<tr${f.primary ? ' style="font-weight:600"' : ''}><td>${esc(fundName(f))}${f.primary ? ' · operating budget' : ''}</td><td class="amt">${m(f.approved_base_year.revenue)}</td><td class="amt">${m(f.approved_base_year.expense)}</td><td class="amt">${m(f.working.revenue)}</td><td class="amt">${m(f.working.expense)}</td><td class="amt">${m(f.working.net)}</td><td>${f.excluded_unbudgeted_revenue.lines ? `${m(f.excluded_unbudgeted_revenue.cents)} excluded (${esc(f.excluded_unbudgeted_revenue.accounts.join(', '))})` : ''}</td></tr>`).join('');
+    const fundsPanel = `<div class="panel" style="margin:10px 0"><h4>By fund (never combined)</h4><table class="grid"><thead><tr><th>Fund</th><th>${M.base_year} approved revenue</th><th>${M.base_year} approved expense</th><th>${M.target_year} revenue</th><th>${M.target_year} expense</th><th>${M.target_year} net</th><th>Unbudgeted revenue excluded</th></tr></thead><tbody>${fundRows}</tbody></table></div>`;
+    const drivers = `${fundsPanel}<div class="twocol"><div class="panel"><h4>Top forecast drivers${s.primary_fund ? ' · operating fund' : ''}</h4>${s.top_drivers.map((d) => `<div class="drv"><div>${esc(d.account)}<br><span class="k">${esc(d.label)}</span></div><div style="font-weight:600">${signed(d.amount_cents)}</div></div>`).join('') || '<div class="sub">None.</div>'}</div>
       <div class="panel"><h4>Assumptions in this model</h4>${(s.assumptions || []).map((a) => `<div class="drv"><div>${esc(a.text)}<br><span class="k">${esc(a.source || '')}</span></div><div><span class="conf ${a.confidence}">${esc(a.confidence)} confidence</span></div></div>`).join('')}
-      <div class="drv"><div>Revenue is not inflated by the model<br><span class="k">Assessment changes are board decisions; revenue lines carry the ${M.base_year} level.</span></div><div></div></div>
+      <div class="drv"><div>Revenue is not inflated by the model<br><span class="k">Assessment changes are board decisions; revenue lines carry the ${M.base_year} level. Unbudgeted revenue (for example unrealized investment gains) is excluded unless recorded as recurring.</span></div><div></div></div>
       <div class="drv"><div>Unknown is not zero<br><span class="k">Drivers without evidence show "needs evidence" and are excluded from the arithmetic, lowering confidence.</span></div><div></div></div></div></div>`;
     const tools = `<div class="tools"><div class="seg">${[['all', 'All lines'], ['review', 'Needs review'], ['incomplete', 'Incomplete data'], ['override', 'Overridden']].map(([k, t]) => `<button data-f="${k}" class="${S.filter === k ? 'on' : ''}">${t}</button>`).join('')}</div><input id="q" placeholder="Find an account" value="${esc(S.q)}"></div>`;
     const keep = (l) => (S.filter === 'all' || (S.filter === 'review' && l.evidence_status === 'needs_review') || (S.filter === 'incomplete' && l.evidence_status === 'incomplete_source_data') || (S.filter === 'override' && l.override))

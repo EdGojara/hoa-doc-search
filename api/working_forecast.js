@@ -20,7 +20,7 @@ const express = require('express');
 const { createClient } = require('@supabase/supabase-js');
 const { safeErrorMessage } = require('./_safe_error');
 const { loadWorkingForecastInput } = require('../lib/forecast/working_forecast_data');
-const { buildWorkingForecast, DRIVERS } = require('../lib/forecast/working_forecast');
+const { buildWorkingForecast, checkAdjustment, DRIVERS } = require('../lib/forecast/working_forecast');
 
 const multer = require('multer');
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 15 * 1024 * 1024 } });
@@ -84,18 +84,24 @@ router.post('/:cid/adjustments', async (req, res) => {
   try {
     const u = await admin(req, res); if (!u) return;
     const b = req.body || {};
-    if (!DRIVERS.includes(b.driver)) return res.status(400).json({ error: 'driver_invalid', allowed: DRIVERS });
+    const pre = checkAdjustment({ driver: b.driver, amount_cents: b.amount_cents });
+    if (pre) return res.status(400).json({ ...pre, allowed: DRIVERS });
     const amount = Number(b.amount_cents);
-    if (!Number.isInteger(amount)) return res.status(400).json({ error: 'amount_cents_must_be_an_integer' });
     if (String(b.assumption || '').trim().length < 10) return res.status(400).json({ error: 'assumption_required', message: 'Write the assumption (10+ characters).' });
     if (!['high', 'medium', 'low'].includes(b.confidence)) return res.status(400).json({ error: 'confidence_invalid' });
     const { model, input } = await build(req.params.cid, b);
     if (!input.persistence.available) return notPersisted(res);
     const line = lineOf(model, b.account_id, b.fund_id);
     if (!line) return res.status(404).json({ error: 'line_not_found' });
+    const isNorm = b.driver === 'one_time' || b.driver === 'omitted_recurring';
+    const vs = checkAdjustment({ driver: b.driver, amount_cents: amount, base_cents: line.base.cents });   // sign + removal-exceeds-base (signs also enforced by 506)
+    if (vs) return res.status(400).json(vs);
     const fid = await ensureForecast(req.params.cid, input, u.email);
+    // A normalization records the base (server-computed) and as-of it was made against, so a
+    // later change in the books is detected instead of removing the same cost twice.
     const { error } = await supabase.from('working_forecast_adjustments').insert({ forecast_id: fid, community_id: req.params.cid, account_id: line.account_id, fund_id: line.fund_id,
-      driver: b.driver, amount_cents: amount, assumption: String(b.assumption).trim(), evidence: b.evidence || null, confidence: b.confidence, source: ['management', 'board', 'contract'].includes(b.source) ? b.source : 'management', actor: u.email });
+      driver: b.driver, amount_cents: amount, assumption: String(b.assumption).trim(), evidence: b.evidence || null, confidence: b.confidence, source: ['management', 'board', 'contract'].includes(b.source) ? b.source : 'management', actor: u.email,
+      base_cents: isNorm ? line.base.cents : null, base_as_of: isNorm ? input.as_of : null });
     if (error) throw error;
     const after = await build(req.params.cid, b);
     res.json({ ok: true, line: lineOf(after.model, line.account_id, line.fund_id), summary: after.model.summary });
@@ -161,21 +167,18 @@ router.post('/:cid/contracts', upload.single('file'), async (req, res) => {
     if (account_id && !(await accountOk(req.params.cid, account_id))) return res.status(400).json({ error: 'account_must_be_a_revenue_or_expense_account_of_this_community' });
     const { extractVendorContract } = require('../lib/accounting/vendor_contract_extractor');
     const extraction = await extractVendorContract(req.file.buffer, req.file.mimetype, req.file.originalname);
-    const file_hash = intake.sha256(req.file.buffer);
-    const ext = /\.(pdf|xlsx|xls|csv)$/i.exec(req.file.originalname || '');
-    const file_path = `vendor-contracts/${req.params.cid}/${file_hash}${ext ? ext[0].toLowerCase() : '.pdf'}`;
-    const { error: upErr } = await supabase.storage.from('documents').upload(file_path, req.file.buffer, { contentType: req.file.mimetype || 'application/pdf', upsert: true });
-    if (upErr) throw upErr;
-    const { data: mc, error: mce } = await supabase.from('management_companies').select('id').limit(1).maybeSingle();
-    if (mce) throw mce;
-    const row = intake.contractRecord({ management_company_id: mc && mc.id, community_id: req.params.cid, extraction, file_path, file_hash, file_size_bytes: req.file.size,
-      forecast_account_id: account_id, forecast_fund_id: fund_id, intake_source: 'upload', actor: u.email });
+    // File the document in the community library under the community's own management
+    // company; the contract record cites that library document and its hash.
+    const filed = await intake.fileContractDocument(supabase, { community_id: req.params.cid, buffer: req.file.buffer, filename: req.file.originalname, mimetype: req.file.mimetype, extraction });
+    const { file_hash, file_path } = filed;
+    const row = intake.contractRecord({ management_company_id: filed.management_company_id, community_id: req.params.cid, extraction, file_path, file_hash, file_size_bytes: req.file.size,
+      source_document_id: filed.library_document_id, forecast_account_id: account_id, forecast_fund_id: fund_id, intake_source: 'upload', actor: u.email });
     const { data: ins, error } = await supabase.from('vendor_contracts').insert(row).select('id, execution_status, execution_confidence, execution_reason, document_version').single();
     if (error) { if (/column .* does not exist|schema cache/i.test(error.message || '')) return contractsNotReady(res); throw error; }
     const { error: ee } = await supabase.from('vendor_contract_events').insert({ vendor_contract_id: ins.id, event: 'recorded', to_status: ins.execution_status, file_hash, document_version: ins.document_version, actor: u.email,
-      detail: { filename: req.file.originalname, intake_source: 'upload', account_id } });
+      detail: { filename: req.file.originalname, intake_source: 'upload', account_id, library_document_id: filed.library_document_id, library_document_reused: filed.reused } });
     if (ee) throw ee;
-    res.json({ ok: true, contract: { ...ins, file_hash, file_path, vendor: row.vendor_name_raw }, extraction });
+    res.json({ ok: true, contract: { ...ins, file_hash, file_path, library_document_id: filed.library_document_id, vendor: row.vendor_name_raw }, extraction });
   } catch (err) { fail(res, 'contracts attach', err); }
 });
 

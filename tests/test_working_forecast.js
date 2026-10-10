@@ -15,7 +15,7 @@ let pass = 0, fail = 0;
 const check = (name, ok, detail) => { if (ok) { pass++; console.log(`  ✓ ${name}`); } else { fail++; console.log(`  ✗ ${name}${detail ? `\n      ${detail}` : ''}`); } };
 const ctx = { as_of_month: 9, base_year: 2026, target_year: 2027, policy: { expense_inflation_pct: 3, inflation_source: 'test policy', inflation_confidence: 'low' }, post_cutover_months: [8, 9] };
 const flat = (annual) => { const m = Array(12).fill(Math.trunc(annual / 12)); m[0] += annual - m.reduce((a, b) => a + b, 0); return m; };
-const L = (o) => ({ account_id: o.id || 'a1', account_number: o.n || '5770', account_name: o.name || 'Security', account_type: o.type || 'expense', fund_id: 'f', fund_code: 'OPR',
+const L = (o) => ({ account_id: o.id || 'a1', account_number: o.n || '5770', account_name: o.name || 'Security', account_type: o.type || 'expense', fund_id: o.fund === undefined ? 'f' : o.fund, fund_code: o.fundCode || 'OPR', fund_type: o.fundType === undefined ? 'operating' : o.fundType,
   budget_months: o.budget === null ? null : (o.budget || Array(12).fill(1000000)), ytd_actual: o.ytd ?? 9000000, month_actuals: o.months || { 8: 1000000, 9: 1000000 }, contracts: o.contracts });
 const item = (l, d) => l.bridge.find((b) => b.driver === d);
 
@@ -33,11 +33,92 @@ const item = (l, d) => l.bridge.find((b) => b.driver === d);
   const over = WF.buildLine(L({ ytd: 13000000 }), ctx);
   check('a 2026 overrun is flagged "needs review", with the overrun as evidence, and NOT removed', item(over, 'one_time').status === 'needs_review' && item(over, 'one_time').amount_cents === null && item(over, 'one_time').evidence.overrun_cents === 4000000);
   check('... the recommendation keeps the overrun until a person decides (base 16,000,000 + 3%)', over.recommendation_cents === 16000000 + 480000);
-  const norm = WF.buildLine(L({ ytd: 13000000 }), ctx, { one_time: { amount_cents: -4000000, assumption: 'Gate rebuild invoiced in 2026 is one-time', confidence: 'medium', source: 'management', actor: 'ed', created_at: '2026-10-10T10:00:00Z' } });
+  const norm = WF.buildLine(L({ ytd: 13000000 }), ctx, { one_time: { amount_cents: -4000000, base_cents: 16000000, base_as_of: '2026-09-30', assumption: 'Gate rebuild invoiced in 2026 is one-time', confidence: 'medium', source: 'management', actor: 'ed', created_at: '2026-10-10T10:00:00Z' } });
   check('a human one-time adjustment (signed effect) normalizes the base and inflation applies to the normalized base', norm.base_year.normalized_cents === 12000000 && item(norm, 'rate').amount_cents === 360000 && norm.recommendation_cents === 12360000);
   check('... and the bridge carries the assumption, actor, confidence and source', item(norm, 'one_time').assumption.includes('Gate rebuild') && item(norm, 'one_time').actor === 'ed' && item(norm, 'one_time').source === 'management');
   const unb = WF.buildLine(L({ budget: null, ytd: 7426400, months: { 8: 100, 9: 100 } }), ctx);
   check('unbudgeted 2026 activity is carried as the base but flagged "does it recur?" (needs review)', unb.flags.some((f) => f.code === 'unbudgeted') && item(unb, 'one_time').status === 'needs_review' && unb.evidence_status === 'needs_review');
+
+  console.log('A. accounting base changes after a normalization (no double removal)');
+  const NORM = { amount_cents: -4000000, base_cents: 16000000, base_as_of: '2026-09-30', assumption: 'Gate rebuild invoiced in 2026 is one-time', evidence: { reference: 'Inv 29548' }, confidence: 'medium', source: 'management', actor: 'ed', created_at: '2026-10-10T10:00:00Z' };
+  const recl = WF.buildLine(L({ ytd: 9000000 }), { ...ctx, as_of: '2026-09-30' }, { one_time: NORM });   // the books moved 40,000 to reserve: base 160,000 -> 120,000
+  check('base changed since the normalization: flagged needs review, NOT applied', item(recl, 'one_time').status === 'needs_review' && item(recl, 'one_time').amount_cents === null && item(recl, 'one_time').evidence.issues.some((x) => x.code === 'base_changed'));
+  check('... so the cost is not removed twice (recommendation = corrected base + 3%, not base - 40,000)', recl.recommendation_cents === 12000000 + 360000 && recl.base_year.normalized_cents === 12000000);
+  check('... and the management decision is preserved unaltered (amount, base at entry, evidence, actor) and flagged on the line', item(recl, 'one_time').evidence.recorded_adjustment.amount_cents === -4000000 && item(recl, 'one_time').evidence.recorded_adjustment.base_cents === 16000000
+    && item(recl, 'one_time').evidence.recorded_adjustment.evidence.reference === 'Inv 29548' && item(recl, 'one_time').actor === 'ed' && recl.flags.some((f) => f.code === 'normalization_needs_review') && recl.evidence_status === 'needs_review');
+  const same = WF.buildLine(L({ ytd: 13000000 }), ctx, { one_time: NORM });
+  check('unchanged base: the normalization applies and records the base it was made against', item(same, 'one_time').status === 'applied' && item(same, 'one_time').base_cents_at_entry === 16000000 && same.recommendation_cents === 12360000);
+  const big = WF.buildLine(L({ ytd: 13000000 }), ctx, { one_time: { ...NORM, amount_cents: -20000000 } });
+  check('a removal larger than the base is flagged, not applied', item(big, 'one_time').status === 'needs_review' && item(big, 'one_time').evidence.issues.some((x) => x.code === 'exceeds_base'));
+  const nobase = WF.buildLine(L({ ytd: 13000000 }), ctx, { one_time: { ...NORM, base_cents: null } });
+  check('a normalization without its recorded base is flagged, not applied', item(nobase, 'one_time').status === 'needs_review' && item(nobase, 'one_time').evidence.issues.some((x) => x.code === 'base_not_recorded'));
+
+  console.log('C. normalization sign rules');
+  const pos = WF.buildLine(L({ ytd: 13000000 }), ctx, { one_time: { ...NORM, amount_cents: 4000000 } });
+  check('engine: a positive one-time entry is never applied as an addition', item(pos, 'one_time').status === 'needs_review' && item(pos, 'one_time').evidence.issues.some((x) => x.code === 'sign') && pos.recommendation_cents === 16000000 + 480000);
+  const negR = WF.buildLine(L({}), ctx, { omitted_recurring: { ...NORM, base_cents: 12000000, amount_cents: -100 } });
+  check('engine: a negative omitted-recurring entry is never applied', item(negR, 'omitted_recurring').status === 'needs_review' && item(negR, 'omitted_recurring').evidence.issues.some((x) => x.code === 'sign'));
+  check('API rule: a positive one-time removal is refused', WF.checkAdjustment({ driver: 'one_time', amount_cents: 4000000 }).error === 'one_time_must_be_negative');
+  check('API rule: a negative omitted-recurring amount is refused', WF.checkAdjustment({ driver: 'omitted_recurring', amount_cents: -1 }).error === 'omitted_recurring_must_be_positive');
+  check('API rule: a removal larger than the base is refused; a valid removal passes', WF.checkAdjustment({ driver: 'one_time', amount_cents: -20000000, base_cents: 16000000 }).error === 'removal_exceeds_base' && WF.checkAdjustment({ driver: 'one_time', amount_cents: -4000000, base_cents: 16000000 }) === null);
+  check('API rule: other drivers keep their sign freedom; unknown drivers and non-integers are refused', WF.checkAdjustment({ driver: 'contract', amount_cents: -500 }) === null && WF.checkAdjustment({ driver: 'guess', amount_cents: 1 }).error === 'driver_invalid' && WF.checkAdjustment({ driver: 'rate', amount_cents: 1.5 }).error === 'amount_cents_must_be_an_integer');
+
+  console.log('B. unbudgeted revenue excluded unless authorized');
+  const GAINS = { id: 'g', n: '4205', name: 'Unrealized Gains/Losses', type: 'revenue', budget: null, ytd: 6364500, months: { 8: 100, 9: 100 }, fund: 'r', fundCode: 'RES', fundType: 'reserve' };
+  const gains = WF.buildLine(L(GAINS), ctx);
+  check('unrealized gains (unbudgeted revenue) are excluded from the recommendation', gains.recommendation_cents === 0 && gains.base.choice === 'excluded_unbudgeted_revenue' && gains.final_cents === 0);
+  check('... but stay visible: amount shown, flagged, and listed as needs review', gains.base_year.current_forecast_cents === 6364500 && gains.base_year.excluded_cents === 6364500 && gains.flags.some((f) => f.code === 'unbudgeted_revenue_excluded')
+    && item(gains, 'omitted_recurring').status === 'needs_review' && item(gains, 'omitted_recurring').evidence.excluded_cents === 6364500 && gains.evidence_status === 'needs_review');
+  const auth = WF.buildLine(L(GAINS), ctx, { omitted_recurring: { amount_cents: 2000000, base_cents: 0, base_as_of: '2026-09-30', assumption: 'Board expects recurring investment income of 20,000', confidence: 'low', source: 'board', actor: 'ed', created_at: 'x' } });
+  check('explicit authorization (a recorded recurring entry with a reason) includes only the authorized amount', auth.recommendation_cents === 2000000 && item(auth, 'omitted_recurring').status === 'applied' && item(auth, 'omitted_recurring').source === 'board');
+  const unbExp = WF.buildLine(L({ budget: null, ytd: 500000, months: { 8: 100, 9: 100 } }), ctx);
+  check('unbudgeted EXPENSE is still carried (conservative) and flagged', unbExp.base.cents === 500000 && unbExp.recommendation_cents > 0 && unbExp.flags.some((f) => f.code === 'unbudgeted'));
+
+  console.log('E. summary separates funds; operating is the board budget');
+  const fin = { community: { id: 'c', name: 'Test' }, base_year: 2026, target_year: 2027, as_of: '2026-09-30', as_of_month: 9, post_cutover_months: [8, 9], policy: ctx.policy, facts: {},
+    lines: [L({ id: 'o1', n: '4000', name: 'Assessments', type: 'revenue' }), L({ id: 'o2', n: '5250', name: 'Monument' }), L(GAINS),
+      L({ id: 'r2', n: '6000', name: 'Reserve Expenditures', fund: 'r', fundCode: 'RES', fundType: 'reserve', ytd: 30000000, months: { 8: 100000, 9: 100000 } }),
+      L({ id: 'x1', n: '5999', name: 'No fund line', fund: null, fundType: null })] };
+  const fm = WF.buildWorkingForecast(fin);
+  const opr = fm.summary.funds.find((x) => x.fund_code === 'OPR' && x.fund_type === 'operating'), res = fm.summary.funds.find((x) => x.fund_code === 'RES');
+  check('headline summary is the operating fund only (basis + primary fund named)', fm.summary.basis === 'operating_fund' && fm.summary.primary_fund.fund_code === 'OPR' && fm.summary.model.expense === opr.model.expense && fm.summary.model.revenue === opr.model.revenue);
+  check('reserve results are not in the operating headline', fm.summary.model.expense === fm.lines.filter((l) => l.fund_id === 'f' && l.account_type === 'expense').reduce((t, l) => t + l.recommendation_cents, 0) && res.model.expense > 0);
+  check('every fund is listed separately (operating first), lines without a fund in their own group; no all-funds total', fm.summary.funds.length === 3 && fm.summary.funds[0].primary && fm.summary.funds.some((x) => x.fund_type === 'unassigned' && x.line_count === 1)
+    && fm.data_status.reasons.some((r) => r.code === 'lines_without_fund') && !('all_funds' in fm.summary));
+  check('excluded unbudgeted revenue is reported in its own fund', res.excluded_unbudgeted_revenue.lines === 1 && res.excluded_unbudgeted_revenue.cents === 6364500 && opr.excluded_unbudgeted_revenue.lines === 0);
+  const neg = WF.buildWorkingForecast({ ...fin, lines: [...fin.lines, L({ id: 'r3', n: '4010', name: 'Reserve Contribution', type: 'revenue', budget: flat(-16400000), ytd: 0, months: { 8: 0, 9: 0 }, fund: 'r', fundCode: 'RES', fundType: 'reserve' })] });
+  const negR2 = neg.data_status.reasons.find((r) => r.code === 'negative_revenue_budget');
+  check('a negative revenue budget (a transfer between funds) is called out with its fund, not re-assigned', negR2 && negR2.accounts[0].account.startsWith('4010') && negR2.accounts[0].fund_code === 'RES' && neg.summary.funds.find((x) => x.fund_code === 'RES').approved_base_year.revenue < 0);
+  const twoOp = WF.buildWorkingForecast({ ...fin, lines: [L({ id: 'o1' }), L({ id: 'o3', fund: 'g', fundCode: 'OPR2' })] });
+  check('two operating funds: no combined operating budget is invented (headline empty, reason given)', twoOp.summary.basis === null && twoOp.summary.model === null && twoOp.data_status.reasons.some((r) => r.code === 'no_operating_fund') && twoOp.summary.funds.length === 2);
+
+  console.log('D. contract upload files the document in the library under the community management company');
+  const fakeDocs = (opts = {}) => {
+    const log = { inserts: [], uploads: [] };
+    const tables = { communities: [{ id: 'c1', name: 'Canyon Gate', management_company_id: opts.noMc ? null : 'mc-cg' }, { id: 'c2', name: 'Other', management_company_id: 'mc-cg' }], library_documents: opts.docs || [] };
+    const q = (t) => { const f = []; const api = { select: () => api, eq: (k, v) => { f.push([k, v]); return api; },
+      maybeSingle: async () => ({ data: tables[t].find((r) => f.every(([k, v]) => r[k] === v)) || null, error: null }),
+      insert: (row) => { log.inserts.push({ t, row }); return { select: () => ({ single: async () => ({ data: { id: 'doc-new' }, error: null }) }) }; } }; return api; };
+    return { log, client: { from: q, storage: { from: () => ({ upload: async (path) => { log.uploads.push(path); return { error: null }; } }) } } };
+  };
+  const buf = Buffer.from('signed contract bytes');
+  const fd = fakeDocs();
+  const filed = await intake.fileContractDocument(fd.client, { community_id: 'c1', buffer: buf, filename: 'Star Protection.pdf', mimetype: 'application/pdf', extraction: { vendor_name: 'Star Protection', service_category: 'security', effective_date: '2026-01-01', end_date: 'not a date' } });
+  const ins = fd.log.inserts.find((x) => x.t === 'library_documents');
+  check('a library_documents row is created: category vendor_contract, current, this community, the file hash', ins && ins.row.category === 'vendor_contract' && ins.row.status === 'current' && ins.row.community_id === 'c1' && ins.row.file_hash === intake.sha256(buf) && filed.library_document_id === 'doc-new');
+  check('the community management company is used (not an arbitrary one), and storage is filed under it', ins.row.management_company_id === 'mc-cg' && filed.management_company_id === 'mc-cg' && fd.log.uploads[0].startsWith('mc-cg/c1/vendor_contract/'));
+  check('a malformed extracted date is not written to the library', ins.row.effective_date === '2026-01-01' && ins.row.expiration_date === null);
+  const rec2 = intake.contractRecord({ management_company_id: filed.management_company_id, community_id: 'c1', source_document_id: filed.library_document_id, extraction: { vendor_name: 'Star Protection', signatures: null, warnings: [] }, file_path: filed.file_path, file_hash: filed.file_hash, file_size_bytes: buf.length });
+  check('the contract record cites the library document and the community management company', rec2.source_document_id === 'doc-new' && rec2.management_company_id === 'mc-cg' && rec2.file_hash === filed.file_hash);
+  const fd2 = fakeDocs({ docs: [{ id: 'doc-old', management_company_id: 'mc-cg', community_id: 'c1', category: 'vendor_contract', file_hash: intake.sha256(buf), file_path: 'mc-cg/c1/vendor_contract/x.pdf' }] });
+  const again = await intake.fileContractDocument(fd2.client, { community_id: 'c1', buffer: buf, filename: 'copy.pdf', extraction: {} });
+  check('the same bytes already in the library are reused, not duplicated or re-uploaded', again.reused && again.library_document_id === 'doc-old' && !fd2.log.inserts.length && !fd2.log.uploads.length);
+  const fd3 = fakeDocs({ docs: [{ id: 'doc-x', management_company_id: 'mc-cg', community_id: 'c2', file_hash: intake.sha256(buf), file_path: 'p' }] });
+  let crossErr = null; try { await intake.fileContractDocument(fd3.client, { community_id: 'c1', buffer: buf, extraction: {} }); } catch (e) { crossErr = e.message; }
+  check('a document filed under another community is refused, not re-linked', crossErr === 'this_document_is_filed_under_another_community');
+  let mcErr = null; try { await intake.fileContractDocument(fakeDocs({ noMc: true }).client, { community_id: 'c1', buffer: buf, extraction: {} }); } catch (e) { mcErr = e.message; }
+  check('a community without a management company is refused (no guessing)', mcErr === 'community_has_no_management_company');
+
 
   console.log('unknown is not zero');
   check('contract with nothing on file shows "none on file", excluded from the arithmetic', item(a, 'contract').status === 'no_evidence' && item(a, 'contract').amount_cents === null);
