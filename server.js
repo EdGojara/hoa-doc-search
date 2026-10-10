@@ -590,9 +590,9 @@ const _STAFF_GATE_PUBLIC = [
   /^\/api\/payments\/webhook$/,                // Stripe webhook (signature-verified inside)
   /^\/api\/graph\/mail\/(notify|lifecycle)\/[0-9a-f]{16}$/, // Graph mail push (per-mailbox clientState checked inside; Issue #29)
   // Twilio voice webhooks — same pattern as Stripe: outside-service webhooks,
-  // never carry a staff cookie. The voice router handles them. Long-term,
-  // these should validate the X-Twilio-Signature header to confirm the
-  // request actually came from Twilio (not anyone else hitting the URL).
+  // never carry a staff cookie. The voice router handles them and validates
+  // X-Twilio-Signature (lib/voice/twilio_signature.js); the stream upgrade is
+  // checked in the httpServer 'upgrade' handler below.
   /^\/api\/voice\/incoming$/,                  // Twilio "A call comes in" webhook
   /^\/api\/voice\/status$/,                    // Twilio "Call status changes" webhook
   /^\/api\/voice\/stream$/,                    // Twilio Media Streams WebSocket upgrade path
@@ -11403,28 +11403,49 @@ const httpServer = http.createServer(app);
 const voiceWss = new WebSocketServer({ noServer: true });
 
 httpServer.on('upgrade', (req, socket, head) => {
-  // Only intercept the voice WS path; everything else gets dropped
-  // (we don't have any other WS endpoints today).
+  // WebSocket upgrades never pass through Express, so the staff gate and the
+  // route-level checks do NOT run here. Every path authenticates BEFORE
+  // handleUpgrade, and an unauthenticated client never gets a socket
+  // (Issue #29: these paths used to be open to anyone, on our Deepgram,
+  // OpenAI and ElevenLabs bills).
   const pathname = req.url ? req.url.split('?')[0] : '';
+  const wsAuth = require('./lib/voice/ws_auth');
+  const deny = (label, status, reason) => {
+    console.warn(`[${label}] upgrade refused: ${reason}`);
+    wsAuth.rejectUpgrade(socket, status);
+  };
   if (pathname === '/api/voice/stream') {
+    // Twilio Media Streams: prove it is Twilio (X-Twilio-Signature).
+    const v = require('./lib/voice/twilio_signature').verifyTwilioUpgrade(req);
+    if (!v.ok) return deny('voice/stream', 403, v.reason);
     voiceWss.handleUpgrade(req, socket, head, (ws) => {
       handleVoiceWs(ws, req);
     });
   } else if (pathname === '/api/claire-live/stream') {
     // Isolated GPT-Live-1 portal PoC (Claire B). Gated behind GPT_LIVE_ENABLED
-    // inside the handler; production /api/voice/stream (Claire A) is untouched.
-    voiceWss.handleUpgrade(req, socket, head, (ws) => {
-      try { require('./lib/voice/claire_live_ws').handleClaireLiveWs(ws, req); }
-      catch (e) { console.error('[claire-live] handler failed:', e.message); try { ws.close(); } catch (_) {} }
-    });
+    // inside the handler, and staff-only here; production /api/voice/stream
+    // (Claire A) is untouched.
+    wsAuth.authorizeLiveUpgrade(req).then((a) => {
+      if (!a.ok) return deny('claire-live', a.status, a.reason);
+      voiceWss.handleUpgrade(req, socket, head, (ws) => {
+        wsAuth.armMaxDuration(ws, a.maxSeconds, 'claire-live');
+        try { require('./lib/voice/claire_live_ws').handleClaireLiveWs(ws, req); }
+        catch (e) { console.error('[claire-live] handler failed:', e.message); try { ws.close(); } catch (_) {} }
+      });
+    }).catch((e) => deny('claire-live', 500, e.message));
   } else if (pathname === '/api/claire/stt-stream') {
     // Browser mic -> Deepgram STT relay for the /claire web voice (so the web
     // voice hears as well as the phone). STT only; answers still come from the
-    // existing /api/claire turn endpoint.
-    voiceWss.handleUpgrade(req, socket, head, (ws) => {
-      try { require('./lib/voice/claire_stt_ws').handleClaireSttWs(ws, req); }
-      catch (e) { console.error('[claire-stt] handler failed:', e.message); try { ws.close(); } catch (_) {} }
-    });
+    // existing /api/claire turn endpoint. Requires a signed-in visitor and a
+    // live visit they own (?session=<id>); capped at the visit's seconds_cap.
+    wsAuth.authorizeSttUpgrade(req).then((a) => {
+      if (!a.ok) return deny('claire-stt', a.status, a.reason);
+      voiceWss.handleUpgrade(req, socket, head, (ws) => {
+        wsAuth.armMaxDuration(ws, a.maxSeconds, 'claire-stt');
+        try { require('./lib/voice/claire_stt_ws').handleClaireSttWs(ws, req, { session: a.session }); }
+        catch (e) { console.error('[claire-stt] handler failed:', e.message); try { ws.close(); } catch (_) {} }
+      });
+    }).catch((e) => deny('claire-stt', 500, e.message));
   } else {
     socket.destroy();
   }
