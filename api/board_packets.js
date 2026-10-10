@@ -3041,14 +3041,20 @@ function _gateRefusal(gate) {
   const unmapped = gate.open.filter((b) => b.problem === 'unmapped_accounts');
   const altered = gate.open.filter((b) => b.problem === 'snapshot_altered');
   const stale = gate.open.filter((b) => b.problem === 'stale_native_format');
+  const notClosed = [...new Set(gate.open.filter((b) => b.problem === 'period_not_closed').map((b) => b.period_label))];
+  const pulledOpen = [...new Set(gate.open.filter((b) => b.problem === 'snapshot_pulled_open').map((b) => b.period_label))];
+  const reopened = [...new Set(gate.open.filter((b) => b.problem === 'period_reopened').map((b) => b.period_label))];
   const secName = (k) => (k === 'balance_sheet' ? 'balance sheet' : 'income statement');
   const n = unmapped.reduce((t, b) => t + b.unmapped.length, 0);
   const msg = [
+    ...notClosed.map((p) => `Financial period ${p} is not closed. Close the period before finalizing or distributing this packet.`),
+    ...pulledOpen.map((p) => `Financial period ${p} is closed, but this statement was pulled while it was still open. Pull the section again so the packet records the closed period.`),
+    ...reopened.map((p) => `Financial period ${p} was reopened after this statement was pulled. Close the period and pull the section again before finalizing or distributing this packet.`),
     unmapped.length ? `The balance sheet has ${n} account${n === 1 ? '' : 's'} not mapped to an approved category${unmapped.some((b) => b.mapping_unavailable) ? ' (balance-sheet categories are not set up yet)' : ''}. Approve the mapping and pull the section again, or the owner can record an override for this exact statement.` : null,
     altered.length ? 'A statement snapshot no longer matches what was generated. Pull the section again from the books.' : null,
     stale.length ? `The ${stale.map((x) => secName(x.section_key)).join(' and ')} section${stale.length === 1 ? ' was' : 's were'} filled in an older format and must be pulled again (Auto-fill) using the current native statement model before this packet can be marked final or distributed.` : null,
   ].filter(Boolean).join(' ');
-  return { error: 'statement_not_final_ready', message: msg, blockers: gate.open };
+  return { error: 'packet_not_finalizable', message: msg, blockers: gate.open };
 }
 
 // ----------------------------------------------------------------------------
