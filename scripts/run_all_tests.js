@@ -97,6 +97,7 @@ const CHECKS = [
   'tests/test_statement_package.js',
   'tests/test_working_forecast.js',
   'tests/test_board_budget_funds.js',
+  'tests/test_board_reporting.js',
   'tests/test_reply_recipient.js',
   'tests/test_reply_learning.js',
   'tests/test_acc_application_matching.js',

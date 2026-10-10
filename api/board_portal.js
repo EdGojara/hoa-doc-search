@@ -763,10 +763,15 @@ router.get('/community/:id/budget', async (req, res) => {
     if (cErr) throw cErr;
     if (!community) return res.status(404).json({ error: 'community_not_found' });
 
-    // Period end drives which fiscal year + how many months of actuals. Default
-    // to today (Central), clamped to a real date; the engine reads the FY from it.
+    // Reporting period (lib/portal/board_reporting.js): the last COMPLETED month with posted
+    // activity, unless a date is asked for, so budget-to-date and actuals cover the same
+    // months. Its close status and the month-end close's completeness findings come with it.
     const todayISO = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Chicago' });
-    const periodEnd = /^\d{4}-\d{2}-\d{2}$/.test(req.query.period_end || '') ? req.query.period_end : todayISO;
+    const BR = require('../lib/portal/board_reporting');
+    const chosen = await BR.chooseReportingPeriod(supabase, communityId, { today: todayISO, requested: req.query.period_end });
+    const periodEnd = chosen.period_end;
+    const pstat = await BR.periodStatus(supabase, communityId, periodEnd);
+    const completeness = await BR.periodCompleteness(supabase, communityId, pstat.period_id);
 
     const { budgetVsActual } = require('../lib/accounting/financial_statements');
     const bva = await budgetVsActual({ community_id: communityId, period_end: periodEnd });
@@ -799,7 +804,20 @@ router.get('/community/:id/budget', async (req, res) => {
     const isNonCash = (r) => /unrealized|realized\s+(gain|loss)|market\s+(gain|loss)/i.test(r.account_name || '');
     const allRows = (bva.rows || []).filter((r) => ['revenue', 'expense'].includes(r.account_type));
     const MEASURES = ['annual_budget_cents', 'ytd_budget_cents', 'ytd_actual_cents'];
-    const cls = BFS.classifyByFund({ rows: allRows.filter((r) => !isNonCash(r)), accounts, funds: fundRows || [], measures: MEASURES });
+    // Actual interfund transfers: from the posted entries on each configured transfer account
+    // (lib/accounting/transfer_activity.js), never from the budget line or the configuration.
+    const { transferConfig } = require('../lib/forecast/working_forecast_data');
+    const txAccts = allRows.map((r) => ({ r, a: accounts.find((x) => x.id === r.account_id) }))
+      .filter(({ a }) => a && transferConfig(a, fundRows || []).transfer)
+      .map(({ r, a }) => ({ account_id: a.id, account_type: a.account_type, recorded_leg: a.account_type === 'expense' || Number(r.annual_budget_cents || 0) < 0 ? 'outgoing' : 'incoming' }));
+    let transferActuals = null;
+    if (txAccts.length) {
+      const SP = require('../lib/accounting/statement_periods');
+      const windows = await SP.loadWindows(supabase, communityId, new Map(accounts.map((x) => [x.id, x.account_type])));
+      const TA = require('../lib/accounting/transfer_activity');
+      transferActuals = await TA.loadTransferActivity(supabase, { community_id: communityId, transfers: txAccts, from: `${periodEnd.slice(0, 4)}-01-01`, to: periodEnd, windows });
+    }
+    const cls = BFS.classifyByFund({ rows: allRows.filter((r) => !isNonCash(r)), accounts, funds: fundRows || [], measures: MEASURES, transferActuals });
     const A = new Map(accounts.map((x) => [x.id, x]));
     const fundOf = (r) => r.fund_id || (A.get(r.account_id) || {}).fund_id || null;
     const byNum = (x, y) => String(x.account_number).localeCompare(String(y.account_number));
@@ -815,6 +833,7 @@ router.get('/community/:id/budget', async (req, res) => {
         revenue: g.revenue.slice().sort(byNum),
         expense: g.expense.slice().sort(byNum),
         transfers: g.transfers.map((x) => ({ account_name: x.account_name, account_number: x.account_number, direction: x.direction, label: x.label,
+          actual_status: x.actual_status || null, actual_status_label: x.actual_status_label || null, actual_note: x.actual_note || null,
           counterparty_fund_code: x.direction === 'out' ? x.to_fund_code : x.from_fund_code, annual_cents: x.annual_budget_cents, ytd_budget_cents: x.ytd_budget_cents, ytd_actual_cents: x.ytd_actual_cents })),
         noncash,
         totals: {
@@ -850,6 +869,17 @@ router.get('/community/:id/budget', async (req, res) => {
       ytd_note: (bva.availability && bva.availability.ytd && bva.availability.ytd.note) || null,
       funds,
       operating_net_basis: cls.operating_net_basis,
+      // What period this is and how final it is.
+      reporting: {
+        period_end: periodEnd, cutoff_label: BR.dayLabel(periodEnd), basis: chosen.basis,
+        stepped_back_from: chosen.stepped_back_from, no_recent_activity: !!chosen.no_recent_activity,
+        status: pstat.status, status_label: pstat.status_label, closed_through: pstat.closed_through,
+        budget_to_date_through: pstat.month_end,
+      },
+      // Board members see material exceptions and a concise list of open close procedures;
+      // authorized staff (accounting, Kat, Amanda) also get every finding in full.
+      completeness: { available: completeness.available, note: completeness.note || null, material: completeness.material, procedures: completeness.procedures,
+        ...(viewer && viewer.kind === 'staff' ? { details: completeness.details } : {}) },
       warnings: cls.warnings.map((w) => w.text),
     });
   } catch (err) {

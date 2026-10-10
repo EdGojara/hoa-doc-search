@@ -700,7 +700,7 @@
       return `<tr>
         <td style="padding:9px 12px;">
           <div style="font-size:13px;color:#0B1D34;">${esc(r.account_name)}</div>
-          <div style="margin-top:4px;height:5px;background:#eef2f7;border-radius:3px;overflow:hidden;max-width:220px;">
+          <div title="Actual year to date${annual !== 0 ? ' is ' + (na ? 'not available' : Math.round((actual / annual) * 100) + '%') : ''} of the annual budget" style="margin-top:4px;height:5px;background:#eef2f7;border-radius:3px;overflow:hidden;max-width:220px;">
             <div style="height:100%;width:${pct}%;background:${barColor};"></div>
           </div>
         </td>
@@ -741,9 +741,9 @@
             <thead>
               <tr style="background:#f8fafc;">
                 <th style="text-align:left;padding:8px 12px;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:#64748b;">Account</th>
-                <th class="bnum bhead">Annual budget</th>
-                <th class="bnum bhead">Spent YTD</th>
-                <th class="bnum bhead">vs. plan</th>
+                <th class="bnum bhead">Annual Budget</th>
+                <th class="bnum bhead">Actual YTD</th>
+                <th class="bnum bhead">Variance vs. Budget to Date</th>
               </tr>
             </thead>
             <tbody>
@@ -765,12 +765,18 @@
                 const txRows = tx.map((x) => {
                   const sgn = x.direction === 'out' ? -1 : 1;
                   const na = x.ytd_actual_cents === null;
-                  return `<tr><td style="padding:9px 12px;font-size:13px;color:#0B1D34;">${esc(x.label)} <span style="color:#94a3b8;font-size:12px;">(${esc(x.account_number)} ${esc(x.account_name)})</span></td>
+                  const st = x.actual_status;
+                  const chip = (txt, bg, fg) => `<div style="margin-top:3px;display:inline-block;padding:1px 7px;border-radius:9px;background:${bg};color:${fg};font-size:11px;font-weight:600;">${esc(txt)}</div>`;
+                  const actualCell = st === 'requires_reconciliation' ? `<span style="color:#92400e;font-size:12px;font-weight:600;">Needs reconciliation</span>`
+                    : na ? '<span style="color:#94a3b8;font-size:12px;">Not available</span>'
+                    : `${_bMoney(sgn * Number(x.ytd_actual_cents || 0))}${st === 'offsetting' ? '<br>' + chip('Offsetting entries', '#fef3c7', '#92400e') : st === 'not_found' ? '<br>' + chip('None recorded', '#f1f5f9', '#475569') : st === 'confirmed' ? '<br>' + chip('Recorded', '#dcfce7', '#166534') : ''}`;
+                  return `<tr><td style="padding:9px 12px;font-size:13px;color:#0B1D34;">${esc(x.label)} <span style="color:#94a3b8;font-size:12px;">(${esc(x.account_number)} ${esc(x.account_name)})</span>${x.actual_note ? `<div style="margin-top:3px;color:#64748b;font-size:11.5px;max-width:460px;">${esc(x.actual_status_label ? x.actual_status_label + ': ' : '')}${esc(x.actual_note)}</div>` : ''}</td>
                     <td class="bnum">${_bMoney(sgn * Number(x.annual_cents || 0))}</td>
-                    <td class="bnum">${na ? '<span style="color:#94a3b8;font-size:12px;">Not available</span>' : _bMoney(sgn * Number(x.ytd_actual_cents || 0))}</td>
+                    <td class="bnum">${actualCell}</td>
                     <td class="bnum"><span style="color:#94a3b8;">—</span></td></tr>`;
                 }).join('');
                 const naAfter = t.ytd_actual_net_after_transfers_cents === null;
+                const reconcile = tx.some((x) => x.actual_status === 'requires_reconciliation');
                 const afterFav = naAfter ? 0 : Number(t.ytd_actual_net_after_transfers_cents || 0) - Number(t.ytd_budget_net_after_transfers_cents || 0);
                 const c2 = afterFav > 0 ? '#2D7956' : afterFav < 0 ? '#b42318' : '#94a3b8';
                 return `${netRow}
@@ -779,7 +785,7 @@
               <tr class="btotal">
                 <td style="padding:11px 12px;">${isOp ? 'Net after reserve funding' : 'Net after transfers'}</td>
                 <td class="bnum">${_bMoney(t.annual_net_after_transfers_cents)}</td>
-                <td class="bnum">${naAfter ? '<span style="color:#94a3b8;font-size:12px;">Not available</span>' : _bMoney(t.ytd_actual_net_after_transfers_cents)}</td>
+                <td class="bnum">${naAfter ? (reconcile ? '<span style="color:#92400e;font-size:12px;font-weight:600;">Needs reconciliation</span>' : '<span style="color:#94a3b8;font-size:12px;">Not available</span>') : _bMoney(t.ytd_actual_net_after_transfers_cents)}</td>
                 <td class="bnum" style="color:${c2};">${naAfter ? '—' : (afterFav > 0 ? '+' : '') + _bMoney(afterFav)}</td>
               </tr>`;
               })()}
@@ -795,11 +801,24 @@
         <div class="empty">No adopted budget is on file for FY ${esc(String(j.fiscal_year || ''))} yet. Once the board adopts it, it appears here line by line.</div>`;
     }
     const asOf = j.period_end ? new Date(j.period_end + 'T00:00:00').toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }) : '';
+    const rp = j.reporting || {};
+    const btd = rp.budget_to_date_through ? new Date(rp.budget_to_date_through + 'T00:00:00').toLocaleDateString('en-US', { month: 'long', year: 'numeric' }) : '';
+    const provisional = rp.status && rp.status !== 'closed';
+    const statusPill = rp.status ? `<span style="display:inline-block;margin-left:8px;padding:2px 9px;border-radius:10px;font-size:11.5px;font-weight:700;vertical-align:middle;${provisional ? 'background:#fef3c7;color:#92400e;' : 'background:#dcfce7;color:#166534;'}">${esc(rp.status_label || '')}</span>` : '';
     const header = `<div class="properties-header">FY ${esc(String(j.fiscal_year))} Budget</div>
-      <div style="color:#64748b;font-size:13px;margin:-6px 0 16px;">Adopted budget vs. actuals through ${esc(asOf)}. Green means favorable — expenses under plan or income ahead of plan.</div>`;
+      <div style="color:#0B1D34;font-size:13.5px;margin:-6px 0 6px;"><b>Reporting period: January 1 through ${esc(asOf)}</b>${statusPill}${rp.basis === 'last_completed_month' ? '<span style="color:#64748b;"> · the most recent completed month</span>' : ''}${rp.stepped_back_from ? `<span style="color:#64748b;"> (no activity is posted yet for later months)</span>` : ''}</div>
+      <div style="color:#64748b;font-size:12.5px;margin:0 0 16px;line-height:1.5;"><b>Annual Budget</b> is the full adopted year. <b>Actual YTD</b> is posted activity through ${esc(asOf)}. <b>Variance vs. Budget to Date</b> compares Actual YTD with the budget for January through ${esc(btd || asOf)}; green is favorable (expenses under budget, income ahead of budget). Bars show Actual YTD as a share of the <b>annual</b> budget.</div>`;
+    const cp = j.completeness || {};
+    const mat = cp.material || [], procs = cp.procedures || [];
+    // Provisional explained in plain language; it stays until the month is formally closed.
+    const provNote = provisional ? `<div style="margin:0 0 12px;color:#475569;font-size:12.5px;line-height:1.5;"><b>Provisional</b> means Bedrock's accounting team has not yet formally closed ${esc(btd || 'this month')}. Figures can still change as bills, bank statements and adjustments are recorded; they become final when the month is closed.</div>` : '';
+    const matBlock = mat.length ? `<div style="margin:0 0 12px;padding:11px 13px;border-radius:8px;background:#fef2f2;border:1px solid #fecaca;color:#7f1d1d;font-size:13px;line-height:1.5;"><b>Items that affect these financial statements (${mat.length})</b>${mat.map((c) => `<div style="margin-top:6px;"><b>${esc(c.title)}.</b> ${esc(c.explanation || '')}</div>`).join('')}</div>` : '';
+    const procBlock = procs.length ? `<details style="margin:0 0 14px;padding:9px 13px;border-radius:8px;background:#f8fafc;border:1px solid #e2e8f0;color:#334155;font-size:12.5px;"><summary style="cursor:pointer;font-weight:600;">Month-end close procedures still outstanding (${procs.length})</summary>${procs.map((c) => `<div style="margin-top:6px;"><b>${esc(c.title)}.</b> <span style="color:#64748b;">${esc(c.explanation || '')}</span></div>`).join('')}</details>` : '';
+    const staffBlock = (cp.details || []).length ? `<details style="margin:0 0 14px;padding:9px 13px;border-radius:8px;background:#fff;border:1px dashed #cbd5e1;color:#334155;font-size:12px;"><summary style="cursor:pointer;font-weight:600;">Staff only: all close findings in full (${cp.details.length})</summary>${cp.details.map((d) => `<div style="margin-top:6px;"><b>${esc(d.code)} ${esc(d.status)}</b> ${esc(d.label)}: ${esc(d.explanation || '')}${d.action ? ` <i>${esc(d.action)}</i>` : ''}</div>`).join('')}</details>` : '';
+    const completenessNote = provNote + matBlock + procBlock + staffBlock + (cp.available === false && cp.note ? `<div style="margin:0 0 14px;padding:10px 12px;border-radius:8px;background:#f8fafc;border:1px solid #e2e8f0;color:#475569;font-size:13px;">${esc(cp.note)}</div>` : '');
     const naNote = j.ytd_available === false ? `<div style="margin:0 0 14px;padding:10px 12px;border-radius:8px;background:#f8fafc;border:1px solid #e2e8f0;color:#475569;font-size:13px;">Year-to-date actuals through this date are not available in TrustEd: the months before the books moved to TrustEd are in the prior system. Choose a later date to compare against actuals.</div>` : '';
     const warn = (j.warnings || []).length ? `<div style="margin:0 0 14px;padding:10px 12px;border-radius:8px;background:#fffbeb;border:1px solid #fde68a;color:#92400e;font-size:13px;">${(j.warnings || []).map((w) => esc(w)).join('<br>')}</div>` : '';
-    return header + naNote + warn + (j.funds || []).map(_budgetFundSection).join('');
+    return header + completenessNote + naNote + warn + (j.funds || []).map(_budgetFundSection).join('');
   }
 
   // ARC — read-only board oversight. Summary + comfort first; anything PENDING
