@@ -339,6 +339,9 @@ t('LOPF: same cutover behavior, and statements never hide its broken history', a
 });
 
 // ---------------------------------------------------------------- greenfield
+// No conversion opening entry: trustEd history starts at the earliest posted
+// entry (Ed 2026-10-10). Periods that end before it are not available, never a
+// zero; everything from that date on is exactly as before.
 t('greenfield (no conversion): July monthly is July, YTD is the plain sum — exactly as before', async () => {
   reset(); community('gf');
   je('gf', 'JAN', '2026-01-10', 'assessment_billing', [[1000, 200000, 0], [4000, 0, 200000]]);
@@ -349,13 +352,46 @@ t('greenfield (no conversion): July monthly is July, YTD is the plain sum — ex
   assert.strictEqual(is.totals.period.revenue_cents, 300000);
   assert.strictEqual(is.totals.period.expenses_cents, 70000);
   assert.strictEqual(is.totals.ytd.revenue_cents, 500000);
+  assert.strictEqual(is.availability.ytd.status, 'available', 'a YTD that reaches the first entry is unchanged (not partial, no note)');
   assert.deepStrictEqual(is.carryforward.windows, []);
   const r = await FS.rollingIncomeStatement({ community_id: 'gf', end_date: '2026-07-31', months: 12 });
-  assert.deepStrictEqual(r.not_available_months, []);
-  assert.deepStrictEqual(r.zero_months, ['2025-08', '2025-09', '2025-10', '2025-11', '2025-12', '2026-02', '2026-03', '2026-04', '2026-05', '2026-06'], 'a greenfield community keeps ordinary zero months (no pre-history rule)');
+  assert.deepStrictEqual(r.not_available_months, ['2025-08', '2025-09', '2025-10', '2025-11', '2025-12'], 'months before the first posted entry (1/10/2026) are not available');
+  assert.deepStrictEqual(r.zero_months, ['2026-02', '2026-03', '2026-04', '2026-05', '2026-06'], 'months after the first entry keep ordinary zeros');
+  assert.ok(r.monthly.filter((m) => m.month < '2026-01').every((m) => m.revenue_cents === null && m.expense_cents === null && m.net_cents === null), 'not available is null, never 0');
+  assert.strictEqual(r.monthly.find((m) => m.month === '2026-01').revenue_cents, 200000, 'the month containing the first entry is unchanged');
   const nov = await FS.incomeStatement({ community_id: 'gf', period_start: '2025-11-01', period_end: '2025-11-30' });
-  assert.strictEqual(nov.totals.period.revenue_cents, 0, 'greenfield 2025 month is an ordinary zero');
+  assert.strictEqual(nov.availability.period.status, 'not_available');
+  assert.strictEqual(nov.totals.period.revenue_cents, null, 'a 2025 month before the first entry is null, never an ordinary zero');
+  assert.match(nov.availability.period.note, /begin 1\/10\/2026 \(its earliest posted entry\)/);
   assert.strictEqual(r.monthly.find((m) => m.month === '2026-07').revenue_cents, 300000);
+});
+
+t('greenfield with full history (first entry long before the period): completely unchanged', async () => {
+  reset(); community('gf2');
+  je('gf2', 'OLD', '2023-03-15', 'assessment_billing', [[1000, 100000, 0], [4000, 0, 100000]]);
+  je('gf2', 'NOV', '2025-11-12', 'assessment_billing', [[1000, 40000, 0], [4000, 0, 40000]]);
+  je('gf2', 'JUL', '2026-07-10', 'assessment_billing', [[1000, 300000, 0], [4000, 0, 300000]]);
+  const r = await FS.rollingIncomeStatement({ community_id: 'gf2', end_date: '2026-07-31', months: 12 });
+  assert.deepStrictEqual(r.not_available_months, []);
+  assert.strictEqual(r.monthly.find((m) => m.month === '2025-11').revenue_cents, 40000);
+  assert.strictEqual(r.monthly.find((m) => m.month === '2025-10').revenue_cents, 0, 'a real zero month after history began stays a zero');
+  const nov = await FS.incomeStatement({ community_id: 'gf2', period_start: '2025-11-01', period_end: '2025-11-30' });
+  assert.strictEqual(nov.availability.period.status, 'available');
+  assert.strictEqual(nov.totals.period.revenue_cents, 40000);
+});
+
+t('history-start rule (pure): only periods ENDING before the first posted entry; converted windows win', () => {
+  const hs = SP.withHistoryStart([], '2026-05-21');
+  assert.strictEqual(SP.coverage(hs, '2025-12-31', '2025-12-31').status, 'not_available');
+  assert.strictEqual(SP.coverage(hs, '2026-04-01', '2026-04-30').status, 'not_available');
+  assert.strictEqual(SP.coverage(hs, '2026-05-01', '2026-05-31').status, 'available', 'the month containing the first entry is unchanged');
+  assert.strictEqual(SP.coverage(hs, '2026-01-01', '2026-09-30').status, 'available', 'a YTD reaching the first entry is unchanged');
+  assert.strictEqual(SP.coverage(hs, '2026-01-01', '2026-09-30').note, null);
+  assert.strictEqual(SP.coverage(SP.withHistoryStart([], null), '2020-01-01', '2020-01-31').status, 'available', 'no entries at all: unchanged');
+  assert.strictEqual(SP.coverage([], '2025-12-01', '2025-12-31').status, 'available', 'a plain array (no history start) is unchanged');
+  const conv = [{ from: '2026-01-01', through: '2026-07-31', label: 'x', references: [] }];
+  conv.history_start = '2027-01-01';   // ignored when a conversion window exists
+  assert.strictEqual(SP.coverage(conv, '2026-09-01', '2026-09-30').status, 'available', 'converted communities keep their own rule');
 });
 
 (async () => {
