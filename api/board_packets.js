@@ -43,6 +43,8 @@ const puppeteer = require('puppeteer');
 const BRAND = require('../lib/brand');
 const { safeErrorMessage } = require('./_safe_error');
 const { nativeSectionKeys } = require('../lib/board_package/engine');
+const { STATEMENT_SECTIONS, isSnapshot: isStatementSnapshot, packetFinalizationGate, mappingBlockers } = require('../lib/statements/snapshot');
+const StatementRender = require('../lib/statements/render');
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -183,6 +185,18 @@ function renderLightMarkdown(md) {
 // ============================================================================
 
 function renderSectionStandaloneHtml({ packet, section, embed = false }) {
+  // A native statement section stores the versioned statement model
+  // (lib/statements/snapshot.js): it renders through the ONE statement renderer.
+  if (STATEMENT_SECTIONS.includes(section.section_key)) {
+    const d = section.input_data || {};
+    if (isStatementSnapshot(d)) return renderStatementSnapshotHtml({ packet, section, embed });
+    // A native fill from before the statement model stored the raw engine result
+    // ({ statement }), which no section renderer reads. Say so instead of
+    // rendering an empty statement that looks complete.
+    if (d.statement && d.source === 'trusted_gl') {
+      return renderStandalonePage({ packet, section, embed, bodyHtml: '<div class="table-h2">This statement needs to be pulled again</div><p style="color:#5b6b7f;">It was filled from trustEd before the current statement format. Use Auto-fill on this section to rebuild it from the books.</p>' });
+    }
+  }
   // 'balance_sheet' + 'income_statement' are the split sections (migration 070).
   // 'financials' is the legacy combined section that still renders for any
   // historic data captured before the split.
@@ -230,6 +244,13 @@ function renderSectionStandaloneHtml({ packet, section, embed = false }) {
 
 // Shared HTML shell — header lockup (community logo + Bedrock cornerstone),
 // styles, footer. Body content slots in via the `bodyHtml` arg.
+// Native statement section: the stored model(s), through the shared renderer.
+function renderStatementSnapshotHtml({ packet, section, embed = false }) {
+  const d = section.input_data;
+  const body = `<style>${StatementRender.CSS}</style>` + d.models.map((m) => StatementRender.renderHtml(m, { mode: 'embed', noStyle: true })).join('<div style="height:28px"></div>');
+  return renderStandalonePage({ packet, section, bodyHtml: body, embed });
+}
+
 function renderStandalonePage({ packet, section, bodyHtml, accent = '#1F3A5F', embed = false }) {
   const community = packet.community || {};
   const assets = resolveCommunityAssets(community);
@@ -2993,6 +3014,13 @@ router.patch('/:id', async (req, res) => {
     const update = {};
     for (const k of allowed) if (k in (req.body || {})) update[k] = req.body[k];
     if (Object.keys(update).length === 0) return res.status(400).json({ error: 'no updatable fields' });
+    // A statement cannot be marked final / distributed while a balance-sheet
+    // snapshot has unmapped accounts, unless the owner overrode that exact
+    // snapshot. A draft is never blocked. (Ed 2026-10-09)
+    if (FINAL_STATUSES.includes(update.status)) {
+      const gate = await packetFinalizationGate(supabase, req.params.id);
+      if (!gate.ok) return res.status(409).json(_gateRefusal(gate));
+    }
     const { data, error } = await supabase
       .from('board_packets')
       .update(update)
@@ -3005,6 +3033,67 @@ router.patch('/:id', async (req, res) => {
   } catch (err) {
     console.error('[board_packets] patch failed:', err.message);
     res.status(500).json({ error: err.message });
+  }
+});
+
+const FINAL_STATUSES = ['final', 'distributed'];
+function _gateRefusal(gate) {
+  const unmapped = gate.open.filter((b) => b.problem === 'unmapped_accounts');
+  const altered = gate.open.filter((b) => b.problem === 'snapshot_altered');
+  const n = unmapped.reduce((t, b) => t + b.unmapped.length, 0);
+  const msg = [
+    unmapped.length ? `The balance sheet has ${n} account${n === 1 ? '' : 's'} not mapped to an approved category${unmapped.some((b) => b.mapping_unavailable) ? ' (balance-sheet categories are not set up yet)' : ''}. Approve the mapping and pull the section again, or the owner can record an override for this exact statement.` : null,
+    altered.length ? 'A statement snapshot no longer matches what was generated. Pull the section again from the books.' : null,
+  ].filter(Boolean).join(' ');
+  return { error: 'statement_not_final_ready', message: msg, blockers: gate.open };
+}
+
+// ----------------------------------------------------------------------------
+// GET /api/board-packets/:id/statement-gate  (can this packet be marked final?)
+// ----------------------------------------------------------------------------
+router.get('/:id/statement-gate', async (req, res) => {
+  try {
+    const { data: pk, error } = await supabase.from('board_packets').select('id').eq('id', req.params.id).eq('management_company_id', BEDROCK_MGMT_CO_ID).maybeSingle();
+    if (error) throw error;
+    if (!pk) return res.status(404).json({ error: 'packet_not_found' });
+    res.json(await packetFinalizationGate(supabase, req.params.id));
+  } catch (err) {
+    console.error('[board_packets] statement-gate failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// ----------------------------------------------------------------------------
+// POST /api/board-packets/:id/statement-mapping-override   OWNER ONLY
+// Body: { section_key: 'balance_sheet', reason }
+// Records the owner's decision to let this packet's statement be finalized with
+// unmapped balance-sheet accounts. Bound to the CURRENT snapshot sha256: if the
+// section is pulled again, the override no longer applies. Append-only (505).
+// ----------------------------------------------------------------------------
+router.post('/:id/statement-mapping-override', async (req, res) => {
+  try {
+    const { requireOwner } = require('./_require_admin');
+    const owner = await requireOwner(req, res); if (!owner) return;
+    const section_key = (req.body && req.body.section_key) || 'balance_sheet';
+    const reason = String((req.body && req.body.reason) || '').trim();
+    if (!STATEMENT_SECTIONS.includes(section_key)) return res.status(400).json({ error: 'section_key_invalid' });
+    if (reason.length < 10) return res.status(400).json({ error: 'reason_required', message: 'Write the reason (10+ characters).' });
+    const { data: pk, error: pe } = await supabase.from('board_packets').select('id, community_id').eq('id', req.params.id).eq('management_company_id', BEDROCK_MGMT_CO_ID).maybeSingle();
+    if (pe) throw pe;
+    if (!pk) return res.status(404).json({ error: 'packet_not_found' });
+    const { data: sec, error: se } = await supabase.from('board_packet_sections').select('section_key, input_data').eq('packet_id', pk.id).eq('section_key', section_key).maybeSingle();
+    if (se) throw se;
+    const b = sec ? mappingBlockers(sec) : null;
+    if (!b) return res.status(409).json({ error: 'nothing_to_override', message: 'This statement has no unmapped balance-sheet accounts.' });
+    const { data: row, error: ie } = await supabase.from('statement_mapping_overrides').insert({
+      community_id: pk.community_id, packet_id: pk.id, section_key, snapshot_sha256: b.snapshot_sha256,
+      unmapped_accounts: b.unmapped, reason, owner_actor: owner.full_name || owner.email, owner_user_id: owner.user && owner.user.id ? owner.user.id : null,
+    }).select('id, created_at').single();
+    if (ie) throw ie;
+    res.json({ ok: true, override: row, snapshot_sha256: b.snapshot_sha256, unmapped: b.unmapped.length });
+  } catch (err) {
+    console.error('[board_packets] statement-mapping-override failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
   }
 });
 
@@ -3423,14 +3512,15 @@ async function autoFillSection(packetId, sectionKey) {
     const cutoff = new Date(Date.UTC(md.getUTCFullYear(), md.getUTCMonth(), 0)).toISOString().slice(0, 10);
     const periodStart = cutoff.slice(0, 8) + '01';
     let input_data = null, pulled = {};
-    if (sectionKey === 'balance_sheet') {
-      const { balanceSheet } = require('../lib/accounting/financial_statements');
-      const stmt = await balanceSheet({ community_id: cid, as_of_date: cutoff });
-      input_data = { as_of_date: cutoff, statement: stmt, source: 'trusted_gl' }; pulled = { as_of_date: cutoff };
-    } else if (sectionKey === 'income_statement') {
-      const { budgetVsActual } = require('../lib/accounting/financial_statements');
-      const stmt = await budgetVsActual({ community_id: cid, period_end: cutoff });
-      input_data = { period_start: periodStart, period_end: cutoff, statement: stmt, source: 'trusted_gl' }; pulled = { period_end: cutoff };
+    if (sectionKey === 'balance_sheet' || sectionKey === 'income_statement') {
+      // The versioned statement model itself (lib/statements/snapshot.js), so the
+      // packet reproduces exactly what the board received; rendered by the one
+      // statement renderer (lib/statements/render.js), never stored as HTML.
+      const { buildSectionSnapshot } = require('../lib/statements/snapshot');
+      input_data = await buildSectionSnapshot(supabase, { community_id: cid, section_key: sectionKey, cutoff });
+      const bsm = input_data.models.find((m) => m.kind === 'balance_sheet');
+      pulled = { ...(sectionKey === 'balance_sheet' ? { as_of_date: cutoff } : { period_end: cutoff }), model_version: input_data.model_version, snapshot_sha256: input_data.snapshot_sha256,
+        ...(bsm ? { unmapped_accounts: bsm.mapping.unmapped.length } : {}) };
     } else if (sectionKey === 'drv') {
       const { data: vios } = await supabase.from('violations').select('current_stage, opened_at, enforcement_categories(label)').eq('community_id', cid).not('current_stage', 'in', '(cured,closed,voided)').order('current_stage', { ascending: false }).limit(500);
       const byStage = {}; (vios || []).forEach((v) => { byStage[v.current_stage] = (byStage[v.current_stage] || 0) + 1; });
@@ -4028,6 +4118,9 @@ router.post('/:id/distribute', async (req, res) => {
       return res.status(400).json({ error: 'recipients array required' });
     }
     if (!method) return res.status(400).json({ error: 'method required' });
+    // Distributing delivers the statements to the board: same gate as marking final.
+    const gate = await packetFinalizationGate(supabase, req.params.id);
+    if (!gate.ok) return res.status(409).json(_gateRefusal(gate));
     const rows = recipients.map(r => ({
       packet_id: req.params.id,
       distributed_to: typeof r === 'string' ? r : (r.email || r.name || 'unknown'),

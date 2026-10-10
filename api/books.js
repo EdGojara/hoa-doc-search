@@ -443,14 +443,21 @@ router.get('/report-categories', async (req, res) => {
   try {
     const { community_id } = req.query;
     if (!community_id) return res.status(400).json({ error: 'community_id_required' });
-    const [cats, maps, coa] = await Promise.all([
+    const [cats, mapsR, coa] = await Promise.all([
       supabase.from('report_categories').select('id, section, name, report_label, parent_category_id, display_order, is_active, updated_by, updated_at')
         .eq('community_id', community_id).eq('statement', REPORT_STATEMENT).order('display_order').order('name').limit(2000),
-      supabase.from('account_report_map').select('account_id, category_id, display_order, updated_by, updated_at')
+      supabase.from('account_report_map').select('account_id, category_id, display_order, updated_by, updated_at, approval_status')
         .eq('community_id', community_id).eq('statement', REPORT_STATEMENT).order('account_id').limit(5000),
       supabase.from('chart_of_accounts').select('id, account_number, account_name, account_type, is_active, account_funds(fund_code)')
         .eq('community_id', community_id).in('account_type', ['revenue', 'expense']).order('account_number').limit(5000),
     ]);
+    // Before migration 505 there is no approval state (every 463 row is a person's decision).
+    let maps = mapsR;
+    if (maps.error && /approval_status/.test(maps.error.message || '')) {
+      maps = await supabase.from('account_report_map').select('account_id, category_id, display_order, updated_by, updated_at')
+        .eq('community_id', community_id).eq('statement', REPORT_STATEMENT).order('account_id').limit(5000);
+      if (!maps.error) maps.data = (maps.data || []).map((m) => ({ ...m, approval_status: 'approved' }));
+    }
     for (const r of [cats, maps, coa]) if (r.error) throw r.error;
     const catById = new Map((cats.data || []).map((c) => [c.id, c]));
     const mapByAcct = new Map((maps.data || []).map((m) => [m.account_id, m]));
@@ -465,9 +472,10 @@ router.get('/report-categories', async (req, res) => {
         subcategory_name: leaf && leaf.parent_category_id ? leaf.name : null,
         display_order: m ? m.display_order : null,
         updated_by: m ? m.updated_by : null, updated_at: m ? m.updated_at : null,
+        approval_status: m ? m.approval_status : null,   // 'proposed' does not group a statement until approved
       };
     });
-    res.json({ categories: cats.data || [], accounts, unmapped_count: accounts.filter((a) => !a.category_id).length });
+    res.json({ categories: cats.data || [], accounts, unmapped_count: accounts.filter((a) => !a.category_id || a.approval_status !== 'approved').length });
   } catch (err) {
     console.error('[books] report-categories read failed:', err);
     res.status(500).json({ error: safeErrorMessage(err) });
