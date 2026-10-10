@@ -92,6 +92,57 @@ const item = (l, d) => l.bridge.find((b) => b.driver === d);
   const twoOp = WF.buildWorkingForecast({ ...fin, lines: [L({ id: 'o1' }), L({ id: 'o3', fund: 'g', fundCode: 'OPR2' })] });
   check('two operating funds: no combined operating budget is invented (headline empty, reason given)', twoOp.summary.basis === null && twoOp.summary.model === null && twoOp.data_status.reasons.some((r) => r.code === 'no_operating_fund') && twoOp.summary.funds.length === 2);
 
+  console.log('F. interfund transfers (4010 Reserve Contribution, explicitly configured)');
+  const TX = { from_fund_id: 'f', from_fund_code: 'OPR', from_fund_type: 'operating', to_fund_id: 'r', to_fund_code: 'RES', to_fund_type: 'reserve' };
+  const none = { 8: 0, 9: 0 };
+  const cgLines = (o = {}) => [
+    L({ id: 'o4000', n: '4000', name: 'Assessments', type: 'revenue', budget: flat(110579600), ytd: 0, months: none }),
+    L({ id: 'o5000', n: '5000', name: 'Operating expenses', budget: flat(96507800), ytd: 0, months: none }),
+    { ...L({ id: 'r4010', n: '4010', name: 'Reserve Contribution', type: 'revenue', budget: flat(-16400000), ytd: 0, months: none, fund: 'r', fundCode: 'RES', fundType: 'reserve' }), ...(o.cfg === undefined ? { transfer: TX } : o.cfg) },
+    L({ id: 'a4050', n: '4050', name: 'Adopt a School Income', type: 'revenue', budget: flat(495000), ytd: 0, months: none, fund: 'a', fundCode: 'ADO', fundType: 'other' }),
+    L({ ...GAINS }),
+  ];
+  const cg = (o = {}) => WF.buildWorkingForecast({ ...fin, facts: {}, lines: cgLines(o), overrides: o.overrides || [] });
+  const tm = cg();
+  const t4010 = tm.lines.find((l) => l.account_number === '4010');
+  check('a configured transfer line is presented as a transfer, never as revenue or expense', t4010.kind === 'interfund_transfer' && t4010.transfer.from_fund_code === 'OPR' && t4010.transfer.to_fund_code === 'RES' && t4010.transfer.recorded_leg === 'outgoing');
+  check('no inflation, normalization or other driver applies to a transfer (even with a 3% policy)', t4010.bridge.every((b) => b.status === 'not_applicable' && b.amount_cents === 0) && t4010.recommendation_cents === -16400000);
+  check('the $164,000 is carried as a provisional 2027 assumption marked Needs board decision', t4010.transfer.model_cents === 16400000 && t4010.transfer.status === 'needs_board_decision' && t4010.evidence_status === 'needs_board_decision' && t4010.flags.some((f) => f.code === 'transfer_provisional' && /Needs board decision/.test(f.text)));
+  const tAdj = WF.buildLine(cgLines()[2], ctx, { one_time: { amount_cents: -5000000, base_cents: -16400000, base_as_of: '2026-09-30', assumption: 'should never apply to a transfer', confidence: 'low', actor: 'x', created_at: 'x' }, rate: { amount_cents: 99, assumption: 'should never apply to a transfer', actor: 'x', created_at: 'x' } });
+  check('a stray adjustment on a transfer line is never applied', tAdj.bridge.every((b) => b.status === 'not_applicable') && tAdj.recommendation_cents === -16400000);
+  const op = tm.summary;
+  check('operating before reserve funding excludes the transfer (2026 approved $140,718)', op.approved_base_year.revenue === 110579600 && op.approved_base_year.net === 14071800);
+  check('planned reserve funding is shown separately ($164,000 out of Operating)', op.approved_base_year.transfers_out === 16400000 && op.approved_base_year.transfers_in === 0 && op.transfers.length === 1 && op.transfers[0].label === 'Planned reserve funding' && op.board_decisions.length === 1);
+  check('operating after reserve funding = before - funding (2026 approved ($23,282))', op.approved_base_year.net_after_transfers === -2328200 && op.model.net_after_transfers === op.model.net - 16400000);
+  const resF = tm.summary.funds.find((x) => x.fund_code === 'RES');
+  check('the Reserve fund shows the positive transfer in, and the transfer is not reserve revenue', resF.approved_base_year.transfers_in === 16400000 && resF.approved_base_year.revenue === 0 && resF.approved_base_year.net_after_transfers === 16400000 && resF.transfers[0].label === 'Transfer in from OPR');
+  const adoF = tm.summary.funds.find((x) => x.fund_code === 'ADO');
+  check('Adopt-a-School stays out of the Operating summary and is presented on its own ($4,950)', adoF.approved_base_year.net_after_transfers === 495000 && op.approved_base_year.revenue === 110579600 && op.line_count === 2);
+  const rc = tm.summary.reconciliation;
+  check('reconciliation: approved budget as recorded = ($18,332), and the fund contributions tie to it without combining funds', rc.approved_budget_total.net === -1833200 && rc.ties && rc.sum_of_fund_contributions_cents === -1833200
+    && rc.funds.find((x) => x.fund_code === 'OPR').contribution_to_budget_total === -2328200 && rc.funds.find((x) => x.fund_code === 'RES').contribution_to_budget_total === 0 && rc.funds.find((x) => x.fund_code === 'ADO').contribution_to_budget_total === 495000);
+  check('... the $4,950 between ($23,282) and ($18,332) is the Adopt-a-School fund', rc.approved_budget_total.net - rc.funds.find((x) => x.fund_code === 'OPR').contribution_to_budget_total === 495000);
+  check('... and Reserve\'s transfer in is listed as the unrecorded other side of 4010 (nets to zero across funds)', rc.unrecorded_transfer_legs.length === 1 && rc.unrecorded_transfer_legs[0].fund_code === 'RES' && rc.unrecorded_transfer_legs[0].cents === 16400000);
+  check('a configured transfer does not raise the negative-revenue warning; the board decision is called out', !tm.data_status.reasons.some((r) => r.code === 'negative_revenue_budget') && tm.data_status.reasons.some((r) => r.code === 'transfers_need_board_decision'));
+  check('transfers never appear in the top drivers', !op.top_drivers.some((d) => d.account.startsWith('4010')) && !resF.top_drivers.some((d) => d.account.startsWith('4010')));
+  const unc = cg({ cfg: {} });
+  check('without configuration (name alone), 4010 is NOT treated as a transfer and the warning is preserved', !unc.lines.find((l) => l.account_number === '4010').transfer && unc.data_status.reasons.some((r) => r.code === 'negative_revenue_budget') && unc.summary.reconciliation.ties);
+  const bad = cg({ cfg: { transfer_config_error: 'the from and to funds are the same' } });
+  check('an invalid configuration is reported, treated as an ordinary line, and the warning is preserved', bad.lines.find((l) => l.account_number === '4010').flags.some((f) => f.code === 'transfer_config_invalid') && bad.data_status.reasons.some((r) => r.code === 'transfer_config_invalid') && bad.data_status.reasons.some((r) => r.code === 'negative_revenue_budget'));
+  const dec = cg({ overrides: [{ account_id: 'r4010', fund_id: 'r', override_cents: -20000000, model_recommendation_cents: -16400000, reason: 'Board adopted the reserve study funding of 200,000', actor: 'ed', created_at: '2026-11-01T00:00:00Z' }] });
+  const dOp = dec.summary;
+  check('a recorded decision (override with reason) sets the 2027 transfer; the model value is kept', dec.lines.find((l) => l.account_number === '4010').transfer.status === 'set_by_decision' && dOp.working.transfers_out === 20000000 && dOp.model.transfers_out === 16400000 && dOp.board_decisions.length === 0
+    && dec.summary.funds.find((x) => x.fund_code === 'RES').working.transfers_in === 20000000);
+  const D = require('../lib/forecast/working_forecast_data');
+  const FUNDS = [{ id: 'f', fund_code: 'OPR', fund_type: 'operating' }, { id: 'r', fund_code: 'RES', fund_type: 'reserve' }];
+  const acct = (o) => ({ account_number: '4010', account_name: 'Reserve Contribution', account_type: 'revenue', fund_id: 'r', account_subtype: 'interfund_transfer', interfund_from_fund_id: 'f', interfund_to_fund_id: 'r', ...o });
+  check('loader config: subtype + direction in this community -> transfer', D.transferConfig(acct({}), FUNDS).transfer.to_fund_code === 'RES');
+  check('loader config: the name alone never makes a transfer', JSON.stringify(D.transferConfig(acct({ account_subtype: 'operating_revenue', interfund_from_fund_id: null, interfund_to_fund_id: null }), FUNDS)) === '{}');
+  check('loader config: missing direction, same fund, foreign fund, or account outside its funds -> reported error', /not configured/.test(D.transferConfig(acct({ interfund_to_fund_id: null }), FUNDS).transfer_config_error)
+    && /same/.test(D.transferConfig(acct({ interfund_from_fund_id: 'r' }), FUNDS).transfer_config_error) && /belong/.test(D.transferConfig(acct({ interfund_to_fund_id: 'zz' }), FUNDS).transfer_config_error)
+    && /sit in/.test(D.transferConfig(acct({ fund_id: 'a' }), [...FUNDS, { id: 'a', fund_code: 'ADO' }]).transfer_config_error));
+
+
   console.log('D. contract upload files the document in the library under the community management company');
   const fakeDocs = (opts = {}) => {
     const log = { inserts: [], uploads: [] };

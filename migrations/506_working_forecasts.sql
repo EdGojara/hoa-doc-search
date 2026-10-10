@@ -39,6 +39,11 @@
 --                                  resets verification.
 --   vendor_contract_events         append-only history of contract status / document
 --                                  changes and verifications.
+--   chart_of_accounts (EXTENDED)   interfund_from_fund_id / interfund_to_fund_id: an
+--                                  account is an interfund transfer only when its
+--                                  account_subtype is 'interfund_transfer' AND both are
+--                                  set. Read only by the working forecast. NULL on every
+--                                  existing row; no account is configured here.
 --
 -- 465's budget_forecasts is the IN-YEAR forecast against the same year's
 -- approved budget; it cannot hold a forward plan, so this is additive, not a
@@ -167,6 +172,49 @@ DROP TRIGGER IF EXISTS trg_working_forecast_adjustments_guard ON working_forecas
 CREATE TRIGGER trg_working_forecast_adjustments_guard BEFORE INSERT OR UPDATE OR DELETE ON working_forecast_adjustments FOR EACH ROW EXECUTE FUNCTION working_forecast_decisions_guard();
 DROP TRIGGER IF EXISTS trg_working_forecast_overrides_guard ON working_forecast_overrides;
 CREATE TRIGGER trg_working_forecast_overrides_guard BEFORE INSERT OR UPDATE OR DELETE ON working_forecast_overrides FOR EACH ROW EXECUTE FUNCTION working_forecast_decisions_guard();
+
+-- ---------------------------------------------------------------- interfund-transfer configuration
+-- An account is an INTERFUND TRANSFER only by explicit configuration, never by its
+-- name: account_subtype = 'interfund_transfer' together with the direction (from
+-- fund -> to fund). Vantaca records both legs of a reserve contribution in one
+-- account (e.g. 4010 Reserve Contribution), so the approved budget carries one
+-- negative line; with this configuration the working forecast presents it as the
+-- from-fund's transfer out and the to-fund's transfer in, never as revenue or
+-- expense. Additive: both columns are NULL on every existing row, no account is
+-- reconfigured here, and nothing that posts or reports reads these columns.
+ALTER TABLE chart_of_accounts ADD COLUMN IF NOT EXISTS interfund_from_fund_id uuid;
+ALTER TABLE chart_of_accounts ADD COLUMN IF NOT EXISTS interfund_to_fund_id uuid;
+ALTER TABLE chart_of_accounts DROP CONSTRAINT IF EXISTS chart_of_accounts_interfund_from_fk;
+ALTER TABLE chart_of_accounts ADD CONSTRAINT chart_of_accounts_interfund_from_fk FOREIGN KEY (interfund_from_fund_id) REFERENCES account_funds(id) ON DELETE RESTRICT;
+ALTER TABLE chart_of_accounts DROP CONSTRAINT IF EXISTS chart_of_accounts_interfund_to_fk;
+ALTER TABLE chart_of_accounts ADD CONSTRAINT chart_of_accounts_interfund_to_fk FOREIGN KEY (interfund_to_fund_id) REFERENCES account_funds(id) ON DELETE RESTRICT;
+ALTER TABLE chart_of_accounts DROP CONSTRAINT IF EXISTS chart_of_accounts_interfund_config_check;
+ALTER TABLE chart_of_accounts ADD CONSTRAINT chart_of_accounts_interfund_config_check CHECK (
+  (coalesce(account_subtype, '') = 'interfund_transfer') = (interfund_from_fund_id IS NOT NULL AND interfund_to_fund_id IS NOT NULL)
+  AND (interfund_from_fund_id IS NULL OR interfund_from_fund_id <> interfund_to_fund_id)
+  AND (interfund_from_fund_id IS NULL OR account_type IN ('revenue', 'expense')));
+COMMENT ON COLUMN chart_of_accounts.interfund_from_fund_id IS 'Set only when account_subtype = interfund_transfer: the fund the transfer leaves (e.g. Operating). Read by the working forecast; nothing posts from it.';
+COMMENT ON COLUMN chart_of_accounts.interfund_to_fund_id IS 'Set only when account_subtype = interfund_transfer: the fund the transfer enters (e.g. Reserve).';
+
+-- Both funds belong to the account's community, and the account sits in one of them.
+CREATE OR REPLACE FUNCTION chart_of_accounts_interfund_guard() RETURNS trigger
+LANGUAGE plpgsql AS $fn$
+DECLARE fc uuid; tc uuid;
+BEGIN
+  IF NEW.interfund_from_fund_id IS NULL AND NEW.interfund_to_fund_id IS NULL THEN RETURN NEW; END IF;
+  SELECT community_id INTO fc FROM account_funds WHERE id = NEW.interfund_from_fund_id;
+  SELECT community_id INTO tc FROM account_funds WHERE id = NEW.interfund_to_fund_id;
+  IF fc IS DISTINCT FROM NEW.community_id OR tc IS DISTINCT FROM NEW.community_id THEN
+    RAISE EXCEPTION 'interfund transfer funds must belong to the account''s community';
+  END IF;
+  IF NEW.fund_id IS NOT NULL AND NEW.fund_id NOT IN (NEW.interfund_from_fund_id, NEW.interfund_to_fund_id) THEN
+    RAISE EXCEPTION 'an interfund transfer account must sit in its from or to fund';
+  END IF;
+  RETURN NEW;
+END $fn$;
+DROP TRIGGER IF EXISTS trg_chart_of_accounts_interfund_guard ON chart_of_accounts;
+CREATE TRIGGER trg_chart_of_accounts_interfund_guard BEFORE INSERT OR UPDATE OF interfund_from_fund_id, interfund_to_fund_id, fund_id, community_id ON chart_of_accounts
+  FOR EACH ROW EXECUTE FUNCTION chart_of_accounts_interfund_guard();
 
 -- ---------------------------------------------------------------- executed-contract evidence
 ALTER TABLE vendor_contracts ADD COLUMN IF NOT EXISTS execution_status text;

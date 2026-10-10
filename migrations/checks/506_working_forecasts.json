@@ -1,6 +1,6 @@
 {
   "migration": "506_working_forecasts.sql",
-  "summary": "Persistence for the next-year working forecast (management forecast, not the board budget). Adds working_forecasts (one working forecast per community / target year from an approved base-year budget, with policy assumptions), working_forecast_adjustments (human driver entries: one-time, omitted recurring, contract, rate, volatility, each with a written assumption, evidence, confidence, source and actor; normalizations record the line base and as-of date they were made against and obey sign rules) and working_forecast_overrides (human / board override of a line, storing the model recommendation and model hash at the time, the override, reason, actor and time). Decisions are append-only and same-community guarded. RLS on; anon / authenticated get nothing. Additive: changes no existing row. Extends vendor_contracts (executed-contract evidence: execution status detected / likely_executed / verified_executed with confidence and reason, verification provenance, source email message / library document / version, notice date, periodic amount + frequency, dated rate schedule, unit pricing, one-time fees, extracted assumptions, forecast GL account / fund, intake source). verified_executed only through verify_vendor_contract() by a named person against the exact document hash; replacing the document resets verification and bumps the version; vendor_contract_events is the append-only history.",
+  "summary": "Persistence for the next-year working forecast (management forecast, not the board budget). Adds working_forecasts (one working forecast per community / target year from an approved base-year budget, with policy assumptions), working_forecast_adjustments (human driver entries: one-time, omitted recurring, contract, rate, volatility, each with a written assumption, evidence, confidence, source and actor; normalizations record the line base and as-of date they were made against and obey sign rules) and working_forecast_overrides (human / board override of a line, storing the model recommendation and model hash at the time, the override, reason, actor and time). Decisions are append-only and same-community guarded. RLS on; anon / authenticated get nothing. Additive: changes no existing row. Extends vendor_contracts (executed-contract evidence: execution status detected / likely_executed / verified_executed with confidence and reason, verification provenance, source email message / library document / version, notice date, periodic amount + frequency, dated rate schedule, unit pricing, one-time fees, extracted assumptions, forecast GL account / fund, intake source). verified_executed only through verify_vendor_contract() by a named person against the exact document hash; replacing the document resets verification and bumps the version; vendor_contract_events is the append-only history. Adds explicit interfund-transfer configuration to chart_of_accounts (subtype interfund_transfer + from / to fund), read only by the working forecast; no account is configured by this migration.",
   "requires": [
     "171_budgets_and_fs.sql",
     "015_vendor_storage_benchmarking.sql"
@@ -30,6 +30,16 @@
       "name": "vendor_contract_events does not exist yet",
       "sql": "SELECT count(*)::int FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'vendor_contract_events'",
       "expect": 0
+    },
+    {
+      "name": "chart_of_accounts has no interfund direction columns yet",
+      "sql": "SELECT count(*)::int FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'chart_of_accounts' AND column_name IN ('interfund_from_fund_id', 'interfund_to_fund_id')",
+      "expect": 0
+    },
+    {
+      "name": "no account already uses the interfund_transfer subtype (the new CHECK would reject it)",
+      "sql": "SELECT count(*)::int FROM chart_of_accounts WHERE account_subtype = 'interfund_transfer'",
+      "expect": 0
     }
   ],
   "expected_changes": [
@@ -37,10 +47,13 @@
     "Creates working_forecast_adjustments and working_forecast_overrides with FKs (RESTRICT), CHECKs (driver set, normalization signs (one-time <= 0, omitted recurring >= 0), base_cents + base_as_of required on normalizations, 10+ character assumption / reason, confidence, source, 64-hex model hash), line indexes and an append-only + same-community guard trigger.",
     "RLS on all three; nothing for anon / authenticated; service_role SELECT, INSERT (and UPDATE on working_forecasts for policy).",
     "Adds nullable evidence columns to vendor_contracts (document_version defaults to 1; rate_schedule / one_time_fees default to an empty array), FKs (library_documents, chart_of_accounts, account_funds; RESTRICT), CHECKs (execution status set, confidence 0-1, frequency, intake source, verified provenance), an index on forecast_account_id, a guard trigger (verified only via verify_vendor_contract(); document replacement resets verification and logs it; GL binding stays in the community), verify_vendor_contract() (service_role only) and the append-only vendor_contract_events table.",
+    "Adds nullable interfund_from_fund_id / interfund_to_fund_id to chart_of_accounts (FKs to account_funds, RESTRICT), a CHECK that account_subtype = interfund_transfer exactly when both are set (distinct, revenue/expense accounts only), and a guard trigger (both funds in the account's community; the account sits in one of them). No account is configured; NULL on every existing row.",
     "No existing table or row changes."
   ],
   "objects": {
     "added": [
+      "column:chart_of_accounts.interfund_from_fund_id",
+      "column:chart_of_accounts.interfund_to_fund_id",
       "column:vendor_contract_events.actor",
       "column:vendor_contract_events.created_at",
       "column:vendor_contract_events.detail",
@@ -108,6 +121,9 @@
       "column:working_forecasts.status",
       "column:working_forecasts.updated_at",
       "column:working_forecasts.updated_by",
+      "constraint:chart_of_accounts.chart_of_accounts_interfund_config_check",
+      "constraint:chart_of_accounts.chart_of_accounts_interfund_from_fk",
+      "constraint:chart_of_accounts.chart_of_accounts_interfund_to_fk",
       "constraint:vendor_contract_events.vendor_contract_events_contract_fk",
       "constraint:vendor_contract_events.vendor_contract_events_event_check",
       "constraint:vendor_contract_events.vendor_contract_events_pkey",
@@ -143,6 +159,7 @@
       "constraint:working_forecasts.working_forecasts_pkey",
       "constraint:working_forecasts.working_forecasts_status_check",
       "constraint:working_forecasts.working_forecasts_years_check",
+      "function:chart_of_accounts_interfund_guard",
       "function:vendor_contract_events_append_only",
       "function:vendor_contracts_execution_guard",
       "function:verify_vendor_contract",
@@ -161,6 +178,7 @@
       "table:working_forecast_adjustments",
       "table:working_forecast_overrides",
       "table:working_forecasts",
+      "trigger:chart_of_accounts.trg_chart_of_accounts_interfund_guard",
       "trigger:vendor_contract_events.trg_vendor_contract_events_append_only",
       "trigger:vendor_contracts.trg_vendor_contracts_execution_guard",
       "trigger:working_forecast_adjustments.trg_working_forecast_adjustments_guard",
@@ -221,6 +239,11 @@
       "name": "only service_role may verify a contract",
       "sql": "SELECT (CASE WHEN has_function_privilege('service_role', 'verify_vendor_contract(uuid, text, text, text)', 'EXECUTE') AND NOT has_function_privilege('anon', 'verify_vendor_contract(uuid, text, text, text)', 'EXECUTE') AND NOT has_function_privilege('authenticated', 'verify_vendor_contract(uuid, text, text, text)', 'EXECUTE') THEN 1 ELSE 0 END)::int",
       "expect": 1
+    },
+    {
+      "name": "no account is configured as an interfund transfer by this migration",
+      "sql": "SELECT count(*)::int FROM chart_of_accounts WHERE interfund_from_fund_id IS NOT NULL OR interfund_to_fund_id IS NOT NULL",
+      "expect": 0
     }
   ]
 }

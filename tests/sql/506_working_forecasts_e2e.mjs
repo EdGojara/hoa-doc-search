@@ -33,6 +33,7 @@ await db.exec(`
   CREATE TABLE vendor_contracts (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), management_company_id uuid, community_id uuid REFERENCES communities(id), vendor_name_raw text,
     service_category text, effective_date date, end_date date, file_path text, file_hash text, status text NOT NULL DEFAULT 'active', notes text,
     created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now());
+  ALTER TABLE chart_of_accounts ADD COLUMN IF NOT EXISTS account_type text, ADD COLUMN IF NOT EXISTS account_subtype text;   -- production columns (170) the rehearsal world omits
   INSERT INTO communities (id, name) VALUES ('${OTHER}', 'Other');
   INSERT INTO account_funds (id, community_id, fund_code) VALUES ('00000000-0000-0000-0000-00000000f0f1', '${C}', 'OPR');
   INSERT INTO chart_of_accounts (id, community_id, account_number, fund_id) VALUES ('00000000-0000-0000-0000-0000000a5770', '${C}', '5770', '00000000-0000-0000-0000-00000000f0f1'),
@@ -109,6 +110,20 @@ check('replacing the document resets verification (back to likely_executed) and 
 check('the document replacement is logged', (await one(`SELECT count(*)::int AS n FROM vendor_contract_events WHERE vendor_contract_id = $1 AND event = 'document_replaced'`, [K])).n === 1);
 check('contract events are append-only', /permanent/.test(await code(() => db.query(`DELETE FROM vendor_contract_events`)) || ''));
 check('only service_role may run verify_vendor_contract', (await one(`SELECT has_function_privilege('authenticated', 'verify_vendor_contract(uuid, text, text, text)', 'EXECUTE') AS a`)).a === false);
+
+// ---- interfund-transfer configuration (explicit, never by name)
+const OPR = '00000000-0000-0000-0000-00000000f0f1', RES = '00000000-0000-0000-0000-00000000f0f2', XF = '00000000-0000-0000-0000-00000000f0f9';
+await db.exec(`INSERT INTO account_funds (id, community_id, fund_code) VALUES ('${RES}', '${C}', 'RES'), ('${XF}', '${OTHER}', 'RES');
+  INSERT INTO chart_of_accounts (id, community_id, account_number, fund_id, account_type, account_subtype) VALUES ('00000000-0000-0000-0000-000000004010', '${C}', '4010', '${RES}', 'revenue', 'operating_revenue');`);
+const A4010 = '00000000-0000-0000-0000-000000004010';
+const cfg = (sub, from, to) => db.query(`UPDATE chart_of_accounts SET account_subtype = $2, interfund_from_fund_id = $3, interfund_to_fund_id = $4 WHERE id = $1`, [A4010, sub, from, to]);
+check('existing accounts are untouched: no account is configured as a transfer', (await one(`SELECT count(*)::int AS n FROM chart_of_accounts WHERE interfund_from_fund_id IS NOT NULL OR interfund_to_fund_id IS NOT NULL`)).n === 0);
+check('the transfer subtype without a direction is refused', /interfund_config_check/.test(await code(() => cfg('interfund_transfer', null, null)) || ''));
+check('a direction without the transfer subtype is refused', /interfund_config_check/.test(await code(() => cfg('operating_revenue', OPR, RES)) || ''));
+check('the same fund on both sides is refused', /interfund_config_check/.test(await code(() => cfg('interfund_transfer', RES, RES)) || ''));
+check('a fund of another community is refused', /community/.test(await code(() => cfg('interfund_transfer', OPR, XF)) || ''));
+check('explicit configuration (subtype + Operating -> Reserve) is accepted', !(await code(() => cfg('interfund_transfer', OPR, RES))));
+check('a configured transfer account cannot move to a fund outside its direction', /from or to fund/.test(await code(async () => { await db.query(`INSERT INTO account_funds (id, community_id, fund_code) VALUES ('00000000-0000-0000-0000-00000000f0f3', '${C}', 'ADO')`); await db.query(`UPDATE chart_of_accounts SET fund_id = '00000000-0000-0000-0000-00000000f0f3' WHERE id = $1`, [A4010]); }) || ''));
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

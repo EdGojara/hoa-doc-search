@@ -93,6 +93,9 @@ router.post('/:cid/adjustments', async (req, res) => {
     if (!input.persistence.available) return notPersisted(res);
     const line = lineOf(model, b.account_id, b.fund_id);
     if (!line) return res.status(404).json({ error: 'line_not_found' });
+    // Interfund transfers take no drivers (no inflation, normalization, contract or volatility).
+    // Their amount is a funding decision, recorded as an override with a reason.
+    if (line.transfer) return res.status(400).json({ error: 'transfer_lines_take_no_drivers', message: 'This line is an interfund transfer. Its amount is a board funding decision: record it as an override with the reason (for example the reserve study or the board decision).' });
     const isNorm = b.driver === 'one_time' || b.driver === 'omitted_recurring';
     const vs = checkAdjustment({ driver: b.driver, amount_cents: amount, base_cents: line.base.cents });   // sign + removal-exceeds-base (signs also enforced by 506)
     if (vs) return res.status(400).json(vs);
