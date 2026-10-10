@@ -199,29 +199,12 @@ router.get('/community/:id/summary', async (req, res) => {
         .in('status', ['approved', 'active'])
         .maybeSingle();
       if (bdg) {
-        const { data: lines } = await supabase
-          .from('budget_line_items')
-          .select('annual_amount_cents, chart_of_accounts ( account_type, account_funds ( fund_code ) )')
-          .eq('budget_id', bdg.id);
-        let opRev = 0, opExp = 0, resContrib = 0;
-        for (const l of (lines || [])) {
-          const amt = Number(l.annual_amount_cents) || 0;
-          const coa = l.chart_of_accounts || {};
-          const fund = coa.account_funds?.fund_code || 'OPR';
-          if (fund === 'RES') { if (coa.account_type === 'revenue') resContrib += amt; }
-          else if (coa.account_type === 'revenue') opRev += amt;
-          else if (coa.account_type === 'expense') opExp += amt;
-        }
-        budgetHeadline = {
-          fiscal_year: bdg.fiscal_year,
-          status: bdg.status,
-          operating_revenue_cents: opRev,
-          operating_expense_cents: opExp,
-          operating_net_cents: opRev - opExp,
-          // Contributions are booked as a negative (contra) revenue transfer; show
-          // the magnitude of money going INTO reserves so the tile reads "+ $X".
-          reserve_contribution_cents: Math.abs(resContrib),
-        };
+        // By fund, with the financial statements' and working forecast's definitions:
+        // Operating is the operating fund alone (Reserve and Adopt-a-School are never
+        // folded in); the reserve contribution is the CONFIGURED Operating -> Reserve
+        // transfer, never revenue (lib/accounting/budget_fund_summary.js).
+        const BFS = require('../lib/accounting/budget_fund_summary');
+        budgetHeadline = BFS.budgetHeadline(bdg, await BFS.loadBudgetByFund(supabase, { community_id: communityId, budget_id: bdg.id }));
       }
     } catch (e) {
       console.warn('[board_portal] budget headline skipped:', e.message);
@@ -1286,31 +1269,17 @@ async function buildBoardAggregateContext(communityId, communityName) {
 - Reserve spending last 12 months: ${money(rh.spent_last_12mo_cents)}`);
   } catch (e) { console.warn('[board_portal] amanda reserve skipped:', e.message); }
 
-  // Adopted operating budget headline (annual, by fund) — same computation as the
-  // /summary budget tile. YTD-vs-actual is on the Budget tile; not recomputed here.
+  // Adopted budget by fund — same computation as the /summary budget tile
+  // (lib/accounting/budget_fund_summary.js). YTD-vs-actual is on the Budget tile; not recomputed here.
   try {
     const fy = new Date().getUTCFullYear();
     const { data: bdg } = await supabase.from('community_budgets')
       .select('id, fiscal_year, status').eq('community_id', communityId)
       .eq('fiscal_year', fy).in('status', ['approved', 'active']).maybeSingle();
     if (bdg) {
-      const { data: lines } = await supabase.from('budget_line_items')
-        .select('annual_amount_cents, chart_of_accounts ( account_type, account_funds ( fund_code ) )')
-        .eq('budget_id', bdg.id);
-      let opRev = 0, opExp = 0, resContrib = 0;
-      for (const l of (lines || [])) {
-        const amt = Number(l.annual_amount_cents) || 0;
-        const coa = l.chart_of_accounts || {};
-        const fund = coa.account_funds?.fund_code || 'OPR';
-        if (fund === 'RES') { if (coa.account_type === 'revenue') resContrib += amt; }
-        else if (coa.account_type === 'revenue') opRev += amt;
-        else if (coa.account_type === 'expense') opExp += amt;
-      }
-      parts.push(`OPERATING BUDGET (FY ${bdg.fiscal_year}, ${bdg.status}):
-- Budgeted operating revenue: ${money(opRev)}
-- Budgeted operating expense: ${money(opExp)}
-- Net operating: ${money(opRev - opExp)}
-- Annual reserve contribution: ${money(Math.abs(resContrib))}
+      const BFS = require('../lib/accounting/budget_fund_summary');
+      const summary = await BFS.loadBudgetByFund(supabase, { community_id: communityId, budget_id: bdg.id });
+      parts.push(`${BFS.budgetContextText(bdg, summary, money)}
 (For how the year is tracking against this, point the board to the Budget tile.)`);
     } else {
       parts.push(`OPERATING BUDGET: no adopted budget on file for FY ${fy} yet.`);
