@@ -3,6 +3,95 @@
 // tests/fixtures/legal-invoices, with a valid PDF read in use, run through
 // lib/legal/review_data.js detailPayload().
 window.TX_FIXTURE = {
+  "/api/legal-review/summaries": {
+    "ok": true,
+    "data": {
+      "generated_at": "2026-09-29T15:00:00.000Z",
+      "summaries": {
+        "00000000-0000-4000-8000-0000000000e1": {
+          "source": "suggestion",
+          "revision": 0,
+          "pdf": "in_use",
+          "summary": {
+            "total_cents": 72006,
+            "recoverable": {
+              "count": 1,
+              "cents": 33606
+            },
+            "association": {
+              "count": 1,
+              "cents": 6000
+            },
+            "exceptions": {
+              "count": 1,
+              "cents": 32400
+            },
+            "accepted": {
+              "count": 2,
+              "cents": 39606
+            },
+            "reconciled": true,
+            "difference_cents": 0,
+            "can_accept": false
+          }
+        },
+        "00000000-0000-4000-8000-0000000000e2": {
+          "source": "draft",
+          "revision": 0,
+          "pdf": "in_use",
+          "summary": {
+            "total_cents": 46000,
+            "recoverable": {
+              "count": 1,
+              "cents": 46000
+            },
+            "association": {
+              "count": 0,
+              "cents": 0
+            },
+            "exceptions": {
+              "count": 0,
+              "cents": 0
+            },
+            "accepted": {
+              "count": 1,
+              "cents": 46000
+            },
+            "reconciled": true,
+            "difference_cents": 0,
+            "can_accept": true
+          }
+        },
+        "00000000-0000-4000-8000-0000000000e3": {
+          "source": "suggestion",
+          "revision": 0,
+          "pdf": "in_use",
+          "summary": {
+            "total_cents": 67500,
+            "recoverable": {
+              "count": 0,
+              "cents": 0
+            },
+            "association": {
+              "count": 1,
+              "cents": 67500
+            },
+            "exceptions": {
+              "count": 0,
+              "cents": 0
+            },
+            "accepted": {
+              "count": 1,
+              "cents": 67500
+            },
+            "reconciled": true,
+            "difference_cents": 0,
+            "can_accept": true
+          }
+        }
+      }
+    }
+  },
   "user": {
     "full_name": "Preview User",
     "role": "admin"
@@ -200,7 +289,14 @@ window.TX_FIXTURE = {
                   "Juniper Farrow"
                 ]
               }
-            ]
+            ],
+            "triage": {
+              "status": "accepted",
+              "hard": [],
+              "soft": [],
+              "reasons": [],
+              "confirmable": false
+            }
           },
           {
             "sort_order": 1,
@@ -222,9 +318,9 @@ window.TX_FIXTURE = {
                 "tenure_id": "t2",
                 "tenure_match": "current",
                 "confidence": "high",
-                "bankruptcy_stop": false,
+                "bankruptcy_stop": true,
                 "charge_category": "attorney_fee",
-                "classification": "homeowner_recoverable",
+                "classification": "needs_review",
                 "evidence": [
                   {
                     "kind": "pdf_matter",
@@ -256,11 +352,17 @@ window.TX_FIXTURE = {
                     "value": "the printed name matches the owner on file"
                   },
                   {
+                    "kind": "bankruptcy",
+                    "value": "bankruptcy on file for this property"
+                  },
+                  {
                     "kind": "legal_status",
                     "value": "at legal"
                   }
                 ],
-                "review_reasons": [],
+                "review_reasons": [
+                  "bankruptcy: hard stop for legal review"
+                ],
                 "amount_cents": 32400,
                 "suggested": true,
                 "property_label": "4202 Example Hollow Ct",
@@ -268,7 +370,20 @@ window.TX_FIXTURE = {
                   "Quill O. Pemberton"
                 ]
               }
-            ]
+            ],
+            "triage": {
+              "status": "exception",
+              "hard": [
+                "needs a decision: homeowner or association",
+                "bankruptcy: hard stop for legal review"
+              ],
+              "soft": [],
+              "reasons": [
+                "needs a decision: homeowner or association",
+                "bankruptcy: hard stop for legal review"
+              ],
+              "confirmable": false
+            }
           },
           {
             "sort_order": 2,
@@ -313,7 +428,14 @@ window.TX_FIXTURE = {
                 "property_label": null,
                 "owner_names": []
               }
-            ]
+            ],
+            "triage": {
+              "status": "accepted",
+              "hard": [],
+              "soft": [],
+              "reasons": [],
+              "confirmable": false
+            }
           }
         ],
         "reconciliation": {
@@ -322,8 +444,33 @@ window.TX_FIXTURE = {
           "difference_cents": 0,
           "items_balanced": true,
           "reconciled": true,
-          "ready_for_approval": true,
-          "blocking": []
+          "ready_for_approval": false,
+          "blocking": [
+            "item 2 has an allocation that needs review",
+            "item 2 has a bankruptcy stop"
+          ]
+        },
+        "summary": {
+          "total_cents": 72006,
+          "recoverable": {
+            "count": 1,
+            "cents": 33606
+          },
+          "association": {
+            "count": 1,
+            "cents": 6000
+          },
+          "exceptions": {
+            "count": 1,
+            "cents": 32400
+          },
+          "accepted": {
+            "count": 2,
+            "cents": 39606
+          },
+          "reconciled": true,
+          "difference_cents": 0,
+          "can_accept": false
         }
       },
       "draft": null,
