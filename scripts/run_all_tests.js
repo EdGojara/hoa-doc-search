@@ -163,6 +163,7 @@ const CHECKS = [
   'tests/test_tessa_interview.js',
   'tests/test_tessa_calendar_intent.js',
   'tests/test_tessa_confirm_intent.js',
+  'tests/test_tessa_availability.js',
   'tests/test_tessa_bounced_address.js',
   'tests/test_transfer_proration.js',
   'tests/test_builder_positions.js',
