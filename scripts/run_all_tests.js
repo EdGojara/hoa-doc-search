@@ -127,6 +127,7 @@ const CHECKS = [
   'tests/test_legal_treatment.js',
   'tests/test_accounting_ownership.js',
   'tests/test_legal_team.js',
+  'tests/test_legal_team_e2e.js',
   'tests/test_early_prepay.js',
   'tests/test_opening_ap_guard.js',
   'tests/test_tessa_schedule.js',

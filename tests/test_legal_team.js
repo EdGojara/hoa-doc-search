@@ -90,17 +90,31 @@ t('notice letters: §209.006 and §209.0064 notices are recognised from their ow
 // ---- research: recommendations -----------------------------------------------
 const base = (signals, extra) => Object.assign({ verified: [{ source: 'x', fact: 'y' }], references: [], assumptions: [], missing: [], sources_searched: ['a', 'b', 'c'], signals: Object.assign({ owner_current: true }, signals) }, extra || {});
 t('recommend: active bankruptcy holds; dismissed bankruptcy goes to the owner; ownership and duplicates go to review', () => {
-  assert.strictEqual(RS.recommend(base({ bankruptcy: { status: 'active', source: 'r' }, collection_notice_verified: true }), {}).recommendation, 'hold');
-  assert.strictEqual(RS.recommend(base({ bankruptcy: { status: 'dismissed', source: 'r' }, collection_notice_verified: true }), {}).recommendation, 'review');
-  assert.strictEqual(RS.recommend(base({ owner_current: false, collection_notice_verified: true }), {}).recommendation, 'review');
-  assert.strictEqual(RS.recommend(base({ already_billed: true, collection_notice_verified: true }), {}).recommendation, 'review');
+  assert.strictEqual(RS.recommend(base({ bankruptcy: { status: 'active', source: 'r' }, collection_notice_content: true, collection_notice_mailed: true }), {}).recommendation, 'hold');
+  assert.strictEqual(RS.recommend(base({ bankruptcy: { status: 'dismissed', source: 'r' }, collection_notice_content: true, collection_notice_mailed: true }), {}).recommendation, 'review');
+  assert.strictEqual(RS.recommend(base({ owner_current: false, collection_notice_content: true, collection_notice_mailed: true }), {}).recommendation, 'review');
+  assert.strictEqual(RS.recommend(base({ already_billed: true, collection_notice_content: true, collection_notice_mailed: true }), {}).recommendation, 'review');
 });
 t('recommend: a verified notice supports recovery; a deed-restriction matter takes the deed-restriction category', () => {
-  const r = RS.recommend(base({ work_type: 'drv', drv_notice_verified: true }), { charge_category: 'attorney_fee' });
+  const r = RS.recommend(base({ work_type: 'drv', drv_notice_content: true, drv_notice_mailed: true }), { charge_category: 'attorney_fee' });
   assert.strictEqual(r.recommendation, 'recoverable'); assert.strictEqual(r.charge_category, 'attorney_fee_other');
-  assert.ok(r.verified.some((v) => /should be attorney_fee_other/.test(v.fact)));
-  const c = RS.recommend(base({ status_report: { prior_certified_notice: 'March 25, 2025' } }), { charge_category: 'attorney_fee' });
-  assert.strictEqual(c.recommendation, 'recoverable');
+  assert.ok(r.corrections.some((c) => /charge category attorney_fee_other/.test(c)));
+});
+t('recommend: notice content without mailing proof (blank certified-mail line) is review, never recoverable', () => {
+  const r = RS.recommend(base({ collection_notice_content: true, collection_cert_blank: true }), { charge_category: 'attorney_fee' });
+  assert.strictEqual(r.recommendation, 'review'); assert.ok(/mailing not verified/.test(r.reason));
+  assert.ok(r.missing.some((m) => /proof of certified mailing.*blank/.test(m)));
+});
+t('recommend: indirect support only (attorney statement, vendor bill) goes to human judgment, never recoverable', () => {
+  const f = base({ notice_indirect: true }); f.evidence = { content: [], mailing: [], delivery: [], indirect: [{ source: 'attorney report', fact: 'mailed via certified mail on March 25, 2025' }] };
+  const r = RS.recommend(f, { charge_category: 'attorney_fee' });
+  assert.strictEqual(r.recommendation, 'review');
+  assert.ok(r.judgment.some((j) => /indirect/.test(j)));
+  const g = base({ collection_notice_content: true, notice_indirect: true }); g.evidence = { content: [{}], mailing: [], delivery: [], indirect: [{}] };
+  assert.ok(RS.recommend(g, {}).judgment.some((j) => /indirect mailing evidence/.test(j)));
+});
+t('recommend: a mailing record without the notice itself is review (content not on file)', () => {
+  assert.ok(/content not on file/.test(RS.recommend(base({ drv_notice_mailed: true, work_type: 'drv' }), {}).reason));
 });
 t('recommend: no verified notice is review with the specific missing document, never recoverable', () => {
   const r = RS.recommend(base({}), { charge_category: 'attorney_fee' });
@@ -136,6 +150,7 @@ t('researchAllocation: trustEd + attorney report + OneDrive notice -> verified, 
   assert.strictEqual(f.charge_category, 'attorney_fee_other');
   assert.strictEqual(f.evidence_grade, 'verified');
   assert.ok(f.verified.some((v) => /OneDrive/.test(v.source) && /209\.006/.test(v.fact)));
+  assert.ok(f.evidence.content.length && f.evidence.mailing.some((m) => /certified article number/.test(m.fact)), 'content and mailing recorded separately');
   assert.ok(f.verified.some((v) => /status report/.test(v.source)));
   assert.ok(f.references.some((r) => /RMWBH Status Report/.test(r.fact)), 'the email itself is a reference');
   assert.ok(f.sources_searched.some((s) => /^email:/.test(s)) && f.sources_searched.some((s) => /^OneDrive:/.test(s)));
@@ -182,9 +197,10 @@ t('amandaResearch: a draft a person saved is never rewritten; the recommendation
 const katDb = (charges = []) => fakeDb({
   chart_of_accounts: [{ id: 'a1300', account_number: '1300', account_name: 'Accounts Receivable' }, { id: 'a5870', account_number: '5870', account_name: 'Legal Fees - Collections/DRV' }, { id: 'a2000', account_number: '2000', account_name: 'Accounts Payable' }],
   homeowner_transactions: charges,
+  ap_invoice_lines: [{ id: 'l1', gl_account_id: 'a5870' }, { id: 'l2', gl_account_id: 'a5860x' }],
 });
 const plan = (over) => Object.assign({ ready: true, blocking: [], posting_date: '2026-09-01', invoice_total_cents: 1000, totals: { homeowner_cents: 800, association_cents: 200, bedrock_cents: 0 },
-  postings: [{ kind: 'homeowner_chargeback', property_id: 'p1', amount_cents: 800, debit_account_id: 'a1300', credit_account_id: 'a5870' }] }, over || {});
+  postings: [{ kind: 'homeowner_chargeback', property_id: 'p1', amount_cents: 800, debit_account_id: 'a1300', credit_account_id: 'a5870', ap_invoice_line_ids: ['l1'] }] }, over || {});
 const kd = { invoice: { id: 'inv', invoice_number: '280595' }, invoiceNumber: '280595' };
 t('Kat: Dr 1300 / Cr 5870, balanced, reconciled, no duplicates -> verified and ready for the owner', async () => {
   const k = await verifyTreatment(katDb(), kd, plan(), { livePostings: 0 });
@@ -201,34 +217,53 @@ t('Kat: a credit to AP, a missing 1300 debit, a duplicate owner charge or a live
   assert.ok(!live.verified);
   const unrec = await verifyTreatment(katDb(), kd, plan({ invoice_total_cents: 1001 }), { livePostings: 0 });
   assert.ok(!unrec.verified);
+  // the credit must be the account the LINE accrued to (here the line accrued to a different account)
+  const other = await verifyTreatment(katDb(), kd, plan({ postings: [{ kind: 'homeowner_chargeback', property_id: 'p1', amount_cents: 800, debit_account_id: 'a1300', credit_account_id: 'a5870', ap_invoice_line_ids: ['l2'] }] }), { livePostings: 0 });
+  assert.ok(!other.verified && other.checks.some((c) => !c.ok && /accrued to/.test(c.name)));
 });
 
-// ---- the activity ----------------------------------------------------------------
+// ---- the activities (payment / recovery / documentation) --------------------------
 const row = (o) => Object.assign({ id: 'inv', community_id: 'c', invoice_number: '280595', vendor: 'D&F', total_cents: 474061, ap_status: 'awaiting_approval', paid: false, released: false,
-  read_only: null, review_status: 'draft', has_draft: true, homeowner_cents: 0, exceptions: [], postings: { pending: 0, posted: 0 } }, o || {});
-t('activity: one stage at a time, closing automatically when paid', () => {
-  assert.ok(/research in progress/.test(TEAM.legalInvoice(row({ has_draft: false })).title));
-  const bk = TEAM.legalInvoice(row({ exceptions: [{ matter: '2705.0006', kind: 'bankruptcy', reason: 'bankruptcy: hard stop' }] }));
-  assert.strictEqual(bk.autonomy_class, 'BLOCK'); assert.ok(/bankruptcy exception/.test(bk.title));
-  assert.ok(/missing legal notice/.test(TEAM.legalInvoice(row({ exceptions: [{ matter: 'x', kind: 'missing_notice', reason: 'r' }] })).title));
-  assert.ok(/^Approval required: \$4,?550/.test(TEAM.legalInvoice(row({ homeowner_cents: 455034 })).title.replace('4550.34', '4,550.34')));
-  assert.ok(/Chargeback posting pending/.test(TEAM.legalInvoice(row({ homeowner_cents: 100, review_status: 'approved', postings: { pending: 1, posted: 0 } })).title));
-  assert.ok(/Payment awaiting release.*chargebacks posted/.test(TEAM.legalInvoice(row({ homeowner_cents: 100, review_status: 'approved', postings: { pending: 0, posted: 2 } })).title));
-  assert.ok(/Payment released, awaiting payment/.test(TEAM.legalInvoice(row({ released: true })).title));
-  const done = TEAM.legalInvoice(row({ paid: true, ap_status: 'paid', review_status: 'approved', homeowner_cents: 100, postings: { pending: 0, posted: 2 } }));
-  assert.strictEqual(done.action, 'clear'); assert.strictEqual(done.outcome, 'resolved');
-  assert.strictEqual(TEAM.legalInvoice(row({ ap_status: 'voided' })).action, 'clear');
-  assert.strictEqual(TEAM.legalInvoice(row({ read_only: 'Leaving Bedrock: view only.' })).action, 'clear');
+  manager_approved: true, read_only: null, review_status: 'draft', has_draft: true, homeowner_cents: 0, recoverable_count: 0, exceptions: [], docs: { missing: [], inaccessible: [] }, postings: { pending: 0, posted: 0 } }, o || {});
+t('payment activity: approval -> release -> released -> paid closes; it ignores the recovery', () => {
+  assert.ok(/awaiting approval/.test(TEAM.legalPayment(row({ manager_approved: false })).title));
+  assert.ok(/Payment awaiting release/.test(TEAM.legalPayment(row()).title));
+  assert.ok(/Payment released, awaiting payment/.test(TEAM.legalPayment(row({ released: true })).title));
+  const paid = TEAM.legalPayment(row({ paid: true, ap_status: 'paid', exceptions: [{ matter: 'x', kind: 'bankruptcy', reason: 'r' }] }));
+  assert.strictEqual(paid.action, 'clear'); assert.strictEqual(paid.outcome, 'resolved');
 });
-t('activity: the same state hashes the same (no duplicate activity), a new stage hashes differently', () => {
+t('recovery activity: paying the attorney never closes an unresolved recovery', () => {
+  const r = row({ paid: true, ap_status: 'paid', homeowner_cents: 105830, recoverable_count: 1, exceptions: [{ matter: '2705-0014', kind: 'review', reason: 'payoff allocation' }] });
+  assert.strictEqual(TEAM.legalRecovery(r).action, 'track');
+  assert.strictEqual(TEAM.legalRecovery(row({ paid: true, ap_status: 'paid', homeowner_cents: 100, recoverable_count: 1 })).action, 'track', 'approval still required after payment');
+});
+t('recovery activity: research -> exceptions (bankruptcy blocks) -> approval -> posting -> resolved when all owner charges post', () => {
+  assert.ok(/research/.test(TEAM.legalRecovery(row({ has_draft: false })).title));
+  const bk = TEAM.legalRecovery(row({ exceptions: [{ matter: '2705.0006', kind: 'bankruptcy', reason: 'bankruptcy: hard stop' }] }));
+  assert.strictEqual(bk.autonomy_class, 'BLOCK'); assert.ok(/bankruptcy exception/.test(bk.title));
+  assert.ok(/notice or mailing not verified/.test(TEAM.legalRecovery(row({ exceptions: [{ matter: 'x', kind: 'missing_notice', reason: 'r' }] })).title));
+  assert.ok(/^Approval required/.test(TEAM.legalRecovery(row({ homeowner_cents: 455034, recoverable_count: 13 })).title));
+  assert.ok(/posting pending/.test(TEAM.legalRecovery(row({ homeowner_cents: 100, recoverable_count: 2, review_status: 'approved', postings: { pending: 1, posted: 1 } })).title));
+  assert.ok(/posting incomplete/.test(TEAM.legalRecovery(row({ homeowner_cents: 100, recoverable_count: 2, review_status: 'approved', postings: { pending: 0, posted: 1 } })).title));
+  const done = TEAM.legalRecovery(row({ homeowner_cents: 100, recoverable_count: 2, review_status: 'approved', postings: { pending: 0, posted: 2 } }));
+  assert.strictEqual(done.action, 'clear'); assert.ok(/homeowner charges posted/.test(done.reason));
+  assert.strictEqual(TEAM.legalRecovery(row()).action, 'clear', 'an association-only invoice has no recovery to track');
+});
+t('documentation activity: open while evidence is missing or inaccessible; closes when supplied or the recovery is resolved', () => {
+  const open = TEAM.legalDocumentation(row({ homeowner_cents: 100, recoverable_count: 1, exceptions: [{ matter: 'm', kind: 'missing_notice', reason: 'r' }], docs: { missing: ['1 A St: proof of certified mailing'], inaccessible: ['1 A St: OneDrive'] } }));
+  assert.strictEqual(open.action, 'track'); assert.ok(/1 missing, 1 source\(s\) inaccessible/.test(open.title));
+  assert.strictEqual(TEAM.legalDocumentation(row({ paid: true, ap_status: 'paid', homeowner_cents: 100, recoverable_count: 1, exceptions: [{ matter: 'm', kind: 'missing_notice', reason: 'r' }], docs: { missing: ['x'], inaccessible: [] } })).action, 'track', 'payment does not close documentation');
+  assert.strictEqual(TEAM.legalDocumentation(row({ homeowner_cents: 100, recoverable_count: 1, review_status: 'approved', postings: { pending: 0, posted: 1 }, docs: { missing: ['x'], inaccessible: [] } })).action, 'clear');
+});
+t('activities: the same state hashes the same (no duplicates), a new stage hashes differently', () => {
   const { stateHash } = require('../lib/manager/subjects');
   const h = (c) => stateHash({ subject: c.basis, classification: { action: c.action, autonomy_class: c.autonomy_class || null, priority: c.priority || null, blocked_reason: c.blocked_reason || null }, due: null, status: 'open' });
-  assert.strictEqual(h(TEAM.legalInvoice(row())), h(TEAM.legalInvoice(row())));
-  assert.notStrictEqual(h(TEAM.legalInvoice(row())), h(TEAM.legalInvoice(row({ released: true }))));
+  assert.strictEqual(h(TEAM.legalPayment(row())), h(TEAM.legalPayment(row())));
+  assert.notStrictEqual(h(TEAM.legalPayment(row())), h(TEAM.legalPayment(row({ released: true }))));
 });
-t('manager: legal_invoice is a registered subject with its own loader; the sweep uses it', () => {
+t('manager: the three legal subjects are registered with their own loader; the sweep uses it', () => {
   const { KINDS, parseSubjectKey } = require('../lib/manager/subjects');
-  assert.ok(KINDS.legal_invoice && typeof KINDS.legal_invoice.load === 'function' && typeof KINDS.legal_invoice.evaluate === 'function');
+  for (const k of ['legal_invoice', 'legal_recovery', 'legal_documentation']) assert.ok(KINDS[k] && typeof KINDS[k].load === 'function' && typeof KINDS[k].evaluate === 'function', k);
   assert.deepStrictEqual(parseSubjectKey('legal_invoice:abc'), { kind: 'legal_invoice', id: 'abc' });
   assert.ok(/if \(k\.load\) return k\.load\(supabase, id\);/.test(src('lib/manager/sweep.js')));
 });

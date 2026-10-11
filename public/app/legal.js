@@ -171,14 +171,25 @@
   function renderTeam() {
     var box = $('lg-team'), t = state.team; if (!box || !t) return;
     var head = '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap"><h3 style="margin:0">AI team</h3>' +
-      (t.activity ? pill(t.activity.status === 'resolved' ? 'ok' : t.activity.autonomy_class === 'BLOCK' ? 'bad' : 'info', t.activity.title) : pill('mute', 'Not run yet')) +
+      (t.activities && Object.keys(t.activities).length ? '' : pill('mute', 'Not run yet')) +
       '<button type="button" class="lg-link" id="lg-runteam" style="margin-left:auto"' + (state.teamRunning ? ' disabled' : '') + '>' + (state.teamRunning ? 'Running…' : 'Run Emma, Amanda, Kat') + '</button></div>';
+    var ACT = { legal_invoice: 'Attorney payment', legal_recovery: 'Homeowner recovery', legal_documentation: 'Documentation' };
+    head += Object.keys(ACT).filter(function (k) { return t.activities && t.activities[k]; }).map(function (k) {
+      var a = t.activities[k];
+      return '<div style="font-size:13px;margin-top:6px"><span class="tx-lbl">' + esc(ACT[k]) + '</span> ' + pill(a.status === 'resolved' ? 'ok' : a.autonomy_class === 'BLOCK' ? 'bad' : 'info', a.status === 'resolved' ? 'Done: ' + (a.closed_reason || '') : a.title) + '</div>';
+    }).join('');
     var body = (t.decisions || []).map(function (d) {
       var ev = d.evidence || {};
       var extra = '';
       if (d.decided_by === 'amanda' && ev.findings) extra = ev.findings.map(function (f) {
         return '<div class="lg-hist-row" style="display:block"><strong>' + esc(f.address || '') + (f.matter_ref ? ' · ' + esc(f.matter_ref) : '') + '</strong> ' + pill(f.recommendation === 'recoverable' ? 'ok' : f.recommendation === 'hold' ? 'bad' : 'warn', f.recommendation + ': ' + f.reason) +
           (f.verified.length ? '<div class="tx-muted" style="font-size:12px;margin-top:4px">Verified: ' + f.verified.map(function (v) { return esc(v.source + ': ' + v.fact); }).join(' · ') + '</div>' : '') +
+          (f.evidence ? ['content', 'mailing', 'delivery', 'indirect'].filter(function (k) { return f.evidence[k] && f.evidence[k].length; }).map(function (k) {
+            var lbl = { content: 'Notice content verified', mailing: 'Mailing verified', delivery: 'Delivery verified', indirect: 'Indirect support only' }[k];
+            return '<div style="font-size:12px"><strong>' + lbl + ':</strong> ' + f.evidence[k].map(function (v) { return esc(v.source + ': ' + v.fact); }).join(' · ') + '</div>';
+          }).join('') : '') +
+          (f.judgment && f.judgment.length ? '<div style="font-size:12px;color:var(--tx-warn,#b45309)">Needs human judgment: ' + f.judgment.map(esc).join(' · ') + '</div>' : '') +
+          (f.inaccessible && f.inaccessible.length ? '<div style="font-size:12px">Not accessible to the system: ' + f.inaccessible.map(esc).join(', ') + '</div>' : '') +
           (f.references.length ? '<div class="tx-muted" style="font-size:12px">References (located, not read): ' + f.references.slice(0, 6).map(function (v) { return esc(v.fact); }).join(' · ') + '</div>' : '') +
           (f.assumptions.length ? '<div class="tx-muted" style="font-size:12px">Assumptions: ' + f.assumptions.map(esc).join(' · ') + '</div>' : '') +
           (f.missing.length ? '<div style="font-size:12px;color:var(--tx-warn,#b45309)">Missing: ' + f.missing.map(esc).join(' · ') + '</div>' : '') +

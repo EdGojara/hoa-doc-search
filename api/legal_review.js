@@ -247,20 +247,24 @@ router.get('/invoices/:id/team', async (req, res) => {
   const staff = await requireStaff(req, res); if (!staff) return;
   try {
     if (!UUID.test(req.params.id)) return res.status(400).json({ error: 'invoice_id_invalid' });
-    const { data: obj, error } = await supabase.from('objectives').select('id, title, status, autonomy_class, priority, next_action, updated_at, closed_reason')
-      .eq('subject_key', `legal_invoice:${req.params.id}`).order('created_at', { ascending: false }).limit(1);
+    // Three activities per invoice: attorney payment, homeowner recovery, documentation.
+    const keys = ['legal_invoice', 'legal_recovery', 'legal_documentation'].map((k) => `${k}:${req.params.id}`);
+    const { data: objs, error } = await supabase.from('objectives').select('id, subject_key, title, status, autonomy_class, priority, next_action, updated_at, closed_reason')
+      .in('subject_key', keys).order('created_at', { ascending: false }).limit(30);
     if (error) throw error;
-    const activity = obj && obj[0] ? obj[0] : null;
+    const activities = {};
+    for (const o of objs || []) { const k = o.subject_key.split(':')[0]; if (!activities[k]) activities[k] = o; }
+    const ids = Object.values(activities).map((o) => o.id);
     let decisions = [];
-    if (activity) {
+    if (ids.length) {
       const { data: dec, error: de } = await supabase.from('objective_decisions').select('decided_by, verdict, confidence, reason, evidence, proposed_action_detail, authorization_boundary, created_at')
-        .eq('objective_id', activity.id).order('created_at', { ascending: false }).limit(30);
+        .in('objective_id', ids).order('created_at', { ascending: false }).limit(60);
       if (de) throw de;
       const latest = {};
       for (const d of dec || []) if (!latest[d.decided_by]) latest[d.decided_by] = d;
       decisions = ['emma', 'amanda', 'kat'].map((k) => latest[k]).filter(Boolean);
     }
-    res.json({ activity, decisions });
+    res.json({ activities, decisions });
   } catch (err) {
     console.error('[legal-review] team read failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
