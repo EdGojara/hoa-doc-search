@@ -12,6 +12,9 @@
 //                                     evidence, the saved draft, reconciliation
 //   GET  /invoices/:id/properties?q=  property search inside the invoice's
 //                                     community (for overriding a match)
+//   GET  /invoices/:id/evidence       the retained originals this review relied
+//                                     on, with what each proves / leaves open
+//   GET  /evidence/:docId/file        short-lived link to one retained original
 //   POST /invoices/:id/draft          save the draft (revisioned; 409 when
 //                                     someone else saved first)
 //   POST /invoices/:id/read-pdf       read the stored attorney PDF into
@@ -46,6 +49,7 @@ const { safeErrorMessage } = require('./_safe_error');
 const { requireStaff, requireOwner } = require('./_require_admin');
 const T = require('../lib/legal/treatment');
 const R = require('../lib/legal/review_data');
+const ES = require('../lib/legal/evidence_store');
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 const router = express.Router();
@@ -80,6 +84,39 @@ router.get('/invoices/:id', async (req, res) => {
     res.json(R.detailPayload(d));
   } catch (err) {
     console.error('[legal-review] detail failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// The originals relied on for this invoice's review (lib/legal/evidence_store):
+// what each one proves and what it leaves uncertain. Staff only, scoped to the
+// invoice's own association. The file itself opens through /evidence/:docId.
+router.get('/invoices/:id/evidence', async (req, res) => {
+  const staff = await requireStaff(req, res); if (!staff) return;
+  try {
+    if (!UUID.test(req.params.id)) return res.status(400).json({ error: 'invoice_id_invalid' });
+    const { data: inv, error } = await supabase.from('ap_invoices').select('id, community_id, vendor_id').eq('id', req.params.id).maybeSingle();
+    if (error) throw error;
+    const { vendors } = await R.legalVendors(supabase);
+    if (!inv || !vendors.some((v) => v.id === inv.vendor_id)) return res.status(404).json({ error: 'not_a_legal_invoice' });
+    const docs = await ES.findEvidence(supabase, { communityId: inv.community_id, apInvoiceId: inv.id });
+    res.json({ evidence: docs.map(ES.evidenceSummary) });
+  } catch (err) {
+    console.error('[legal-review] evidence list failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+router.get('/evidence/:docId/file', async (req, res) => {
+  const staff = await requireStaff(req, res); if (!staff) return;
+  try {
+    if (!UUID.test(req.params.docId)) return res.status(400).json({ error: 'document_id_invalid' });
+    const url = await ES.signedUrl(supabase, req.params.docId);
+    if (!url) return res.status(404).json({ error: 'not_legal_evidence' });
+    console.log('[legal-review] evidence opened', JSON.stringify({ document_id: req.params.docId, by: staff.email || staff.id || null }));
+    res.json({ url });
+  } catch (err) {
+    console.error('[legal-review] evidence open failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
   }
 });
