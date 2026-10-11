@@ -7,7 +7,7 @@ const assert = require('assert');
 const Module = require('module');
 
 // ---- in-memory fake: records inserts/updates; unknown reads come back empty ----
-const db = { ap_invoices: [], ap_invoice_lines: [], updates: [] };
+const db = { ap_invoices: [], ap_invoice_lines: [], updates: [], communities: [{ id: 'c-lopf', name: 'Lakes of Pine Forest', management_status: 'active', books_of_record: 'trusted', financials_active: true }] };
 function fakeClient() {
   return {
     from(table) {
