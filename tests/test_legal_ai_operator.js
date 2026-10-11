@@ -172,6 +172,16 @@ t('Negron: the attorney\'s 6505 Kings Summit address vs the property\'s 6506 is 
   const note = TEAM.amandaNote(f);
   assert.ok(/6505 Kings Summit Dr\.; the property on file is 6506 Kings Summit Drive$/.test(S.amandaOutcome({ note }).reason), 'the full reason survives into the summary');
 });
+t('a changed outcome reason (an address discrepancy found) updates Amanda\'s draft; reworded evidence alone does not', () => {
+  const base = { allocation_id: 'a1', outcome: 'needs_decision', outcome_label: 'NEEDS DECISION', recommendation: 'hold', classification: 'needs_review', charge_category: null, judgment: [], missing: [], limitations: [], evidence_grade: 'verified' };
+  const old = Object.assign({}, base, { reason: 'active bankruptcy (r): no owner charge without counsel', verified: [{ source: 's', fact: 'one' }] });
+  const d = { saved: { items: [{ source_line_ids: ['l1'], matter_ref: null, allocations: [{ id: 'a1', amount_cents: 6000, classification: 'needs_review', property_id: 'p', charge_category: null, evidence: [], note: TEAM.amandaNote(old) }] }] } };
+  assert.strictEqual(TEAM.applyRecommendations(d, [Object.assign({}, old, { verified: [{ source: 's', fact: 'reworded' }] })]).changed, false, 'reworded evidence is not a change');
+  const withAddress = Object.assign({}, old, { reason: old.reason + "; address check: the attorney's report (r) lists 6505 Kings Summit Dr.; the property on file is 6506 Kings Summit Drive" });
+  const out = TEAM.applyRecommendations(d, [withAddress]);
+  assert.strictEqual(out.changed, true);
+  assert.ok(/6505 Kings Summit Dr\./.test(out.items[0].allocations[0].note));
+});
 t('an address mismatch alone never passes as ready', () => {
   const r = RS.recommend({ signals: { owner_current: true, work_type: 'collection', collection_notice_content: true, address_discrepancy: { report: '6505 Kings Summit Dr.', property: '6506 Kings Summit Drive', source: 'r' } }, verified: [], references: [], missing: [], unavailable: [] }, {});
   assert.strictEqual(r.outcome, 'needs_decision'); assert.strictEqual(r.classification, 'needs_review');
