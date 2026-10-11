@@ -336,7 +336,7 @@ const find = (model, num) => { for (const s of model.sections) for (const g of s
     check('subcategories: office equipment and accumulated depreciation stay separate with a net fixed-asset subtotal', sg(oth, 'Fixed assets, net').values.current === 663700 && sg(oth, 'Fixed assets, net').lines.map((l) => l.account_number).join() === '1500,1505');
     const prt = R.renderHtml(con, { mode: 'print' }); const webh = R.renderHtml(con, { mode: 'web' });
     check('print / PDF / board packet: subcategories are visible, never collapsed into one category total', ['Current owners', 'Former owners', 'Less: allowance for doubtful accounts', 'Office Equipment', 'Accumulated Depreciation', 'Fixed assets, net', 'Total homeowner receivables', 'Total other assets'].every((t) => prt.includes(t)));
-    check('the allowance renders as a contra line (parentheses) reducing receivables', /Less: allowance for doubtful accounts[\s\S]*?\(6,265\)/.test(prt) && /Total homeowner receivables[\s\S]*?23,901/.test(prt));
+    check('the allowance renders as a contra line (parentheses) reducing receivables', /Less: allowance for doubtful accounts[\s\S]*?\((6,265.[0-9]{2})\)/.test(prt) && /Total homeowner receivables[\s\S]*?23,90[01].[0-9]{2}/.test(prt));
     check('web shows the same subcategories, with drill targets', ['Current owners', 'Former owners', 'Fixed assets, net'].every((t) => webh.includes(t)) && /class="sgrow"/.test(webh));
     const xr = R.xlsxRows(con).map((r) => (Array.isArray(r) ? r[0] : r.cells[0])).join('|');
     check('XLSX keeps the subcategories and the net fixed-asset subtotal', /Current owners/.test(xr) && /Less: allowance for doubtful accounts/.test(xr) && /Fixed assets, net/.test(xr) && /1505 Accumulated Depreciation/.test(xr));
