@@ -137,6 +137,7 @@
       '<div id="lg-items"></div>' +
       '<div class="lg-foot" id="lg-foot"></div>' +
       '<div class="tx-card lg-treat" id="lg-treat" style="padding:18px;margin-top:14px"></div>' +
+      '<div class="tx-card lg-team" id="lg-team" style="padding:18px;margin-top:14px"></div>' +
       (d.events && d.events.length ? '<details class="lg-hist"><summary>History (' + d.events.length + ')</summary>' + d.events.map(function (e) {
         var s = e.summary || {};
         var what = { draft_saved: 'saved by', treatment_approved: 'treatment approved by', posting_recorded: 'posting recorded by', posting_reversed: 'posting reversed by', review_reopened: 'reopened by' }[e.action] || e.action;
@@ -152,7 +153,53 @@
       if (!confirm('Replace the working copy with fresh suggestions? Nothing is saved until you press Save draft.')) return;
       state.items = clone(d.suggestion.items); state.fromDraft = false; markDirty(); renderItems();
     });
-    renderPdfRead(); renderItems(); renderRecon(); renderFooter(); loadTreatment();
+    renderPdfRead(); renderItems(); renderRecon(); renderFooter(); loadTreatment(); loadTeam();
+  }
+
+  // ---- The AI team (Emma -> Amanda -> Kat) -----------------------------------------
+  // What each agent found, with Amanda's verified evidence kept apart from
+  // references and assumptions. The team prepares and recommends; the owner
+  // still approves the treatment and releases payment.
+  var AGENT = { emma: 'Emma (payables)', amanda: 'Amanda (community manager)', kat: 'Kat (accounting)' };
+  async function loadTeam() {
+    var box = $('lg-team'); if (!box || !state.detail) return;
+    var id = state.detail.invoice.id;
+    var r = await TX.get('/api/legal-review/invoices/' + encodeURIComponent(id) + '/team');
+    if (!state.detail || state.detail.invoice.id !== id) return;
+    state.team = r.ok ? r.data : { error: r.error }; renderTeam();
+  }
+  function renderTeam() {
+    var box = $('lg-team'), t = state.team; if (!box || !t) return;
+    var head = '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap"><h3 style="margin:0">AI team</h3>' +
+      (t.activity ? pill(t.activity.status === 'resolved' ? 'ok' : t.activity.autonomy_class === 'BLOCK' ? 'bad' : 'info', t.activity.title) : pill('mute', 'Not run yet')) +
+      '<button type="button" class="lg-link" id="lg-runteam" style="margin-left:auto"' + (state.teamRunning ? ' disabled' : '') + '>' + (state.teamRunning ? 'Running…' : 'Run Emma, Amanda, Kat') + '</button></div>';
+    var body = (t.decisions || []).map(function (d) {
+      var ev = d.evidence || {};
+      var extra = '';
+      if (d.decided_by === 'amanda' && ev.findings) extra = ev.findings.map(function (f) {
+        return '<div class="lg-hist-row" style="display:block"><strong>' + esc(f.address || '') + (f.matter_ref ? ' · ' + esc(f.matter_ref) : '') + '</strong> ' + pill(f.recommendation === 'recoverable' ? 'ok' : f.recommendation === 'hold' ? 'bad' : 'warn', f.recommendation + ': ' + f.reason) +
+          (f.verified.length ? '<div class="tx-muted" style="font-size:12px;margin-top:4px">Verified: ' + f.verified.map(function (v) { return esc(v.source + ': ' + v.fact); }).join(' · ') + '</div>' : '') +
+          (f.references.length ? '<div class="tx-muted" style="font-size:12px">References (located, not read): ' + f.references.slice(0, 6).map(function (v) { return esc(v.fact); }).join(' · ') + '</div>' : '') +
+          (f.assumptions.length ? '<div class="tx-muted" style="font-size:12px">Assumptions: ' + f.assumptions.map(esc).join(' · ') + '</div>' : '') +
+          (f.missing.length ? '<div style="font-size:12px;color:var(--tx-warn,#b45309)">Missing: ' + f.missing.map(esc).join(' · ') + '</div>' : '') +
+          (f.external_request ? '<div style="font-size:12px">Outside request drafted, held for approval: ' + esc(f.external_request.subject) + '</div>' : '') +
+          '<div class="tx-muted" style="font-size:11px">Searched: ' + f.sources_searched.map(esc).join(' · ') + '</div></div>';
+      }).join('');
+      if (d.decided_by === 'kat' && ev.checks) extra = '<ul class="lg-reasons">' + ev.checks.map(function (c) { return '<li>' + (c.ok ? '✓ ' : '✗ ') + esc(c.name) + (c.detail ? ' (' + esc(c.detail) + ')' : '') + '</li>'; }).join('') + '</ul>';
+      return '<div style="margin-top:10px"><div><strong>' + esc(AGENT[d.decided_by] || d.decided_by) + '</strong> ' + pill(d.verdict === 'PROPOSE_ACTION' ? 'ok' : 'warn', d.verdict === 'PROPOSE_ACTION' ? 'ready' : 'needs a person') +
+        ' <span class="tx-muted" style="font-size:12px">' + esc(fmtTime(d.created_at)) + '</span></div><div style="font-size:13px">' + esc(d.reason || '') + '</div>' + extra + '</div>';
+    }).join('');
+    box.innerHTML = head + (t.error ? '<div class="tx-err">' + esc(t.error) + '</div>' : '') + (body || '<div class="tx-muted" style="font-size:13px;margin-top:8px">The team runs automatically when Emma loads an attorney invoice. It prepares and recommends; it never approves, posts or pays.</div>');
+    var b = $('lg-runteam'); if (b) b.addEventListener('click', runTeam);
+  }
+  async function runTeam() {
+    if (state.teamRunning) return;
+    state.teamRunning = true; renderTeam();
+    var id = state.detail.invoice.id;
+    var r = await TX.post('/api/legal-review/invoices/' + encodeURIComponent(id) + '/run-team', {});
+    state.teamRunning = false;
+    if (!r.ok) { state.team = Object.assign({}, state.team, { error: 'Team run failed (' + r.error + ').' }); renderTeam(); return; }
+    openInvoice(id, true);
   }
 
   // ---- Approve Treatment (migration 508) -------------------------------------------

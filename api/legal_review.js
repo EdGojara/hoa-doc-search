@@ -27,6 +27,9 @@
 //   POST /postings/:id/reverse        OWNER: reverse one posting, with reason
 //   POST /postings/:id/cancel         OWNER: cancel a pending posting that cannot
 //                                     finish (reverses anything it wrote)
+//   POST /invoices/:id/run-team       run Emma -> Amanda -> Kat now (prepares and
+//                                     recommends only; never approves or posts)
+//   GET  /invoices/:id/team           the team's latest findings + the activity
 //   POST /invoices/:id/reopen         OWNER: reopen an approved review once
 //                                     every posting is reversed, with reason
 //
@@ -223,6 +226,43 @@ router.post('/postings/:id/cancel', express.json({ limit: '4kb' }), async (req, 
     res.status(out.ok ? 200 : 400).json(out);
   } catch (err) {
     console.error('[legal-review] cancel failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+router.post('/invoices/:id/run-team', express.json({ limit: '4kb' }), async (req, res) => {
+  const staff = await requireStaff(req, res); if (!staff) return;
+  try {
+    if (!UUID.test(req.params.id)) return res.status(400).json({ error: 'invoice_id_invalid' });
+    const out = await require('../lib/legal/team').runLegalTeam(supabase, req.params.id, { trigger: `manual:${staff.email || 'staff'}` });
+    console.log('[legal-review] run-team', JSON.stringify({ invoice: req.params.id, actor: staff.email, skipped: out.skipped || null }));
+    res.json(out);
+  } catch (err) {
+    console.error('[legal-review] run-team failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+router.get('/invoices/:id/team', async (req, res) => {
+  const staff = await requireStaff(req, res); if (!staff) return;
+  try {
+    if (!UUID.test(req.params.id)) return res.status(400).json({ error: 'invoice_id_invalid' });
+    const { data: obj, error } = await supabase.from('objectives').select('id, title, status, autonomy_class, priority, next_action, updated_at, closed_reason')
+      .eq('subject_key', `legal_invoice:${req.params.id}`).order('created_at', { ascending: false }).limit(1);
+    if (error) throw error;
+    const activity = obj && obj[0] ? obj[0] : null;
+    let decisions = [];
+    if (activity) {
+      const { data: dec, error: de } = await supabase.from('objective_decisions').select('decided_by, verdict, confidence, reason, evidence, proposed_action_detail, authorization_boundary, created_at')
+        .eq('objective_id', activity.id).order('created_at', { ascending: false }).limit(30);
+      if (de) throw de;
+      const latest = {};
+      for (const d of dec || []) if (!latest[d.decided_by]) latest[d.decided_by] = d;
+      decisions = ['emma', 'amanda', 'kat'].map((k) => latest[k]).filter(Boolean);
+    }
+    res.json({ activity, decisions });
+  } catch (err) {
+    console.error('[legal-review] team read failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
   }
 });
