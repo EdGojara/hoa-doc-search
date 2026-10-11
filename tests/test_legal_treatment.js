@@ -176,6 +176,13 @@ function posters(db, { failChargeOnce } = {}) {
 const approve = (db, d, P, extra) => T.approveTreatment(db, d, Object.assign({ actor: 'owner@example.test', baseRevision: 3, deps: P.deps }, extra || {}));
 
 // ---- plan ------------------------------------------------------------------
+t('owner ledger wording: DRV reads DRV Enforcement, collections reads Collections, one reference, no repeated "Legal Fees"', async () => {
+  const T = require('../lib/legal/treatment');
+  assert.strictEqual(T.homeownerDescription('attorney_fee_other', 'PS-INV350881'), 'Legal Fees - DRV Enforcement / PS-INV350881');
+  assert.strictEqual(T.homeownerDescription('attorney_fee', '4071915'), 'Legal Fees - Collections / 4071915');
+  assert.strictEqual(T.homeownerDescription(null, '123'), 'Legal Fees / 123');
+  assert.strictEqual(T.homeownerDescription('attorney_fee', null), 'Legal Fees - Collections');
+});
 t('plan: owner-specific lines bill back Dr 1300 / Cr the accrued 5870; the general matter posts nothing', async () => {
   const db = fakeDb(seed());
   const p = await T.planTreatment(db, twoOwnersOneGeneral(), { periods: OPEN });
