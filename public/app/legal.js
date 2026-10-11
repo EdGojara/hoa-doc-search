@@ -172,7 +172,7 @@
   // charges (one per invoice, property and category, as the ledger will show
   // them), what stays with the association, and only the genuine open items,
   // each as READY / NEEDS INFORMATION / NEEDS DECISION with its specific reason.
-  var STATE_PILL = { ready: ['ok', 'Ready'], needs_information: ['warn', 'Needs information'], needs_decision: ['bad', 'Needs decision'] };
+  var STATE_PILL = { ready: ['ok', 'Classified'], needs_information: ['warn', 'Needs information'], needs_decision: ['bad', 'Needs decision'] };
   function renderDecision() {
     var box = $('lg-decide'), d = state.detail; if (!box || !d) return;
     var S = TXLegalSuggest, items = state.items || [];
@@ -199,14 +199,21 @@
     var latest = function (who) { return decs.filter(function (x) { return x.decided_by === who; }).sort(function (a, b) { return String(b.created_at).localeCompare(String(a.created_at)); })[0]; };
     var am = latest('amanda'), kat = latest('kat');
     var katIssues = kat && kat.evidence && kat.evidence.issues ? kat.evidence.issues : [];
+    var katReady = !!(kat && kat.evidence && kat.evidence.state === 'ready');
     var html = '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><h3 style="margin:0">Decision summary</h3>' +
       ['ready', 'needs_information', 'needs_decision'].map(function (k) { return ds[k].count ? pill(STATE_PILL[k][0], ds[k].count + ' ' + STATE_PILL[k][1].toLowerCase()) : ''; }).join(' ') + '</div>' +
       '<div class="lg-facts" style="margin-top:8px"><span>Invoice ' + money(d.invoice.total_cents) + '</span><span>Proposed for homeowners ' + money(sum.recoverable.cents) + '</span><span>Stays with the association ' + money(sum.association.cents) + '</span>' +
         (sum.bedrock.cents ? '<span>Bedrock ' + money(sum.bedrock.cents) + '</span>' : '') +
         (ds.needs_information.cents + ds.needs_decision.cents ? '<span>Open ' + money(ds.needs_information.cents + ds.needs_decision.cents) + ' (stays association expense until resolved)</span>' : '') +
         '<span>' + (sum.reconciled ? 'Reconciled to the cent' : 'Does not reconcile: ' + money(Math.abs(sum.difference_cents))) + '</span></div>';
+    // Posting readiness is Kat's verdict, separate from Amanda's classification:
+    // classified charges are not cleared for posting until Kat clears them.
+    var postingLine = !kat ? pill('mute', 'Posting: not verified') + ' Kat has not verified this invoice yet.'
+      : katReady ? pill('ok', 'Cleared for your approval') + ' Kat verified the accounting; nothing posts until you approve in Treatment.'
+      : pill('warn', 'Not cleared for posting') + ' ' + esc(katIssues.length ? katIssues.map(function (x) { return x.text; }).join(' ') : (kat.reason || 'Open items remain.'));
+    html += '<div style="font-size:13px;margin-top:10px">' + postingLine + '</div>';
     if (rows.length) {
-      html += '<div style="margin-top:12px"><span class="tx-lbl">Homeowner charges as the ledger will show them</span>' +
+      html += '<div style="margin-top:12px"><span class="tx-lbl">Proposed homeowner charges' + (katReady ? '' : ' (classified, not yet cleared for posting)') + ', as the ledger would show them</span>' +
         '<table class="lg-tbl" style="width:100%;border-collapse:collapse;margin-top:6px;font-size:13px"><thead><tr><th style="text-align:left">Property</th><th style="text-align:left">Charge</th><th style="text-align:right">Amount</th></tr></thead><tbody>' +
         rows.map(function (c) { return '<tr><td>' + esc(c.who) + (c.owners ? '<div class="tx-muted" style="font-size:12px">' + esc(c.owners) + '</div>' : '') + '</td><td>' + esc(c.desc) + (c.limited ? ' <span class="tx-muted" title="See the limitation below">*</span>' : '') + '</td><td style="text-align:right">' + money(c.cents) + '</td></tr>'; }).join('') +
         '</tbody></table></div>';
