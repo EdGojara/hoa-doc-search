@@ -160,6 +160,15 @@ t('plan: owner-specific lines bill back Dr 1300 / Cr the accrued 5870; the gener
   assert.strictEqual(p.totals.homeowner_cents + p.totals.association_cents + p.totals.bedrock_cents, p.invoice_total_cents);
   assert.strictEqual(p.posting_date, '2026-08-31', 'defaults to the accrual date');
 });
+t('plan: a pre-cutover accrual (neutralized and re-posted at conversion) posts at the cutover, never before', async () => {
+  const db = fakeDb(seed());
+  db.tables.journal_entries[0].posting_date = '2026-07-13';
+  db.tables.communities = [{ id: CG, gl_cutover_date: '2026-08-01' }];
+  const p = await T.planTreatment(db, twoOwnersOneGeneral());
+  assert.strictEqual(p.posting_date, '2026-08-01');
+  const early = await T.planTreatment(db, twoOwnersOneGeneral(), { postingDate: '2026-07-20' });
+  assert.ok(!early.ready && early.blocking.some((b) => /cannot be before 2026-08-01/.test(b)));
+});
 t('plan: a line coded to 5860 is credited back to 5860, line by line', async () => {
   const db = fakeDb(seed());
   const p = await T.planTreatment(db, invoice([item('it-1', LINE, [owner(10000, 'p-a')]), item('it-2', 'line-2', [owner(3200, 'p-b')])]));
