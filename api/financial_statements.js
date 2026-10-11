@@ -89,7 +89,14 @@ async function modelsFor(cid, q) {
     if (s === 'balance_sheet') out.push(await M.buildBalanceSheetModel(supabase, { community_id: cid, as_of, view: q.view === 'fund' ? 'fund' : 'consolidated' }));
     else if (s === 'income_budget') {
       // funds=OPR,RES,... gives each fund its own statement; fund= one fund.
-      const list = q.funds ? String(q.funds).split(',').map((x) => x.trim()).filter(Boolean) : [q.fund || 'OPR'];
+      // funds=active: every active fund of the community, Operating first (the Books screen).
+      let list = q.funds ? String(q.funds).split(',').map((x) => x.trim()).filter(Boolean) : [q.fund || 'OPR'];
+      if (list.length === 1 && list[0] === 'active') {
+        const { data: fr, error: fe } = await supabase.from('account_funds').select('fund_code, display_order').eq('community_id', cid).eq('is_active', true).order('display_order');
+        if (fe) throw fe;
+        const codes = (fr || []).map((f) => f.fund_code);
+        list = [...codes.filter((c) => c === 'OPR'), ...codes.filter((c) => c !== 'OPR')];
+      }
       for (const f of list) out.push(await M.buildIncomeBudgetModel(supabase, { community_id: cid, period_end, fund: f }));
     } else if (s === 'reserve_activity') out.push(await M.buildReserveActivityModel(supabase, { community_id: cid, period_end, fund: q.fund || 'RES' }));
     else throw Object.assign(new Error(`unknown_statement:${s}`), { code: 'invalid_input' });
