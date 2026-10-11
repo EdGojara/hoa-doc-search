@@ -74,6 +74,14 @@
       <div class="body" id="invBody"><div class="empty">Loading your queue…</div></div>
     </div>
 
+    <div class="tile" id="runsTile">
+      <div class="head">
+        <h2>🧮 Kat's monthly accounting</h2>
+        <span class="meta" id="runsMeta">Loading…</span>
+      </div>
+      <div class="body" id="runsBody"><div class="empty">Loading…</div></div>
+    </div>
+
     <div class="grid2">
       <div class="tile soon"><div class="head"><h2>➕ Add a shortcut</h2></div>
         <div class="body"><div class="empty">Shortcuts you add land here as tiles, an approval queue, a cash-to-release view, exceptions the team flagged, a KPI. Whatever saves you clicks.</div></div></div>
@@ -107,7 +115,81 @@ async function boot(){
   }catch(_){ /* fall through — load() will show the owner-only message if unauthed */ }
   load();
   loadPending();
+  loadRuns();
 }
+// ---- Kat's monthly accounting runs (migration 510): Kat prepares, Ed approves or holds ----
+const PROC = { recognition: 'Monthly recognition', interest: 'Late interest' };
+const monthLabel = (d) => new Date(String(d).slice(0,10)+'T00:00:00').toLocaleDateString('en-US',{month:'long',year:'numeric'});
+async function loadRuns(){
+  try{
+    const r = await af('/api/accounting-runs/pending');
+    if(!r.ok){ $('runsBody').innerHTML='<div class="empty">Runs are not available yet.</div>'; $('runsMeta').textContent=''; return; }
+    const runs = (await r.json()).runs||[];
+    if(!runs.length){ $('runsBody').innerHTML='<div class="empty">Nothing from Kat is waiting on you.</div>'; $('runsMeta').textContent=''; return; }
+    $('runsMeta').textContent = runs.length+' run'+(runs.length===1?'':'s');
+    $('runsBody').innerHTML = runs.map(x=>{
+      const t=x.totals||{}; const amt = x.process==='interest' ? t.interest_cents : t.amount_cents;
+      const badge = x.status==='failed' ? '<span style="color:#9B2C2C;font-weight:700;">FAILED</span>' : x.status==='held' ? '<span style="color:#8a6d1a;font-weight:700;">Held</span>' : 'Ready for approval';
+      const what = x.process==='interest' ? (t.owners||0)+' owners' : (t.entries||0)+' entries';
+      const exc = (x.exceptions||[]).length ? ' · '+x.exceptions.length+' exception(s)' : '';
+      const err = x.error ? ' · '+esc(x.error) : '';
+      const rd = x.process==='interest' ? ' (run '+esc(String(x.run_date).slice(0,10))+')' : '';
+      return '<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:13px 18px;border-bottom:1px solid #f1f3f6;">'
+        + '<span><b>'+esc(x.community_name||'')+'</b> · '+(PROC[x.process]||x.process)+' · '+monthLabel(x.period_month)+rd+'<br>'
+        + '<span style="color:var(--muted);font-size:12.5px;">'+badge+' · '+what+' · '+money(amt||0)+exc+err+'</span></span>'
+        + '<button onclick="openRun(\''+x.id+'\')" style="border:1px solid #dde3ea;background:#fff;border-radius:6px;padding:6px 14px;cursor:pointer;font-weight:600;">Review</button></div>';
+    }).join('');
+  }catch(_){ $('runsBody').innerHTML='<div class="empty">Could not load the runs.</div>'; }
+}
+async function openRun(id){
+  $('modal').innerHTML='<div class="mb"><div class="empty">Loading…</div></div>'; $('modalBg').classList.add('show');
+  try{
+    const r = await af('/api/accounting-runs/run/'+id); const d = await r.json(); if(!r.ok) throw new Error(d.error||'load failed');
+    const run=d.run, t=run.totals||{}, items=(run.preview&&run.preview.items)||[];
+    const exc = run.exceptions||[];
+    const excOwners = exc.filter(e=>e.code==='owner_exception');
+    const other = exc.filter(e=>e.code!=='owner_exception');
+    let head;
+    if(run.process==='interest'){
+      head = '<p>'+(t.owners||0)+' owners, eligible assessment principal '+money(t.principal_cents||0)+', interest '+money(t.interest_cents||0)+'.<br>'
+        + 'Will post now: <b>'+(t.clean_owners||0)+' owners, '+money(t.clean_interest_cents||0)+'</b>. Exceptions are held unless you tick them: '
+        + (t.exception_owners||0)+' owners, '+money(t.exception_interest_cents||0)+'.</p>';
+    } else {
+      head = '<p>'+(t.entries||0)+' entries, '+money(t.amount_cents||0)+'.</p><table style="width:100%;font-size:13px;border-collapse:collapse;">'
+        + items.map(i=>'<tr><td style="padding:4px 0;">'+esc(i.schedule)+'</td><td>'+esc(String(i.month).slice(0,7))+'</td><td style="text-align:right;">'+money(i.amount_cents)+'</td></tr>').join('')+'</table>';
+    }
+    const excHtml = excOwners.length ? '<h4 style="margin:14px 0 6px;">Exceptions (tick to include)</h4><div style="max-height:260px;overflow:auto;font-size:12.5px;">'
+      + excOwners.map(e=>'<label style="display:block;padding:4px 0;border-bottom:1px solid #f1f3f6;"><input type="checkbox" class="incl" value="'+esc(e.tenure_id)+'"> '+esc(e.address||'')+' · '+money(e.interest_cents)+' · '+esc(e.text)+'</label>').join('')+'</div>' : '';
+    const otherHtml = other.length ? '<div style="background:#FFF5DD;color:#7A5408;padding:8px 10px;border-radius:6px;font-size:12.5px;margin-top:10px;">'+other.map(e=>esc(e.text)).join('<br>')+'</div>' : '';
+    const ev = (d.events||[]).map(e=>new Date(e.created_at).toLocaleString()+' · '+esc(e.event)+' · '+esc(e.actor)).join('<br>');
+    const can = run.status==='prepared';
+    const btns = can ? '<button onclick="holdRun(\''+run.id+'\')" style="padding:8px 14px;border:1px solid #e3c98a;background:#fff;border-radius:6px;cursor:pointer;">Hold</button>'
+      + '<button onclick="approveRun(\''+run.id+'\')" style="padding:8px 16px;border:none;background:#0B1D34;color:#fff;border-radius:6px;cursor:pointer;font-weight:700;">Approve &amp; post</button>' : '';
+    $('modal').innerHTML = '<div class="mb" style="padding:20px 22px;max-width:760px;">'
+      + '<h3 style="margin:0 0 6px;">'+(PROC[run.process]||run.process)+' · '+monthLabel(run.period_month)+'</h3>'
+      + '<div style="color:var(--muted);font-size:12.5px;">Prepared by '+esc(run.prepared_by)+' · status '+esc(run.status)+'</div>'
+      + head+otherHtml+excHtml
+      + '<p style="margin-top:12px;"><a href="#" onclick="event.preventDefault();dlCsv(\''+run.id+'\')">Download the full '+(run.process==='interest'?'owner-by-owner':'entry')+' detail (CSV)</a></p>'
+      + '<div style="font-size:11.5px;color:var(--muted);margin-top:8px;">'+ev+'</div>'
+      + '<div style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px;"><button onclick="closeModal()" style="padding:8px 14px;border:1px solid #dde3ea;background:#fff;border-radius:6px;cursor:pointer;">Close</button>'+btns+'</div></div>';
+  }catch(e){ $('modal').innerHTML='<div class="mb"><div class="empty" style="color:#9B2C2C;">'+esc(e.message)+'</div></div>'; }
+}
+async function dlCsv(id){ const r=await af('/api/accounting-runs/run/'+id+'/csv'); const b=await r.blob(); const a=document.createElement('a'); a.href=URL.createObjectURL(b); a.download='kat-run-'+id.slice(0,8)+'.csv'; a.click(); }
+async function approveRun(id){
+  const include=[...document.querySelectorAll('.incl:checked')].map(x=>x.value);
+  if(!confirm('Post this run now'+(include.length?' (including '+include.length+' exception owner(s))':'')+'? This writes the journal entries.')) return;
+  const r=await af('/api/accounting-runs/run/'+id+'/approve',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({include})});
+  const d=await r.json().catch(()=>({}));
+  if(!r.ok){ toast(d.error||'Posting failed',true); return; }
+  toast('Posted.'); closeModal(); loadRuns();
+}
+async function holdRun(id){
+  const reason=prompt('Why hold this run?'); if(!reason) return;
+  const r=await af('/api/accounting-runs/run/'+id+'/hold',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({reason})});
+  const d=await r.json().catch(()=>({})); if(!r.ok){ toast(d.error||'Hold failed',true); return; }
+  toast('Held.'); closeModal(); loadRuns();
+}
+
 async function loadPending(){
   try{
     const r = await af('/api/ed/pending');
