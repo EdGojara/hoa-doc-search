@@ -1,0 +1,50 @@
+{
+  "migration": "509_prior_period_flag.sql",
+  "summary": "Adds journal_entries.prior_period_through (nullable date), a presentation flag: statements show flagged entries, and conversion re-posts, apart from the month's operating results on a 'Prior-period items recorded this month' line; year to date keeps them in their accounts. Backfills Canyon Gate's six reserve reclassification entries of pre-cutover spending (JE-2026-00455, 457, 458, 459 dated 8/1; 460, 461 dated 9/1) with 2026-07-31. No amount, account, fund or date changes; posts nothing.",
+  "requires": [],
+  "preflight": [
+    {
+      "name": "the column does not exist yet",
+      "sql": "SELECT count(*)::int FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'journal_entries' AND column_name = 'prior_period_through'",
+      "expect": 0
+    },
+    {
+      "name": "the six Canyon Gate reclassification entries exist exactly once each, posted",
+      "sql": "SELECT count(*)::int FROM journal_entries WHERE community_id = 'a0000000-0000-4000-8000-000000000003' AND reference IN ('JE-2026-00455','JE-2026-00457','JE-2026-00458','JE-2026-00459','JE-2026-00460','JE-2026-00461') AND status = 'posted'",
+      "expect": 6
+    }
+  ],
+  "expected_changes": [
+    "journal_entries: adds nullable column prior_period_through (date) with a comment.",
+    "journal_entries: sets prior_period_through = 2026-07-31 on the six Canyon Gate reserve reclassification entries; no other column or row changes."
+  ],
+  "objects": {
+    "added": ["column:journal_entries.prior_period_through"],
+    "removed": [],
+    "changed": []
+  },
+  "row_changes": {
+    "journal_entries": 6,
+    "journal_entry_lines": 0
+  },
+  "protected": [
+    { "table": "journal_entry_lines", "order_by": "id" }
+  ],
+  "verify": [
+    {
+      "name": "the column exists",
+      "sql": "SELECT count(*)::int FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'journal_entries' AND column_name = 'prior_period_through'",
+      "expect": 1
+    },
+    {
+      "name": "exactly the six entries are flagged, all through 2026-07-31",
+      "sql": "SELECT count(*)::int FROM journal_entries WHERE prior_period_through IS NOT NULL",
+      "expect": 6
+    },
+    {
+      "name": "the flagged entries are the named Canyon Gate references",
+      "sql": "SELECT count(*)::int FROM journal_entries WHERE prior_period_through = DATE '2026-07-31' AND community_id = 'a0000000-0000-4000-8000-000000000003' AND reference IN ('JE-2026-00455','JE-2026-00457','JE-2026-00458','JE-2026-00459','JE-2026-00460','JE-2026-00461')",
+      "expect": 6
+    }
+  ]
+}
