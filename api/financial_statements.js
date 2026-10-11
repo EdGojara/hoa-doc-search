@@ -8,7 +8,9 @@
 //
 //   GET  /:cid/balance-sheet?as_of=YYYY-MM-DD[&view=consolidated|fund]      model JSON
 //   GET  /:cid/income-budget?period_end=YYYY-MM-DD[&fund=OPR|all]           model JSON
-//   GET  /:cid/render?format=html|print|pdf|xlsx&statements=balance_sheet,income_budget
+//   GET  /:cid/render?format=html|print|pdf|xlsx&statements=board_package&period_end=..     the full board package
+//        (balance sheet by fund, each fund's income statement, non-operating fund activity)
+//   GET  /:cid/render?format=html|print|pdf|xlsx&statements=balance_sheet,income_budget,reserve_activity
 //        &as_of=..&period_end=..[&view=..&fund=..]                          rendered output
 //   GET  /:cid/drill/account?kind=balance_sheet|income_budget&account_id=..[&fund_id=..]
 //        &as_of=.. | &period_start=..&period_end=..                         line -> transactions
@@ -53,10 +55,28 @@ async function modelsFor(cid, q) {
   const defEnd = monthEndBefore(today());
   const as_of = dateParam(q.as_of, defEnd), period_end = dateParam(q.period_end, q.as_of && ISO.test(q.as_of) ? q.as_of : defEnd);
   if (!as_of || !period_end) throw Object.assign(new Error('dates_must_be_YYYY-MM-DD'), { code: 'invalid_input' });
+  // The board package (Ed 2026-10-11): the balance sheet by fund, then each of
+  // the community's own active funds on its own income statement (operating
+  // first), then the activity schedule of every non-operating fund. Uses the
+  // community's actual fund structure (account_funds), never an assumed one.
+  if (want.includes('board_package')) {
+    const { data: funds, error } = await supabase.from('account_funds').select('fund_code, fund_type, display_order, is_active').eq('community_id', cid).eq('is_active', true).order('display_order');
+    if (error) throw error;
+    const codes = (funds || []).map((f) => f.fund_code);
+    const ordered = [...codes.filter((c) => c === 'OPR'), ...codes.filter((c) => c !== 'OPR')];
+    const out = [await M.buildBalanceSheetModel(supabase, { community_id: cid, as_of: period_end, view: 'fund' })];
+    for (const f of ordered) out.push(await M.buildIncomeBudgetModel(supabase, { community_id: cid, period_end, fund: f }));
+    for (const f of ordered.filter((c) => c !== 'OPR')) out.push(await M.buildReserveActivityModel(supabase, { community_id: cid, period_end, fund: f }));
+    return out;
+  }
   const out = [];
   for (const s of want) {
     if (s === 'balance_sheet') out.push(await M.buildBalanceSheetModel(supabase, { community_id: cid, as_of, view: q.view === 'fund' ? 'fund' : 'consolidated' }));
-    else if (s === 'income_budget') out.push(await M.buildIncomeBudgetModel(supabase, { community_id: cid, period_end, fund: q.fund || 'OPR' }));
+    else if (s === 'income_budget') {
+      // funds=OPR,RES,... gives each fund its own statement; fund= one fund.
+      const list = q.funds ? String(q.funds).split(',').map((x) => x.trim()).filter(Boolean) : [q.fund || 'OPR'];
+      for (const f of list) out.push(await M.buildIncomeBudgetModel(supabase, { community_id: cid, period_end, fund: f }));
+    } else if (s === 'reserve_activity') out.push(await M.buildReserveActivityModel(supabase, { community_id: cid, period_end, fund: q.fund || 'RES' }));
     else throw Object.assign(new Error(`unknown_statement:${s}`), { code: 'invalid_input' });
   }
   return out;
