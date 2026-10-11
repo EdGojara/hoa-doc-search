@@ -533,12 +533,19 @@ const find = (model, num) => { for (const s of model.sections) for (const g of s
         { id: `${id}-2`, journal_entry_id: id, line_number: 2, account_id: 'a-2000', fund_id: 'f-opr', debit_cents: c, credit_cents: d, memo: null, vendor_id: null, property_id: null }); };
     push('CONV-DC-REPOST-JE1', {}, 5210, 40000, 0);
     push('JE-PP-1', { prior_period_through: '2026-07-31' }, 5400, 0, 15000);
+    // a void in September of an invoice dated before the cutover (the original sits in the carried YTD)
+    dbp.journal_entries.push({ id: 'je-pp-orig', community_id: F.CID, reference: 'JE-ORIG-0720', posting_date: '2026-07-20', source_module: 'ap_invoice', status: 'voided', void_reversal_je_id: 'je-pp-JE-VOID-1', reverses_je_id: null, description: 'July invoice' });
+    push('JE-VOID-1', { source_module: 'reversal', reverses_je_id: 'je-pp-orig' }, 5300, 0, 7000);
+    // a void in September of a September invoice stays in the month
+    push('JE-SEPINV', { source_module: 'ap_invoice' }, 5300, 3000, 0);
+    push('JE-VOID-2', { source_module: 'reversal', reverses_je_id: 'je-pp-JE-SEPINV' }, 5300, 0, 3000);
     const pp = await M.buildIncomeBudgetModel(sbp, { community_id: F.CID, period_end: '2026-09-30', fund: 'OPR', now: NOW });
-    check('prior-period items print in their own section, signed by fund effect (re-post expense -400.00, correction credit +150.00)', pp.prior_period && pp.prior_period.total.values.mtd_actual === -25000
-      && pp.prior_period.groups[0].lines.map((l) => `${l.account_number}:${l.values.mtd_actual}`).join() === '5210:-40000,5400:15000', JSON.stringify(pp.prior_period && pp.prior_period.groups[0].lines.map((l) => l.values)));
+    check('prior-period items print in their own section, signed by fund effect (re-post expense -400.00, correction credit +150.00, void of a July invoice +70.00)', pp.prior_period && pp.prior_period.total.values.mtd_actual === -18000
+      && pp.prior_period.groups[0].lines.map((l) => `${l.account_number}:${l.values.mtd_actual}`).join() === '5210:-40000,5300:7000,5400:15000', JSON.stringify(pp.prior_period && pp.prior_period.groups[0].lines.map((l) => l.values)));
     check('the month excludes them from operating results; year to date keeps them in their accounts', line(pp, '5210').values.mtd_actual === (line(base, '5210') ? line(base, '5210').values.mtd_actual : 0)
       && line(pp, '5210').values.ytd_actual === (line(base, '5210') ? line(base, '5210').values.ytd_actual : 0) + 40000);
-    check('net change in fund balance = excess of revenue over expenses + prior-period items', pp.change && pp.change.values.mtd_actual === pp.net.values.mtd_actual - 25000 && pp.net.label === 'Excess (deficit) of revenue over expenses');
+    check('a void of a September invoice stays in the month (only reversals of entries dated on or before the cutoff move)', line(pp, '5300').values.mtd_actual === (line(base, '5300') ? line(base, '5300').values.mtd_actual : 0));
+    check('net change in fund balance = excess of revenue over expenses + prior-period items', pp.change && pp.change.values.mtd_actual === pp.net.values.mtd_actual - 18000 && pp.net.label === 'Excess (deficit) of revenue over expenses');
     const ppr = R.renderHtml(pp, { mode: 'print', noStyle: true });
     check('printed: the prior-period section sits between the excess and the net change, with its note', ppr.indexOf('Excess (deficit) of revenue over expenses') < ppr.search(/<tr class="sec"><td[^>]*>Prior-period items recorded this month/) && ppr.search(/<tr class="sec"><td[^>]*>Prior-period items recorded this month/) < ppr.indexOf('Net change in fund balance') && pp.notes.some((n) => n.code === 'prior_period'));
   }
