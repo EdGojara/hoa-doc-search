@@ -69,7 +69,8 @@
 </div>
 <script>
   const $ = (id) => document.getElementById(id);
-  const fmt = (cents) => '$' + (Number(cents||0)/100).toLocaleString(undefined,{minimumFractionDigits:2, maximumFractionDigits:2});
+  // Negative amounts in parentheses, the same convention as the printed statements: ($79.85), never $-79.85.
+  const fmt = (cents) => { const n = Number(cents||0)/100; const t = '$' + Math.abs(n).toLocaleString('en-US',{minimumFractionDigits:2, maximumFractionDigits:2}); return n < 0 ? `(${t})` : t; };
   // Statement amounts: null = not available in trustEd (monthly detail before a conversion cutover
   // lives in the prior system; lib/accounting/statement_periods.js). Never shown as $0.00.
   const NA_HTML = '<span class="muted" style="font-size:11.5px;" title="Monthly detail before the conversion cutover is in the prior system">Not available in TrustEd</span>';
@@ -288,7 +289,7 @@
   // section per fund (Operating / Reserve / Savings), because budget-vs-actual +
   // variance can't be read across funds in one row. Each section shows Month
   // (Actual / Budget / Variance) then Year to Date (Actual / Budget / Variance).
-  const _FUND_TITLES = { OPR:'Operating Fund', RES:'Reserve Fund', SAV:'Savings Fund' };
+  const _FUND_TITLES = { OPR:'Operating Fund', RES:'Reserve Fund', SAV:'Savings Fund', AAS:'Adopt a School Fund', ADO:'Adopt a School Fund' };
   // Variance is favorable-positive for revenue AND expense, the same convention as the
   // server (lib/accounting/variance.js): revenue actual − budget, expense budget − actual.
   // No actual (not available in trustEd) = no variance, never a fake one.
