@@ -50,7 +50,9 @@ const find = (model, num) => { for (const s of model.sections) for (const g of s
   console.log('income vs budget model');
   check('prior-year columns hidden (2025 not in trustEd), with the reason', !ib.columns.some((c) => c.key.startsWith('py_')) && ib.notes.some((n) => n.code === 'prior_year_hidden'));
   check('year to date includes the conversion carryforward, and says so', ib.carryforward && ib.carryforward.revenue > 0 && ib.notes.some((n) => n.code === 'carryforward'));
-  check('net income: month 1,895 vs budget 2,225, variance (330) unfavorable, (14.8%)', ib.net.values.mtd_actual === 189500 && ib.net.values.mtd_budget === 222500 && ib.net.values.mtd_var === -33000 && ib.net.values.mtd_var_pct === -14.8);
+  check('net income: month 1,895 vs budget 2,225, variance (330) unfavorable; no percentage columns (board layout)', ib.net.values.mtd_actual === 189500 && ib.net.values.mtd_budget === 222500 && ib.net.values.mtd_var === -33000 && !ib.columns.some((c) => c.is_pct) && ib.net.values.mtd_var_pct === undefined);
+  check('board layout: seven columns (month actual/budget/variance, YTD actual/budget/variance, annual budget) in that order', ib.columns.map((c) => c.key).join() === 'mtd_actual,mtd_budget,mtd_var,ytd_actual,ytd_budget,ytd_var,annual_budget' && ib.columns.map((c) => c.band).join() === 'Current month,Current month,Current month,Year to date,Year to date,Year to date,Annual');
+  check('annual budget totals add up from the accounts', ib.sections.every((sec) => sec.total.values.annual_budget === sec.groups.reduce((t, g) => t + (g.values.annual_budget || 0), 0)) && ib.net.values.annual_budget === ib.sections[0].total.values.annual_budget - ib.sections[1].total.values.annual_budget);
   const land = ib.sections[1].groups.find((g) => g.label === 'Landscaping');
   check('variance is favorable-positive: expense over budget is negative', land.values.mtd_var === -70000 && ib.sections[0].total.values.mtd_var > 0);
   check('a group\'s figures add up from its accounts', land.values.ytd_actual === land.lines.reduce((t, l) => t + l.values.ytd_actual, 0));
@@ -284,7 +286,7 @@ const find = (model, num) => { for (const s of model.sections) for (const g of s
     check('August Meadows: YTD unchanged (plain sum, available, no not-available note); prior-year columns hidden as not in trustEd', amIB.net.values.ytd_actual === 187874
       && !amIB.columns.some((c) => c.key.startsWith('py_')) && amIB.notes.some((n) => n.code === 'prior_year_hidden') && !amIB.notes.some((n) => n.code === 'ytd_availability'));
     const am25 = await M.buildIncomeBudgetModel(sb, { community_id: AM, period_end: '2025-12-31', fund: 'OPR', now: NOW });
-    check('no downstream arithmetic treats the unavailable period as zero (actuals, variances, net all null)', ['mtd_actual', 'ytd_actual', 'mtd_var', 'ytd_var', 'mtd_var_pct', 'ytd_var_pct'].every((k) => am25.net.values[k] === null)
+    check('no downstream arithmetic treats the unavailable period as zero (actuals, variances, net all null)', ['mtd_actual', 'ytd_actual', 'mtd_var', 'ytd_var'].every((k) => am25.net.values[k] === null)
       && am25.sections.every((sec) => sec.total.values.ytd_actual === null), JSON.stringify(am25.net.values));
     const r12 = await FS.rollingIncomeStatement({ community_id: AM, end_date: '2026-09-30', months: 12 });
     check('rolling 12: months before 5/21/2026 are n/a (null), later months real; the range total is the real activity', r12.not_available_months.join() === '2025-10,2025-11,2025-12,2026-01,2026-02,2026-03,2026-04'
@@ -297,7 +299,7 @@ const find = (model, num) => { for (const s of model.sections) for (const g of s
     // bs / ib were built on the fresh fixture at the top of this file. Pinned content hashes: the
     // income statement is unchanged since #109; the balance sheet changed exactly once, when its
     // mapping state key was renamed final_ready -> mapping_complete (Ed 2026-10-10).
-    check('Drama Creek (converted): statement content hashes are the pinned values (only the mapping_complete rename moved the balance sheet)', bs.snapshot_sha256.startsWith('87999b8f716a') && ib.snapshot_sha256.startsWith('79482666433a') && bs.period.books_start === '2026-01-01', `${bs.snapshot_sha256} ${ib.snapshot_sha256}`);
+    check('Drama Creek (converted): statement content hashes are the pinned values (income re-pinned 2026-10-11 for the seven-column board layout; balance sheet unchanged)', bs.snapshot_sha256.startsWith('87999b8f716a') && ib.snapshot_sha256.startsWith('5faa01095644') && bs.period.books_start === '2026-01-01', `${bs.snapshot_sha256} ${ib.snapshot_sha256}`);
   }
 
   console.log('balance-sheet subcategories and interfund elimination');
@@ -449,6 +451,34 @@ const find = (model, num) => { for (const s of model.sections) for (const g of s
   check('nothing is inferred from an account name (AR stays for a person)', !roleOf('1300'));
   const pr3 = proposeFromRoles({ accounts: accts, banks: [{ gl_account_number: '1000', account_type: 'operating' }, { gl_account_number: '1000', account_type: 'reserve' }], schedules: [], existing: new Set(['a5']) });
   check('two roles that disagree are a conflict, not a guess; an existing mapping is never touched', pr3.conflicts.some((c) => c.account.id === 'a1') && !pr3.proposals.some((p) => p.account.id === 'a5'));
+
+  console.log('reserve fund activity (board schedule)');
+  {
+    F.seed(); const sbr = F.fakeClient();
+    const ra = await M.buildReserveActivityModel(sbr, { community_id: F.CID, period_end: '2026-09-30', fund: 'RES', now: NOW });
+    const fvr = await M.buildBalanceSheetModel(sbr, { community_id: F.CID, as_of: '2026-09-30', view: 'fund', now: NOW });
+    const ibr = await M.buildIncomeBudgetModel(sbr, { community_id: F.CID, period_end: '2026-09-30', fund: 'RES', now: NOW });
+    const roll = ra.sections.find((s) => s.key === 'rollforward');
+    const beg = roll.groups[0];
+    const activity = roll.groups.slice(1).reduce((t, g) => t + g.values.ytd, 0);
+    const eqr = fvr.sections.find((s) => s.key === 'equity');
+    check('roll-forward: beginning + year-to-date activity = ending = the balance sheet fund balance', beg.label === 'Beginning fund balance' && beg.values.ytd + activity === roll.total.values.ytd && roll.total.values.ytd === eqr.total.values['fund:RES'] && !ra.warnings.length, JSON.stringify({ beg: beg.values, activity, end: roll.total.values }));
+    check('roll-forward activity is the fund\'s own income statement (revenue in, expenses out)', activity === ibr.net.values.ytd_actual);
+    check('month: beginning of month + month activity = ending', beg.values.mtd + roll.groups.slice(1).reduce((t, g) => t + g.values.mtd, 0) === roll.total.values.mtd);
+    const exps = ra.sections.find((s) => s.key === 'expenditures');
+    check('expenditure detail, when present, adds up to the fund\'s expenses', !exps || exps.total.values.ytd === -roll.groups.filter((g) => g.values.ytd < 0).reduce((t, g) => t + g.values.ytd, 0));
+    const keysR = new Set(); const walkR = (o, pre) => { if (Array.isArray(o)) return o.forEach((x) => walkR(x, pre)); if (o && typeof o === 'object') for (const [k, v] of Object.entries(o)) { const p = pre ? `${pre}.${k}` : k; keysR.add(p.replace(/\.\d+/g, '')); walkR(v, p); } };
+    walkR(ra, ''); const contentR = new Set(); const walkC = (o, pre) => { if (Array.isArray(o)) return o.forEach((x) => walkC(x, pre)); if (o && typeof o === 'object') for (const [k, v] of Object.entries(o)) { const p = pre ? `${pre}.${k}` : k; contentR.add(p.replace(/\.\d+/g, '')); walkC(v, p); } };
+    walkC(M.statementContent(ra), '');
+    const escR = [...keysR].filter((k) => !contentR.has(k) && !M.HASH_EXCLUDED.some((x) => k === x || k.startsWith(x + '.') || k.endsWith('.' + x) || k.includes('.' + x + '.')));
+    check('reserve schedule: every model key is hashed content or explicitly excluded', escR.length === 0, JSON.stringify(escR));
+    const htmlR = R.renderHtml(ra, { mode: 'print', noStyle: true });
+    check('reserve schedule prints the roll-forward with its ending balance, two columns (month, year to date)', /Fund balance roll-forward/.test(htmlR) && /Ending fund balance/.test(htmlR) && ra.columns.map((c) => c.key).join() === 'mtd,ytd');
+    const doc = R.renderDocument([fvr, ibr, ra]);
+    check('the package document is landscape letter', /@page\{size:Letter landscape/.test(doc));
+    const ibPrint = R.renderHtml(ibr, { mode: 'print', noStyle: true });
+    check('printed income statement: a column band row and each GL account under its category with a category subtotal', /class="band"/.test(ibPrint) && /Current month/.test(ibPrint) && /Annual/.test(ibPrint) && (!ibr.sections[0].groups.some((g) => g.kind === 'category') || /class="cattot"/.test(ibPrint)));
+  }
 
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
