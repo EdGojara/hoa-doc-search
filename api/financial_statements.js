@@ -69,6 +69,21 @@ async function modelsFor(cid, q) {
     for (const f of ordered.filter((c) => c !== 'OPR')) out.push(await M.buildReserveActivityModel(supabase, { community_id: cid, period_end, fund: f }));
     return out;
   }
+  // The proposed budget package (Ed 2026-10-11): Operating summary, then every
+  // active fund in detail (operating first), from the target year's draft budget
+  // beside the base year's budget, actual through as_of and projection.
+  if (want.includes('budget_package')) {
+    const target_year = Number(q.target_year) || Number(as_of.slice(0, 4)) + 1;
+    const { data: funds, error } = await supabase.from('account_funds').select('fund_code, display_order').eq('community_id', cid).eq('is_active', true).order('display_order');
+    if (error) throw error;
+    const codes = (funds || []).map((f) => f.fund_code);
+    const ordered = [...codes.filter((c) => c === 'OPR'), ...codes.filter((c) => c !== 'OPR')];
+    const args = { community_id: cid, target_year, as_of, budget_id: q.budget_id || null };
+    const out = [];
+    if (ordered.includes('OPR')) out.push(await M.buildProposedBudgetModel(supabase, { ...args, fund: 'OPR', summary: true }));
+    for (const f of ordered) out.push(await M.buildProposedBudgetModel(supabase, { ...args, fund: f }));
+    return out;
+  }
   const out = [];
   for (const s of want) {
     if (s === 'balance_sheet') out.push(await M.buildBalanceSheetModel(supabase, { community_id: cid, as_of, view: q.view === 'fund' ? 'fund' : 'consolidated' }));

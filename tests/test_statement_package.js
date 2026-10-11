@@ -522,6 +522,39 @@ const find = (model, num) => { for (const s of model.sections) for (const g of s
     check('consolidated: the budgeted transfer nets to zero across funds', c2.transfers && c2.transfers.total.values.annual_budget === 0);
   }
 
+  console.log('proposed budget (draft next year beside this year\'s budget, actual and projection)');
+  {
+    F.seed(); const sbb = F.fakeClient(); const dbb = F.getDb();
+    const a49 = dbb.chart_of_accounts.find((a) => a.account_number === '4900'); Object.assign(a49, { account_subtype: 'interfund_transfer', interfund_from_fund_id: 'f-opr', interfund_to_fund_id: 'f-res' });
+    for (const b of dbb.budget_line_items) if (b.account_id === a49.id) { b.annual_amount_cents = -Math.abs(b.annual_amount_cents); if (b.monthly_amounts_cents) b.monthly_amounts_cents = b.monthly_amounts_cents.map((x) => -Math.abs(x)); }
+    const base = dbb.community_budgets.find((b) => b.fiscal_year === 2026);
+    dbb.community_budgets.push({ id: 'bud-2027', community_id: F.CID, fiscal_year: 2027, status: 'draft', created_at: '2026-10-10T00:00:00Z' });
+    let n = 0;
+    for (const l of dbb.budget_line_items.filter((x) => x.budget_id === base.id)) dbb.budget_line_items.push({ ...l, id: `bl27-${++n}`, budget_id: 'bud-2027', annual_amount_cents: Math.round(l.annual_amount_cents * 1.1) });
+    const draftOf = (num) => dbb.budget_line_items.filter((x) => x.budget_id === 'bud-2027' && x.account_id === `a-${num}`).reduce((t, x) => t + x.annual_amount_cents, 0);
+    const apprOf = (num) => dbb.budget_line_items.filter((x) => x.budget_id === base.id && x.account_id === `a-${num}`).reduce((t, x) => t + x.annual_amount_cents, 0);
+    // an Operating account's revenue posted to the Reserve fund (the Vantaca 4050 shape, mirrored)
+    dbb.journal_entries.push({ id: 'je-xf', community_id: F.CID, reference: 'JE-XF', posting_date: '2026-09-15', source_module: 'manual', status: 'posted', void_reversal_je_id: null, reverses_je_id: null, description: 'cross-fund' });
+    dbb.journal_entry_lines.push({ id: 'jl-xf1', journal_entry_id: 'je-xf', line_number: 1, account_id: 'a-1200', fund_id: 'f-res', debit_cents: 4321, credit_cents: 0, memo: null, vendor_id: null, property_id: null },
+      { id: 'jl-xf2', journal_entry_id: 'je-xf', line_number: 2, account_id: 'a-4200', fund_id: 'f-res', debit_cents: 0, credit_cents: 4321, memo: null, vendor_id: null, property_id: null });
+    const po = await M.buildProposedBudgetModel(sbb, { community_id: F.CID, target_year: 2027, as_of: '2026-09-30', fund: 'OPR', now: NOW });
+    const pr = await M.buildProposedBudgetModel(sbb, { community_id: F.CID, target_year: 2027, as_of: '2026-09-30', fund: 'RES', now: NOW });
+    const lineP = (m, num) => { for (const s of m.sections) for (const g of s.groups) for (const l of g.lines) if (l.account_number === num) return l; return null; };
+    const l52 = lineP(po, '5200');
+    check('proposed column is the draft budget line for line; the base-year column is the approved budget; change = proposed - approved', l52 && l52.values.prop === draftOf(5200) && l52.values.appr === apprOf(5200) && l52.values.chg === l52.values.prop - l52.values.appr, JSON.stringify(l52 && l52.values));
+    check('columns are banded by year (2026 budget, actual, projected | 2027 proposed, change) with no variance or percentage column', po.columns.map((c) => `${c.band}:${c.key}`).join() === '2026:appr,2026:ytd,2026:proj,2027:prop,2027:chg' && !po.columns.some((c) => c.is_var || c.is_pct));
+    const ot = po.transfers && po.transfers.groups[0].lines[0], rt = pr.transfers && pr.transfers.groups[0].lines[0];
+    check('a single-account reserve contribution is a transfer out of Operating and into Reserve, never revenue', ot && rt && ot.values.prop === -rt.values.prop && ot.values.prop < 0 && !lineP(pr, '4900') && /transfer to RES/.test(ot.account_name));
+    check('net change in fund balance = excess + transfers, every column', po.change && ['appr', 'ytd', 'proj', 'prop'].every((k) => po.change.values[k] === po.net.values[k] + po.transfers.total.values[k]));
+    const ib = await M.buildIncomeBudgetModel(sbb, { community_id: F.CID, period_end: '2026-09-30', fund: 'OPR', now: NOW });
+    const ibl = (() => { for (const s of ib.sections) for (const g of s.groups) for (const l of g.lines) if (l.account_number === '4200') return l; return null; })();
+    check('actuals stay in the fund they were posted to (never merged into the budget line of another fund): Operating actual matches the statement, Reserve shows its own line', lineP(po, '4200').values.ytd === ibl.values.ytd_actual && lineP(pr, '4200') && lineP(pr, '4200').values.ytd === 4321);
+    const ps = await M.buildProposedBudgetModel(sbb, { community_id: F.CID, target_year: 2027, as_of: '2026-09-30', fund: 'OPR', summary: true, now: NOW });
+    check('summary: category totals only, same totals as the detail', ps.sections.every((s) => s.groups.every((g) => g.kind !== 'category' || !g.lines.length)) && ps.change.values.prop === po.change.values.prop);
+    const htm = R.renderHtml(po, { mode: 'print', noStyle: true });
+    check('printed: draft lifecycle label, year bands, no variance legend', /DRAFT – PROPOSED, NOT APPROVED/.test(htm) && /<th colspan="3">2026<\/th>/.test(htm) && !/Variance: favorable/.test(R.renderDocument([po])));
+  }
+
   console.log('prior-period items recorded this month (conversion re-posts and flagged entries)');
   {
     F.seed(); const sbp = F.fakeClient(); const dbp = F.getDb();
