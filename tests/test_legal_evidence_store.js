@@ -23,12 +23,12 @@ function stub() {
     const q = {
       select() { return q; }, eq(k, v) { st.eqs.push([k, v]); return q; }, limit(x) { st.lim = x; return q; },
       insert(p) { st.op = 'insert'; st.payload = p; return q; }, update(p) { st.op = 'update'; st.payload = p; return q; },
-      single() { st.single = true; return q; },
+      single() { st.single = true; return q; }, maybeSingle() { st.maybe = true; return q; },
       then(res, rej) {
         let out;
         if (st.op === 'insert') { const row = Object.assign({ id: table === 'library_documents' ? 'doc-' + (++n) : undefined }, st.payload); db[table].push(row); out = { data: st.single ? row : [row], error: null }; }
         else if (st.op === 'update') { rows().forEach((r) => Object.assign(r, st.payload)); out = { data: null, error: null }; }
-        else { const r = rows(); out = { data: st.lim ? r.slice(0, st.lim) : r, error: null }; }
+        else { const r = rows(); out = { data: st.maybe ? (r[0] || null) : st.lim ? r.slice(0, st.lim) : r, error: null }; }
         return Promise.resolve(out).then(res, rej);
       },
     };
@@ -82,6 +82,17 @@ const base = { buffer: buf, filename: 'notice.pdf', mime: 'application/pdf', com
 
   const sum = ES.evidenceSummary(Object.assign({}, row, { fields: f3 }));
   ok(sum.restricted === true && sum.uses.length === 2 && !('text' in sum), 'summary shows provenance and restriction, never the extracted text');
+
+  // The shared index has no access filter: legal evidence must never be chunked
+  // into it, whichever reindex path calls (queue, per-doc, reindex-all).
+  const RI = require('../lib/library_reindex');
+  ok(RI.ASKED_SKIP_CATEGORIES.includes('legal_evidence') && RI.NEVER_INDEX_CATEGORIES.includes('legal_evidence'), 'legal evidence is skipped by the index queue');
+  let touched = false;
+  const noStorage = { storage: { from: () => ({ download: async () => { touched = true; return { data: null, error: { message: 'x' } }; } }) }, from: s.from };
+  const r1 = await RI.indexLibraryDoc(noStorage, null, { id: a.document_id, file_path: 'x.pdf', category: 'legal_evidence' });
+  ok(r1.reason === 'restricted_category' && !touched, 'indexing a legal evidence document is refused before the file is read');
+  const r2 = await RI.indexLibraryDoc(noStorage, null, { id: a.document_id, file_path: 'x.pdf' });
+  ok(r2.reason === 'restricted_category' && !touched, 'refused even when the caller omits the category (read from the row)');
 
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
