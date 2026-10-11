@@ -543,17 +543,25 @@
         <h2 class="sec">Budget vs Actual</h2>
         <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
           <div class="bva-mode" role="group" aria-label="View" style="display:inline-flex; border:1px solid var(--rule); border-radius:7px; overflow:hidden;">
-            <button type="button" data-mode="flat" style="padding:6px 12px; border:none; cursor:pointer; font-size:12.5px; font-weight:600;">Flat</button>
+            <button type="button" data-mode="statement" style="padding:6px 12px; border:none; cursor:pointer; font-size:12.5px; font-weight:600;">Statement</button>
+            <button type="button" data-mode="flat" style="padding:6px 12px; border:none; border-left:1px solid var(--rule); cursor:pointer; font-size:12.5px; font-weight:600;">Flat</button>
             <button type="button" data-mode="grouped" style="padding:6px 12px; border:none; border-left:1px solid var(--rule); cursor:pointer; font-size:12.5px; font-weight:600;">Grouped</button>
           </div>
           <span class="muted" style="font-size:12px;">Through</span>${dateInput('bva-end',dToday())}${goBtn('bva-go')}</div>
       </div><div id="bva-out" class="muted">Loading…</div></div>`;
-    let mode = 'flat'; try { if (localStorage.getItem('bvaMode') === 'grouped') mode = 'grouped'; } catch (_) {}
+    // Statement (default): the same statement model and renderer as the board package
+    // (lib/statements), every active fund, to the cent, so the two never disagree.
+    let mode = 'statement'; try { const m = localStorage.getItem('bvaMode'); if (m === 'grouped' || m === 'flat') mode = m; } catch (_) {}
     const paintMode = () => document.querySelectorAll('.bva-mode button').forEach((b)=>{ const on=b.dataset.mode===mode; b.style.background=on?'var(--navy)':'#fff'; b.style.color=on?'#fff':'var(--navy)'; b.setAttribute('aria-pressed', on?'true':'false'); });
     const run = async () => {
       const e=$('bva-end').value; if (!e) { $('bva-out').innerHTML='Pick a period end.'; return; }
       $('bva-out').innerHTML='Loading…';
       try {
+        if (mode === 'statement') {
+          const r = await fetch(`/api/financial-statements/${CID}/render?format=html&statements=income_budget&funds=active&period_end=${e}`);
+          const sj = await r.json(); if (!r.ok || sj.error) throw new Error(sj.error || 'statement failed');
+          $('bva-out').innerHTML = `<style>${sj.css || ''}</style>` + sj.html; return;
+        }
         // Flat is the unchanged request and renderer. Grouped adds ?grouped=1.
         const j = await (await fetch(`/api/books/budget-vs-actual?community_id=${CID}&period_end=${e}${mode==='grouped'?'&grouped=1':''}`)).json();
         if (j.error) throw new Error(j.error);
