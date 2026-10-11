@@ -100,18 +100,21 @@ t('recommend: a verified notice supports recovery; a deed-restriction matter tak
   assert.strictEqual(r.recommendation, 'recoverable'); assert.strictEqual(r.charge_category, 'attorney_fee_other');
   assert.ok(r.corrections.some((c) => /charge category attorney_fee_other/.test(c)));
 });
-t('recommend: notice content without mailing proof (blank certified-mail line) is review, never recoverable', () => {
+t('recommend: notice content without mailing proof is ready for the OWNER to approve, with the limitation stated (never claimed as mailing proof)', () => {
   const r = RS.recommend(base({ collection_notice_content: true, collection_cert_blank: true }), { charge_category: 'attorney_fee' });
-  assert.strictEqual(r.recommendation, 'review'); assert.ok(/mailing not verified/.test(r.reason));
-  assert.ok(r.missing.some((m) => /proof of certified mailing.*blank/.test(m)));
+  assert.strictEqual(r.outcome, 'ready'); assert.strictEqual(r.recommendation, 'recoverable');
+  assert.ok(!/mailing/.test(r.reason), 'the reason never asserts mailing');
+  assert.ok(r.limitations.some((m) => /Independent proof of mailing .* not verified .*certified-mail line on the letter is blank/.test(m)));
+  assert.strictEqual(r.evidence.mailing.length, 0, 'no mailing evidence is invented');
 });
-t('recommend: indirect support only (attorney statement, vendor bill) goes to human judgment, never recoverable', () => {
+t('recommend: indirect support only (attorney statement, vendor bill) is never recoverable; with the notice content on file it is ready with the limitation', () => {
   const f = base({ notice_indirect: true }); f.evidence = { content: [], mailing: [], delivery: [], indirect: [{ source: 'attorney report', fact: 'mailed via certified mail on March 25, 2025' }] };
   const r = RS.recommend(f, { charge_category: 'attorney_fee' });
-  assert.strictEqual(r.recommendation, 'review');
+  assert.strictEqual(r.recommendation, 'review'); assert.strictEqual(r.outcome, 'needs_information');
   assert.ok(r.judgment.some((j) => /indirect/.test(j)));
   const g = base({ collection_notice_content: true, notice_indirect: true }); g.evidence = { content: [{}], mailing: [], delivery: [], indirect: [{}] };
-  assert.ok(RS.recommend(g, {}).judgment.some((j) => /indirect mailing evidence/.test(j)));
+  const rg = RS.recommend(g, { charge_category: 'attorney_fee' });
+  assert.strictEqual(rg.outcome, 'ready'); assert.ok(rg.limitations.length === 1);
 });
 t('recommend: a mailing record without the notice itself is review (content not on file)', () => {
   assert.ok(/content not on file/.test(RS.recommend(base({ drv_notice_mailed: true, work_type: 'drv' }), {}).reason));
@@ -177,7 +180,7 @@ t('applyRecommendations: changes the draft, attests only verified recoveries; ho
   const { items, changed } = TEAM.applyRecommendations(d, findings);
   assert.ok(changed);
   const [a1, a2] = items[0].allocations;
-  assert.strictEqual(a1.charge_category, 'attorney_fee_other'); assert.strictEqual(a1.confirmed, true); assert.ok(/^Amanda \(AI\): recoverable/.test(a1.note));
+  assert.strictEqual(a1.charge_category, 'attorney_fee_other'); assert.strictEqual(a1.confirmed, true); assert.ok(/^Amanda \(AI\): READY FOR APPROVAL - notice verified\./.test(a1.note));
   assert.strictEqual(a2.classification, 'needs_review'); assert.strictEqual(a2.confirmed, false);
 });
 t('only Emma/Amanda drafts are AI-owned (a supervised review draft is not)', () => {

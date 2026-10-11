@@ -43,6 +43,9 @@
     if (!s) return inv.review && inv.review.revision ? pill('info', 'Draft saved') : pill('mute', state.summaries ? 'Not checked' : 'Checking…');
     if (s.error) return pill('bad', 'Couldn’t check');
     if (s.stale) return pill('warn', 'Draft out of date');
+    var ds = s.summary.decisions;
+    if (ds && ds.needs_decision.count) return pill('bad', ds.needs_decision.count + (ds.needs_decision.count === 1 ? ' needs a decision' : ' need a decision'));
+    if (ds && ds.needs_information.count) return pill('warn', ds.needs_information.count + ' need information');
     var n = s.summary.exceptions.count;
     if (n) return pill('warn', n + (n === 1 ? ' exception' : ' exceptions'));
     if (!s.summary.reconciled) return pill('bad', 'Doesn’t balance');
@@ -56,9 +59,11 @@
     $('lg-banner').innerHTML = d.schema_ready ? '' : '<div class="lg-banner">' + icon('info', { size: 16 }) + '<span>Suggestions are live, but drafts can’t be saved until migration 473 is applied (Documents → Migration status).</span></div>';
     if (!d.invoices.length) { $('lg-list').innerHTML = '<div class="tx-muted" style="padding:18px">No attorney invoices on file.</div>'; return; }
     var sm = state.summaries || {};
-    var need = d.invoices.filter(function (i) { var s = sm[i.id]; return !i.read_only && s && s.summary && s.summary.exceptions.count; }).length;
     var ready = d.invoices.filter(function (i) { var s = sm[i.id]; return !i.read_only && s && s.summary && s.summary.can_accept && s.source !== 'draft' && !s.stale; }).length;
-    $('lg-count').textContent = d.invoices.length + ' invoices' + (state.summaries ? ' · ' + need + ' with exceptions · ' + ready + ' ready to accept' : '') + (d.truncated ? ' · showing the newest ' + d.invoices.length : '');
+    var dsOf = function (i) { var s = sm[i.id]; return !i.read_only && s && s.summary && s.summary.decisions; };
+    var dec = d.invoices.filter(function (i) { var x = dsOf(i); return x && x.needs_decision.count; }).length;
+    var info = d.invoices.filter(function (i) { var x = dsOf(i); return x && !x.needs_decision.count && x.needs_information.count; }).length;
+    $('lg-count').textContent = d.invoices.length + ' invoices' + (state.summaries ? ' · ' + dec + ' need a decision · ' + info + ' need information · ' + ready + ' ready' : '') + (d.truncated ? ' · showing the newest ' + d.invoices.length : '');
     $('lg-list').innerHTML = d.invoices.map(function (i) {
       return '<a class="lg-row' + (i.id === currentId ? ' is-on' : '') + '" href="?id=' + encodeURIComponent(i.id) + '" data-id="' + esc(i.id) + '">' +
         '<div class="lg-row-top"><span class="lg-vendor">' + esc(i.vendor) + '</span><span class="lg-amt">' + money(i.total_cents) + '</span></div>' +
@@ -106,7 +111,7 @@
   }
   function approved() { var d = state.detail; return !!(d && d.review && d.review.status === 'approved'); }
   function editable() { var d = state.detail; return d && !d.read_only && d.schema_ready && !approved(); }
-  function markDirty() { state.dirty = true; renderRecon(); renderFooter(); }
+  function markDirty() { state.dirty = true; renderRecon(); renderFooter(); renderDecision(); }
 
   function lineLabel(ids) {
     var byId = {}; state.detail.lines.forEach(function (l) { byId[l.id] = l.line_number; });
@@ -132,9 +137,13 @@
         '<div class="lg-draftline">' + icon('info', { size: 14 }) + '<span>Showing: ' + esc(src) + '. Draft only: saving never posts to the books or charges an owner.</span>' +
         (d.draft && ed ? '<button type="button" class="lg-link" id="lg-reset">Start over from suggestions</button>' : '') + '</div>' +
       '</div>' +
-      '<div class="tx-card lg-recon" id="lg-recon"></div>' +
-      '<div class="tx-card lg-pdfread" id="lg-pdfread"></div>' +
-      '<div id="lg-items"></div>' +
+      '<div class="tx-card lg-decide" id="lg-decide" style="padding:18px;margin-top:14px"></div>' +
+      // Line-by-line work is for overrides only: Amanda prepares it and Kat checks it.
+      '<details class="tx-card lg-lines" id="lg-lines" style="padding:12px 18px;margin-top:14px"' + (state.linesOpen ? ' open' : '') + '><summary style="cursor:pointer;font-weight:600">Invoice lines and manual adjustments (' + state.items.length + ')</summary>' +
+        '<div class="lg-recon" id="lg-recon" style="margin-top:10px"></div>' +
+        '<div class="lg-pdfread" id="lg-pdfread"></div>' +
+        '<div id="lg-items"></div>' +
+      '</details>' +
       '<div class="lg-foot" id="lg-foot"></div>' +
       '<div class="tx-card lg-treat" id="lg-treat" style="padding:18px;margin-top:14px"></div>' +
       '<div class="tx-card lg-team" id="lg-team" style="padding:18px;margin-top:14px"></div>' +
@@ -154,7 +163,74 @@
       if (!confirm('Replace the working copy with fresh suggestions? Nothing is saved until you press Save draft.')) return;
       state.items = clone(d.suggestion.items); state.fromDraft = false; markDirty(); renderItems();
     });
-    renderPdfRead(); renderItems(); renderRecon(); renderFooter(); loadTreatment(); loadTeam(); loadEvidence();
+    $('lg-lines').addEventListener('toggle', function () { state.linesOpen = $('lg-lines').open; });
+    renderDecision(); renderPdfRead(); renderItems(); renderRecon(); renderFooter(); loadTreatment(); loadTeam(); loadEvidence();
+  }
+
+  // ---- Decision summary ------------------------------------------------------------
+  // What the owner decides on, without reading line forms: the proposed owner
+  // charges (one per invoice, property and category, as the ledger will show
+  // them), what stays with the association, and only the genuine open items,
+  // each as READY / NEEDS INFORMATION / NEEDS DECISION with its specific reason.
+  var STATE_PILL = { ready: ['ok', 'Classified'], needs_information: ['warn', 'Needs information'], needs_decision: ['bad', 'Needs decision'] };
+  function renderDecision() {
+    var box = $('lg-decide'), d = state.detail; if (!box || !d) return;
+    var S = TXLegalSuggest, items = state.items || [];
+    var sum = S.summarize(d.invoice.total_cents, items);
+    var ds = sum.decisions || { ready: { count: 0, cents: 0 }, needs_information: { count: 0, cents: 0 }, needs_decision: { count: 0, cents: 0 } };
+    var charges = {}, open = [], limits = {};
+    items.forEach(function (it) {
+      var st = S.decisionOf(it);
+      if (st.state !== 'ready') {
+        var a0 = (it.allocations || [])[0] || {};
+        open.push({ state: st.state, who: a0.property_label || (it.source_text || '').split(' - ')[0] || 'Invoice item', amount: it.amount_cents, reason: st.reason });
+        return;
+      }
+      (it.allocations || []).forEach(function (a) {
+        if (a.classification !== 'homeowner_recoverable') return;
+        var k = a.property_id + '|' + a.charge_category;
+        var c = charges[k] || (charges[k] = { who: a.property_label || 'Homeowner', owners: (a.owner_names || []).join(', '), desc: S.ownerDescription(a.charge_category, d.invoice.invoice_number), cents: 0, limited: false });
+        c.cents += Number(a.amount_cents || 0);
+        var o = S.amandaOutcome(a); if (o && o.limitation) { c.limited = true; limits[o.limitation] = (limits[o.limitation] || 0) + 1; }
+      });
+    });
+    var rows = Object.keys(charges).map(function (k) { return charges[k]; });
+    var team = state.team || {}, decs = team.decisions || [];
+    var latest = function (who) { return decs.filter(function (x) { return x.decided_by === who; }).sort(function (a, b) { return String(b.created_at).localeCompare(String(a.created_at)); })[0]; };
+    var am = latest('amanda'), kat = latest('kat');
+    var katIssues = kat && kat.evidence && kat.evidence.issues ? kat.evidence.issues : [];
+    var katReady = !!(kat && kat.evidence && kat.evidence.state === 'ready');
+    var html = '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><h3 style="margin:0">Decision summary</h3>' +
+      ['ready', 'needs_information', 'needs_decision'].map(function (k) { return ds[k].count ? pill(STATE_PILL[k][0], ds[k].count + ' ' + STATE_PILL[k][1].toLowerCase()) : ''; }).join(' ') + '</div>' +
+      '<div class="lg-facts" style="margin-top:8px"><span>Invoice ' + money(d.invoice.total_cents) + '</span><span>Proposed for homeowners ' + money(sum.recoverable.cents) + '</span><span>Stays with the association ' + money(sum.association.cents) + '</span>' +
+        (sum.bedrock.cents ? '<span>Bedrock ' + money(sum.bedrock.cents) + '</span>' : '') +
+        (ds.needs_information.cents + ds.needs_decision.cents ? '<span>Open ' + money(ds.needs_information.cents + ds.needs_decision.cents) + ' (stays association expense until resolved)</span>' : '') +
+        '<span>' + (sum.reconciled ? 'Reconciled to the cent' : 'Does not reconcile: ' + money(Math.abs(sum.difference_cents))) + '</span></div>';
+    // Posting readiness is Kat's verdict, separate from Amanda's classification:
+    // classified charges are not cleared for posting until Kat clears them.
+    var postingLine = !kat ? pill('mute', 'Posting: not verified') + ' Kat has not verified this invoice yet.'
+      : katReady ? pill('ok', 'Cleared for your approval') + ' Kat verified the accounting; nothing posts until you approve in Treatment.'
+      : pill('warn', 'Not cleared for posting') + ' ' + esc(katIssues.length ? katIssues.map(function (x) { return x.text; }).join(' ') : (kat.reason || 'Open items remain.'));
+    html += '<div style="font-size:13px;margin-top:10px">' + postingLine + '</div>';
+    if (rows.length) {
+      html += '<div style="margin-top:12px"><span class="tx-lbl">Proposed homeowner charges' + (katReady ? '' : ' (classified, not yet cleared for posting)') + ', as the ledger would show them</span>' +
+        '<table class="lg-tbl" style="width:100%;border-collapse:collapse;margin-top:6px;font-size:13px"><thead><tr><th style="text-align:left">Property</th><th style="text-align:left">Charge</th><th style="text-align:right">Amount</th></tr></thead><tbody>' +
+        rows.map(function (c) { return '<tr><td>' + esc(c.who) + (c.owners ? '<div class="tx-muted" style="font-size:12px">' + esc(c.owners) + '</div>' : '') + '</td><td>' + esc(c.desc) + (c.limited ? ' <span class="tx-muted" title="See the limitation below">*</span>' : '') + '</td><td style="text-align:right">' + money(c.cents) + '</td></tr>'; }).join('') +
+        '</tbody></table></div>';
+      var lk = Object.keys(limits);
+      if (lk.length) html += '<div style="font-size:12.5px;margin-top:6px;color:var(--tx-warn,#b45309)">* Limitation you accept by approving (' + lk.map(function (x) { return limits[x]; }).reduce(function (a, b) { return a + b; }, 0) + ' charge(s)): ' + esc(lk[0]) + '</div>';
+    }
+    if (open.length) {
+      html += '<div style="margin-top:12px"><span class="tx-lbl">Open items (' + open.length + ')</span>' + open.map(function (o) {
+        return '<div style="font-size:13px;margin-top:6px">' + pill(STATE_PILL[o.state][0], STATE_PILL[o.state][1]) + ' <strong>' + esc(o.who) + '</strong> ' + money(o.amount) + '<div class="tx-muted" style="font-size:12.5px">' + esc(o.reason || '') + '</div></div>';
+      }).join('') + '</div>';
+    }
+    if (katIssues.length) html += '<div style="margin-top:12px"><span class="tx-lbl">Kat (accounting)</span>' + katIssues.map(function (x) { return '<div style="font-size:13px;margin-top:4px">' + pill(STATE_PILL[x.state][0], STATE_PILL[x.state][1]) + ' ' + esc(x.text) + '</div>'; }).join('') + '</div>';
+    html += '<div class="tx-muted" style="font-size:12.5px;margin-top:10px">' +
+      (am ? 'Amanda: ' + esc(am.reason || '') + '. ' : 'Amanda has not run on this invoice yet. ') +
+      (kat ? 'Kat: ' + esc(kat.reason || '') + '. ' : '') +
+      'Evidence is under "Evidence retained in trustEd"; nothing posts until you approve in Treatment.</div>';
+    box.innerHTML = html;
   }
 
   // ---- The AI team (Emma -> Amanda -> Kat) -----------------------------------------
@@ -167,7 +243,7 @@
     var id = state.detail.invoice.id;
     var r = await TX.get('/api/legal-review/invoices/' + encodeURIComponent(id) + '/team');
     if (!state.detail || state.detail.invoice.id !== id) return;
-    state.team = r.ok ? r.data : { error: r.error }; renderTeam();
+    state.team = r.ok ? r.data : { error: r.error }; renderTeam(); renderDecision();
   }
   function renderTeam() {
     var box = $('lg-team'), t = state.team; if (!box || !t) return;

@@ -170,7 +170,7 @@ t('A: supported recovery runs end to end; attorney payment and recovery close on
   const d1 = await load(db, INV);
   const owner = d1.saved.items.flatMap((i) => i.allocations).find((a) => a.property_id === '11111111-1111-4111-8111-111111111111');
   assert.strictEqual(owner.classification, 'homeowner_recoverable'); assert.strictEqual(owner.charge_category, 'attorney_fee_other', 'deed-restriction fee category');
-  assert.ok(/content and certified mailing verified/.test(owner.note));
+  assert.ok(/^Amanda \(AI\): READY FOR APPROVAL - .* on file with certified mailing\./.test(owner.note));
   const amanda = db.tables.objective_decisions.find((x) => x.decided_by === 'amanda');
   const f = amanda.evidence.findings[0];
   assert.ok(f.evidence.content.length && f.evidence.mailing.length && !f.evidence.delivery.length, 'content and mailing verified; delivery not claimed');
