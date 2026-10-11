@@ -138,6 +138,7 @@
       '<div class="lg-foot" id="lg-foot"></div>' +
       '<div class="tx-card lg-treat" id="lg-treat" style="padding:18px;margin-top:14px"></div>' +
       '<div class="tx-card lg-team" id="lg-team" style="padding:18px;margin-top:14px"></div>' +
+      '<div class="tx-card lg-evid" id="lg-evid" style="padding:18px;margin-top:14px"></div>' +
       (d.events && d.events.length ? '<details class="lg-hist"><summary>History (' + d.events.length + ')</summary>' + d.events.map(function (e) {
         var s = e.summary || {};
         var what = { draft_saved: 'saved by', treatment_approved: 'treatment approved by', posting_recorded: 'posting recorded by', posting_reversed: 'posting reversed by', review_reopened: 'reopened by' }[e.action] || e.action;
@@ -153,7 +154,7 @@
       if (!confirm('Replace the working copy with fresh suggestions? Nothing is saved until you press Save draft.')) return;
       state.items = clone(d.suggestion.items); state.fromDraft = false; markDirty(); renderItems();
     });
-    renderPdfRead(); renderItems(); renderRecon(); renderFooter(); loadTreatment(); loadTeam();
+    renderPdfRead(); renderItems(); renderRecon(); renderFooter(); loadTreatment(); loadTeam(); loadEvidence();
   }
 
   // ---- The AI team (Emma -> Amanda -> Kat) -----------------------------------------
@@ -211,6 +212,38 @@
     state.teamRunning = false;
     if (!r.ok) { state.team = Object.assign({}, state.team, { error: 'Team run failed (' + r.error + ').' }); renderTeam(); return; }
     openInvoice(id, true);
+  }
+
+  // ---- Retained evidence (lib/legal/evidence_store) ---------------------------------
+  // The originals this review relied on, stored in trustEd: what each proves and
+  // what it leaves open. Restricted to staff; opens through a short-lived link.
+  async function loadEvidence() {
+    var box = $('lg-evid'); if (!box || !state.detail) return;
+    var id = state.detail.invoice.id;
+    box.innerHTML = '<div class="tx-skel" style="height:14px;width:40%"></div>';
+    var r = await TX.get('/api/legal-review/invoices/' + encodeURIComponent(id) + '/evidence');
+    if (!state.detail || state.detail.invoice.id !== id) return;
+    if (!r.ok) { box.innerHTML = '<div class="tx-err">' + icon('alert', { size: 16 }) + '<span>Couldn’t load the retained evidence: ' + esc(r.error) + '.</span></div>'; return; }
+    var ev = (r.data && r.data.evidence) || [];
+    var srcLabel = function (s) { return s.system === 'email' ? 'Email' + (s.sender ? ' from ' + s.sender : '') + (s.attachment ? ', attachment' : '') : s.system === 'onedrive' ? 'OneDrive' : s.system; };
+    box.innerHTML = '<span class="tx-lbl">Evidence retained in trustEd (' + ev.length + ')</span>' +
+      (ev.length ? ev.map(function (e) {
+        var u = e.uses[e.uses.length - 1] || { proves: [], uncertain: [] };
+        return '<details class="lg-hist" style="margin-top:8px"><summary>' + esc(e.title) + (e.doc_date ? ' <span class="tx-muted">· ' + esc(fmtDate(e.doc_date)) + '</span>' : '') +
+          (e.restricted ? ' <span class="tx-muted">· restricted</span>' : '') + '</summary>' +
+          '<div style="padding:6px 0 4px 0;font-size:13px">' +
+          '<div class="tx-muted">' + esc(e.sources.map(srcLabel).join('; ')) + '</div>' +
+          (u.proves.length ? '<div style="margin-top:6px"><b>Shows</b><ul style="margin:4px 0 0 18px">' + u.proves.map(function (x) { return '<li>' + esc(x) + '</li>'; }).join('') + '</ul></div>' : '') +
+          (u.uncertain.length ? '<div style="margin-top:6px"><b>Does not establish</b><ul style="margin:4px 0 0 18px">' + u.uncertain.map(function (x) { return '<li>' + esc(x) + '</li>'; }).join('') + '</ul></div>' : '') +
+          '<button type="button" class="lg-link" data-evid="' + esc(e.id) + '" style="margin-top:6px">Open original</button></div></details>';
+      }).join('') : '<div class="tx-muted" style="margin-top:6px;font-size:13px">No originals retained for this invoice yet.</div>');
+    box.querySelectorAll('[data-evid]').forEach(function (b) { b.addEventListener('click', function () { openEvidence(b.getAttribute('data-evid')); }); });
+  }
+  async function openEvidence(docId) {
+    var w = window.open('', '_blank');
+    var r = await TX.get('/api/legal-review/evidence/' + encodeURIComponent(docId) + '/file');
+    if (r.ok && r.data && r.data.url) { if (w) w.location = r.data.url; else location.href = r.data.url; }
+    else { if (w) w.close(); alert('Couldn’t open the original: ' + (r.error || 'not found')); }
   }
 
   // ---- Approve Treatment (migration 508) -------------------------------------------

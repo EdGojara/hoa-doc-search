@@ -124,6 +124,7 @@ const CHECKS = [
   'tests/test_reconcile.js',
   'tests/test_bedrock_ops.js',
   'tests/test_legal_billback.js',
+  'tests/test_legal_evidence_store.js',
   'tests/test_legal_treatment.js',
   'tests/test_accounting_ownership.js',
   'tests/test_legal_team.js',
