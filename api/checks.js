@@ -47,8 +47,8 @@ function handleErr(res, feature, err) {
 
 router.get('/payable', async (req, res) => {
   try {
-    const { invoices, held_opening_ap } = await listPayableInvoices({ community_id: req.query.community_id });
-    res.json({ invoices, held_opening_ap });
+    const { invoices, held_opening_ap, financials_not_enabled } = await listPayableInvoices({ community_id: req.query.community_id });
+    res.json({ invoices, held_opening_ap, financials_not_enabled: financials_not_enabled || null });
   } catch (err) { handleErr(res, 'payable', err); }
 });
 

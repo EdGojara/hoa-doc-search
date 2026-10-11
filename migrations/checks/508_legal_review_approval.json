@@ -1,0 +1,234 @@
+{
+  "migration": "508_legal_review_approval.sql",
+  "summary": "Legal Invoice Review step 3, Approve Treatment. Adds the 'approved' review state (locked against draft saves; approved_revision/by/at), a 'bedrock_corporate' allocation classification, review events for approval / posting / reversal / reopen, and legal_invoice_postings: one row per posted allocation linking the AP invoice line(s), journal entry and homeowner ledger charge, with a partial unique index allowing one live posting per allocation (the idempotency control). Approval and every posting claim commit in one transaction (legal_review_approve); claims are worked under a lease (legal_posting_claim); unique indexes on the bill-back journal entry and the owner charge / correction per posting are the database backstop; a pending claim that cannot finish can be cancelled. Replaces legal_review_save_draft (same body as 474 plus an approved_locked refusal) and adds legal_review_approve / legal_review_reopen. Changes no existing row; posts nothing.",
+  "requires": [
+    "473_legal_invoice_review.sql",
+    "474_legal_invoice_extractions.sql"
+  ],
+  "preflight": [
+    {
+      "name": "the review status CHECK being replaced is named legal_invoice_reviews_status_check (473 inline default)",
+      "sql": "SELECT count(*)::int FROM pg_constraint WHERE conrelid = 'legal_invoice_reviews'::regclass AND conname = 'legal_invoice_reviews_status_check'",
+      "expect": 1
+    },
+    {
+      "name": "the allocation classification CHECK being replaced is named legal_invoice_allocations_classification_check",
+      "sql": "SELECT count(*)::int FROM pg_constraint WHERE conrelid = 'legal_invoice_allocations'::regclass AND conname = 'legal_invoice_allocations_classification_check'",
+      "expect": 1
+    },
+    {
+      "name": "the event action CHECK being replaced is named legal_invoice_review_events_action_check",
+      "sql": "SELECT count(*)::int FROM pg_constraint WHERE conrelid = 'legal_invoice_review_events'::regclass AND conname = 'legal_invoice_review_events_action_check'",
+      "expect": 1
+    },
+    {
+      "name": "every existing review is a draft (the new shape CHECK holds)",
+      "sql": "SELECT count(*)::int FROM legal_invoice_reviews WHERE status <> 'draft'",
+      "expect": 0
+    },
+    {
+      "name": "every existing allocation classification is still allowed",
+      "sql": "SELECT count(*)::int FROM legal_invoice_allocations WHERE classification NOT IN ('homeowner_recoverable', 'association_legal_expense', 'bedrock_corporate', 'needs_review')",
+      "expect": 0
+    },
+    {
+      "name": "every existing event action is still allowed",
+      "sql": "SELECT count(*)::int FROM legal_invoice_review_events WHERE action NOT IN ('draft_saved', 'treatment_approved', 'posting_recorded', 'posting_reversed', 'review_reopened')",
+      "expect": 0
+    },
+    {
+      "name": "legal_invoice_postings does not exist yet",
+      "sql": "SELECT count(*)::int FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'legal_invoice_postings'",
+      "expect": 0
+    },
+    {
+      "name": "the 474 draft-save function is present (extraction_id column exists)",
+      "sql": "SELECT count(*)::int FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'legal_invoice_items' AND column_name = 'extraction_id'",
+      "expect": 1
+    },
+    {
+      "name": "no two posted ap_billback journal entries share a source_reference (the new unique index can build)",
+      "sql": "SELECT count(*)::int FROM (SELECT source_reference FROM journal_entries WHERE source_module = 'ap_billback' AND status = 'posted' AND source_reference IS NOT NULL GROUP BY source_reference HAVING count(*) > 1) d",
+      "expect": 0
+    },
+    {
+      "name": "no homeowner transaction carries a legal posting key yet",
+      "sql": "SELECT count(*)::int FROM homeowner_transactions WHERE raw_row_jsonb->>'legal_posting_id' IS NOT NULL OR raw_row_jsonb->>'reverses_legal_posting_id' IS NOT NULL",
+      "expect": 0
+    },
+    {
+      "name": "ownership_tenures exists (456)",
+      "sql": "SELECT count(*)::int FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'ownership_tenures'",
+      "expect": 1
+    }
+  ],
+  "expected_changes": [
+    "legal_invoice_reviews: status CHECK widened to draft / approved; adds approved_revision, approved_by, approved_at (nullable) and legal_review_approved_shape (an approved review names its approver, time and the exact revision approved).",
+    "legal_invoice_allocations: classification CHECK adds bedrock_corporate.",
+    "legal_invoice_review_events: action CHECK adds treatment_approved, posting_recorded, posting_reversed, review_reopened.",
+    "Creates legal_invoice_postings (review, allocation, item, AP invoice, AP line ids, community, revision, kind homeowner_chargeback / bedrock_recovery, property, amount > 0, debit/credit accounts, posting date, status pending / posted / reversed, journal entry, homeowner transaction, reversal entry + owner adjustment + reason + who/when). FKs RESTRICT. Shape CHECKs: a homeowner chargeback names a property; posted carries its entry (and owner charge); reversed carries the reversal, reason, who and when. Partial unique index: one pending/posted row per allocation. RLS on; nothing for anon / authenticated; SELECT, INSERT, UPDATE to service_role.",
+    "Replaces legal_review_save_draft: identical to 474 plus a refusal ('approved_locked') for an approved review.",
+    "Adds legal_review_approve (locks the exact revision the approver saw and inserts every posting claim in the same transaction, each checked against its active allocation's kind, amount, property and owner tenure; re-approving the same revision is a no-op success) and legal_review_reopen (only once every posting is reversed; reason of 5+ characters on the audit trail). EXECUTE to service_role only.",
+    "Adds legal_posting_claim (a 10-minute lease per posting row: one worker at a time; a lapsed lease may be taken over). Adds partial unique indexes uq_journal_entries_ap_billback_source (one posted ap_billback entry per source_reference), uq_homeowner_txn_legal_posting and uq_homeowner_txn_legal_posting_reversal (one owner charge / one owner correction per posting). legal_invoice_postings also carries tenure_id (the owner approved), claim_token / claimed_at, and a 'cancelled' status with its own shape CHECK.",
+    "No existing row changes; no posting, journal entry or homeowner charge is written."
+  ],
+  "objects": {
+    "added": [
+      "column:legal_invoice_postings.allocation_id",
+      "column:legal_invoice_postings.amount_cents",
+      "column:legal_invoice_postings.ap_invoice_id",
+      "column:legal_invoice_postings.ap_invoice_line_ids",
+      "column:legal_invoice_postings.claim_token",
+      "column:legal_invoice_postings.claimed_at",
+      "column:legal_invoice_postings.community_id",
+      "column:legal_invoice_postings.created_at",
+      "column:legal_invoice_postings.credit_account_id",
+      "column:legal_invoice_postings.debit_account_id",
+      "column:legal_invoice_postings.homeowner_transaction_id",
+      "column:legal_invoice_postings.id",
+      "column:legal_invoice_postings.item_id",
+      "column:legal_invoice_postings.journal_entry_id",
+      "column:legal_invoice_postings.kind",
+      "column:legal_invoice_postings.posted_at",
+      "column:legal_invoice_postings.posted_by",
+      "column:legal_invoice_postings.posting_date",
+      "column:legal_invoice_postings.property_id",
+      "column:legal_invoice_postings.reversal_homeowner_transaction_id",
+      "column:legal_invoice_postings.reversal_journal_entry_id",
+      "column:legal_invoice_postings.reversal_reason",
+      "column:legal_invoice_postings.reversed_at",
+      "column:legal_invoice_postings.reversed_by",
+      "column:legal_invoice_postings.review_id",
+      "column:legal_invoice_postings.review_revision",
+      "column:legal_invoice_postings.status",
+      "column:legal_invoice_postings.tenure_id",
+      "column:legal_invoice_reviews.approved_at",
+      "column:legal_invoice_reviews.approved_by",
+      "column:legal_invoice_reviews.approved_revision",
+      "constraint:legal_invoice_postings.legal_invoice_postings_allocation_id_fkey",
+      "constraint:legal_invoice_postings.legal_invoice_postings_amount_cents_check",
+      "constraint:legal_invoice_postings.legal_invoice_postings_ap_invoice_id_fkey",
+      "constraint:legal_invoice_postings.legal_invoice_postings_community_id_fkey",
+      "constraint:legal_invoice_postings.legal_invoice_postings_credit_account_id_fkey",
+      "constraint:legal_invoice_postings.legal_invoice_postings_debit_account_id_fkey",
+      "constraint:legal_invoice_postings.legal_invoice_postings_homeowner_transaction_id_fkey",
+      "constraint:legal_invoice_postings.legal_invoice_postings_item_id_fkey",
+      "constraint:legal_invoice_postings.legal_invoice_postings_journal_entry_id_fkey",
+      "constraint:legal_invoice_postings.legal_invoice_postings_kind_check",
+      "constraint:legal_invoice_postings.legal_invoice_postings_pkey",
+      "constraint:legal_invoice_postings.legal_invoice_postings_property_id_fkey",
+      "constraint:legal_invoice_postings.legal_invoice_postings_reversal_homeowner_transaction_id_fkey",
+      "constraint:legal_invoice_postings.legal_invoice_postings_reversal_journal_entry_id_fkey",
+      "constraint:legal_invoice_postings.legal_invoice_postings_review_id_fkey",
+      "constraint:legal_invoice_postings.legal_invoice_postings_status_check",
+      "constraint:legal_invoice_postings.legal_invoice_postings_tenure_id_fkey",
+      "constraint:legal_invoice_postings.legal_posting_cancelled_shape",
+      "constraint:legal_invoice_postings.legal_posting_homeowner_has_property",
+      "constraint:legal_invoice_postings.legal_posting_posted_shape",
+      "constraint:legal_invoice_postings.legal_posting_reversed_shape",
+      "constraint:legal_invoice_reviews.legal_review_approved_shape",
+      "function:legal_posting_claim",
+      "function:legal_review_approve",
+      "function:legal_review_reopen",
+      "index:idx_legal_invoice_postings_invoice",
+      "index:idx_legal_invoice_postings_property",
+      "index:legal_invoice_postings_pkey",
+      "index:uq_homeowner_txn_legal_posting",
+      "index:uq_homeowner_txn_legal_posting_reversal",
+      "index:uq_journal_entries_ap_billback_source",
+      "index:uq_legal_invoice_postings_live_allocation",
+      "table:legal_invoice_postings"
+    ],
+    "changed": [
+      "constraint:legal_invoice_allocations.legal_invoice_allocations_classification_check",
+      "constraint:legal_invoice_review_events.legal_invoice_review_events_action_check",
+      "constraint:legal_invoice_reviews.legal_invoice_reviews_status_check",
+      "function:legal_review_save_draft"
+    ],
+    "removed": []
+  },
+  "row_changes": {
+    "legal_invoice_reviews": 0,
+    "legal_invoice_items": 0,
+    "legal_invoice_allocations": 0,
+    "legal_invoice_review_events": 0,
+    "journal_entries": 0,
+    "homeowner_transactions": 0
+  },
+  "protected": [
+    {
+      "table": "legal_invoice_items",
+      "order_by": "id"
+    },
+    {
+      "table": "legal_invoice_allocations",
+      "order_by": "id"
+    },
+    {
+      "table": "legal_invoice_review_events",
+      "order_by": "id"
+    }
+  ],
+  "verify": [
+    {
+      "name": "review status CHECK allows approved",
+      "sql": "SELECT count(*)::int FROM pg_constraint WHERE conrelid = 'legal_invoice_reviews'::regclass AND conname = 'legal_invoice_reviews_status_check' AND pg_get_constraintdef(oid) LIKE '%approved%'",
+      "expect": 1
+    },
+    {
+      "name": "allocation classification CHECK allows bedrock_corporate",
+      "sql": "SELECT count(*)::int FROM pg_constraint WHERE conrelid = 'legal_invoice_allocations'::regclass AND conname = 'legal_invoice_allocations_classification_check' AND pg_get_constraintdef(oid) LIKE '%bedrock_corporate%'",
+      "expect": 1
+    },
+    {
+      "name": "event action CHECK allows the posting actions",
+      "sql": "SELECT count(*)::int FROM pg_constraint WHERE conrelid = 'legal_invoice_review_events'::regclass AND conname = 'legal_invoice_review_events_action_check' AND pg_get_constraintdef(oid) LIKE '%posting_reversed%'",
+      "expect": 1
+    },
+    {
+      "name": "one live posting per allocation (partial unique index present)",
+      "sql": "SELECT count(*)::int FROM pg_indexes WHERE schemaname = 'public' AND indexname = 'uq_legal_invoice_postings_live_allocation' AND indexdef LIKE '%UNIQUE%'",
+      "expect": 1
+    },
+    {
+      "name": "draft save refuses an approved review",
+      "sql": "SELECT count(*)::int FROM pg_proc WHERE proname = 'legal_review_save_draft' AND prosrc LIKE '%approved_locked%'",
+      "expect": 1
+    },
+    {
+      "name": "approve and reopen functions present",
+      "sql": "SELECT count(*)::int FROM pg_proc WHERE proname IN ('legal_review_approve', 'legal_review_reopen')",
+      "expect": 2
+    },
+    {
+      "name": "no posting written",
+      "sql": "SELECT count(*)::int FROM legal_invoice_postings",
+      "expect": 0
+    },
+    {
+      "name": "every review still a draft",
+      "sql": "SELECT count(*)::int FROM legal_invoice_reviews WHERE status <> 'draft'",
+      "expect": 0
+    },
+    {
+      "name": "service_role can read, insert and update postings; anon and authenticated cannot read them",
+      "sql": "SELECT (CASE WHEN has_table_privilege('service_role', 'legal_invoice_postings', 'SELECT') AND has_table_privilege('service_role', 'legal_invoice_postings', 'INSERT') AND has_table_privilege('service_role', 'legal_invoice_postings', 'UPDATE') AND NOT has_table_privilege('anon', 'legal_invoice_postings', 'SELECT') AND NOT has_table_privilege('authenticated', 'legal_invoice_postings', 'SELECT') THEN 1 ELSE 0 END)::int",
+      "expect": 1
+    },
+    {
+      "name": "bill-back entry and owner charge backstop indexes present",
+      "sql": "SELECT count(*)::int FROM pg_indexes WHERE schemaname = 'public' AND indexname IN ('uq_journal_entries_ap_billback_source', 'uq_homeowner_txn_legal_posting', 'uq_homeowner_txn_legal_posting_reversal') AND indexdef LIKE '%UNIQUE%'",
+      "expect": 3
+    },
+    {
+      "name": "claim lease function present",
+      "sql": "SELECT count(*)::int FROM pg_proc WHERE proname = 'legal_posting_claim'",
+      "expect": 1
+    },
+    {
+      "name": "only service_role may execute approve, claim and reopen",
+      "sql": "SELECT (CASE WHEN has_function_privilege('service_role', 'legal_review_approve(uuid, integer, text, jsonb, jsonb)', 'EXECUTE') AND NOT has_function_privilege('anon', 'legal_review_approve(uuid, integer, text, jsonb, jsonb)', 'EXECUTE') AND NOT has_function_privilege('authenticated', 'legal_posting_claim(uuid, uuid, text)', 'EXECUTE') AND NOT has_function_privilege('authenticated', 'legal_review_reopen(uuid, text, text)', 'EXECUTE') THEN 1 ELSE 0 END)::int",
+      "expect": 1
+    }
+  ]
+}

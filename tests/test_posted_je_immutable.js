@@ -145,6 +145,7 @@ function seed() {
     journal_entries: [], journal_entry_lines: [], journal_entry_corrections: [], journal_entry_edits: [],
     ap_invoices: [], ap_invoice_lines: [], ap_invoice_approvals: [],
     ar_charges: [], homeowner_ledger_entries: [], ar_charge_types: [], community_billing_policies: [],
+    legal_invoice_postings: [],   // read by the legal-postings guard on re-code (migration 508)
   };
 }
 const je = (id, o) => db.journal_entries.push({ id, community_id: C, status: 'posted', reverses_je_id: null, void_reversal_je_id: null, source_module: 'ap_invoice', ...o });

@@ -318,7 +318,8 @@ check('autopay: a CHECK cannot be recorded against an auto-drafted bill (no seco
   const inv = { id: 'i1', vendor_id: 'nrg', vendor_invoice_number: '302 008 342 079', is_ach_autopay: true, invoice_date: '2026-09-17' };
   // The vendor has a W-9 on file, so the W-9 gate passes and the AUTOPAY guard is what's tested.
   const vendor = { id: 'nrg', name: 'NRG Business', w9_on_file: true, is_mud: false };
-  const fake = () => ({ from: (t) => { const q = { select() { return q; }, in() { return Promise.resolve({ data: [t === 'vendors' ? vendor : inv], error: null }); }, eq() { return q; } }; return q; } });
+  const fake = () => ({ from: (t) => { const q = { select() { return q; }, in() { return Promise.resolve({ data: [t === 'vendors' ? vendor : inv], error: null }); }, eq() { return q; },
+    maybeSingle() { return Promise.resolve({ data: t === 'communities' ? { id: 'c', name: 'Canyon Gate', management_status: 'active', books_of_record: 'trusted', financials_active: true } : null, error: null }); } }; return q; } });
   require.cache[sbPath] = { id: sbPath, filename: sbPath, loaded: true, exports: { createClient: fake } };
   delete require.cache[enPath];
   try {

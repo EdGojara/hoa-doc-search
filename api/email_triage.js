@@ -1863,6 +1863,8 @@ router.post('/:id/add-to-payables', express.json(), async (req, res) => {
       .eq('id', req.params.id).maybeSingle();
     if (!m) return res.status(404).json({ error: 'not_found' });
     if (!m.community_id) return res.status(400).json({ error: 'no_community', detail: 'Link this email to a community first — a payable has to belong to the right association.' });
+    { const own = await require('../lib/accounting/ownership').accountingStatusFor(supabase, m.community_id);
+      if (!own.enabled) return res.status(409).json({ error: 'financials_not_enabled', code: own.code, detail: own.reason }); }
 
     const ex = m.extracted || {};
     const { singleAmountCents } = require('../lib/accounting/record_vendor_payment');

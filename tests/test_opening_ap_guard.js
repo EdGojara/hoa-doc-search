@@ -46,6 +46,7 @@ function reset() {
       { id: 'v-gym', name: 'GymTech360', remit_address_line1: null, remit_city: null, remit_state: null, remit_zip: null },
     ],
     bank_accounts: [{ id: 'ba-1', community_id: 'c-cg', is_check_disbursement: true, gl_account_number: '1000', next_check_number: 1052 }],
+    communities: [{ id: 'c-cg', name: 'Canyon Gate', management_status: 'active', books_of_record: 'trusted', financials_active: true }],
   };
   const CG = 'c-cg';
   const inv = (id, vendor_id, number, date, cents, je, extra = {}) => ({ id, community_id: CG, vendor_id, vendor_invoice_number: number, invoice_date: date, due_date: null,

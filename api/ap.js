@@ -742,7 +742,10 @@ router.get('/ed-queue', async (req, res) => {
       .limit(500);
     if (error) throw error;
     const waiting = [];
+    // Only associations whose books trustEd keeps (lib/accounting/ownership).
+    const notOurs = await require('../lib/accounting/ownership').financialsDisabledIds(supabase);
     for (const inv of (invs || [])) {
+      if (notOurs.has(inv.community_id)) continue;
       const appr = inv.ap_invoice_approvals || [];
       const mgr = appr.find((a) => a.action === 'approved');
       const released = appr.find((a) => a.action === 'released_for_payment');
@@ -854,7 +857,9 @@ router.get('/manager-queue', async (req, res) => {
 
     const { approvalPath } = require('../lib/ap/approval_policy');
     const out = [];
+    const notOurs = await require('../lib/accounting/ownership').financialsDisabledIds(supabase);
     for (const inv of (invs || [])) {
+      if (notOurs.has(inv.community_id)) continue; // books not kept in trustEd
       if ((inv.ap_invoice_approvals || []).some((a) => a.action === 'approved')) continue; // a manager already vouched
       const open = creditFor(inv);
       let path = inv.approval_path;
@@ -1066,9 +1071,11 @@ router.post('/invoices/:id/approve', express.json(), async (req, res) => {
     const isAdmin = ctx.role === 'admin';
     const notes = (req.body || {}).notes || null;
 
-    const { data: inv } = await supabase.from('ap_invoices').select('id, status, total_cents, posting_journal_entry_id').eq('id', id).maybeSingle();
+    const { data: inv } = await supabase.from('ap_invoices').select('id, community_id, status, total_cents, posting_journal_entry_id').eq('id', id).maybeSingle();
     if (!inv) return res.status(404).json({ error: 'not_found' });
     if (inv.status === 'voided') return res.status(400).json({ error: 'voided', detail: 'This invoice was voided.' });
+    { const own = await require('../lib/accounting/ownership').accountingStatusFor(supabase, inv.community_id);
+      if (!own.enabled) return res.status(409).json({ error: 'financials_not_enabled', code: own.code, detail: own.reason }); }
     if (!inv.posting_journal_entry_id) return res.status(400).json({ error: 'not_coded', detail: 'Code the expense account first — an uncoded bill has no journal entry to approve.' });
 
     const { data: prior } = await supabase.from('ap_invoice_approvals')
@@ -1185,6 +1192,9 @@ router.post('/invoices/:id/void', express.json(), async (req, res) => {
     if (!inv) return res.status(404).json({ error: 'not_found' });
     if (inv.status === 'voided') return res.json({ ok: true, already_voided: true });
     if (inv.status === 'paid' || (inv.amount_paid_cents || 0) > 0) return res.status(400).json({ error: 'cannot_void_paid', detail: 'A payment is recorded on this invoice — void the payment first.' });
+    // A legal bill-back posted from this invoice would survive the void and
+    // leave the owner charged for a voided bill (migration 508).
+    if (await require('../lib/legal/treatment').livePostingsForInvoice(supabase, id)) return res.status(409).json({ error: 'legal_postings_live', detail: 'Homeowner legal charges were posted from this invoice. Reverse them in Legal Invoice Review first.' });
     const reason = String((req.body || {}).reason || 'Duplicate / discarded').slice(0, 200);
     if (inv.posting_journal_entry_id) {
       try { const { voidJournalEntry } = require('../lib/accounting/posting'); await voidJournalEntry({ journal_entry_id: inv.posting_journal_entry_id, void_reason: `AP invoice voided: ${reason}` }); }
@@ -1206,6 +1216,8 @@ router.post('/invoices/:id/mark-paid', express.json(), async (req, res) => {
     const { data: inv } = await supabase.from('ap_invoices').select('*').eq('id', id).maybeSingle();
     if (!inv) return res.status(404).json({ error: 'not_found' });
     if (inv.status === 'voided') return res.status(400).json({ error: 'voided', detail: 'This invoice was voided.' });
+    { const own = await require('../lib/accounting/ownership').accountingStatusFor(supabase, inv.community_id);
+      if (!own.enabled) return res.status(409).json({ error: 'financials_not_enabled', code: own.code, detail: own.reason }); }
     const owed = (inv.total_cents || 0) - (inv.amount_paid_cents || 0);
     if (owed <= 0) return res.status(400).json({ error: 'nothing_due', detail: 'This invoice is already fully paid.' });
     // Staff can override the amount when a credit/debit adjusts what was actually
@@ -1458,6 +1470,7 @@ router.post('/invoices/:id/lines/:lineId/code', express.json(), async (req, res)
     // Once the bill is PAID the entry is a committed cash transaction: correct it
     // by reversal, with a name and a reason. (Ed 2026-09-04.)
     const posted = !!inv.posting_journal_entry_id;
+    if (await require('../lib/legal/treatment').livePostingsForInvoice(supabase, id)) return res.status(409).json({ error: 'legal_postings_live', detail: 'Homeowner legal charges were posted from this invoice. Reverse them in Legal Invoice Review before re-coding its lines.' });
     const notYetPaid = !inv.paid_at;
     let ctx = null;
     if (posted) {
@@ -1712,6 +1725,7 @@ router.post('/invoices/:id/lines/:lineId/split', express.json(), async (req, res
     }
 
     const posted = !!inv.posting_journal_entry_id;
+    if (await require('../lib/legal/treatment').livePostingsForInvoice(supabase, id)) return res.status(409).json({ error: 'legal_postings_live', detail: 'Homeowner legal charges were posted from this invoice. Reverse them in Legal Invoice Review before splitting its lines.' });
     let ctx = null;
     if (posted) {
       if (!reason) return res.status(400).json({ error: 'reason_required', detail: "This bill's accrual is already posted. Splitting a line reverses that entry and posts a new one — say why." });

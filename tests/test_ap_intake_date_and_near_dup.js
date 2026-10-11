@@ -23,7 +23,7 @@ const assert = require('assert');
 const Module = require('module');
 
 // ---- in-memory fake: eq filters only; unknown reads come back empty ----------
-const db = { ap_invoices: [], ap_invoice_lines: [], updates: [] };
+const db = { ap_invoices: [], ap_invoice_lines: [], updates: [], communities: [{ id: 'c-waterview', name: 'Waterview Estates', management_status: 'active', books_of_record: 'trusted', financials_active: true }] };
 function fakeClient() {
   return {
     from(table) {
