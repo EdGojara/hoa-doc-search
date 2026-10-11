@@ -77,6 +77,8 @@ function configure(db, { budgetSign = 1 } = {}) {
   const pr = R.renderHtml(opr, { mode: 'print' });
   check('print shows the transfers block, its total and the net change line', /Interfund transfers in \(out\)/.test(pr) && /Total interfund transfers/.test(pr) && /Net change in fund balance/.test(pr) && /Planned reserve funding/.test(pr));
   check('the management note renders in the header notes', pr.includes(notes[0]));
+  const tblock = pr.slice(pr.indexOf('Interfund transfers in (out)'), pr.indexOf('Net change in fund balance'));
+  check('transfer variances are untoned (an unmade contribution is never shown as favorable)', tblock.length > 0 && !/ fav| unfav/.test(tblock));
   const xr = R.xlsxRows(opr).map((x) => (Array.isArray(x) ? x : x.cells)).map((c) => c[0]);
   check('xlsx rows include the transfers block and net change', xr.includes('Interfund transfers in (out)') && xr.includes('Net change in fund balance'));
 
