@@ -1,0 +1,128 @@
+{
+  "migration": "510_accounting_runs.sql",
+  "summary": "Kat's controlled monthly accounting runs: community_accounting_automation (per community + process on/off, auto-post off), accounting_runs (one live run per community + process + month; prepared -> approved -> posted, or held / failed; the stored preview is what posts; posted runs are final) and accounting_run_events (append-only audit trail). Seeds Canyon Gate only: recognition and interest enabled, auto-post off. Creates no journal entry or ledger row.",
+  "requires": [
+    "469_payments_safe_foundation.sql"
+  ],
+  "preflight": [
+    {
+      "name": "accounting_runs does not exist yet",
+      "sql": "SELECT count(*)::int FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'accounting_runs'",
+      "expect": 0
+    },
+    {
+      "name": "Canyon Gate exists",
+      "sql": "SELECT count(*)::int FROM communities WHERE id = 'a0000000-0000-4000-8000-000000000003'",
+      "expect": 1
+    }
+  ],
+  "expected_changes": [
+    "New tables community_accounting_automation, accounting_runs, accounting_run_events with guard triggers and service_role grants.",
+    "Two automation rows for Canyon Gate (recognition, interest), enabled, auto_post false."
+  ],
+  "objects": {
+    "added": [
+      "column:accounting_run_events.actor",
+      "column:accounting_run_events.created_at",
+      "column:accounting_run_events.detail",
+      "column:accounting_run_events.event",
+      "column:accounting_run_events.id",
+      "column:accounting_run_events.run_id",
+      "column:accounting_runs.approved_at",
+      "column:accounting_runs.approved_by",
+      "column:accounting_runs.community_id",
+      "column:accounting_runs.created_at",
+      "column:accounting_runs.error",
+      "column:accounting_runs.exceptions",
+      "column:accounting_runs.held_reason",
+      "column:accounting_runs.id",
+      "column:accounting_runs.period_month",
+      "column:accounting_runs.posted_at",
+      "column:accounting_runs.posted_by",
+      "column:accounting_runs.prepared_at",
+      "column:accounting_runs.prepared_by",
+      "column:accounting_runs.preview",
+      "column:accounting_runs.process",
+      "column:accounting_runs.result",
+      "column:accounting_runs.run_date",
+      "column:accounting_runs.status",
+      "column:accounting_runs.totals",
+      "column:accounting_runs.updated_at",
+      "column:community_accounting_automation.auto_post",
+      "column:community_accounting_automation.community_id",
+      "column:community_accounting_automation.enabled",
+      "column:community_accounting_automation.process",
+      "column:community_accounting_automation.settings",
+      "column:community_accounting_automation.updated_at",
+      "column:community_accounting_automation.updated_by",
+      "constraint:accounting_run_events.accounting_run_events_event_check",
+      "constraint:accounting_run_events.accounting_run_events_pkey",
+      "constraint:accounting_run_events.accounting_run_events_run_fkey",
+      "constraint:accounting_runs.accounting_runs_approved_check",
+      "constraint:accounting_runs.accounting_runs_community_fkey",
+      "constraint:accounting_runs.accounting_runs_failed_check",
+      "constraint:accounting_runs.accounting_runs_held_check",
+      "constraint:accounting_runs.accounting_runs_period_check",
+      "constraint:accounting_runs.accounting_runs_pkey",
+      "constraint:accounting_runs.accounting_runs_posted_check",
+      "constraint:accounting_runs.accounting_runs_process_check",
+      "constraint:accounting_runs.accounting_runs_status_check",
+      "constraint:community_accounting_automation.community_accounting_automation_community_fkey",
+      "constraint:community_accounting_automation.community_accounting_automation_pkey",
+      "constraint:community_accounting_automation.community_accounting_automation_process_check",
+      "function:accounting_run_events_append_only",
+      "function:accounting_runs_guard",
+      "index:accounting_run_events_pkey",
+      "index:accounting_runs_pkey",
+      "index:community_accounting_automation_pkey",
+      "index:ix_accounting_run_events_run",
+      "index:ix_accounting_runs_community",
+      "index:uq_accounting_runs_live",
+      "table:accounting_run_events",
+      "table:accounting_runs",
+      "table:community_accounting_automation",
+      "trigger:accounting_run_events.trg_accounting_run_events_append_only",
+      "trigger:accounting_runs.trg_accounting_runs_guard"
+    ],
+    "removed": [],
+    "changed": []
+  },
+  "row_changes": {
+    "journal_entries": 0,
+    "journal_entry_lines": 0,
+    "homeowner_transactions": 0,
+    "community_accounting_automation": 2
+  },
+  "protected": [
+    {
+      "table": "journal_entry_lines",
+      "order_by": "id"
+    },
+    {
+      "table": "homeowner_transactions",
+      "order_by": "id"
+    }
+  ],
+  "verify": [
+    {
+      "name": "three tables exist",
+      "sql": "SELECT count(*)::int FROM information_schema.tables WHERE table_schema = 'public' AND table_name IN ('community_accounting_automation', 'accounting_runs', 'accounting_run_events')",
+      "expect": 3
+    },
+    {
+      "name": "only Canyon Gate is enabled, never auto-posting",
+      "sql": "SELECT count(*)::int FROM community_accounting_automation WHERE enabled AND community_id <> 'a0000000-0000-4000-8000-000000000003'",
+      "expect": 0
+    },
+    {
+      "name": "Canyon Gate has both processes, auto_post off",
+      "sql": "SELECT count(*)::int FROM community_accounting_automation WHERE community_id = 'a0000000-0000-4000-8000-000000000003' AND enabled AND NOT auto_post",
+      "expect": 2
+    },
+    {
+      "name": "no runs yet",
+      "sql": "SELECT count(*)::int FROM accounting_runs",
+      "expect": 0
+    }
+  ]
+}

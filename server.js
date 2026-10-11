@@ -1144,6 +1144,7 @@ app.use('/api/gl', glRouter);
 // Financial statement package (PR C): one statement model + one renderer for web,
 // PDF, XLSX, CSV and board packets; drill-down; balance-sheet mapping.
 app.use('/api/financial-statements', require('./api/financial_statements'));
+app.use('/api/accounting-runs', require('./api/accounting_runs'));
 app.get('/admin/financial-statements', (req, res) => {
   res.sendFile(require('path').join(__dirname, 'public', 'financial-statements.html'));
 });
