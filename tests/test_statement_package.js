@@ -299,7 +299,7 @@ const find = (model, num) => { for (const s of model.sections) for (const g of s
     // bs / ib were built on the fresh fixture at the top of this file. Pinned content hashes: the
     // income statement is unchanged since #109; the balance sheet changed exactly once, when its
     // mapping state key was renamed final_ready -> mapping_complete (Ed 2026-10-10).
-    check('Drama Creek (converted): statement content hashes are the pinned values (income re-pinned 2026-10-11 for the seven-column board layout; balance sheet unchanged)', bs.snapshot_sha256.startsWith('87999b8f716a') && ib.snapshot_sha256.startsWith('5faa01095644') && bs.period.books_start === '2026-01-01', `${bs.snapshot_sha256} ${ib.snapshot_sha256}`);
+    check('Drama Creek (converted): statement content hashes are the pinned values (income re-pinned 2026-10-11: seven-column board layout and the fund name in the subtitle; balance sheet unchanged)', bs.snapshot_sha256.startsWith('87999b8f716a') && ib.snapshot_sha256.startsWith('89ffb221dcb3') && bs.period.books_start === '2026-01-01', `${bs.snapshot_sha256} ${ib.snapshot_sha256}`);
   }
 
   console.log('balance-sheet subcategories and interfund elimination');
@@ -478,6 +478,48 @@ const find = (model, num) => { for (const s of model.sections) for (const g of s
     check('the package document is landscape letter', /@page\{size:Letter landscape/.test(doc));
     const ibPrint = R.renderHtml(ibr, { mode: 'print', noStyle: true });
     check('printed income statement: a column band row and each GL account under its category with a category subtotal', /class="band"/.test(ibPrint) && /Current month/.test(ibPrint) && /Annual/.test(ibPrint) && (!ibr.sections[0].groups.some((g) => g.kind === 'category') || /class="cattot"/.test(ibPrint)));
+  }
+
+  console.log('interfund transfers (reserve contribution)');
+  {
+    F.seed(); const sbt = F.fakeClient(); const dbt = F.getDb();
+    for (const a of dbt.chart_of_accounts) if (a.account_number === '5900' || a.account_number === '4900') a.account_subtype = 'interfund_transfer';
+    const opr = await M.buildIncomeBudgetModel(sbt, { community_id: F.CID, period_end: '2026-09-30', fund: 'OPR', now: NOW });
+    const res = await M.buildIncomeBudgetModel(sbt, { community_id: F.CID, period_end: '2026-09-30', fund: 'RES', now: NOW });
+    const inSections = (m, n) => m.sections.some((s) => s.groups.some((g) => g.lines.some((l) => l.account_number === n)));
+    check('a transfer is neither revenue nor expense: it prints in its own section', !inSections(opr, '5900') && opr.transfers && opr.transfers.groups[0].lines[0].account_number === '5900' && !inSections(res, '4900') && res.transfers.groups[0].lines[0].account_number === '4900');
+    const out = opr.transfers.total.values, inn = res.transfers.total.values;
+    check('signed as the fund sees it: Operating transfer out is negative, Reserve transfer in is positive', out.mtd_actual === -1250000 && out.mtd_budget === -1250000 && inn.mtd_actual === 1250000 && inn.mtd_budget === 1250000, JSON.stringify({ out, inn }));
+    check('net change in fund balance = excess of revenue over expenses + transfers', opr.change.values.ytd_actual === opr.net.values.ytd_actual + out.ytd_actual && opr.net.label === 'Excess (deficit) of revenue over expenses' && opr.change.label === 'Net change in fund balance');
+    // An unpaid contribution: actual 0 against a budget is unfavorable to the receiving fund.
+    const unpaid = { mtd_actual: 0, mtd_budget: 1250000 }; const v = unpaid.mtd_actual - unpaid.mtd_budget;
+    check('variance on a transfer is actual - budget (an unpaid contribution is unfavorable to Reserve)', inn.mtd_var === inn.mtd_actual - inn.mtd_budget && v < 0);
+    const pr = R.renderHtml(res, { mode: 'print', noStyle: true });
+    check('printed: the transfer section and the net change row follow the excess of revenue over expenses', pr.indexOf('Excess (deficit) of revenue over expenses') < pr.indexOf('Interfund transfers') && pr.indexOf('Interfund transfers') < pr.indexOf('Net change in fund balance'));
+    const ra = await M.buildReserveActivityModel(sbt, { community_id: F.CID, period_end: '2026-09-30', fund: 'RES', now: NOW });
+    const roll = ra.sections.find((s) => s.key === 'rollforward');
+    check('reserve roll-forward counts the transfer in and still ties', roll.groups.some((g) => /Interfund transfers/.test(g.label)) && !ra.warnings.length && roll.groups[0].values.ytd + roll.groups.slice(1).reduce((t, g) => t + g.values.ytd, 0) === roll.total.values.ytd);
+  }
+
+  console.log('prior-period items recorded this month (conversion re-posts and flagged entries)');
+  {
+    F.seed(); const sbp = F.fakeClient(); const dbp = F.getDb();
+    const base = await M.buildIncomeBudgetModel(sbp, { community_id: F.CID, period_end: '2026-09-30', fund: 'OPR', now: NOW });
+    const line = (m, n) => { for (const s of m.sections) for (const g of s.groups) for (const l of g.lines) if (l.account_number === n) return l; return null; };
+    // a pre-cutover invoice re-posted at the cutover date, and a flagged correction of pre-cutover spending
+    const push = (ref, extra, acct, d, c) => { const id = `je-pp-${ref}`; dbp.journal_entries.push({ id, community_id: F.CID, reference: ref, posting_date: '2026-09-01', source_module: 'manual', status: 'posted', void_reversal_je_id: null, reverses_je_id: null, description: ref, ...extra });
+      dbp.journal_entry_lines.push({ id: `${id}-1`, journal_entry_id: id, line_number: 1, account_id: `a-${acct}`, fund_id: 'f-opr', debit_cents: d, credit_cents: c, memo: null, vendor_id: null, property_id: null },
+        { id: `${id}-2`, journal_entry_id: id, line_number: 2, account_id: 'a-2000', fund_id: 'f-opr', debit_cents: c, credit_cents: d, memo: null, vendor_id: null, property_id: null }); };
+    push('CONV-DC-REPOST-JE1', {}, 5210, 40000, 0);
+    push('JE-PP-1', { prior_period_through: '2026-07-31' }, 5400, 0, 15000);
+    const pp = await M.buildIncomeBudgetModel(sbp, { community_id: F.CID, period_end: '2026-09-30', fund: 'OPR', now: NOW });
+    check('prior-period items print in their own section, signed by fund effect (re-post expense -400.00, correction credit +150.00)', pp.prior_period && pp.prior_period.total.values.mtd_actual === -25000
+      && pp.prior_period.groups[0].lines.map((l) => `${l.account_number}:${l.values.mtd_actual}`).join() === '5210:-40000,5400:15000', JSON.stringify(pp.prior_period && pp.prior_period.groups[0].lines.map((l) => l.values)));
+    check('the month excludes them from operating results; year to date keeps them in their accounts', line(pp, '5210').values.mtd_actual === (line(base, '5210') ? line(base, '5210').values.mtd_actual : 0)
+      && line(pp, '5210').values.ytd_actual === (line(base, '5210') ? line(base, '5210').values.ytd_actual : 0) + 40000);
+    check('net change in fund balance = excess of revenue over expenses + prior-period items', pp.change && pp.change.values.mtd_actual === pp.net.values.mtd_actual - 25000 && pp.net.label === 'Excess (deficit) of revenue over expenses');
+    const ppr = R.renderHtml(pp, { mode: 'print', noStyle: true });
+    check('printed: the prior-period section sits between the excess and the net change, with its note', ppr.indexOf('Excess (deficit) of revenue over expenses') < ppr.search(/<tr class="sec"><td[^>]*>Prior-period items recorded this month/) && ppr.search(/<tr class="sec"><td[^>]*>Prior-period items recorded this month/) < ppr.indexOf('Net change in fund balance') && pp.notes.some((n) => n.code === 'prior_period'));
   }
 
   console.log(`\n${pass} passed, ${fail} failed`);
