@@ -165,6 +165,10 @@ t('applyRecommendations: changes the draft, attests only verified recoveries; ho
   assert.strictEqual(a1.charge_category, 'attorney_fee_other'); assert.strictEqual(a1.confirmed, true); assert.ok(/^Amanda \(AI\): recoverable/.test(a1.note));
   assert.strictEqual(a2.classification, 'needs_review'); assert.strictEqual(a2.confirmed, false);
 });
+t('only Emma/Amanda drafts are AI-owned (a supervised review draft is not)', () => {
+  assert.ok(TEAM.AI_ACTORS.has(TEAM.EMMA) && TEAM.AI_ACTORS.has(TEAM.AMANDA));
+  assert.ok(!TEAM.AI_ACTORS.has('claude-ai-review@bedrocktx.com'));
+});
 t('amandaResearch: a draft a person saved is never rewritten; the recommendation is recorded only', async () => {
   let saved = false;
   const db = { rpc: async () => { saved = true; return { data: { ok: true, revision: 9 } }; } };
