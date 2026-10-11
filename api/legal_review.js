@@ -25,6 +25,8 @@
 //   POST /invoices/:id/approve-treatment  OWNER: lock the reviewed revision
 //                                     and post its accounting (migration 508)
 //   POST /postings/:id/reverse        OWNER: reverse one posting, with reason
+//   POST /postings/:id/cancel         OWNER: cancel a pending posting that cannot
+//                                     finish (reverses anything it wrote)
 //   POST /invoices/:id/reopen         OWNER: reopen an approved review once
 //                                     every posting is reversed, with reason
 //
@@ -38,7 +40,7 @@
 const express = require('express');
 const { createClient } = require('@supabase/supabase-js');
 const { safeErrorMessage } = require('./_safe_error');
-const { requireStaff, requireAdmin } = require('./_require_admin');
+const { requireStaff, requireOwner } = require('./_require_admin');
 const T = require('../lib/legal/treatment');
 const R = require('../lib/legal/review_data');
 
@@ -155,8 +157,8 @@ router.post('/invoices/:id/read-pdf', express.json({ limit: '4kb' }), async (req
   }
 });
 
-async function treatmentPayload(d) {
-  const plan = await T.planTreatment(supabase, d);
+async function treatmentPayload(d, postingDate) {
+  const plan = await T.planTreatment(supabase, d, { postingDate: postingDate || undefined });
   const ready = await T.postingsReady(supabase);
   return { plan, postings: ready ? await T.loadPostings(supabase, d.invoice.id) : [], migration_508: ready };
 }
@@ -167,7 +169,8 @@ router.get('/invoices/:id/treatment', async (req, res) => {
     if (!UUID.test(req.params.id)) return res.status(400).json({ error: 'invoice_id_invalid' });
     const d = await R.loadInvoice(supabase, req.params.id);
     if (!d) return res.status(404).json({ error: 'not_a_legal_invoice' });
-    res.json(await treatmentPayload(d));
+    const pd = req.query.posting_date && /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.posting_date)) ? String(req.query.posting_date) : null;
+    res.json(await treatmentPayload(d, pd));
   } catch (err) {
     console.error('[legal-review] treatment plan failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
@@ -175,7 +178,7 @@ router.get('/invoices/:id/treatment', async (req, res) => {
 });
 
 router.post('/invoices/:id/approve-treatment', express.json({ limit: '4kb' }), async (req, res) => {
-  const admin = await requireAdmin(req, res); if (!admin) return;
+  const admin = await requireOwner(req, res); if (!admin) return;
   try {
     if (!UUID.test(req.params.id)) return res.status(400).json({ error: 'invoice_id_invalid' });
     const d = await R.loadInvoice(supabase, req.params.id);
@@ -196,7 +199,7 @@ router.post('/invoices/:id/approve-treatment', express.json({ limit: '4kb' }), a
 });
 
 router.post('/postings/:id/reverse', express.json({ limit: '4kb' }), async (req, res) => {
-  const admin = await requireAdmin(req, res); if (!admin) return;
+  const admin = await requireOwner(req, res); if (!admin) return;
   try {
     if (!UUID.test(req.params.id)) return res.status(400).json({ error: 'posting_id_invalid' });
     const out = await T.reversePosting(supabase, req.params.id, {
@@ -211,8 +214,21 @@ router.post('/postings/:id/reverse', express.json({ limit: '4kb' }), async (req,
   }
 });
 
+router.post('/postings/:id/cancel', express.json({ limit: '4kb' }), async (req, res) => {
+  const admin = await requireOwner(req, res); if (!admin) return;
+  try {
+    if (!UUID.test(req.params.id)) return res.status(400).json({ error: 'posting_id_invalid' });
+    const out = await T.cancelPendingPosting(supabase, req.params.id, { actor: admin.email, actorUserId: admin.user && admin.user.id, reason: req.body && req.body.reason });
+    console.log('[legal-review] cancel posting', JSON.stringify({ posting: req.params.id, actor: admin.email, ok: out.ok, error: out.error || null }));
+    res.status(out.ok ? 200 : 400).json(out);
+  } catch (err) {
+    console.error('[legal-review] cancel failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
 router.post('/invoices/:id/reopen', express.json({ limit: '4kb' }), async (req, res) => {
-  const admin = await requireAdmin(req, res); if (!admin) return;
+  const admin = await requireOwner(req, res); if (!admin) return;
   try {
     if (!UUID.test(req.params.id)) return res.status(400).json({ error: 'invoice_id_invalid' });
     const out = await T.reopenReview(supabase, req.params.id, { actor: admin.email, reason: req.body && req.body.reason });

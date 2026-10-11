@@ -101,7 +101,7 @@
     state.items.forEach(function (it) { it._staffDate = it.service_date_source === 'staff'; it._wasException = TXLegalSuggest.triageItem(it).status === 'exception'; });
     state.open = {}; state.showAll = false;
     state.fromDraft = !!d.draft;
-    state.dirty = false; state.errors = []; state.notice = notice;
+    state.dirty = false; state.errors = []; state.notice = notice; state.postDate = null; state.treatErr = null;
     renderDetail();
   }
   function approved() { var d = state.detail; return !!(d && d.review && d.review.status === 'approved'); }
@@ -171,7 +171,7 @@
   function renderTreatment() {
     var box = $('lg-treat'), t = state.treatment, d = state.detail; if (!box || !t) return;
     var p = t.plan, owner = user.role === 'admin', isApproved = approved();
-    var live = (t.postings || []).filter(function (x) { return x.status !== 'reversed'; });
+    var live = (t.postings || []).filter(function (x) { return x.status === 'pending' || x.status === 'posted'; });
     var props = {}; (d.draft ? d.draft.items : []).forEach(function (it) { it.allocations.forEach(function (a) { if (a.property_id) props[a.property_id] = a.property_label; }); });
     var head = '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap"><h3 style="margin:0">Treatment</h3>' +
       (isApproved ? pill('ok', 'Approved by ' + (d.review.approved_by || 'owner') + ', ' + fmtTime(d.review.approved_at)) : p.ready ? pill('info', 'Ready for the owner to approve') : pill('warn', 'Not ready')) + '</div>' +
@@ -183,26 +183,37 @@
       return '<tr><td>' + esc(KIND[x.kind]) + '</td><td>' + esc(x.property_id ? props[x.property_id] || 'property' : 'n/a') + '</td><td style="text-align:right">' + money(x.amount_cents) + '</td></tr>'; }).join('') + '</tbody></table>' : '';
     var posted = (t.postings || []).length ? '<table class="tx-table" style="margin-top:10px"><thead><tr><th>Posted</th><th>Property</th><th style="text-align:right">Amount</th><th>Status</th><th></th></tr></thead><tbody>' + t.postings.map(function (x) {
       return '<tr><td>' + esc(KIND[x.kind]) + ' · ' + esc(fmtDate(x.posting_date)) + '</td><td>' + esc(x.property_id ? props[x.property_id] || 'property' : 'n/a') + '</td><td style="text-align:right">' + money(x.amount_cents) + '</td><td>' +
-        (x.status === 'reversed' ? pill('mute', 'Reversed: ' + (x.reversal_reason || '')) : x.status === 'posted' ? pill('ok', 'Posted') : pill('warn', 'Pending')) + '</td><td>' +
-        (owner && x.status === 'posted' ? '<button type="button" class="lg-link lg-rev" data-id="' + esc(x.id) + '">Reverse</button>' : '') + '</td></tr>'; }).join('') + '</tbody></table>' : '';
+        (x.status === 'reversed' ? pill('mute', 'Reversed: ' + (x.reversal_reason || '')) : x.status === 'cancelled' ? pill('mute', 'Cancelled: ' + (x.reversal_reason || '')) : x.status === 'posted' ? pill('ok', 'Posted') : pill('warn', 'Pending')) + '</td><td>' +
+        (owner && x.status === 'posted' && !state.approving ? '<button type="button" class="lg-link lg-rev" data-id="' + esc(x.id) + '">Reverse</button>' : '') +
+        (owner && x.status === 'pending' && !state.approving ? '<button type="button" class="lg-link lg-cancel" data-id="' + esc(x.id) + '">Cancel</button>' : '') + '</td></tr>'; }).join('') + '</tbody></table>' : '';
     var migration = t.migration_508 ? '' : '<div class="tx-muted" style="font-size:13px">Approval turns on once migration 508 is applied.</div>';
     var btns = '';
     if (owner && t.migration_508 && !d.read_only) {
-      if (!isApproved) btns = '<button type="button" class="tx-btn tx-btn--pri" id="lg-approve"' + (p.ready && !state.dirty && !state.approving ? '' : ' disabled') + '>' + (state.approving ? 'Posting…' : 'Approve treatment') + '</button>';
-      else if (live.some(function (x) { return x.status === 'pending'; })) btns = '<button type="button" class="tx-btn tx-btn--pri" id="lg-approve">Finish posting</button>';
+      if (!isApproved) btns = (p.postings && p.postings.length ? '<label style="display:flex;gap:6px;align-items:center;font-size:13px;margin-right:auto"><span class="tx-lbl">Posting date</span><input type="date" class="lg-in" id="lg-postdate" value="' + esc(state.postDate || p.posting_date || '') + '"></label>' : '') +
+        '<button type="button" class="tx-btn tx-btn--pri" id="lg-approve"' + (p.ready && !state.dirty && !state.approving ? '' : ' disabled') + '>' + (state.approving ? 'Posting…' : 'Approve treatment') + '</button>';
+      else if (live.some(function (x) { return x.status === 'pending'; })) btns = '<button type="button" class="tx-btn tx-btn--pri" id="lg-approve"' + (state.approving ? ' disabled' : '') + '>' + (state.approving ? 'Posting…' : 'Finish posting') + '</button>';
       else if (!live.length) btns = '<button type="button" class="tx-btn tx-btn--sec" id="lg-reopen">Reopen review (correction)</button>';
     }
     box.innerHTML = head + sums + blocking + planned + posted + migration + (state.treatErr ? '<div class="tx-err">' + icon('alert', { size: 16 }) + '<span>' + esc(state.treatErr) + '</span></div>' : '') +
-      (btns ? '<div style="display:flex;justify-content:flex-end;margin-top:12px">' + btns + '</div>' : '');
+      (btns ? '<div style="display:flex;justify-content:flex-end;align-items:center;gap:10px;margin-top:12px">' + btns + '</div>' : '');
     var ap = $('lg-approve'); if (ap) ap.addEventListener('click', approveTreatment);
     var ro = $('lg-reopen'); if (ro) ro.addEventListener('click', reopenReview);
     box.querySelectorAll('.lg-rev').forEach(function (b) { b.addEventListener('click', function () { reversePosting(b.getAttribute('data-id')); }); });
+    box.querySelectorAll('.lg-cancel').forEach(function (b) { b.addEventListener('click', function () { cancelPosting(b.getAttribute('data-id')); }); });
+    var pd = $('lg-postdate');
+    if (pd) pd.addEventListener('change', async function () {
+      // Re-plan for the chosen date: the server checks it is open and after the accrual / cutover.
+      state.postDate = pd.value || null;
+      var r = await TX.get('/api/legal-review/invoices/' + encodeURIComponent(state.detail.invoice.id) + '/treatment' + (state.postDate ? '?posting_date=' + encodeURIComponent(state.postDate) : ''));
+      if (r.ok) { state.treatment = r.data; renderTreatment(); }
+    });
   }
   async function approveTreatment() {
     var d = state.detail, p = state.treatment.plan;
+    if (state.approving) return;
     if (!confirm('Approve this treatment and post it?\n\nOwners: ' + money(p.totals.homeowner_cents) + '\nAssociation: ' + money(p.totals.association_cents) + '\nBedrock: ' + money(p.totals.bedrock_cents) + '\n\nThis does not approve or pay the attorney’s bill.')) return;
     state.approving = true; state.treatErr = null; renderTreatment();
-    var r = await TX.post('/api/legal-review/invoices/' + encodeURIComponent(d.invoice.id) + '/approve-treatment', { revision: d.revision });
+    var r = await TX.post('/api/legal-review/invoices/' + encodeURIComponent(d.invoice.id) + '/approve-treatment', { revision: d.revision, posting_date: state.postDate || undefined });
     state.approving = false;
     if (r.ok) { openInvoice(d.invoice.id, true); return; }
     var b = r.body || {};
@@ -214,6 +225,13 @@
     if (!reason || reason.trim().length < 5) return;
     var r = await TX.post('/api/legal-review/postings/' + encodeURIComponent(id) + '/reverse', { reason: reason.trim() });
     state.treatErr = r.ok ? null : ((r.body && r.body.detail) || 'Not reversed (' + r.error + ').');
+    if (r.ok) openInvoice(state.detail.invoice.id, true); else renderTreatment();
+  }
+  async function cancelPosting(id) {
+    var reason = prompt('Why is this pending posting being cancelled? Anything it already posted is reversed. (kept on the audit trail)');
+    if (!reason || reason.trim().length < 5) return;
+    var r = await TX.post('/api/legal-review/postings/' + encodeURIComponent(id) + '/cancel', { reason: reason.trim() });
+    state.treatErr = r.ok ? null : ((r.body && r.body.detail) || 'Not cancelled (' + r.error + ').');
     if (r.ok) openInvoice(state.detail.invoice.id, true); else renderTreatment();
   }
   async function reopenReview() {

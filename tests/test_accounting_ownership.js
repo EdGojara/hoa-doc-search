@@ -52,7 +52,7 @@ t('every financial chokepoint asks the ownership rule', () => {
     'lib/ap/intake.js': /accounting\/ownership'\)\.accountingStatusFor/,
     'api/email_triage.js': /accounting\/ownership'\)\.accountingStatusFor/,
     'lib/accounting/ap_engine.js': /ownership'\)\.assertFinancialsEnabled\(supabase, community_id, 'Creating a payable'\)[\s\S]*ownership'\)\.assertFinancialsEnabled\(supabase, community_id, 'Recording a vendor payment'\)/,
-    'lib/accounting/posting.js': /ap_posting \|\| \['ap_invoice', 'payment_intake', 'ap_billback', 'ap_payment'\]\.includes\(source_module\)[\s\S]{0,120}assertFinancialsEnabled/,
+    'lib/accounting/posting.js': /ap_posting \|\| \['ap_invoice', 'ap_billback'\]\.includes\(source_module\)[\s\S]{0,120}assertFinancialsEnabled/,
     'lib/accounting/check_run.js': /ownership'\)\.accountingStatusFor[\s\S]*ownership'\)\.accountingStatusFor/,
     'lib/accounting/record_vendor_payment.js': /ownership'\)\.accountingStatusFor/,
   };

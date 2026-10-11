@@ -23,7 +23,11 @@
 --
 -- Additive and safe to re-run. Ed applies it; the app reads the new state only
 -- once it exists (until then Approve Treatment reports the migration missing).
+-- Applied through the in-app runner (lib/migrations/apply_one.js) with
+-- migrations/checks/508_legal_review_approval.json; the runner reloads the
+-- PostgREST schema cache after COMMIT.
 -- ============================================================================
+BEGIN;
 
 -- 1. Review state ------------------------------------------------------------
 ALTER TABLE legal_invoice_reviews DROP CONSTRAINT IF EXISTS legal_invoice_reviews_status_check;
@@ -43,7 +47,7 @@ ALTER TABLE legal_invoice_allocations ADD CONSTRAINT legal_invoice_allocations_c
 -- 3. Events ------------------------------------------------------------------
 ALTER TABLE legal_invoice_review_events DROP CONSTRAINT IF EXISTS legal_invoice_review_events_action_check;
 ALTER TABLE legal_invoice_review_events ADD CONSTRAINT legal_invoice_review_events_action_check
-  CHECK (action IN ('draft_saved', 'treatment_approved', 'posting_recorded', 'posting_reversed', 'review_reopened'));
+  CHECK (action IN ('draft_saved', 'treatment_approved', 'posting_recorded', 'posting_reversed', 'posting_cancelled', 'review_reopened'));
 
 -- 4. Postings ----------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS legal_invoice_postings (
@@ -61,7 +65,10 @@ CREATE TABLE IF NOT EXISTS legal_invoice_postings (
   debit_account_id          uuid NOT NULL REFERENCES chart_of_accounts(id) ON DELETE RESTRICT,
   credit_account_id         uuid NOT NULL REFERENCES chart_of_accounts(id) ON DELETE RESTRICT,
   posting_date              date NOT NULL,
-  status                    text NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'posted', 'reversed')),
+  tenure_id                 uuid REFERENCES ownership_tenures(id) ON DELETE RESTRICT,
+  status                    text NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'posted', 'reversed', 'cancelled')),
+  claim_token               uuid,
+  claimed_at                timestamptz,
   journal_entry_id          uuid REFERENCES journal_entries(id) ON DELETE RESTRICT,
   homeowner_transaction_id  uuid REFERENCES homeowner_transactions(id) ON DELETE RESTRICT,
   posted_by                 text,
@@ -72,9 +79,12 @@ CREATE TABLE IF NOT EXISTS legal_invoice_postings (
   reversed_by               text,
   reversed_at               timestamptz,
   created_at                timestamptz NOT NULL DEFAULT now(),
-  CONSTRAINT legal_posting_homeowner_has_property CHECK (kind <> 'homeowner_chargeback' OR property_id IS NOT NULL),
-  CONSTRAINT legal_posting_posted_shape CHECK (status = 'pending' OR (journal_entry_id IS NOT NULL AND posted_at IS NOT NULL
+  CONSTRAINT legal_posting_homeowner_has_property CHECK (kind <> 'homeowner_chargeback' OR (property_id IS NOT NULL AND tenure_id IS NOT NULL)),
+  CONSTRAINT legal_posting_posted_shape CHECK (status NOT IN ('posted', 'reversed') OR (journal_entry_id IS NOT NULL AND posted_at IS NOT NULL
     AND (kind <> 'homeowner_chargeback' OR homeowner_transaction_id IS NOT NULL))),
+  -- A pending claim that cannot finish (period closed, owner changed) is
+  -- cancelled with a reason; anything it already wrote is reversed first.
+  CONSTRAINT legal_posting_cancelled_shape CHECK (status <> 'cancelled' OR (reversal_reason IS NOT NULL AND reversed_by IS NOT NULL AND reversed_at IS NOT NULL)),
   CONSTRAINT legal_posting_reversed_shape CHECK (status <> 'reversed' OR (reversal_journal_entry_id IS NOT NULL
     AND reversal_reason IS NOT NULL AND reversed_by IS NOT NULL AND reversed_at IS NOT NULL
     AND (kind <> 'homeowner_chargeback' OR reversal_homeowner_transaction_id IS NOT NULL)))
@@ -88,6 +98,31 @@ CREATE INDEX IF NOT EXISTS idx_legal_invoice_postings_property ON legal_invoice_
 ALTER TABLE legal_invoice_postings ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON legal_invoice_postings FROM PUBLIC, anon, authenticated;
 GRANT SELECT, INSERT, UPDATE ON legal_invoice_postings TO service_role;
+
+-- Database backstops behind the claim: one live bill-back journal entry per
+-- posting, one owner charge and one owner correction per posting. Two
+-- concurrent workers can never both write.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_journal_entries_ap_billback_source
+  ON journal_entries (source_reference) WHERE source_module = 'ap_billback' AND status = 'posted' AND source_reference IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_homeowner_txn_legal_posting
+  ON homeowner_transactions ((raw_row_jsonb->>'legal_posting_id')) WHERE raw_row_jsonb->>'legal_posting_id' IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_homeowner_txn_legal_posting_reversal
+  ON homeowner_transactions ((raw_row_jsonb->>'reverses_legal_posting_id')) WHERE raw_row_jsonb->>'reverses_legal_posting_id' IS NOT NULL;
+
+-- Lease: one worker at a time per posting row. A lease older than 10 minutes
+-- is treated as abandoned (a crashed request) and may be taken over.
+CREATE OR REPLACE FUNCTION legal_posting_claim(p_posting_id uuid, p_token uuid, p_from_status text)
+RETURNS boolean LANGUAGE plpgsql SET search_path = public AS $$
+DECLARE v_n integer;
+BEGIN
+  UPDATE legal_invoice_postings SET claim_token = p_token, claimed_at = now()
+   WHERE id = p_posting_id AND status = p_from_status
+     AND (claimed_at IS NULL OR claimed_at < now() - interval '10 minutes' OR claim_token = p_token);
+  GET DIAGNOSTICS v_n = ROW_COUNT;
+  RETURN v_n = 1;
+END $$;
+REVOKE ALL ON FUNCTION legal_posting_claim(uuid, uuid, text) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION legal_posting_claim(uuid, uuid, text) TO service_role;
 
 -- 5. Draft save refuses an approved review ----------------------------------
 -- Same body as migration 474, plus the lock check right after the row lock.
@@ -170,12 +205,17 @@ END $$;
 REVOKE ALL ON FUNCTION legal_review_save_draft(uuid, uuid, integer, text, jsonb, jsonb) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION legal_review_save_draft(uuid, uuid, integer, text, jsonb, jsonb) TO service_role;
 
--- 6. Approve (lock) ----------------------------------------------------------
--- Locks the exact revision the approver saw. Re-approving the same revision is
--- a no-op success, so a run that crashed mid-posting can resume.
-CREATE OR REPLACE FUNCTION legal_review_approve(p_ap_invoice_id uuid, p_base_revision integer, p_actor text, p_summary jsonb)
+-- 6. Approve (lock + claims) ----------------------------------------------------
+-- Locks the exact revision the approver saw and writes every posting claim in
+-- the same transaction. Re-approving the same revision is a no-op success (no
+-- new claims), so a run that crashed mid-posting resumes from its claims.
+CREATE OR REPLACE FUNCTION legal_review_approve(p_ap_invoice_id uuid, p_base_revision integer, p_actor text, p_summary jsonb, p_postings jsonb)
 RETURNS jsonb LANGUAGE plpgsql SET search_path = public AS $$
-DECLARE v_review legal_invoice_reviews%ROWTYPE;
+DECLARE
+  v_review legal_invoice_reviews%ROWTYPE;
+  v_p jsonb;
+  v_alloc legal_invoice_allocations%ROWTYPE;
+  v_kind text;
 BEGIN
   IF p_actor IS NULL OR btrim(p_actor) = '' THEN RAISE EXCEPTION 'legal_review_actor_required'; END IF;
   SELECT * INTO v_review FROM legal_invoice_reviews WHERE ap_invoice_id = p_ap_invoice_id FOR UPDATE;
@@ -186,14 +226,36 @@ BEGIN
   IF v_review.status = 'approved' THEN
     RETURN jsonb_build_object('ok', true, 'already', true, 'review_id', v_review.id, 'revision', v_review.revision);
   END IF;
+  IF jsonb_typeof(coalesce(p_postings, '[]'::jsonb)) IS DISTINCT FROM 'array' THEN RAISE EXCEPTION 'legal_review_postings_not_array'; END IF;
   UPDATE legal_invoice_reviews SET status = 'approved', approved_revision = revision, approved_by = p_actor,
          approved_at = now(), updated_by = p_actor WHERE id = v_review.id;
+  -- Every claim is written in the same transaction as the approval, checked
+  -- against the active allocation it posts: approval and claims commit
+  -- together or not at all.
+  FOR v_p IN SELECT value FROM jsonb_array_elements(coalesce(p_postings, '[]'::jsonb)) LOOP
+    SELECT * INTO v_alloc FROM legal_invoice_allocations
+     WHERE id = (v_p->>'allocation_id')::uuid AND review_id = v_review.id AND revision = v_review.revision AND is_active;
+    IF NOT FOUND THEN RAISE EXCEPTION 'legal_review_posting_allocation_not_active'; END IF;
+    v_kind := CASE v_alloc.classification WHEN 'homeowner_recoverable' THEN 'homeowner_chargeback' WHEN 'bedrock_corporate' THEN 'bedrock_recovery' END;
+    IF v_kind IS NULL OR v_kind <> v_p->>'kind' THEN RAISE EXCEPTION 'legal_review_posting_kind_mismatch'; END IF;
+    IF v_alloc.amount_cents <> (v_p->>'amount_cents')::bigint THEN RAISE EXCEPTION 'legal_review_posting_amount_mismatch'; END IF;
+    IF v_kind = 'homeowner_chargeback' AND (v_alloc.property_id IS DISTINCT FROM (v_p->>'property_id')::uuid
+        OR v_alloc.tenure_id IS DISTINCT FROM (v_p->>'tenure_id')::uuid) THEN
+      RAISE EXCEPTION 'legal_review_posting_owner_mismatch';
+    END IF;
+    INSERT INTO legal_invoice_postings (review_id, allocation_id, item_id, ap_invoice_id, ap_invoice_line_ids, community_id, review_revision,
+                                        kind, property_id, tenure_id, amount_cents, debit_account_id, credit_account_id, posting_date, status)
+    VALUES (v_review.id, v_alloc.id, v_alloc.item_id, p_ap_invoice_id,
+            ARRAY(SELECT jsonb_array_elements_text(v_p->'ap_invoice_line_ids'))::uuid[], v_review.community_id, v_review.revision,
+            v_kind, v_alloc.property_id, v_alloc.tenure_id, v_alloc.amount_cents, (v_p->>'debit_account_id')::uuid,
+            (v_p->>'credit_account_id')::uuid, (v_p->>'posting_date')::date, 'pending');
+  END LOOP;
   INSERT INTO legal_invoice_review_events (review_id, community_id, revision, action, actor, summary)
   VALUES (v_review.id, v_review.community_id, v_review.revision, 'treatment_approved', p_actor, coalesce(p_summary, '{}'::jsonb));
   RETURN jsonb_build_object('ok', true, 'review_id', v_review.id, 'revision', v_review.revision);
 END $$;
-REVOKE ALL ON FUNCTION legal_review_approve(uuid, integer, text, jsonb) FROM PUBLIC, anon, authenticated;
-GRANT EXECUTE ON FUNCTION legal_review_approve(uuid, integer, text, jsonb) TO service_role;
+REVOKE ALL ON FUNCTION legal_review_approve(uuid, integer, text, jsonb, jsonb) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION legal_review_approve(uuid, integer, text, jsonb, jsonb) TO service_role;
 
 -- 7. Reopen (documented correction) -------------------------------------------
 -- Only once every posting is reversed: nothing live can be orphaned by a
@@ -221,4 +283,4 @@ END $$;
 REVOKE ALL ON FUNCTION legal_review_reopen(uuid, text, text) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION legal_review_reopen(uuid, text, text) TO service_role;
 
-NOTIFY pgrst, 'reload schema';
+COMMIT;
