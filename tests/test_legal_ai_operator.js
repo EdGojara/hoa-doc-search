@@ -141,6 +141,42 @@ t('#278001 "Prepare deed restriction status report." (no owner) is association g
   assert.strictEqual(S.triageItem({ amount_cents: 2400, allocations: [Object.assign({ amount_cents: 2400 }, a)] }).status, 'accepted');
 });
 
+t('#278001 with the attorney PDF read: matter 2706.0001 "General Matters" filed under Deed Restriction Matters, no homeowner, status-report entries -> association expense, ready', () => {
+  const ix = S.buildIndex({ properties: [], tenures: [], owners: [] });
+  const extraction = { id: 'ext1', line_map: { L1: 0 }, matters: [{ matter_ref: '2706.0001', title: 'General Matters', section_heading: 'Deed Restriction Matters', work_type: 'deed_restriction', parties: [], property_address: null,
+    entries: [{ description: 'Prepare deed restriction status report.' }, { description: 'Review deed restriction status report. [NO CHARGE]' }] }] };
+  const sig = S.itemSignals(ix, { invoice_date: '2026-07-31' }, [{ id: 'L1', description: 'Prepare deed restriction status report.' }], extraction);
+  assert.strictEqual(sig.cls.association, true, JSON.stringify(sig.cls));
+  const a = S.assess(ix, sig.match, sig.ev, sig.cls, null, '2026-07-31');
+  assert.strictEqual(a.classification, 'association_legal_expense');
+  const it = { amount_cents: 2400, allocations: [Object.assign({ amount_cents: 2400 }, a)] };
+  assert.strictEqual(S.decisionOf(it).state, 'ready');
+});
+t('a deed-restriction matter that names a homeowner is never swept into association expense by the general-matter rule', () => {
+  const ix = S.buildIndex({ properties: [], tenures: [], owners: [] });
+  const extraction = { id: 'ext2', line_map: { L1: 0 }, matters: [{ matter_ref: '2706.0004', title: 'General Matters', section_heading: 'Deed Restriction Matters', work_type: 'deed_restriction', parties: ['Adebo, Adediran'], property_address: '19723 Canyon Gate Ct.', entries: [{ description: 'Prepare status report.' }] }] };
+  const sig = S.itemSignals(ix, { invoice_date: '2026-07-31' }, [{ id: 'L1', description: 'x' }], extraction);
+  assert.strictEqual(sig.cls.association, false);
+});
+t('Negron: the attorney\'s 6505 Kings Summit address vs the property\'s 6506 is shown, and the active-bankruptcy hold is preserved', async () => {
+  const report = 'COLLECTION STATUS REPORT BANKRUPTCY NEGRON, HEIDI – 6505 Kings Summit Dr. 2705.0006 11/15/24 Received file from prior counsel. Prior counsel indicated the bankruptcy remains active. 8/12/26 Mailed a post-petition demand letter.';
+  const db = ownerDb('p-ne');
+  const ctx = { invoiceNumber: '278002', communityId: 'cg', props: new Map([['p-ne', { id: 'p-ne', street_address: '6506 Kings Summit Drive' }]]), owners: new Map([['p-ne', ['Heidi Negron']]]) };
+  const sources = { graphConfigured: () => true, mailboxes: () => ['ed@example.test'], driveOwner: () => 'ed',
+    searchMail: async (_m, q) => ({ messages: /NEGRON|Negron|2705/.test(q) ? [{ id: 'm9', subject: 'Canyon Gate - August Status Report', received_at: '2026-08-13', from: { email: 'x@df.test' }, has_attachments: true, web_link: 'L9' }] : [] }),
+    attachmentTexts: async () => [{ name: 'Collection Status Report.pdf', text: report }],
+    searchDrive: async () => ({ items: [] }), retainedEvidence: async () => [] };
+  const f = await RS.researchAllocation(db, ctx, { item: { id: 'it-ne', matter_ref: '2705.0006' }, alloc: { id: 'al-ne', property_id: 'p-ne', tenure_id: 'ten-p-ne', classification: 'needs_review', charge_category: null, amount_cents: 6000 } }, sources, { reports: new Map() });
+  assert.strictEqual(f.recommendation, 'hold'); assert.strictEqual(f.outcome, 'needs_decision');
+  assert.ok(/active bankruptcy/.test(f.reason) && /lists 6505 Kings Summit Dr\.; the property on file is 6506 Kings Summit Drive/.test(f.reason), f.reason);
+  const note = TEAM.amandaNote(f);
+  assert.ok(/6505 Kings Summit Dr\.; the property on file is 6506 Kings Summit Drive$/.test(S.amandaOutcome({ note }).reason), 'the full reason survives into the summary');
+});
+t('an address mismatch alone never passes as ready', () => {
+  const r = RS.recommend({ signals: { owner_current: true, work_type: 'collection', collection_notice_content: true, address_discrepancy: { report: '6505 Kings Summit Dr.', property: '6506 Kings Summit Drive', source: 'r' } }, verified: [], references: [], missing: [], unavailable: [] }, {});
+  assert.strictEqual(r.outcome, 'needs_decision'); assert.strictEqual(r.classification, 'needs_review');
+});
+
 // ---- three states replace the bare exception count -------------------------------
 t('decision states: Amanda\'s reason is shown; generic reasons map to information vs decision; totals reconcile to the cent', () => {
   const ready = { amount_cents: 3200, allocations: [{ amount_cents: 3200, classification: 'homeowner_recoverable', property_id: 'p', tenure_match: 'current', charge_category: 'attorney_fee', confidence: 'high', suggested: true, evidence: [], note: 'Amanda (AI): READY FOR APPROVAL - §209.0064 pre-referral delinquency notice on file. Work type: collections (report). Limitation: Independent proof of mailing is not verified. Verified: x.' }] };
