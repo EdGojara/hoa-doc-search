@@ -501,6 +501,27 @@ const find = (model, num) => { for (const s of model.sections) for (const g of s
     check('reserve roll-forward counts the transfer in and still ties', roll.groups.some((g) => /Interfund transfers/.test(g.label)) && !ra.warnings.length && roll.groups[0].values.ytd + roll.groups.slice(1).reduce((t, g) => t + g.values.ytd, 0) === roll.total.values.ytd);
   }
 
+  console.log('interfund transfers from the account configuration (from / to funds)');
+  {
+    // paired: a transfer-out account in Operating and a transfer-in account in Reserve
+    F.seed(); const sbc = F.fakeClient(); const dbc = F.getDb();
+    for (const a of dbc.chart_of_accounts) if (a.account_number === '5900' || a.account_number === '4900') Object.assign(a, { account_subtype: 'interfund_transfer', interfund_from_fund_id: 'f-opr', interfund_to_fund_id: 'f-res' });
+    const o = await M.buildIncomeBudgetModel(sbc, { community_id: F.CID, period_end: '2026-09-30', fund: 'OPR', now: NOW });
+    const r = await M.buildIncomeBudgetModel(sbc, { community_id: F.CID, period_end: '2026-09-30', fund: 'RES', now: NOW });
+    check('paired accounts: each fund shows its own account once (no double count), no warning', o.transfers.groups[0].lines.length === 1 && o.transfers.total.values.annual_budget === r.transfers.total.values.annual_budget * -1 && r.transfers.total.values.mtd_actual === 1250000 && !o.warnings.length && !r.warnings.length, JSON.stringify(o.transfers.groups[0].lines.map((l) => l.values)));
+    // single account (the Canyon Gate shape): the whole transfer budgeted on one Reserve line as the outgoing leg
+    F.seed(); const sbs = F.fakeClient(); const dbs = F.getDb();
+    const a49 = dbs.chart_of_accounts.find((a) => a.account_number === '4900'); Object.assign(a49, { account_subtype: 'interfund_transfer', interfund_from_fund_id: 'f-opr', interfund_to_fund_id: 'f-res' });
+    for (const b of dbs.budget_line_items) if (b.account_id === a49.id) { b.annual_amount_cents = -Math.abs(b.annual_amount_cents); if (b.monthly_amounts_cents) b.monthly_amounts_cents = b.monthly_amounts_cents.map((x) => -Math.abs(x)); }
+    const o2 = await M.buildIncomeBudgetModel(sbs, { community_id: F.CID, period_end: '2026-09-30', fund: 'OPR', now: NOW });
+    const r2 = await M.buildIncomeBudgetModel(sbs, { community_id: F.CID, period_end: '2026-09-30', fund: 'RES', now: NOW });
+    const ol = o2.transfers && o2.transfers.groups[0].lines.find((l) => l.account_number === '4900'), rl = r2.transfers.groups[0].lines.find((l) => l.account_number === '4900');
+    check('single account: Operating shows a transfer out of the budgeted amount, Reserve a transfer in of the same amount', ol && rl && ol.values.annual_budget < 0 && rl.values.annual_budget === -ol.values.annual_budget && /transfer to RES/.test(ol.account_name) && /transfer from OPR/.test(rl.account_name), JSON.stringify({ ol: ol && ol.values, rl: rl && rl.values }));
+    check('single account: actuals come from each fund\'s posted lines (none in Operating, the posted amount in Reserve)', ol.values.mtd_actual === 0 && rl.values.mtd_actual === 1250000 && ol.values.mtd_var === ol.values.mtd_actual - ol.values.mtd_budget);
+    const c2 = await M.buildIncomeBudgetModel(sbs, { community_id: F.CID, period_end: '2026-09-30', fund: 'all', now: NOW });
+    check('consolidated: the budgeted transfer nets to zero across funds', c2.transfers && c2.transfers.total.values.annual_budget === 0);
+  }
+
   console.log('prior-period items recorded this month (conversion re-posts and flagged entries)');
   {
     F.seed(); const sbp = F.fakeClient(); const dbp = F.getDb();
