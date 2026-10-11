@@ -20,15 +20,26 @@
 //                                     unless {force:true}); writes only the
 //                                     append-only extraction workpaper
 //
-// Nothing here posts to the GL, reclassifies an accrual or charges a
-// homeowner. The save writes only the review workpaper tables, through the
-// atomic legal_review_save_draft() function (migration 473). Evidence, tenure
+//   GET  /invoices/:id/treatment      what Approve Treatment would post, or
+//                                     why it can't, plus postings so far
+//   POST /invoices/:id/approve-treatment  OWNER: lock the reviewed revision
+//                                     and post its accounting (migration 508)
+//   POST /postings/:id/reverse        OWNER: reverse one posting, with reason
+//   POST /invoices/:id/reopen         OWNER: reopen an approved review once
+//                                     every posting is reversed, with reason
+//
+// Drafts write only the review workpaper tables, through the atomic
+// legal_review_save_draft() function (migrations 473/508). Evidence, tenure
 // and the bankruptcy stop are recomputed on the server for every save.
+// Approve Treatment (lib/legal/treatment.js) is the chargeback authorization:
+// it reclassifies accrued expense to the homeowner (or Bedrock) receivable. It
+// never approves the AP invoice and never releases payment.
 // ============================================================================
 const express = require('express');
 const { createClient } = require('@supabase/supabase-js');
 const { safeErrorMessage } = require('./_safe_error');
-const { requireStaff } = require('./_require_admin');
+const { requireStaff, requireAdmin } = require('./_require_admin');
+const T = require('../lib/legal/treatment');
 const R = require('../lib/legal/review_data');
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
@@ -115,6 +126,7 @@ router.post('/invoices/:id/draft', express.json({ limit: '256kb' }), async (req,
     if (error) throw error;
     if (!data || data.ok !== true) {
       if (data && data.error === 'stale') return res.status(409).json({ error: 'stale', revision: data.revision, detail: 'Someone saved this draft after you opened it. Reload to see their changes.' });
+      if (data && data.error === 'approved_locked') return res.status(409).json({ error: 'approved_locked', detail: 'This treatment is approved. To change it, reverse its postings and reopen the review.' });
       throw new Error('save returned no result');
     }
     console.log('[legal-review] draft saved', JSON.stringify({ invoice: d.invoice.id, revision: data.revision, actor, ...summary }));
@@ -139,6 +151,74 @@ router.post('/invoices/:id/read-pdf', express.json({ limit: '4kb' }), async (req
     res.json(Object.assign({ read: { extraction_id: out.extraction_id, status: out.status, reused: out.reused } }, R.detailPayload(fresh)));
   } catch (err) {
     console.error('[legal-review] read-pdf failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+async function treatmentPayload(d) {
+  const plan = await T.planTreatment(supabase, d);
+  const ready = await T.postingsReady(supabase);
+  return { plan, postings: ready ? await T.loadPostings(supabase, d.invoice.id) : [], migration_508: ready };
+}
+
+router.get('/invoices/:id/treatment', async (req, res) => {
+  const staff = await requireStaff(req, res); if (!staff) return;
+  try {
+    if (!UUID.test(req.params.id)) return res.status(400).json({ error: 'invoice_id_invalid' });
+    const d = await R.loadInvoice(supabase, req.params.id);
+    if (!d) return res.status(404).json({ error: 'not_a_legal_invoice' });
+    res.json(await treatmentPayload(d));
+  } catch (err) {
+    console.error('[legal-review] treatment plan failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+router.post('/invoices/:id/approve-treatment', express.json({ limit: '4kb' }), async (req, res) => {
+  const admin = await requireAdmin(req, res); if (!admin) return;
+  try {
+    if (!UUID.test(req.params.id)) return res.status(400).json({ error: 'invoice_id_invalid' });
+    const d = await R.loadInvoice(supabase, req.params.id);
+    if (!d) return res.status(404).json({ error: 'not_a_legal_invoice' });
+    if (d.readOnly) return res.status(409).json({ error: 'read_only', detail: d.readOnly });
+    const out = await T.approveTreatment(supabase, d, {
+      actor: admin.email, actorUserId: admin.user && admin.user.id, baseRevision: Number(req.body && req.body.revision),
+      postingDate: req.body && req.body.posting_date ? String(req.body.posting_date) : undefined,
+    });
+    console.log('[legal-review] approve-treatment', JSON.stringify({ invoice: d.invoice.id, actor: admin.email, ok: out.ok, error: out.error || null, posted: (out.posted || []).length }));
+    if (!out.ok) return res.status(out.error === 'migration_pending' ? 409 : out.error === 'stale' ? 409 : 400).json(out);
+    const fresh = await R.loadInvoice(supabase, req.params.id);
+    res.json(Object.assign({ approved: true, result: out }, await treatmentPayload(fresh)));
+  } catch (err) {
+    console.error('[legal-review] approve-treatment failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+router.post('/postings/:id/reverse', express.json({ limit: '4kb' }), async (req, res) => {
+  const admin = await requireAdmin(req, res); if (!admin) return;
+  try {
+    if (!UUID.test(req.params.id)) return res.status(400).json({ error: 'posting_id_invalid' });
+    const out = await T.reversePosting(supabase, req.params.id, {
+      actor: admin.email, actorUserId: admin.user && admin.user.id, reason: req.body && req.body.reason,
+      reversalDate: req.body && req.body.reversal_date ? String(req.body.reversal_date) : undefined,
+    });
+    console.log('[legal-review] reverse posting', JSON.stringify({ posting: req.params.id, actor: admin.email, ok: out.ok, error: out.error || null }));
+    res.status(out.ok ? 200 : 400).json(out);
+  } catch (err) {
+    console.error('[legal-review] reverse failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+router.post('/invoices/:id/reopen', express.json({ limit: '4kb' }), async (req, res) => {
+  const admin = await requireAdmin(req, res); if (!admin) return;
+  try {
+    if (!UUID.test(req.params.id)) return res.status(400).json({ error: 'invoice_id_invalid' });
+    const out = await T.reopenReview(supabase, req.params.id, { actor: admin.email, reason: req.body && req.body.reason });
+    res.status(out.ok ? 200 : 409).json(out);
+  } catch (err) {
+    console.error('[legal-review] reopen failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
   }
 });

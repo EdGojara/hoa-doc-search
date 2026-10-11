@@ -742,7 +742,10 @@ router.get('/ed-queue', async (req, res) => {
       .limit(500);
     if (error) throw error;
     const waiting = [];
+    // A former client's bills are held, never in the routine release queue.
+    const former = await require('../lib/ap/former_client').formerClientIds(supabase);
     for (const inv of (invs || [])) {
+      if (former.has(inv.community_id)) continue;
       const appr = inv.ap_invoice_approvals || [];
       const mgr = appr.find((a) => a.action === 'approved');
       const released = appr.find((a) => a.action === 'released_for_payment');
@@ -854,7 +857,9 @@ router.get('/manager-queue', async (req, res) => {
 
     const { approvalPath } = require('../lib/ap/approval_policy');
     const out = [];
+    const former = await require('../lib/ap/former_client').formerClientIds(supabase);
     for (const inv of (invs || [])) {
+      if (former.has(inv.community_id)) continue; // former client: held, not routine
       if ((inv.ap_invoice_approvals || []).some((a) => a.action === 'approved')) continue; // a manager already vouched
       const open = creditFor(inv);
       let path = inv.approval_path;
@@ -1066,9 +1071,11 @@ router.post('/invoices/:id/approve', express.json(), async (req, res) => {
     const isAdmin = ctx.role === 'admin';
     const notes = (req.body || {}).notes || null;
 
-    const { data: inv } = await supabase.from('ap_invoices').select('id, status, total_cents, posting_journal_entry_id').eq('id', id).maybeSingle();
+    const { data: inv } = await supabase.from('ap_invoices').select('id, community_id, status, total_cents, posting_journal_entry_id').eq('id', id).maybeSingle();
     if (!inv) return res.status(404).json({ error: 'not_found' });
     if (inv.status === 'voided') return res.status(400).json({ error: 'voided', detail: 'This invoice was voided.' });
+    { const FC = require('../lib/ap/former_client'); const fc = await FC.formerClientFor(supabase, inv.community_id);
+      if (fc) return res.status(409).json({ error: 'former_client', detail: FC.formerClientReason(fc) }); }
     if (!inv.posting_journal_entry_id) return res.status(400).json({ error: 'not_coded', detail: 'Code the expense account first — an uncoded bill has no journal entry to approve.' });
 
     const { data: prior } = await supabase.from('ap_invoice_approvals')
@@ -1206,6 +1213,8 @@ router.post('/invoices/:id/mark-paid', express.json(), async (req, res) => {
     const { data: inv } = await supabase.from('ap_invoices').select('*').eq('id', id).maybeSingle();
     if (!inv) return res.status(404).json({ error: 'not_found' });
     if (inv.status === 'voided') return res.status(400).json({ error: 'voided', detail: 'This invoice was voided.' });
+    { const FC = require('../lib/ap/former_client'); const fc = await FC.formerClientFor(supabase, inv.community_id);
+      if (fc) return res.status(409).json({ error: 'former_client', detail: FC.formerClientReason(fc) }); }
     const owed = (inv.total_cents || 0) - (inv.amount_paid_cents || 0);
     if (owed <= 0) return res.status(400).json({ error: 'nothing_due', detail: 'This invoice is already fully paid.' });
     // Staff can override the amount when a credit/debit adjusts what was actually

@@ -59,8 +59,23 @@ t('association: contradicted by the text → exception', () => {
   const r = S.triageItem(item([assoc([{ kind: 'work_type', value: 'general / association matter per the invoice PDF: contradicted by the entry text, which reads as collection work' }])]));
   assert.strictEqual(r.status, 'exception'); assert.ok(r.reasons.some((x) => /conflicts/.test(x)));
 });
-t('association: a confirmation never clears a hard stop on an association item', () => {
-  assert.strictEqual(S.triageItem(item([assoc([CONFIRMED], { bankruptcy_stop: true })])).status, 'exception');
+// Ed 2026-10-11: bankruptcy work stays association expense unless authority
+// permits recovery. Leaving it with the association needs a person's
+// confirmation; charging the owner is never confirmable.
+t('association: bankruptcy work is an exception until a person confirms it stays association expense', () => {
+  const r = S.triageItem(item([assoc([], { bankruptcy_stop: true })]));
+  assert.strictEqual(r.status, 'exception');
+  assert.ok(r.confirmable && !r.hard.length, 'a soft exception, not a hard stop');
+  assert.strictEqual(S.triageItem(item([assoc([CONFIRMED], { bankruptcy_stop: true })])).status, 'accepted');
+});
+t('bankruptcy: a homeowner charge stays a hard stop, confirmation or not', () => {
+  const r = S.triageItem(item([good({ bankruptcy_stop: true, evidence: [CONFIRMED] })]));
+  assert.ok(r.hard.some((x) => /bankruptcy/.test(x)));
+});
+t('bedrock: Bedrock responsibility without written evidence is a hard stop; with it, accepted', () => {
+  const bare = { amount_cents: 1000, classification: 'bedrock_corporate', property_id: null, charge_category: null, tenure_match: 'not_applicable', confidence: 'none', bankruptcy_stop: false, evidence: [], suggested: false, note: null };
+  assert.ok(S.triageItem(item([bare])).hard.some((x) => /Bedrock/.test(x)));
+  assert.strictEqual(S.triageItem(item([Object.assign({}, bare, { note: 'Bedrock engagement letter: resale certificate work is billed to the manager' })])).status, 'accepted');
 });
 t('accepted: a staff-chosen property is a human decision, not a weak match', () => {
   assert.strictEqual(S.triageItem(item([good({ suggested: false, confidence: 'none' })])).status, 'accepted');

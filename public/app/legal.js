@@ -4,8 +4,10 @@
 // /app/financial/legal. Lists attorney invoices; for one invoice shows the
 // lines, the suggested (or saved) split into matters and allocations with the
 // evidence behind every owner match, a to-the-cent reconciliation, and a
-// revisioned "Save draft". DRAFT ONLY: nothing here posts to the books or
-// charges an owner. Evidence, tenure and the bankruptcy stop shown are the
+// revisioned "Save draft". Saving a draft never posts to the books or charges
+// an owner. The owner's Approve Treatment (migration 508) is the one act that
+// does: it locks the reviewed revision and reclassifies the accrued expense to
+// the homeowner (or Bedrock) receivable. It never approves or pays the bill. Evidence, tenure and the bankruptcy stop shown are the
 // server's; after an edit they are marked "refreshes on save", because the
 // server recomputes them and never trusts the browser's copy.
 // Reconciliation uses the same module as the server (/app/legal-suggest.js).
@@ -16,7 +18,7 @@
   var user = await TX.boot({ active: 'financial' });
   if (!user) return;
 
-  var CLASS = [['needs_review', 'Needs review'], ['homeowner_recoverable', 'Homeowner owes'], ['association_legal_expense', 'Association legal expense']];
+  var CLASS = [['needs_review', 'Needs review'], ['homeowner_recoverable', 'Homeowner owes'], ['association_legal_expense', 'Association legal expense'], ['bedrock_corporate', 'Bedrock responsible (evidence in note)']];
   var CATS = [['', 'Pick one'], ['attorney_fee', 'Collection / assessment attorney fee'], ['attorney_fee_other', 'Other attorney fee (deed restriction)']];
   var TENURE = { current: ['ok', 'Current owner'], former: ['bad', 'Former owner'], unresolved: ['warn', 'Owner period unclear'], not_applicable: ['mute', 'No owner'] };
   var CONF = { high: ['ok', 'High confidence'], medium: ['info', 'Medium confidence'], low: ['warn', 'Low confidence'], none: ['mute', 'Staff choice'] };
@@ -102,7 +104,8 @@
     state.dirty = false; state.errors = []; state.notice = notice;
     renderDetail();
   }
-  function editable() { var d = state.detail; return d && !d.read_only && d.schema_ready; }
+  function approved() { var d = state.detail; return !!(d && d.review && d.review.status === 'approved'); }
+  function editable() { var d = state.detail; return d && !d.read_only && d.schema_ready && !approved(); }
   function markDirty() { state.dirty = true; renderRecon(); renderFooter(); }
 
   function lineLabel(ids) {
@@ -133,9 +136,15 @@
       '<div class="tx-card lg-pdfread" id="lg-pdfread"></div>' +
       '<div id="lg-items"></div>' +
       '<div class="lg-foot" id="lg-foot"></div>' +
+      '<div class="tx-card lg-treat" id="lg-treat" style="padding:18px;margin-top:14px"></div>' +
       (d.events && d.events.length ? '<details class="lg-hist"><summary>History (' + d.events.length + ')</summary>' + d.events.map(function (e) {
         var s = e.summary || {};
-        return '<div class="lg-hist-row"><span>' + esc(fmtTime(e.created_at)) + '</span><span>Revision ' + e.revision + ' saved by ' + esc(e.actor || 'staff') + '</span><span class="tx-muted">' + (s.items != null ? s.items + ' items, ' + money(s.allocated_cents) + ' of ' + money(s.invoice_total_cents) + (s.ready_for_approval ? ', ready' : ', ' + s.blocking + ' open') : '') + '</span></div>';
+        var what = { draft_saved: 'saved by', treatment_approved: 'treatment approved by', posting_recorded: 'posting recorded by', posting_reversed: 'posting reversed by', review_reopened: 'reopened by' }[e.action] || e.action;
+        var detail = e.action === 'draft_saved' ? (s.items != null ? s.items + ' items, ' + money(s.allocated_cents) + ' of ' + money(s.invoice_total_cents) + (s.ready_for_approval ? ', ready' : ', ' + s.blocking + ' open') : '')
+          : e.action === 'posting_recorded' ? money(s.amount_cents) + (s.kind === 'bedrock_recovery' ? ' to Bedrock' : ' to the owner')
+          : e.action === 'posting_reversed' || e.action === 'review_reopened' ? 'Reason: ' + (s.reason || '')
+          : e.action === 'treatment_approved' && s.totals ? 'Owner ' + money(s.totals.homeowner_cents) + ', association ' + money(s.totals.association_cents) + ', Bedrock ' + money(s.totals.bedrock_cents) : '';
+        return '<div class="lg-hist-row"><span>' + esc(fmtTime(e.created_at)) + '</span><span>Revision ' + e.revision + ' ' + esc(what) + ' ' + esc(e.actor || 'staff') + '</span><span class="tx-muted">' + esc(detail) + '</span></div>';
       }).join('') + '</details>' : '');
     $('lg-detail').innerHTML = html;
     if ($('lg-pdf')) $('lg-pdf').addEventListener('click', openPdf);
@@ -143,7 +152,76 @@
       if (!confirm('Replace the working copy with fresh suggestions? Nothing is saved until you press Save draft.')) return;
       state.items = clone(d.suggestion.items); state.fromDraft = false; markDirty(); renderItems();
     });
-    renderPdfRead(); renderItems(); renderRecon(); renderFooter();
+    renderPdfRead(); renderItems(); renderRecon(); renderFooter(); loadTreatment();
+  }
+
+  // ---- Approve Treatment (migration 508) -------------------------------------------
+  // The chargeback authorization, owner only. Separate from approving the bill
+  // and from releasing payment, which stay on the AP screens.
+  var KIND = { homeowner_chargeback: 'Bill to owner', bedrock_recovery: 'Recover from Bedrock' };
+  async function loadTreatment() {
+    var box = $('lg-treat'); if (!box || !state.detail) return;
+    var id = state.detail.invoice.id;
+    box.innerHTML = '<div class="tx-skel" style="height:14px;width:40%"></div>';
+    var r = await TX.get('/api/legal-review/invoices/' + encodeURIComponent(id) + '/treatment');
+    if (!state.detail || state.detail.invoice.id !== id) return;
+    if (!r.ok) { box.innerHTML = '<div class="tx-err">' + icon('alert', { size: 16 }) + '<span>Couldn’t load the treatment: ' + esc(r.error) + '.</span></div>'; return; }
+    state.treatment = r.data; renderTreatment();
+  }
+  function renderTreatment() {
+    var box = $('lg-treat'), t = state.treatment, d = state.detail; if (!box || !t) return;
+    var p = t.plan, owner = user.role === 'admin', isApproved = approved();
+    var live = (t.postings || []).filter(function (x) { return x.status !== 'reversed'; });
+    var props = {}; (d.draft ? d.draft.items : []).forEach(function (it) { it.allocations.forEach(function (a) { if (a.property_id) props[a.property_id] = a.property_label; }); });
+    var head = '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap"><h3 style="margin:0">Treatment</h3>' +
+      (isApproved ? pill('ok', 'Approved by ' + (d.review.approved_by || 'owner') + ', ' + fmtTime(d.review.approved_at)) : p.ready ? pill('info', 'Ready for the owner to approve') : pill('warn', 'Not ready')) + '</div>' +
+      '<div class="tx-muted" style="font-size:13px;margin:6px 0 10px">Approving the treatment bills the owner-specific fees back (Dr 1300 / Cr the accrued legal expense, plus the owner ledger charge). It does not approve or pay the attorney’s bill.</div>';
+    var tot = p.totals || {};
+    var sums = '<div class="lg-facts"><span>Owners ' + money(tot.homeowner_cents) + '</span><span>Association ' + money(tot.association_cents) + '</span><span>Bedrock ' + money(tot.bedrock_cents) + '</span><span>Invoice ' + money(p.invoice_total_cents) + '</span>' + (p.posting_date ? '<span>Posting date ' + esc(fmtDate(p.posting_date)) + '</span>' : '') + '</div>';
+    var blocking = !isApproved && p.blocking && p.blocking.length ? '<ul class="lg-reasons">' + p.blocking.map(function (b) { return '<li>' + esc(b) + '</li>'; }).join('') + '</ul>' : '';
+    var planned = !isApproved && p.postings && p.postings.length ? '<table class="tx-table" style="margin-top:10px"><thead><tr><th>Entry</th><th>Property</th><th style="text-align:right">Amount</th></tr></thead><tbody>' + p.postings.map(function (x) {
+      return '<tr><td>' + esc(KIND[x.kind]) + '</td><td>' + esc(x.property_id ? props[x.property_id] || 'property' : 'n/a') + '</td><td style="text-align:right">' + money(x.amount_cents) + '</td></tr>'; }).join('') + '</tbody></table>' : '';
+    var posted = (t.postings || []).length ? '<table class="tx-table" style="margin-top:10px"><thead><tr><th>Posted</th><th>Property</th><th style="text-align:right">Amount</th><th>Status</th><th></th></tr></thead><tbody>' + t.postings.map(function (x) {
+      return '<tr><td>' + esc(KIND[x.kind]) + ' · ' + esc(fmtDate(x.posting_date)) + '</td><td>' + esc(x.property_id ? props[x.property_id] || 'property' : 'n/a') + '</td><td style="text-align:right">' + money(x.amount_cents) + '</td><td>' +
+        (x.status === 'reversed' ? pill('mute', 'Reversed: ' + (x.reversal_reason || '')) : x.status === 'posted' ? pill('ok', 'Posted') : pill('warn', 'Pending')) + '</td><td>' +
+        (owner && x.status === 'posted' ? '<button type="button" class="lg-link lg-rev" data-id="' + esc(x.id) + '">Reverse</button>' : '') + '</td></tr>'; }).join('') + '</tbody></table>' : '';
+    var migration = t.migration_508 ? '' : '<div class="tx-muted" style="font-size:13px">Approval turns on once migration 508 is applied.</div>';
+    var btns = '';
+    if (owner && t.migration_508 && !d.read_only) {
+      if (!isApproved) btns = '<button type="button" class="tx-btn tx-btn--pri" id="lg-approve"' + (p.ready && !state.dirty && !state.approving ? '' : ' disabled') + '>' + (state.approving ? 'Posting…' : 'Approve treatment') + '</button>';
+      else if (live.some(function (x) { return x.status === 'pending'; })) btns = '<button type="button" class="tx-btn tx-btn--pri" id="lg-approve">Finish posting</button>';
+      else if (!live.length) btns = '<button type="button" class="tx-btn tx-btn--sec" id="lg-reopen">Reopen review (correction)</button>';
+    }
+    box.innerHTML = head + sums + blocking + planned + posted + migration + (state.treatErr ? '<div class="tx-err">' + icon('alert', { size: 16 }) + '<span>' + esc(state.treatErr) + '</span></div>' : '') +
+      (btns ? '<div style="display:flex;justify-content:flex-end;margin-top:12px">' + btns + '</div>' : '');
+    var ap = $('lg-approve'); if (ap) ap.addEventListener('click', approveTreatment);
+    var ro = $('lg-reopen'); if (ro) ro.addEventListener('click', reopenReview);
+    box.querySelectorAll('.lg-rev').forEach(function (b) { b.addEventListener('click', function () { reversePosting(b.getAttribute('data-id')); }); });
+  }
+  async function approveTreatment() {
+    var d = state.detail, p = state.treatment.plan;
+    if (!confirm('Approve this treatment and post it?\n\nOwners: ' + money(p.totals.homeowner_cents) + '\nAssociation: ' + money(p.totals.association_cents) + '\nBedrock: ' + money(p.totals.bedrock_cents) + '\n\nThis does not approve or pay the attorney’s bill.')) return;
+    state.approving = true; state.treatErr = null; renderTreatment();
+    var r = await TX.post('/api/legal-review/invoices/' + encodeURIComponent(d.invoice.id) + '/approve-treatment', { revision: d.revision });
+    state.approving = false;
+    if (r.ok) { openInvoice(d.invoice.id, true); return; }
+    var b = r.body || {};
+    state.treatErr = b.blocking ? 'Not posted: ' + b.blocking.join(' ') : (b.detail && typeof b.detail === 'string' ? b.detail : 'Not posted (' + (b.error || r.error) + ').');
+    renderTreatment();
+  }
+  async function reversePosting(id) {
+    var reason = prompt('Why is this posting being reversed? (kept on the audit trail)');
+    if (!reason || reason.trim().length < 5) return;
+    var r = await TX.post('/api/legal-review/postings/' + encodeURIComponent(id) + '/reverse', { reason: reason.trim() });
+    state.treatErr = r.ok ? null : ((r.body && r.body.detail) || 'Not reversed (' + r.error + ').');
+    if (r.ok) openInvoice(state.detail.invoice.id, true); else renderTreatment();
+  }
+  async function reopenReview() {
+    var reason = prompt('Why is this review being reopened? (kept on the audit trail)');
+    if (!reason || reason.trim().length < 5) return;
+    var r = await TX.post('/api/legal-review/invoices/' + encodeURIComponent(state.detail.invoice.id) + '/reopen', { reason: reason.trim() });
+    state.treatErr = r.ok ? null : ((r.body && r.body.detail) || 'Not reopened (' + r.error + ').');
+    if (r.ok) openInvoice(state.detail.invoice.id, true); else renderTreatment();
   }
 
   // ---- the attorney's PDF (step 2b) ------------------------------------------------
@@ -473,7 +551,7 @@
     var msg = '';
     if (state.notice) msg = '<div class="lg-ok">' + icon('check', { size: 15 }) + '<span>' + esc(state.notice) + '</span></div>';
     if (state.errors.length) msg = '<div class="tx-err" style="align-items:flex-start">' + icon('alert', { size: 16 }) + '<div><div>The draft wasn’t saved:</div><ul style="margin:6px 0 0 18px;padding:0">' + state.errors.map(function (e) { return '<li>' + esc(e) + '</li>'; }).join('') + '</ul></div></div>';
-    var why = !d.schema_ready ? 'Saving turns on once migration 473 is applied.' : d.read_only ? d.read_only : '';
+    var why = !d.schema_ready ? 'Saving turns on once migration 473 is applied.' : d.read_only ? d.read_only : approved() ? 'Treatment approved: locked. Reverse its postings and reopen to correct it.' : '';
     $('lg-foot').innerHTML = msg +
       '<div class="lg-foot-row">' + (why ? '<span class="tx-muted" style="font-size:13px">' + esc(why) + '</span>' : '<span class="tx-muted" style="font-size:13px">' + (state.dirty ? 'Unsaved changes' : 'No unsaved changes') + '</span>') +
       '<div style="display:flex;gap:10px;margin-left:auto">' +
