@@ -13,18 +13,21 @@
 --
 -- Backfill (Canyon Gate at Cinco Ranch, Ed-directed presentation): the manual
 -- corrections of pre-cutover activity posted after the 7/31/2026 conversion.
--- Reserve reclassifications of pre-cutover spending:
---   JE-2026-00455  8/1   Saifee monument sign down payment (paid 4/22)
---   JE-2026-00456  8/14  Saifee monument sign balance (invoice pre-cutover, re-posted 8/1; chk 1002)
---   JE-2026-00457  8/1   Joel's clubhouse/guard shack painting (June)
---   JE-2026-00458  8/1   Joel's entrance structures painting (7/9)
---   JE-2026-00459  8/1   TAW tire spikes deposit (May)
---   JE-2026-00460  9/1   TAW tire spikes balance (invoice accrued 7/24, re-posted 8/1)
---   JE-2026-00461  9/1   CJ Wright clubhouse AC (2025 invoice re-posted 8/1)
+-- Reserve reclassifications of pre-cutover spending (re-posted 10/11 to the reserve
+-- project accounts; the voided originals and their same-day reversals net to zero
+-- in their month and are deliberately NOT flagged):
+--   JE-2026-00488  8/1   Saifee monument sign down payment (paid 4/22)            replaces JE-2026-00455
+--   JE-2026-00490  8/14  Saifee monument sign balance (invoice pre-cutover)        replaces JE-2026-00456
+--   JE-2026-00492  8/1   Joel's clubhouse/guard shack painting (June)              replaces JE-2026-00457
+--   JE-2026-00494  8/1   Joel's entrance structures painting (7/9)                 replaces JE-2026-00458
+--   JE-2026-00496  8/1   TAW tire spikes deposit (May)                             replaces JE-2026-00459
+--   JE-2026-00498  8/1   TAW tire spikes balance (invoice accrued 7/24)            replaces JE-2026-00460 (moved from 9/1)
+--   JE-2026-00504  8/1   CJ Wright clubhouse AC (2025 invoice)                     replaces JE-2026-00461 (moved from 9/1)
 -- Other corrections of pre-cutover activity:
 --   JE-2026-00415  8/1   Correction A4: Max Roof 7/17 invoice, 5450 -> 5719
---   JE-2026-00429  8/1   Creech Elementary furniture $6,971.30, Operating -> Adopt-a-School
---   JE-2026-00435  8/1   4/13 Creech PTA donation $1,000, Operating -> Adopt-a-School
+--   JE-2026-00429  8/1   Creech Elementary furniture $6,971.30, Operating -> Adopt a School
+--   JE-2026-00435  8/1   4/13 Creech PTA donation $1,000, Operating -> Adopt a School
+--   JE-2026-00505  8/1   $1,690 Adopt a School income, Operating -> Adopt a School Fund
 -- Reversals (voids) of entries dated on or before the cutoff need no flag: the
 -- statements identify them from journal_entries.reverses_je_id.
 --
@@ -40,8 +43,8 @@ COMMENT ON COLUMN journal_entries.prior_period_through IS
 UPDATE journal_entries
    SET prior_period_through = DATE '2026-07-31'
  WHERE community_id = 'a0000000-0000-4000-8000-000000000003'
-   AND reference IN ('JE-2026-00415', 'JE-2026-00429', 'JE-2026-00435', 'JE-2026-00455', 'JE-2026-00456', 'JE-2026-00457',
-                     'JE-2026-00458', 'JE-2026-00459', 'JE-2026-00460', 'JE-2026-00461')
+   AND reference IN ('JE-2026-00415', 'JE-2026-00429', 'JE-2026-00435', 'JE-2026-00488', 'JE-2026-00490', 'JE-2026-00492',
+                     'JE-2026-00494', 'JE-2026-00496', 'JE-2026-00498', 'JE-2026-00504', 'JE-2026-00505')
    AND prior_period_through IS NULL;
 
 COMMIT;
