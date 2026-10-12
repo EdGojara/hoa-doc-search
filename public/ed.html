@@ -80,6 +80,11 @@
         <span class="meta" id="runsMeta">Loading…</span>
       </div>
       <div class="body" id="runsBody"><div class="empty">Loading…</div></div>
+      <div id="bankPrep" style="display:none;padding:10px 18px;border-top:1px solid #f1f3f6;font-size:12.5px;color:var(--muted);">
+        Bank reconciliation: <select id="bankPrepAcct" style="padding:4px 6px;border:1px solid #dde3ea;border-radius:6px;max-width:320px;"></select>
+        <input id="bankPrepMonth" type="month" style="padding:3px 6px;border:1px solid #dde3ea;border-radius:6px;">
+        <button onclick="prepBank()" style="border:1px solid #dde3ea;background:#fff;border-radius:6px;padding:4px 12px;cursor:pointer;font-weight:600;">Have Kat prepare it</button>
+      </div>
     </div>
 
     <div class="grid2">
@@ -116,9 +121,11 @@ async function boot(){
   load();
   loadPending();
   loadRuns();
+  loadBankAccts();
 }
 // ---- Kat's monthly accounting runs (migration 510): Kat prepares, Ed approves or holds ----
-const PROC = { recognition: 'Monthly recognition', interest: 'Late interest' };
+const PROC = { recognition: 'Monthly recognition', interest: 'Late interest', bank_reconciliation: 'Bank reconciliation' };
+const REC_STATUS = { reconciled: 'balanced, nothing open', in_progress: 'balances, exceptions open', unbalanced: 'does not balance', blocked: 'blocked' };
 const monthLabel = (d) => new Date(String(d).slice(0,10)+'T00:00:00').toLocaleDateString('en-US',{month:'long',year:'numeric'});
 async function loadRuns(){
   try{
@@ -128,9 +135,9 @@ async function loadRuns(){
     if(!runs.length){ $('runsBody').innerHTML='<div class="empty">Nothing from Kat is waiting on you.</div>'; $('runsMeta').textContent=''; return; }
     $('runsMeta').textContent = runs.length+' run'+(runs.length===1?'':'s');
     $('runsBody').innerHTML = runs.map(x=>{
-      const t=x.totals||{}; const amt = x.process==='interest' ? t.interest_cents : t.amount_cents;
+      const t=x.totals||{}; const amt = x.process==='interest' ? t.interest_cents : x.process==='bank_reconciliation' ? t.difference_cents : t.amount_cents;
       const badge = x.status==='failed' ? '<span style="color:#9B2C2C;font-weight:700;">FAILED</span>' : x.status==='held' ? '<span style="color:#8a6d1a;font-weight:700;">Held</span>' : 'Ready for approval';
-      const what = x.process==='interest' ? (t.owners||0)+' owners' : (t.entries||0)+' entries';
+      const what = x.process==='interest' ? (t.owners||0)+' owners' : x.process==='bank_reconciliation' ? esc(t.account||'')+' · '+(REC_STATUS[t.status]||esc(t.status||''))+(t.proposals?' · '+t.proposals+' proposed entr'+(t.proposals===1?'y':'ies'):'')+' · difference' : (t.entries||0)+' entries';
       const exc = (x.exceptions||[]).length ? ' · '+x.exceptions.length+' exception(s)' : '';
       const err = x.error ? ' · '+esc(x.error) : '';
       const rd = x.process==='interest' ? ' (run '+esc(String(x.run_date).slice(0,10))+')' : '';
@@ -150,7 +157,14 @@ async function openRun(id){
     const excOwners = exc.filter(e=>e.code==='owner_exception');
     const other = exc.filter(e=>e.code!=='owner_exception');
     let head;
-    if(run.process==='interest'){
+    if(run.process==='bank_reconciliation'){
+      const pv=run.preview||{}, props=pv.proposals||[], open=exc.filter(e=>!e.proposal_id);
+      head = '<pre style="white-space:pre-wrap;font:12.5px/1.5 inherit;background:#f7f9fb;padding:10px 12px;border-radius:6px;margin:10px 0;">'+esc(pv.report||'')+'</pre>'
+        + (props.length ? '<h4 style="margin:14px 0 6px;">Proposed entries (tick to post)</h4><div style="font-size:12.5px;">'
+          + props.map(p=>'<label style="display:block;padding:6px 0;border-bottom:1px solid #f1f3f6;"><input type="checkbox" class="incl" value="'+esc(p.id)+'"> <b>'+esc(p.description)+'</b> · '+money(p.amount_cents)+'<br><span style="color:var(--muted);">'
+            + p.lines.map(l=>(l.debit_cents?'Dr ':'Cr ')+esc(l.account_number)+' '+money(l.debit_cents||l.credit_cents)).join(' / ')+' · '+esc((p.evidence||{}).basis||'')+'</span></label>').join('')+'</div>' : '')
+        + (open.length ? '<h4 style="margin:14px 0 6px;">Exceptions for a person</h4><div style="max-height:220px;overflow:auto;font-size:12.5px;">'+open.map(e=>'<div style="padding:4px 0;border-bottom:1px solid #f1f3f6;">'+(e.severity==='blocking'?'<b style="color:#9B2C2C;">Blocking:</b> ':'')+esc(e.text)+'</div>').join('')+'</div>' : '');
+    } else if(run.process==='interest'){
       head = '<p>'+(t.owners||0)+' owners, eligible assessment principal '+money(t.principal_cents||0)+', interest '+money(t.interest_cents||0)+'.<br>'
         + 'Will post now: <b>'+(t.clean_owners||0)+' owners, '+money(t.clean_interest_cents||0)+'</b>. Exceptions are held unless you tick them: '
         + (t.exception_owners||0)+' owners, '+money(t.exception_interest_cents||0)+'.</p>';
@@ -160,28 +174,49 @@ async function openRun(id){
     }
     const excHtml = excOwners.length ? '<h4 style="margin:14px 0 6px;">Exceptions (tick to include)</h4><div style="max-height:260px;overflow:auto;font-size:12.5px;">'
       + excOwners.map(e=>'<label style="display:block;padding:4px 0;border-bottom:1px solid #f1f3f6;"><input type="checkbox" class="incl" value="'+esc(e.tenure_id)+'"> '+esc(e.address||'')+' · '+money(e.interest_cents)+' · '+esc(e.text)+'</label>').join('')+'</div>' : '';
-    const otherHtml = other.length ? '<div style="background:#FFF5DD;color:#7A5408;padding:8px 10px;border-radius:6px;font-size:12.5px;margin-top:10px;">'+other.map(e=>esc(e.text)).join('<br>')+'</div>' : '';
+    const otherHtml = other.length && run.process!=='bank_reconciliation' ? '<div style="background:#FFF5DD;color:#7A5408;padding:8px 10px;border-radius:6px;font-size:12.5px;margin-top:10px;">'+other.map(e=>esc(e.text)).join('<br>')+'</div>' : '';
     const ev = (d.events||[]).map(e=>new Date(e.created_at).toLocaleString()+' · '+esc(e.event)+' · '+esc(e.actor)).join('<br>');
     const can = run.status==='prepared';
     const btns = can ? '<button onclick="holdRun(\''+run.id+'\')" style="padding:8px 14px;border:1px solid #e3c98a;background:#fff;border-radius:6px;cursor:pointer;">Hold</button>'
-      + '<button onclick="approveRun(\''+run.id+'\')" style="padding:8px 16px;border:none;background:#0B1D34;color:#fff;border-radius:6px;cursor:pointer;font-weight:700;">Approve &amp; post</button>' : '';
+      + '<button onclick="approveRun(\''+run.id+'\',\''+run.process+'\')" style="padding:8px 16px;border:none;background:#0B1D34;color:#fff;border-radius:6px;cursor:pointer;font-weight:700;">'+(run.process==='bank_reconciliation'?'Approve &amp; store':'Approve &amp; post')+'</button>' : '';
+    const res = run.result && run.result.report ? '<h4 style="margin:14px 0 6px;">Stored result</h4><pre style="white-space:pre-wrap;font:12.5px/1.5 inherit;background:#f7f9fb;padding:10px 12px;border-radius:6px;">'+esc(run.result.report)+'</pre>' : '';
     $('modal').innerHTML = '<div class="mb" style="padding:20px 22px;max-width:760px;">'
       + '<h3 style="margin:0 0 6px;">'+(PROC[run.process]||run.process)+' · '+monthLabel(run.period_month)+'</h3>'
       + '<div style="color:var(--muted);font-size:12.5px;">Prepared by '+esc(run.prepared_by)+' · status '+esc(run.status)+'</div>'
-      + head+otherHtml+excHtml
-      + '<p style="margin-top:12px;"><a href="#" onclick="event.preventDefault();dlCsv(\''+run.id+'\')">Download the full '+(run.process==='interest'?'owner-by-owner':'entry')+' detail (CSV)</a></p>'
+      + head+otherHtml+excHtml+res
+      + '<p style="margin-top:12px;"><a href="#" onclick="event.preventDefault();dlCsv(\''+run.id+'\')">Download the full '+(run.process==='interest'?'owner-by-owner':run.process==='bank_reconciliation'?'item-by-item':'entry')+' detail (CSV)</a></p>'
       + '<div style="font-size:11.5px;color:var(--muted);margin-top:8px;">'+ev+'</div>'
       + '<div style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px;"><button onclick="closeModal()" style="padding:8px 14px;border:1px solid #dde3ea;background:#fff;border-radius:6px;cursor:pointer;">Close</button>'+btns+'</div></div>';
   }catch(e){ $('modal').innerHTML='<div class="mb"><div class="empty" style="color:#9B2C2C;">'+esc(e.message)+'</div></div>'; }
 }
 async function dlCsv(id){ const r=await af('/api/accounting-runs/run/'+id+'/csv'); const b=await r.blob(); const a=document.createElement('a'); a.href=URL.createObjectURL(b); a.download='kat-run-'+id.slice(0,8)+'.csv'; a.click(); }
-async function approveRun(id){
+async function approveRun(id, proc){
   const include=[...document.querySelectorAll('.incl:checked')].map(x=>x.value);
-  if(!confirm('Post this run now'+(include.length?' (including '+include.length+' exception owner(s))':'')+'? This writes the journal entries.')) return;
+  const q = proc==='bank_reconciliation'
+    ? 'Store this reconciliation'+(include.length?' and post the '+include.length+' ticked entr'+(include.length===1?'y':'ies'):' (no entries ticked, nothing posts)')+'? It is marked complete only if it balances and nothing is open.'
+    : 'Post this run now'+(include.length?' (including '+include.length+' exception owner(s))':'')+'? This writes the journal entries.';
+  if(!confirm(q)) return;
   const r=await af('/api/accounting-runs/run/'+id+'/approve',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({include})});
   const d=await r.json().catch(()=>({}));
   if(!r.ok){ toast(d.error||'Posting failed',true); return; }
-  toast('Posted.'); closeModal(); loadRuns();
+  toast(proc==='bank_reconciliation' ? 'Stored: '+((d.result||{}).status||'done')+'.' : 'Posted.'); closeModal(); loadRuns();
+}
+async function loadBankAccts(){
+  try{
+    const r=await af('/api/accounting-runs/bank-accounts'); if(!r.ok) return;
+    const a=(await r.json()).accounts||[]; if(!a.length) return;
+    $('bankPrepAcct').innerHTML=a.map(x=>'<option value="'+esc(x.id)+'" data-c="'+esc(x.community_id)+'">'+esc((x.community_name||'')+' · '+x.label)+'</option>').join('');
+    const d=new Date(); d.setDate(1); d.setMonth(d.getMonth()-1); $('bankPrepMonth').value=d.toISOString().slice(0,7);
+    $('bankPrep').style.display='';
+  }catch(_){ }
+}
+async function prepBank(){
+  const sel=$('bankPrepAcct'), o=sel.options[sel.selectedIndex], m=$('bankPrepMonth').value; if(!o||!m) return;
+  const r=await af('/api/accounting-runs/community/'+o.dataset.c+'/prepare',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({process:'bank_reconciliation',subject_id:o.value,period_month:m+'-01'})});
+  const d=await r.json().catch(()=>({}));
+  if(!r.ok){ toast(d.error||'Prepare failed',true); return; }
+  if(d.existing){ toast('Kat already has a run for that month.'); openRun(d.run.id); return; }
+  toast('Prepared.'); loadRuns(); if(d.run) openRun(d.run.id);
 }
 async function holdRun(id){
   const reason=prompt('Why hold this run?'); if(!reason) return;

@@ -48,6 +48,15 @@ router.get('/pending', async (req, res) => {
     if (n > 0) sources.push({ key: 'builder_arc', icon: '📐', label: 'Builder ARC submissions to review', count: n, action: '/builder-arc-review.html' });
   } catch (e) { /* skip */ }
 
+  // Source 4 — Kat's monthly accounting runs (recognition, interest, bank
+  // reconciliations) prepared, held or failed: each needs a person.
+  try {
+    const { data, error } = await supabase.from('accounting_runs').select('id, status').in('status', ['prepared', 'held', 'failed']).limit(500);
+    if (error) throw error;
+    const n = data.length; const bad = data.filter((r) => r.status !== 'prepared').length;
+    if (n > 0) sources.push({ key: 'accounting_runs', icon: '🧮', label: `Kat's accounting runs awaiting you${bad ? ` (${bad} held or failed)` : ''}`, count: n, action: '/ed.html#runsTile' });
+  } catch (e) { console.warn('[ed] accounting runs source failed:', e.message); }
+
   sources.sort((a, b) => (b.stakes_cents || 0) - (a.stakes_cents || 0) || b.count - a.count);
   res.json({ sources });
 });

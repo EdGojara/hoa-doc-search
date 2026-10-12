@@ -1,0 +1,84 @@
+{
+  "migration": "511_kat_bank_reconciliation.sql",
+  "summary": "Kat's monthly bank reconciliation on the migration 510 run framework: accounting_runs.subject_id (the bank account), process 'bank_reconciliation' on both process checks, the one-live-run index includes the subject, and the run guard keeps the subject immutable. Seeds Canyon Gate only: bank_reconciliation enabled (auto-post off) for NewFirst 5313 and Columbia 3170, and each account's 7/31/2026 opening reconciled position (NewFirst: three deposits in transit $4,287.18 and check 27 $200; Columbia: check 50 Texas Access Works $389.70). Creates no journal entry or ledger row.",
+  "requires": [
+    "510_accounting_runs.sql"
+  ],
+  "preflight": [
+    {
+      "name": "accounting_runs has no subject_id yet",
+      "sql": "SELECT count(*)::int FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'accounting_runs' AND column_name = 'subject_id'",
+      "expect": 0
+    },
+    {
+      "name": "both Canyon Gate operating accounts exist with no opening position",
+      "sql": "SELECT count(*)::int FROM bank_accounts WHERE id IN ('2dd4bf0b-0e71-4da0-b8a7-269845ddf54c', 'ea31dca3-a435-4e9b-b72c-137ee840f6ba') AND community_id = 'a0000000-0000-4000-8000-000000000003' AND opening_position IS NULL",
+      "expect": 2
+    },
+    {
+      "name": "the opening split entry exists, posted",
+      "sql": "SELECT count(*)::int FROM journal_entries WHERE community_id = 'a0000000-0000-4000-8000-000000000003' AND reference = 'JE-2026-00420' AND status = 'posted'",
+      "expect": 1
+    }
+  ],
+  "expected_changes": [
+    "accounting_runs: new nullable column subject_id; process check allows bank_reconciliation; uq_accounting_runs_live includes the subject; accounting_runs_guard also protects subject_id.",
+    "community_accounting_automation: process check allows bank_reconciliation; one new Canyon Gate row (enabled, auto_post false).",
+    "bank_accounts: opening_position set on NewFirst 5313 and Columbia 3170 (were null). No other row changes."
+  ],
+  "objects": {
+    "added": [
+      "column:accounting_runs.subject_id"
+    ],
+    "removed": [],
+    "changed": [
+      "constraint:accounting_runs.accounting_runs_process_check",
+      "constraint:community_accounting_automation.community_accounting_automation_process_check",
+      "function:accounting_runs_guard",
+      "index:uq_accounting_runs_live"
+    ]
+  },
+  "row_changes": {
+    "journal_entries": 0,
+    "journal_entry_lines": 0,
+    "homeowner_transactions": 0,
+    "community_accounting_automation": 1,
+    "bank_accounts": 0
+  },
+  "protected": [
+    {
+      "table": "journal_entry_lines",
+      "order_by": "id"
+    },
+    {
+      "table": "homeowner_transactions",
+      "order_by": "id"
+    },
+    {
+      "table": "bank_statement_transactions",
+      "order_by": "id"
+    }
+  ],
+  "verify": [
+    {
+      "name": "subject_id exists",
+      "sql": "SELECT count(*)::int FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'accounting_runs' AND column_name = 'subject_id'",
+      "expect": 1
+    },
+    {
+      "name": "bank reconciliation is enabled only at Canyon Gate, never auto-posting",
+      "sql": "SELECT count(*)::int FROM community_accounting_automation WHERE process = 'bank_reconciliation' AND (community_id <> 'a0000000-0000-4000-8000-000000000003' OR auto_post OR NOT enabled)",
+      "expect": 0
+    },
+    {
+      "name": "Canyon Gate has three processes",
+      "sql": "SELECT count(*)::int FROM community_accounting_automation WHERE community_id = 'a0000000-0000-4000-8000-000000000003'",
+      "expect": 3
+    },
+    {
+      "name": "both opening positions tie: book = bank + in transit - outstanding",
+      "sql": "SELECT count(*)::int FROM bank_accounts b WHERE b.id IN ('2dd4bf0b-0e71-4da0-b8a7-269845ddf54c', 'ea31dca3-a435-4e9b-b72c-137ee840f6ba') AND (b.opening_position->>'book_balance_cents')::bigint = (b.opening_position->>'bank_balance_cents')::bigint + coalesce((SELECT sum((d->>'amount_cents')::bigint) FROM jsonb_array_elements(b.opening_position->'deposits_in_transit') d), 0) - coalesce((SELECT sum((c->>'amount_cents')::bigint) FROM jsonb_array_elements(b.opening_position->'outstanding_checks') c), 0)",
+      "expect": 2
+    }
+  ]
+}
