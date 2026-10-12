@@ -63,6 +63,14 @@ t('association: the attorney matter title "General Matters" is printed support (
   assert.strictEqual(S.triageItem(item([assoc([{ kind: 'pdf_matter', value: 'invoice PDF matter 2705-0001: General Matters (Collection Matters)' }])])).status, 'accepted');
   assert.strictEqual(S.triageItem(item([assoc([{ kind: 'pdf_matter', value: 'invoice PDF matter 2705-0026: Keller (Collection Matters)' }])])).status, 'exception');
 });
+t('agent accounts (emma-ai@, amanda-ai@, kat-ai@) are AI: their bare stamp clears nothing; a policy determination clears a bankruptcy-association line', () => {
+  for (const who of ['amanda-ai@bedrocktx.com', 'emma-ai@bedrocktx.com', 'kat-ai@bedrocktx.com']) assert.strictEqual(S.triageItem(item([good({ confidence: 'medium', evidence: [{ kind: 'staff_confirmed', value: `confirmed by ${who} on 2026-10-12` }] })])).status, 'exception', who);
+  const bk = assoc([{ kind: 'bankruptcy', value: 'the bill mentions bankruptcy' }], { bankruptcy_stop: true });
+  assert.strictEqual(S.triageItem(item([bk])).status, 'exception');
+  const det = { kind: 'agent_determination', agent: 'amanda-ai@bedrocktx.com', confidence: 'high', basis: 'Bedrock policy (Ed Gojara, 2026-10-11): legal work on a bankruptcy matter stays association legal expense.' };
+  assert.strictEqual(S.triageItem(item([Object.assign({}, bk, { evidence: bk.evidence.concat([det]) })])).status, 'accepted');
+  assert.strictEqual(S.triageItem(item([good({ bankruptcy_stop: true, evidence: [det] })])).status, 'exception', 'an OWNER charge on a bankruptcy matter stays a hard stop');
+});
 t('association: supported by a general-matter heading → accepted', () => {
   assert.strictEqual(S.triageItem(item([assoc([{ kind: 'work_type', value: 'general / association matter per the invoice PDF: supported by the heading / title' }])])).status, 'accepted');
   assert.strictEqual(S.triageItem(item([assoc([{ kind: 'work_type', value: 'association / corporate work, no property named: supported by the line text' }])])).status, 'accepted');

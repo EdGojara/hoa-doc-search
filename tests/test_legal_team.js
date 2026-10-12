@@ -298,6 +298,14 @@ t('accrual timing (Ed 2026-10-12): a held attorney invoice accrues in its own pe
   const ix = src('lib/ap/intake.js');
   assert.ok(/legalLinesNameAnOwner\([\s\S]{0,200}!legalAccrualDue\(extracted\.invoice_date\)/.test(ix), 'intake never holds an invoice whose hold window has passed');
 });
+t('Amanda records routine determinations only from documented policy (Ed 2026-10-12)', () => {
+  const bk = { classification: 'association_legal_expense', property_id: null, bankruptcy_stop: true, evidence: [] };
+  assert.ok(/bankruptcy matter stays association legal expense/.test(TEAM.associationDetermination({}, bk)));
+  const gen = { classification: 'association_legal_expense', property_id: null, evidence: [{ kind: 'pdf_matter', value: 'invoice PDF matter 071202.000001: General HOA Representation' }] };
+  assert.ok(/General association representation/.test(TEAM.associationDetermination({}, gen)));
+  assert.strictEqual(TEAM.associationDetermination({}, { classification: 'association_legal_expense', property_id: null, evidence: [{ kind: 'pdf_matter', value: 'invoice PDF matter 2705-0026: Keller (Collection Matters)' }] }), null, 'no policy, no determination');
+  assert.strictEqual(TEAM.associationDetermination({}, { classification: 'homeowner_recoverable', property_id: 'p', bankruptcy_stop: true, evidence: [] }), null, 'never on an owner charge');
+});
 t('intake hands only a loaded (non-duplicate) attorney invoice to the team, in the background', () => {
   const s = src('lib/ap/intake.js');
   assert.ok(/if \(!suspected\) \{[\s\S]{0,400}is_legal_counsel[\s\S]{0,300}triggerFromIntake\(supabase, data\.id\)/.test(s));
