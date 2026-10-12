@@ -1408,6 +1408,17 @@ router.get('/budgets/plan-seed', async (req, res) => {
     };
     (is.sections?.revenue || []).forEach((r) => push(r, 'revenue'));
     (is.sections?.expenses || []).forEach((r) => push(r, 'expense'));
+    // The current year is never annualized (12 / months elapsed): when the seed is this
+    // year, each account takes the working forecast's projection (applyWorkingForecast).
+    // A seed year that has not ended (the current year) is not an actual year either.
+    if (basis === 'ytd_annualized' || srcYear >= new Date().getUTCFullYear()) {
+      const acc = new Map(rows.map((r) => [r.account_id, { account_id: r.account_id, forecast: r.prior_actual_cents }]));
+      const fb = await applyWorkingForecast(community_id, fy, acc);
+      if (fb.basis === 'working_forecast') {
+        for (const r of rows) { const a = acc.get(r.account_id); r.prior_actual_cents = a.forecast; r.suggested_annual_cents = Math.round(a.forecast * (1 + bumpPct / 100)); r.fund_code = a.fund_code || r.fund_code; r.fund_type = a.fund_type || null; }
+        basis = 'working_forecast'; sourceLabel = `${srcYear} forecast: ${fb.note}`;
+      } else for (const r of rows) { const a = acc.get(r.account_id); r.fund_code = a.fund_code || r.fund_code; r.fund_type = a.fund_type || null; }
+    }
     rows.sort((a, b) => String(a.account_number).localeCompare(String(b.account_number)));
 
     const sv = rows.filter((r) => r.account_type === 'revenue').reduce((s, r) => s + r.suggested_annual_cents, 0);
@@ -1546,6 +1557,37 @@ Return ONLY a JSON array, one object per account, no prose:
 // confidence grade, and the vendor evidence. Everything traces to a source — the
 // exact thing an exported spreadsheet severs. Deterministic (no model call), so
 // it's auditable. The assessment math (revenue requirement / homes) rides along.
+// The current-year forecast for the budget planner (Ed 2026-10-11): the working
+// forecast's base-year projection (lib/forecast/working_forecast), account by account:
+// a line recognized from a schedule (assessments, CLMA, prepaid insurance) = actual to
+// date + the remaining scheduled recognition; a verified contract line = its contract;
+// everything else = actual through the last closed month + the remaining approved
+// budget. Never a straight-line annualization (12 / months elapsed overstated nothing
+// and understated assessments: Canyon Gate showed $924,682.50 for $1,027,425.00).
+// Each row also takes its ACCOUNT's fund, so a fund-specific view never mixes funds.
+async function applyWorkingForecast(community_id, fy, acc) {
+  const ids = [...acc.keys()];
+  if (ids.length) {
+    const { data: coa, error } = await supabase.from('chart_of_accounts').select('id, fund_id, account_funds ( fund_code, fund_type )').in('id', ids);
+    if (error) throw error;
+    for (const c of coa || []) { const a = acc.get(c.id); if (a && c.account_funds) { a.fund_id = c.fund_id; a.fund_code = c.account_funds.fund_code; a.fund_type = c.account_funds.fund_type || null; } }
+  }
+  const now = new Date(); const cy = now.getUTCFullYear();
+  if (fy - 1 !== cy || now.getUTCMonth() === 0) return { basis: 'annualized', note: 'Forecast is the year-to-date run-rate annualized (the working forecast needs a closed month in the base year).' };
+  try {
+    const asOf = new Date(Date.UTC(cy, now.getUTCMonth(), 0)).toISOString().slice(0, 10);   // last day of the previous month
+    const D = require('../lib/forecast/working_forecast_data'); const W = require('../lib/forecast/working_forecast');
+    const m = W.buildWorkingForecast(await D.loadWorkingForecastInput(supabase, { community_id, target_year: fy, as_of: asOf }));
+    const by = new Map();
+    for (const l of m.lines) { const k = l.account_id; const b = l.base_year || {}; const prev = by.get(k) || { cents: 0, notes: [] }; prev.cents += Number(b.current_forecast_cents || 0); if (l.base && l.base.note) prev.notes.push(l.base.note); by.set(k, prev); }
+    for (const a of acc.values()) { const f = by.get(a.account_id); if (f) { a.forecast = f.cents; a.forecast_note = f.notes.join(' '); } }
+    return { basis: 'working_forecast', as_of: asOf, note: `Forecast = actual through ${asOf} + the rest of the year by each account's method (recognition schedule, verified contract, or remaining approved budget).` };
+  } catch (e) {
+    console.warn('[books] living-lines working forecast failed; annualized fallback:', e.message);
+    return { basis: 'annualized', note: `Forecast is the annualized run-rate because the working forecast could not be built (${e.message}).` };
+  }
+}
+
 router.get('/budgets/living-lines', async (req, res) => {
   try {
     const { community_id, fiscal_year } = req.query;
@@ -1593,6 +1635,7 @@ router.get('/budgets/living-lines', async (req, res) => {
     };
     merge(is2, 'fy2'); merge(is1, 'fy1'); merge(isYtd, 'ytd', annualize);
     for (const a of acc.values()) { if (yearNA(is2)) a.fy2 = null; if (yearNA(is1)) a.fy1 = null; }   // not available in trustEd: null, never $0
+    const forecastBasis = await applyWorkingForecast(community_id, fy, acc);
 
     // Include accounts that are BUDGETED but had no GL activity this year (e.g.
     // a reserve contribution transfer) — a budgeted line belongs in next year's
@@ -1791,7 +1834,7 @@ router.get('/budgets/living-lines', async (req, res) => {
         account_id: a.account_id, account_number: a.account_number, account_name: a.account_name, account_type: a.account_type,
         fund_id: a.fund_id, fund_code: a.fund_code,
         prior_budget_cents: priorBudget[a.account_id] || 0,
-        forecast_cents: a.forecast, actual_ytd_cents: a.ytd_actual, fy1_actual_cents: a.fy1, fy2_actual_cents: a.fy2,
+        forecast_cents: a.forecast, forecast_note: a.forecast_note || null, fund_type: a.fund_type || null, actual_ytd_cents: a.ytd_actual, fy1_actual_cents: a.fy1, fy2_actual_cents: a.fy2,
         proposed_cents, source_type, confidence, built_from, vendors, evidence, flags,
       };
     });
@@ -1800,7 +1843,7 @@ router.get('/budgets/living-lines', async (req, res) => {
     const sum = (arr, k) => arr.reduce((s, r) => s + (r[k] || 0), 0);
     const rev = rows.filter((r) => r.account_type === 'revenue'); const exp = rows.filter((r) => r.account_type === 'expense');
     res.json({
-      community_id, fiscal_year: fy, forecast_year: cy, months_elapsed: monthsElapsed, home_count: homeCount || 0, rows,
+      community_id, fiscal_year: fy, forecast_year: cy, months_elapsed: monthsElapsed, forecast_basis: forecastBasis, home_count: homeCount || 0, rows,
       totals: {
         revenue_proposed_cents: sum(rev, 'proposed_cents'), expense_proposed_cents: sum(exp, 'proposed_cents'),
         revenue_forecast_cents: sum(rev, 'forecast_cents'), expense_forecast_cents: sum(exp, 'forecast_cents'),

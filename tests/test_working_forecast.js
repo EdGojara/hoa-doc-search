@@ -256,6 +256,24 @@ const item = (l, d) => l.bridge.find((b) => b.driver === d);
   const l5200 = lm.lines.find((l) => l.account_number === '5200');
   check('loader + engine: a fixture line forecasts with YTD from the statement engine (incl. carryforward)', l5200 && l5200.base_year.ytd_actual_cents === 11870000 && l5200.base_year.current_forecast_cents === 11870000 + 3 * 1290000);
 
+  // Recognition-scheduled lines (Ed 2026-10-11): actual to date + the REMAINING SCHEDULED
+  // recognition, never the remaining budget or an annualized run-rate (12 / months elapsed).
+  {
+    const per = (m, c) => ({ period_month: `2026-${String(m).padStart(2, '0')}-01`, scheduled_cents: c });
+    const sched = { id: 's1', description: '2026 assessments', status: 'active', schedule_basis: 'calculated',
+      periods: [per(8, 8561875), per(9, 8561875), per(10, 8561875), per(11, 8561875), per(12, 8561875)],
+      postings: [{ period_month: '2026-08-01', kind: 'recognition', reversed: false }, { period_month: '2026-09-01', kind: 'recognition', reversed: false }] };
+    // budget phased differently from the schedule, to prove the schedule (not the budget) drives the remainder
+    const asmt = WF.buildLine({ ...L({ type: 'revenue', n: '4000', name: 'Assessments' }), ytd_actual: 77056875, month_actuals: { 8: 8561875, 9: 8561875 }, budget_months: Array(12).fill(9000000), schedules: [sched] }, ctx);
+    check('assessment forecast = YTD recognized + remaining scheduled recognition ($770,568.75 + 3 x $85,618.75 = $1,027,425.00)', asmt.base_year.current_forecast_cents === 102742500, String(asmt.base_year.current_forecast_cents));
+    check('its basis note names the schedule, not the budget', /remaining scheduled recognition/.test(asmt.base.note), asmt.base.note);
+    const sched2 = { ...sched, postings: [{ period_month: '2026-08-01', kind: 'recognition', reversed: false }] };   // September not posted yet
+    const late = WF.buildLine({ ...L({ type: 'revenue', n: '4000', name: 'Assessments' }), ytd_actual: 68495000, month_actuals: { 8: 8561875, 9: 0 }, budget_months: Array(12).fill(9000000), schedules: [sched2] }, ctx);
+    check('a scheduled month not yet posted is still forecast (catch-up), so the year lands on the schedule', late.base_year.current_forecast_cents === 68495000 + 4 * 8561875, String(late.base_year.current_forecast_cents));
+    const plain = WF.buildLine({ ...L({}), ytd_actual: 1000000, month_actuals: { 8: 100000, 9: 100000 } }, ctx);
+    check('a line without a schedule keeps actual + remaining approved budget', /remaining approved budget/.test(plain.base.note), plain.base.note);
+  }
+
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 })().catch((e) => { console.error(e.stack); process.exit(1); });

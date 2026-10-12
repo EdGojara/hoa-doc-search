@@ -1313,7 +1313,10 @@
     } catch(e){ $('bp-grid').innerHTML=`<div style="color:var(--err); padding:12px;">Couldn't load: ${esc(e.message)}</div>`; }
   };
   function bdgPlanVal(i){ const el=document.querySelector('#bp-grid input[data-i="'+i+'"]'); return el ? Math.round((parseFloat(el.value)||0)*100) : 0; }
-  const _isResvRow=(r)=>{ const f=String(r.fund_code||'').toUpperCase(); if(f==='RES')return true; if(f==='OPR')return false; return /\breserve\b/i.test(r.account_name||''); };
+  const _isResvRow=(r)=>{ if(r.fund_type==='reserve')return true; const f=String(r.fund_code||'').toUpperCase(); if(f==='RES')return true; if(f==='OPR'||r.fund_type==='operating')return false; if(r.fund_type||f)return false; return /\breserve\b/i.test(r.account_name||''); };
+  // A fund that is neither operating nor reserve (e.g. the Adopt a School Fund) is its own budget,
+  // never part of the Operating budget or its totals (Ed 2026-10-11).
+  const _isOtherFundRow=(r)=>{ if(_isResvRow(r))return false; if(r.fund_type) return r.fund_type!=='operating'; const f=String(r.fund_code||'').toUpperCase(); return !!f && f!=='OPR' && f!=='RES'; };
   window.bdgLivingRenderReserveProjects=function(){
     const box=$('bl-reserve-projects'); if(!box) return; const ps=window._reserveProjects||[];
     box.innerHTML = ps.length ? ps.map((p,i)=>`
@@ -1366,6 +1369,7 @@
     let opRev=0, opExp=0, otherIncome=0, assessIncome=0, resvIncome=0;
     _bdgPlanRows.forEach((r,i)=>{ const c=bdgPlanVal(i);
       if(_isResvRow(r)){ if(r.account_type==='revenue') resvIncome+=c; }
+      else if(_isOtherFundRow(r)){ /* separate fund: not in the Operating totals */ }
       else if(r.account_type==='revenue'){ opRev+=c; if(/assessment|dues|maintenance fee/i.test(r.account_name||'')) assessIncome+=c; else otherIncome+=c; }
       else opExp+=c; });
     const resvProjects=(window._reserveProjects||[]).reduce((s,p)=>s+(p.planned_amount_cents||0),0);
@@ -1501,9 +1505,10 @@
         <span>Acct</span><span>Account</span><span class="num">Prior budget</span><span class="num">Forecast</span><span class="num">YTD actual</span><span class="num">FY ${esc(String(j.fiscal_year))}</span></div>`;
       // Split by FUND: operating (OPR / unknown) vs reserve (RES). The reserve
       // side pairs its contribution income with the planned capital projects.
-      const isResv=(x)=>{ const f=String(x.fund_code||'').toUpperCase(); if(f==='RES')return true; if(f==='OPR')return false; return /\breserve\b/i.test(x.account_name||''); };
-      const opRev=rev.filter(o=>!isResv(o.x)), opExp=exp.filter(o=>!isResv(o.x));
+      const isResv=_isResvRow, isOther=_isOtherFundRow;
+      const opRev=rev.filter(o=>!isResv(o.x)&&!isOther(o.x)), opExp=exp.filter(o=>!isResv(o.x)&&!isOther(o.x));
       const resvGl=idx.filter(o=>isResv(o.x));
+      const otherGl=idx.filter(o=>isOther(o.x));
       // Reserve projects (capital expenditure plan) — fetched alongside.
       window._reserveProjects=(rbItems||[]).map(p=>({project_name:p.project_name,planned_amount_cents:p.planned_amount_cents,note:p.note||null}));
       const sec=(t,c)=>`<div style="font-weight:700; color:${c}; padding:6px; background:${c==='#166534'?'#f0fdf4':'#fef7f0'}; margin-top:6px;">${t}</div>`;
@@ -1543,6 +1548,10 @@
         ${sec('Revenue','#166534')}${opRev.map(o=>rowHtml(o.x,o.i)).join('')||'<div class="muted" style="padding:8px;">—</div>'}
         ${sec('Expenses','#991b1b')}${opExp.map(o=>rowHtml(o.x,o.i)).join('')||'<div class="muted" style="padding:8px;">—</div>'}
         <div id="bp-totals" style="margin-top:12px; padding:12px; background:#f5f8fc; border-radius:8px; display:flex; gap:24px; flex-wrap:wrap; font-weight:600;"></div>
+
+        ${otherGl.length?`<div style="font-family:var(--font-serif); font-size:19px; color:var(--navy); font-weight:600; margin:22px 0 4px;">Other funds</div>
+        <div class="muted" style="font-size:12px; margin-bottom:6px;">Separate funds (for example the Adopt a School Fund). Shown for completeness; not part of the Operating budget or its totals.</div>
+        ${hdr}${otherGl.map(o=>rowHtml(o.x,o.i)).join('')}`:''}
 
         <div style="font-family:var(--font-serif); font-size:19px; color:var(--navy); font-weight:600; margin:22px 0 4px;">Reserve Budget</div>
         <div class="muted" style="font-size:12px; margin-bottom:6px;">Contributions into reserves, less the planned capital projects, net to the change in your reserve balance.</div>
