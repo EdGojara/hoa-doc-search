@@ -20,6 +20,7 @@ const fs = require('fs');
 
 const PAGES = [
   { name: 'today', path: '/app/today.html?fixture=1' },
+  { name: 'mission-control', path: '/app/mission-control.html?fixture=1' },
   { name: 'communities', path: '/app/communities.html?fixture=1' },
   { name: 'community', path: '/app/community.html?fixture=1&id=00000000-0000-4000-8000-00000000000b' },
   { name: 'community-ready', path: '/app/community.html?fixture=1&id=00000000-0000-4000-8000-00000000000a' },

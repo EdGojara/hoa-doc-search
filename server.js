@@ -898,6 +898,8 @@ app.get('/app/communities/:id', (req, res) => res.sendFile(require('path').join(
 app.get('/app/financial', (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'app', 'financial.html')));
 // Operations home (Issue #6). Read-only.
 app.get('/app/operations', (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'app', 'operations.html')));
+// Mission Control (Ed 2026-10-12): Operations, Platform Buildout, Needs my action.
+app.get('/app/mission-control', (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'app', 'mission-control.html')));
 // Legal Invoice Review (Issue #9 step 2). Draft only: no GL or owner postings.
 app.get('/app/financial/legal', (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'app', 'legal.html')));
 // The review page reconciles with the SAME module the server uses (one rule set).
@@ -1119,6 +1121,8 @@ app.use('/api/mail-scan', mailScanRouter);
 
 const { router: workItemsRouter } = require('./api/work_items');
 app.use('/api/work-items', workItemsRouter);
+// Mission Control (Ed 2026-10-12): one view over the authoritative workflows + the work-item ledger.
+app.use('/api/mission-control', require('./api/mission_control').router);
 
 // Email campaigns — community blasts (single-community or all-communities,
 // each recipient rendered with their community's letterhead). Migration 185.
