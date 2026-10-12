@@ -1,0 +1,257 @@
+{
+  "migration": "514_homeowner_check_receipts.sql",
+  "summary": "Homeowner check scanning: homeowner_check_receipts (images, extracted facts, match evidence, duplicate keys, ledger/GL/deposit links) and homeowner_check_deposits (bank remote-deposit confirmation, bank line match); post_check_receipt_payment / check_receipt_commit_posting write the payment to the homeowner ledger with Tex. Prop. Code 209.0063 applications in a draft batch committed only after its GL entry posts. Adds account 1020 Undeposited Funds beside Operating Cash where a community has no undeposited account (zero balance) and the undeposited_funds account role. Creates no journal entry, ledger row or balance.",
+  "requires": [
+    "469_payments_safe_foundation.sql",
+    "461_homeowner_payment_applications.sql",
+    "195_homeowner_transactions.sql",
+    "169_bank_reconciliation.sql",
+    "012_documents_module.sql"
+  ],
+  "preflight": [
+    {
+      "name": "dependent tables exist (community_account_roles, chart_of_accounts, homeowner_transactions, homeowner_txn_applications, transaction_upload_batches, library_documents, journal_entries, bank_statement_transactions, ownership_tenures, property_ownerships)",
+      "sql": "SELECT count(*)::int FROM information_schema.tables WHERE table_schema = 'public' AND table_name IN ('community_account_roles','chart_of_accounts','homeowner_transactions','homeowner_txn_applications','transaction_upload_batches','library_documents','journal_entries','bank_statement_transactions','ownership_tenures','property_ownerships')",
+      "expect": 10
+    },
+    {
+      "name": "the 209.0063 step function exists (migration 469)",
+      "sql": "SELECT count(*)::int FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'public' AND p.proname = 'payment_application_step'",
+      "expect": 1
+    },
+    {
+      "name": "check receipt tables not created yet",
+      "sql": "SELECT count(*)::int FROM information_schema.tables WHERE table_schema = 'public' AND table_name IN ('homeowner_check_receipts','homeowner_check_deposits')",
+      "expect": 0
+    },
+    {
+      "name": "no undeposited_funds role yet",
+      "sql": "SELECT count(*)::int FROM community_account_roles WHERE role = 'undeposited_funds'",
+      "expect": 0
+    },
+    {
+      "name": "no community has two active Operating Cash (1000) accounts",
+      "sql": "SELECT count(*)::int FROM (SELECT community_id FROM chart_of_accounts WHERE account_number = '1000' AND is_active AND NOT is_summary GROUP BY community_id HAVING count(*) > 1) d",
+      "expect": 0
+    },
+    {
+      "name": "communities that will receive 1020 Undeposited Funds (Operating Cash, no 1020, no undeposited account): 7 in production",
+      "sql": "SELECT count(*)::int FROM chart_of_accounts c WHERE c.account_number = '1000' AND c.is_active AND NOT c.is_summary AND NOT EXISTS (SELECT 1 FROM chart_of_accounts x WHERE x.community_id = c.community_id AND x.account_number = '1020') AND NOT EXISTS (SELECT 1 FROM chart_of_accounts x WHERE x.community_id = c.community_id AND x.account_name ILIKE '%undeposited%')",
+      "expect": 7
+    },
+    {
+      "name": "existing undeposited accounts that will be reused for the role (August Meadows 1020): 1 in production",
+      "sql": "SELECT count(DISTINCT community_id)::int FROM chart_of_accounts WHERE account_name ILIKE '%undeposited%' AND is_active AND NOT is_summary AND account_type = 'asset' AND normal_balance = 'debit'",
+      "expect": 1
+    },
+    {
+      "name": "no ledger row already claims to be a check receipt",
+      "sql": "SELECT count(*)::int FROM homeowner_transactions WHERE raw_row_jsonb->>'source' = 'check_receipt'",
+      "expect": 0
+    },
+    {
+      "name": "no journal entry already uses a check receipt / deposit / return reference",
+      "sql": "SELECT count(*)::int FROM journal_entries WHERE source_reference LIKE 'checkrcpt:%' OR source_reference LIKE 'chkdep:%' OR source_reference LIKE 'checkret:%'",
+      "expect": 0
+    }
+  ],
+  "expected_changes": [
+    "community_account_roles role check also allows undeposited_funds.",
+    "chart_of_accounts: +7 rows, account 1020 Undeposited Funds (asset, debit, active) in the Operating Cash fund of each community with Operating Cash and no undeposited account. Zero balance; no journal entry.",
+    "community_account_roles: +8 rows (role undeposited_funds): the 7 new 1020 accounts and August Meadows' existing 1020.",
+    "New table homeowner_check_deposits (association_record) and homeowner_check_receipts (association_record), RLS on, service_role SELECT/INSERT/UPDATE only.",
+    "Duplicate keys: one receipt per front image and per MICR fingerprint (returned / voided excluded); one ledger row per receipt (homeowner_transactions expression index); one journal entry per receipt / deposit / return reference; one deposit per bank reference and per bank line.",
+    "New functions post_check_receipt_payment (SECURITY DEFINER, dry run by default) and check_receipt_commit_posting, service_role only."
+  ],
+  "objects": {
+    "added": [
+      "column:homeowner_check_deposits.bank_reference",
+      "column:homeowner_check_deposits.bank_statement_transaction_id",
+      "column:homeowner_check_deposits.cash_account_id",
+      "column:homeowner_check_deposits.check_count",
+      "column:homeowner_check_deposits.community_id",
+      "column:homeowner_check_deposits.created_at",
+      "column:homeowner_check_deposits.created_by",
+      "column:homeowner_check_deposits.deposit_date",
+      "column:homeowner_check_deposits.evidence_document_id",
+      "column:homeowner_check_deposits.id",
+      "column:homeowner_check_deposits.journal_entry_id",
+      "column:homeowner_check_deposits.notes",
+      "column:homeowner_check_deposits.reconciled_at",
+      "column:homeowner_check_deposits.reconciled_by",
+      "column:homeowner_check_deposits.record_ownership",
+      "column:homeowner_check_deposits.status",
+      "column:homeowner_check_deposits.total_cents",
+      "column:homeowner_check_deposits.updated_at",
+      "column:homeowner_check_receipts.account_last4",
+      "column:homeowner_check_receipts.amount_cents",
+      "column:homeowner_check_receipts.back_document_id",
+      "column:homeowner_check_receipts.back_sha256",
+      "column:homeowner_check_receipts.check_date",
+      "column:homeowner_check_receipts.check_number",
+      "column:homeowner_check_receipts.community_id",
+      "column:homeowner_check_receipts.confirmed_at",
+      "column:homeowner_check_receipts.confirmed_by",
+      "column:homeowner_check_receipts.created_at",
+      "column:homeowner_check_receipts.created_by",
+      "column:homeowner_check_receipts.deposit_id",
+      "column:homeowner_check_receipts.duplicate_findings",
+      "column:homeowner_check_receipts.exception_reason",
+      "column:homeowner_check_receipts.extracted",
+      "column:homeowner_check_receipts.front_document_id",
+      "column:homeowner_check_receipts.front_sha256",
+      "column:homeowner_check_receipts.homeowner_txn_id",
+      "column:homeowner_check_receipts.id",
+      "column:homeowner_check_receipts.journal_entry_id",
+      "column:homeowner_check_receipts.ledger_batch_id",
+      "column:homeowner_check_receipts.match_candidates",
+      "column:homeowner_check_receipts.match_confidence",
+      "column:homeowner_check_receipts.match_evidence",
+      "column:homeowner_check_receipts.memo",
+      "column:homeowner_check_receipts.micr_fingerprint",
+      "column:homeowner_check_receipts.override_note",
+      "column:homeowner_check_receipts.payee_name",
+      "column:homeowner_check_receipts.payer_address",
+      "column:homeowner_check_receipts.payer_name",
+      "column:homeowner_check_receipts.property_id",
+      "column:homeowner_check_receipts.received_date",
+      "column:homeowner_check_receipts.record_ownership",
+      "column:homeowner_check_receipts.return_journal_entry_id",
+      "column:homeowner_check_receipts.return_reason",
+      "column:homeowner_check_receipts.return_txn_id",
+      "column:homeowner_check_receipts.returned_at",
+      "column:homeowner_check_receipts.routing_number",
+      "column:homeowner_check_receipts.scan_batch_id",
+      "column:homeowner_check_receipts.status",
+      "column:homeowner_check_receipts.tenure_id",
+      "column:homeowner_check_receipts.updated_at",
+      "column:homeowner_check_receipts.written_account_number",
+      "constraint:homeowner_check_deposits.homeowner_check_deposits_bank_reference_check",
+      "constraint:homeowner_check_deposits.homeowner_check_deposits_bank_statement_transaction_id_fkey",
+      "constraint:homeowner_check_deposits.homeowner_check_deposits_cash_account_id_fkey",
+      "constraint:homeowner_check_deposits.homeowner_check_deposits_check_count_check",
+      "constraint:homeowner_check_deposits.homeowner_check_deposits_community_id_bank_reference_key",
+      "constraint:homeowner_check_deposits.homeowner_check_deposits_community_id_fkey",
+      "constraint:homeowner_check_deposits.homeowner_check_deposits_evidence_document_id_fkey",
+      "constraint:homeowner_check_deposits.homeowner_check_deposits_journal_entry_id_fkey",
+      "constraint:homeowner_check_deposits.homeowner_check_deposits_pkey",
+      "constraint:homeowner_check_deposits.homeowner_check_deposits_record_ownership_check",
+      "constraint:homeowner_check_deposits.homeowner_check_deposits_status_check",
+      "constraint:homeowner_check_deposits.homeowner_check_deposits_total_cents_check",
+      "constraint:homeowner_check_receipts.homeowner_check_receipts_amount_cents_check",
+      "constraint:homeowner_check_receipts.homeowner_check_receipts_back_document_id_fkey",
+      "constraint:homeowner_check_receipts.homeowner_check_receipts_check",
+      "constraint:homeowner_check_receipts.homeowner_check_receipts_check1",
+      "constraint:homeowner_check_receipts.homeowner_check_receipts_community_id_fkey",
+      "constraint:homeowner_check_receipts.homeowner_check_receipts_deposit_id_fkey",
+      "constraint:homeowner_check_receipts.homeowner_check_receipts_front_document_id_fkey",
+      "constraint:homeowner_check_receipts.homeowner_check_receipts_homeowner_txn_id_fkey",
+      "constraint:homeowner_check_receipts.homeowner_check_receipts_journal_entry_id_fkey",
+      "constraint:homeowner_check_receipts.homeowner_check_receipts_match_confidence_check",
+      "constraint:homeowner_check_receipts.homeowner_check_receipts_pkey",
+      "constraint:homeowner_check_receipts.homeowner_check_receipts_property_id_fkey",
+      "constraint:homeowner_check_receipts.homeowner_check_receipts_record_ownership_check",
+      "constraint:homeowner_check_receipts.homeowner_check_receipts_return_journal_entry_id_fkey",
+      "constraint:homeowner_check_receipts.homeowner_check_receipts_return_txn_id_fkey",
+      "constraint:homeowner_check_receipts.homeowner_check_receipts_status_check",
+      "constraint:homeowner_check_receipts.homeowner_check_receipts_tenure_id_fkey",
+      "function:check_receipt_commit_posting",
+      "function:post_check_receipt_payment",
+      "index:homeowner_check_deposits_community_id_bank_reference_key",
+      "index:homeowner_check_deposits_pkey",
+      "index:homeowner_check_receipts_pkey",
+      "index:idx_check_receipts_deposit",
+      "index:idx_check_receipts_property",
+      "index:idx_check_receipts_status",
+      "index:uq_check_deposit_bank_line",
+      "index:uq_check_receipt_front_image",
+      "index:uq_check_receipt_micr",
+      "index:uq_homeowner_txn_check_receipt",
+      "index:uq_journal_entries_check_refs",
+      "table:homeowner_check_deposits",
+      "table:homeowner_check_receipts"
+    ],
+    "changed": [
+      "constraint:community_account_roles.community_account_roles_role_check"
+    ],
+    "removed": []
+  },
+  "row_changes": {
+    "chart_of_accounts": 7,
+    "community_account_roles": 8,
+    "journal_entries": 0,
+    "journal_entry_lines": 0,
+    "homeowner_transactions": 0,
+    "homeowner_txn_applications": 0,
+    "transaction_upload_batches": 0
+  },
+  "protected": [
+    {
+      "table": "journal_entries",
+      "order_by": "id"
+    },
+    {
+      "table": "journal_entry_lines",
+      "order_by": "id"
+    },
+    {
+      "table": "homeowner_transactions",
+      "order_by": "id"
+    },
+    {
+      "table": "homeowner_txn_applications",
+      "order_by": "id"
+    },
+    {
+      "table": "transaction_upload_batches",
+      "order_by": "id"
+    }
+  ],
+  "verify": [
+    {
+      "name": "both tables exist",
+      "sql": "SELECT count(*)::int FROM information_schema.tables WHERE table_schema = 'public' AND table_name IN ('homeowner_check_receipts','homeowner_check_deposits')",
+      "expect": 2
+    },
+    {
+      "name": "seven 1020 Undeposited Funds accounts were added",
+      "sql": "SELECT count(*)::int FROM chart_of_accounts WHERE account_number = '1020' AND account_name = 'Undeposited Funds' AND description LIKE '%(mig 514)%'",
+      "expect": 7
+    },
+    {
+      "name": "eight undeposited_funds roles, each on an active debit-normal Undeposited Funds asset account",
+      "sql": "SELECT count(*)::int FROM community_account_roles r JOIN chart_of_accounts a ON a.id = r.account_id WHERE r.role = 'undeposited_funds' AND a.account_name ILIKE '%undeposited%' AND a.account_type = 'asset' AND a.normal_balance = 'debit' AND a.is_active",
+      "expect": 8
+    },
+    {
+      "name": "each new 1020 sits in its community's Operating Cash fund",
+      "sql": "SELECT count(*)::int FROM chart_of_accounts n JOIN chart_of_accounts o ON o.community_id = n.community_id AND o.account_number = '1000' WHERE n.account_number = '1020' AND n.description LIKE '%(mig 514)%' AND n.fund_id IS DISTINCT FROM o.fund_id",
+      "expect": 0
+    },
+    {
+      "name": "no activity on the new accounts (zero balance)",
+      "sql": "SELECT count(*)::int FROM journal_entry_lines l JOIN chart_of_accounts a ON a.id = l.account_id WHERE a.account_number = '1020' AND a.description LIKE '%(mig 514)%'",
+      "expect": 0
+    },
+    {
+      "name": "duplicate-key indexes exist (image, MICR, ledger row per receipt, GL reference, bank line)",
+      "sql": "SELECT count(*)::int FROM pg_indexes WHERE schemaname = 'public' AND indexname IN ('uq_check_receipt_front_image','uq_check_receipt_micr','uq_homeowner_txn_check_receipt','uq_journal_entries_check_refs','uq_check_deposit_bank_line')",
+      "expect": 5
+    },
+    {
+      "name": "both functions exist; the posting function is SECURITY DEFINER",
+      "sql": "SELECT count(*)::int FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'public' AND p.prosecdef AND p.proname IN ('post_check_receipt_payment','check_receipt_commit_posting')",
+      "expect": 2
+    },
+    {
+      "name": "service_role can write the receipts; anon cannot read them",
+      "sql": "SELECT (has_table_privilege('service_role', 'public.homeowner_check_receipts', 'INSERT') AND NOT has_table_privilege('anon', 'public.homeowner_check_receipts', 'SELECT') AND has_table_privilege('service_role', 'public.homeowner_check_deposits', 'INSERT') AND NOT has_table_privilege('anon', 'public.homeowner_check_deposits', 'SELECT'))::int",
+      "expect": 1
+    },
+    {
+      "name": "the full bank account number has no column (last 4 + fingerprint only)",
+      "sql": "SELECT count(*)::int FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'homeowner_check_receipts' AND column_name IN ('account_number','micr_account','bank_account_number')",
+      "expect": 0
+    }
+  ]
+}
