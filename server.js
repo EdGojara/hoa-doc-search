@@ -1149,6 +1149,8 @@ app.use('/api/gl', glRouter);
 // PDF, XLSX, CSV and board packets; drill-down; balance-sheet mapping.
 app.use('/api/financial-statements', require('./api/financial_statements'));
 app.use('/api/accounting-runs', require('./api/accounting_runs'));
+// Homeowner check scanning -> recording -> deposit -> reconciliation (mig 514).
+app.use('/api/check-receipts', require('./api/check_receipts'));
 app.get('/admin/financial-statements', (req, res) => {
   res.sendFile(require('path').join(__dirname, 'public', 'financial-statements.html'));
 });

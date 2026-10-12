@@ -267,6 +267,19 @@ router.post('/upload', upload.single('file'), async (req, res) => {
       (contacts || []).forEach(c => { if (c.vantaca_account_id) contactByAcct[c.vantaca_account_id] = c.id; });
     }
 
+    // A check already recorded in trustEd (scanned + recorded, lib/payments/check_receipts)
+    // is never added again by a later Vantaca snapshot: the matching payment row (same
+    // account, same amount, within the window) is left out and reported (Ed 2026-10-12).
+    let skipRecorded = new Map();
+    try {
+      const CR = require('../lib/payments/check_receipts');
+      const dates = parsedRows.map((r) => r.transaction_date).filter(Boolean).sort();
+      if (dates.length) skipRecorded = CR.recordedCheckRowsToSkip(parsedRows, await CR.recordedChecksForImport(supabase, communityId, dates[0], dates[dates.length - 1]), propByAcct);
+    } catch (e) {
+      // Before migration 514 there are no recorded checks to protect.
+      if (!/homeowner_check_receipts|does not exist|schema cache/i.test(e.message)) throw e;
+    }
+
     // Default period_label + as_of_date if not provided
     const today = new Date();
     const periodLabel = req.body.period_label || today.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
@@ -301,7 +314,7 @@ router.post('/upload', upload.single('file'), async (req, res) => {
     if (batchErr) return res.status(500).json({ error: batchErr.message });
 
     // Insert all transaction rows (chunks of 500 to keep payloads sane)
-    const txnRows = parsedRows.map(r => ({
+    const txnRows = parsedRows.filter(r => !skipRecorded.has(r.source_row_index)).map(r => ({
       source_batch_id: batch.id,
       source_row_index: r.source_row_index,
       community_id: communityId,
@@ -391,6 +404,7 @@ router.post('/upload', upload.single('file'), async (req, res) => {
         total_payments_cents: totalPayments,
       },
       errors: errors.slice(0, 50),
+      already_recorded_checks: [...skipRecorded.entries()].map(([row, c]) => ({ row, check_receipt_id: c.id, check_number: c.check_number, amount_cents: c.amount_cents })),
     });
   } catch (err) {
     console.error('[transactions/upload] failed:', err.stack || err.message);

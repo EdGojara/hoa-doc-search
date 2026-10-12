@@ -968,6 +968,12 @@
       "fallback": null,
       "consequence": "high",
       "prior": null
+    },
+    "payments.check_extract": {
+      "model": "tier:standard",
+      "fallback": null,
+      "consequence": "high",
+      "prior": "sonnet-4-5"
     }
   },
   "_comment_request_defaults": "request_defaults are applied to a routed call only when the caller did not set that parameter. Sonnet 5 / Opus 5 think ADAPTIVELY by default and then put a thinking block BEFORE the text; every call site was written for Sonnet 4.5 (no thinking) and reads content[0].text, so thinking is disabled by default to preserve the response shape (Issue #12, found by the Vantaca PDF fixture). To try thinking on one workflow, set that workflow request_defaults: {\"thinking\": {\"type\": \"enabled\", \"budget_tokens\": N}} after an eval."
