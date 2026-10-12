@@ -254,7 +254,20 @@ async function billbackSummary(d, plan, postings) {
     method: plan.mode === 'direct' ? (charged ? 'posted directly to homeowner AR with the accrual' : 'posts directly to homeowner AR with the accrual when approved')
       : charged ? 'accrued to legal expense, owner share then billed back to homeowner AR (net result shown)' : 'accrued to legal expense; the owner share is billed back to homeowner AR when approved',
     posted: homeowner === 0 ? !!plan.accrual : charged === homeowner };
-  return { review_status: plan.review ? plan.review.status : 'none', ready: plan.ready, blocking: plan.blocking, final,
+  // The ORIGINAL posted accrual, as coded (kept as posted; adjustments are separate entries).
+  let original = null;
+  if (plan.accrual && plan.accrual.id) {
+    const { data: al, error: ae } = await supabase.from('journal_entry_lines').select('debit_cents, credit_cents, chart_of_accounts(account_number, account_name)').eq('journal_entry_id', plan.accrual.id);
+    if (ae) throw ae;
+    const by = new Map();
+    for (const l of al || []) {
+      const a = l.chart_of_accounts || {}; const k = `${a.account_number} ${a.account_name}`;
+      const cur = by.get(k) || { account: k, debit_cents: 0, credit_cents: 0 };
+      cur.debit_cents += Number(l.debit_cents) || 0; cur.credit_cents += Number(l.credit_cents) || 0; by.set(k, cur);
+    }
+    original = { reference: plan.accrual.reference, posting_date: plan.accrual.posting_date, lines: [...by.values()] };
+  }
+  return { review_status: plan.review ? plan.review.status : 'none', ready: plan.ready, blocking: plan.blocking, final, original,
     homeowner_cents: sum((r) => r.classification === 'homeowner_recoverable'), charged_cents: sum((r) => r.status === 'charged'),
     association_cents: sum((r) => r.classification === 'association_legal_expense'), rows, review_url: `/app/financial/legal?id=${d.invoice.id}` };
 }
