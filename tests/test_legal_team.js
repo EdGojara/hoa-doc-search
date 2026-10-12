@@ -253,6 +253,10 @@ t('recovery activity: research -> exceptions (bankruptcy blocks) -> approval -> 
   assert.strictEqual(done.action, 'clear'); assert.ok(/homeowner charges posted/.test(done.reason));
   assert.strictEqual(TEAM.legalRecovery(row()).action, 'clear', 'an association-only invoice has no recovery to track');
 });
+t('documentation activity: an inaccessible source with nothing missing is not a task (Ed 2026-10-12)', () => {
+  assert.strictEqual(TEAM.legalDocumentation(row({ homeowner_cents: 100, recoverable_count: 1, docs: { missing: [], inaccessible: ['1 A St: OneDrive'] } })).action, 'clear');
+  assert.strictEqual(TEAM.legalDocumentation(row({ homeowner_cents: 100, recoverable_count: 1, exceptions: [{ matter: 'm', kind: 'bankruptcy', reason: 'r' }], docs: { missing: [], inaccessible: ['1 A St: OneDrive'] } })).action, 'track', 'an unresolved line keeps the unsearched source as work');
+});
 t('documentation activity: open while evidence is missing or inaccessible; closes when supplied or the recovery is resolved', () => {
   const open = TEAM.legalDocumentation(row({ homeowner_cents: 100, recoverable_count: 1, exceptions: [{ matter: 'm', kind: 'missing_notice', reason: 'r' }], docs: { missing: ['1 A St: proof of certified mailing'], inaccessible: ['1 A St: OneDrive'] } }));
   assert.strictEqual(open.action, 'track'); assert.ok(/1 missing, 1 source\(s\) inaccessible/.test(open.title));
