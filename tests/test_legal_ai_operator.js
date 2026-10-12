@@ -138,10 +138,14 @@ t('#278001 "Prepare deed restriction status report." (no owner) is association g
   const ev = S.extractEvidence('Prepare deed restriction status report.');
   const a = S.assess(ix, S.matchProperty(ix, ev), ev, cls, null, '2026-07-31');
   assert.strictEqual(a.classification, 'association_legal_expense');
-  assert.strictEqual(S.triageItem({ amount_cents: 2400, allocations: [Object.assign({ amount_cents: 2400 }, a)] }).status, 'accepted');
+  // General Matters stays a review exception until a person confirms it (Ed 2026-10-12): soft, never hard.
+  const tr = S.triageItem({ amount_cents: 2400, allocations: [Object.assign({ amount_cents: 2400 }, a)] });
+  assert.strictEqual(tr.status, 'exception'); assert.deepStrictEqual(tr.hard, []);
+  const conf = Object.assign({ amount_cents: 2400 }, a, { evidence: (a.evidence || []).concat([{ kind: 'staff_confirmed', value: 'confirmed by egojara@bedrocktx.com on 2026-10-12' }]) });
+  assert.strictEqual(S.triageItem({ amount_cents: 2400, allocations: [conf] }).status, 'accepted');
 });
 
-t('#278001 with the attorney PDF read: matter 2706.0001 "General Matters" filed under Deed Restriction Matters, no homeowner, status-report entries -> association expense, ready', () => {
+t('#278001 with the attorney PDF read: matter 2706.0001 "General Matters" filed under Deed Restriction Matters, no homeowner, status-report entries -> association expense once a person confirms (Ed 2026-10-12)', () => {
   const ix = S.buildIndex({ properties: [], tenures: [], owners: [] });
   const extraction = { id: 'ext1', line_map: { L1: 0 }, matters: [{ matter_ref: '2706.0001', title: 'General Matters', section_heading: 'Deed Restriction Matters', work_type: 'deed_restriction', parties: [], property_address: null,
     entries: [{ description: 'Prepare deed restriction status report.' }, { description: 'Review deed restriction status report. [NO CHARGE]' }] }] };
@@ -150,6 +154,9 @@ t('#278001 with the attorney PDF read: matter 2706.0001 "General Matters" filed 
   const a = S.assess(ix, sig.match, sig.ev, sig.cls, null, '2026-07-31');
   assert.strictEqual(a.classification, 'association_legal_expense');
   const it = { amount_cents: 2400, allocations: [Object.assign({ amount_cents: 2400 }, a)] };
+  // A person confirms General Matters before it is ready (Ed 2026-10-12); Amanda never self-approves it.
+  assert.strictEqual(S.decisionOf(it).state, 'needs_decision');
+  it.allocations[0].evidence = (it.allocations[0].evidence || []).concat([{ kind: 'staff_confirmed', value: 'confirmed by egojara@bedrocktx.com on 2026-10-12' }]);
   assert.strictEqual(S.decisionOf(it).state, 'ready');
 });
 t('a deed-restriction matter that names a homeowner is never swept into association expense by the general-matter rule', () => {
