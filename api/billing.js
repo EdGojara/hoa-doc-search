@@ -157,7 +157,7 @@ router.get('/communities', async (req, res) => {
     const { data: communities, error } = await supabase
       .from('communities')
       .select(`
-        id, name, legal_name, slug, vantaca_code, billing_code, total_lots, active,
+        id, name, legal_name, slug, vantaca_code, billing_code, total_lots, active, management_status, management_end_date,
         contracts:contracts(id, version, effective_date, escalator_kind, escalator_pct, status)
       `)
       .eq('management_company_id', BEDROCK_MGMT_CO_ID)
@@ -167,7 +167,10 @@ router.get('/communities', async (req, res) => {
     if (error) throw error;
 
     // Reduce contract array to the one active contract (if any) for cleaner UI.
-    const enriched = (communities || []).map(c => {
+    // A community Bedrock no longer manages (archived / past its last day) is not billed
+    // going forward (lib/community/lifecycle). Its past invoices stay where they are.
+    const { isEnded } = require('../lib/community/lifecycle');
+    const enriched = (communities || []).filter((c) => !isEnded(c)).map(c => {
       const active = (c.contracts || []).find(ct => ct.status === 'active') || null;
       return {
         id: c.id,

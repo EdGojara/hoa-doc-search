@@ -23,7 +23,7 @@ const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY
 router.use(express.json({ limit: '256kb' }));
 
 const who = (actor) => `${actorDisplayName(actor)}${actor && actor.email ? ` <${actor.email}>` : ''}`;
-const STATUS = { attestation_required: 409, invalid_input: 400, not_eligible: 409, conflict: 409, duplicate: 409, date_mismatch: 409, blocked: 409, template_not_approved: 409, verification_failed: 409, forbidden: 403 };
+const STATUS = { community_not_operational: 409, attestation_required: 409, invalid_input: 400, not_eligible: 409, conflict: 409, duplicate: 409, date_mismatch: 409, blocked: 409, template_not_approved: 409, verification_failed: 409, forbidden: 403 };
 function fail(res, err, where) {
   const msg = String(err && err.message);
   if (/collection_notice|collection_fee_autopost/.test(msg) && /does not exist|schema cache|not find/i.test(msg)) return res.status(503).json({ error: 'migration_515_required', message: 'Collections notices need migration 515 (Documents -> Migration status).' });
@@ -138,6 +138,7 @@ router.post('/legal-status/:propertyId', async (req, res) => {
     if (!['not_with_counsel', 'with_counsel'].includes(b.status)) return res.status(400).json({ error: 'invalid_input', message: "status must be 'not_with_counsel' or 'with_counsel'" });
     if (!source) return res.status(400).json({ error: 'invalid_input', message: "Name what you checked (for example the attorney's current account list and its date)." });
     if (b.status === 'with_counsel' && !String(b.attorney_firm || '').trim()) return res.status(400).json({ error: 'invalid_input', message: 'Name the attorney firm.' });
+    { const { data: p, error: pe } = await supabase.from('properties').select('community_id').eq('id', req.params.propertyId).single(); if (pe) throw pe; await require('../lib/community/lifecycle').assertCanDo('financials', p.community_id, 'Confirming legal status for collections'); }
     const { setEnforcementState } = require('./contacts');
     return setEnforcementState({ params: { propertyId: req.params.propertyId }, ip: req.ip, body: {
       state: b.status === 'with_counsel' ? 'at_legal' : 'current',
@@ -155,6 +156,7 @@ router.post('/templates/:id/approve', async (req, res) => {
     const { data: t, error } = await supabase.from('collection_notice_templates').select('id, community_id, status').eq('id', req.params.id).single();
     if (error) throw error;
     if (t.status === 'approved') return res.json({ status: 'already_approved' });
+    await require('../lib/community/lifecycle').assertCanDo('financials', t.community_id, 'Approving a notice template');
     const { error: re } = await supabase.from('collection_notice_templates').update({ status: 'retired', updated_at: new Date().toISOString() }).eq('community_id', t.community_id).eq('status', 'approved');
     if (re) throw re;
     const { data: u, error: ue } = await supabase.from('collection_notice_templates').update({ status: 'approved', approved_by: who(actor), approved_at: new Date().toISOString(), updated_at: new Date().toISOString() }).eq('id', t.id).select('*').single();
@@ -170,6 +172,7 @@ router.put('/settings', async (req, res) => {
     const b = req.body || {};
     const cents = Number(b.fee_cents);
     if (!b.community_id || !Number.isInteger(cents) || cents < 0) return res.status(400).json({ error: 'invalid_input', message: 'community_id and a whole-cent fee are required' });
+    await require('../lib/community/lifecycle').assertCanDo('financials', b.community_id, 'Setting the certified-letter fee');
     const { data, error } = await supabase.from('communities').update({ certified_collection_fee_cents: cents, collection_fee_autopost: b.autopost === true }).eq('id', b.community_id).select('id, certified_collection_fee_cents, collection_fee_autopost').single();
     if (error) throw error;
     res.json({ community: data, fee: (await N.loadConfig(supabase, b.community_id)).fee });

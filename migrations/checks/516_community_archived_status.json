@@ -1,0 +1,80 @@
+{
+  "migration": "516_community_archived_status.sql",
+  "summary": "Adds 'archived' to communities.management_status and archives every community whose engagement has ended (terminating / terminated with a last day already past): management_status 'archived', enforcement_active and arc_active off. Today that is exactly Eaglewood (last day 2026-09-30). Selected by status and date, not by name. Nothing is deleted; no journal entry, ledger row, violation, document or correspondence changes.",
+  "requires": [
+    "382_community_management_lifecycle.sql"
+  ],
+  "preflight": [
+    {
+      "name": "the management_status check exists under its migration 382 name",
+      "sql": "SELECT count(*)::int FROM pg_constraint k JOIN pg_class c ON c.oid = k.conrelid WHERE c.relname = 'communities' AND k.conname = 'communities_management_status_check'",
+      "expect": 1
+    },
+    {
+      "name": "archived is not allowed yet",
+      "sql": "SELECT count(*)::int FROM pg_constraint k JOIN pg_class c ON c.oid = k.conrelid WHERE c.relname = 'communities' AND k.conname = 'communities_management_status_check' AND pg_get_constraintdef(k.oid) LIKE '%archived%'",
+      "expect": 0
+    },
+    {
+      "name": "exactly one community has ended (terminating / terminated, last day past)",
+      "sql": "SELECT count(*)::int FROM communities WHERE management_status IN ('terminating','terminated') AND management_end_date IS NOT NULL AND management_end_date < (now() AT TIME ZONE 'America/Chicago')::date",
+      "expect": 1
+    },
+    {
+      "name": "and it is Eaglewood, with financials already off",
+      "sql": "SELECT count(*)::int FROM communities WHERE name = 'Eaglewood' AND management_status IN ('terminating','terminated') AND management_end_date < (now() AT TIME ZONE 'America/Chicago')::date AND financials_active = false",
+      "expect": 1
+    },
+    {
+      "name": "status counts before (9 active, 3 prospect, 1 terminating)",
+      "sql": "SELECT string_agg(management_status || '=' || n, ',' ORDER BY management_status) FROM (SELECT management_status, count(*) n FROM communities GROUP BY management_status) s",
+      "expect": "active=9,prospect=3,terminating=1"
+    }
+  ],
+  "expected_changes": [
+    "communities_management_status_check also allows 'archived'.",
+    "Eaglewood: management_status terminating -> archived; enforcement_active and arc_active -> false (financials_active already false). One row updated; no row added or removed.",
+    "No other community changes. No journal entry, journal line, homeowner ledger row, violation, ARC application, interaction or document changes."
+  ],
+  "objects": {
+    "added": [],
+    "changed": [
+      "constraint:communities.communities_management_status_check"
+    ],
+    "removed": []
+  },
+  "row_changes": {
+    "communities": 0,
+    "journal_entries": 0,
+    "journal_entry_lines": 0,
+    "homeowner_transactions": 0,
+    "violations": 0,
+    "interactions": 0,
+    "library_documents": 0
+  },
+  "protected": [
+    { "table": "journal_entries", "order_by": "id" },
+    { "table": "journal_entry_lines", "order_by": "id" },
+    { "table": "homeowner_transactions", "order_by": "id" },
+    { "table": "violations", "order_by": "id" },
+    { "table": "interactions", "order_by": "id" },
+    { "table": "library_documents", "order_by": "id" }
+  ],
+  "verify": [
+    {
+      "name": "Eaglewood is archived with enforcement and ARC off",
+      "sql": "SELECT count(*)::int FROM communities WHERE name = 'Eaglewood' AND management_status = 'archived' AND enforcement_active = false AND arc_active = false AND financials_active = false",
+      "expect": 1
+    },
+    {
+      "name": "status counts after (9 active, 3 prospect, 1 archived): no other community changed",
+      "sql": "SELECT string_agg(management_status || '=' || n, ',' ORDER BY management_status) FROM (SELECT management_status, count(*) n FROM communities GROUP BY management_status) s",
+      "expect": "active=9,archived=1,prospect=3"
+    },
+    {
+      "name": "the check allows archived",
+      "sql": "SELECT count(*)::int FROM pg_constraint WHERE conname = 'communities_management_status_check' AND pg_get_constraintdef(oid) LIKE '%archived%'",
+      "expect": 1
+    }
+  ]
+}
