@@ -1,0 +1,252 @@
+{
+  "migration": "515_collection_notices.sql",
+  "summary": "Certified collections notices: collection_notice_templates (each community's current Vantaca wording seeded as a DRAFT with five counsel questions and seven required elements), collection_notice_batches (workpaper) and collection_notices (association_record: fixed statement snapshot, PDF, USPS tracking, mailing evidence, fee links). Database-enforced controls: cure period >= 45 days, deadline = notice date + cure, amount due = ledger + fee, mailed only with a tracking number on the notice date, one open notice per account. Fee idempotency keys (one homeowner fee row, one GL entry, one Bedrock billing item per notice). communities.collection_fee_autopost added DEFAULT false (no homeowner fee is charged until the owner turns it on). billing_pending_items.source also allows collection_notice. Creates no journal entry, ledger row, charge or balance.",
+  "requires": [
+    "296_billing_pending_items.sql",
+    "394_certified_letter_fee_autopost.sql",
+    "195_homeowner_transactions.sql",
+    "457_current_tenure_reader_views.sql"
+  ],
+  "preflight": [
+    {
+      "name": "dependent tables exist (communities, properties, ownership_tenures, homeowner_transactions, journal_entries, billing_pending_items)",
+      "sql": "SELECT count(*)::int FROM information_schema.tables WHERE table_schema = 'public' AND table_name IN ('communities','properties','ownership_tenures','homeowner_transactions','journal_entries','billing_pending_items')",
+      "expect": 6
+    },
+    {
+      "name": "collections tables not created yet",
+      "sql": "SELECT count(*)::int FROM information_schema.tables WHERE table_schema = 'public' AND table_name IN ('collection_notice_templates','collection_notice_batches','collection_notices')",
+      "expect": 0
+    },
+    {
+      "name": "communities.collection_fee_autopost not added yet",
+      "sql": "SELECT count(*)::int FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'communities' AND column_name = 'collection_fee_autopost'",
+      "expect": 0
+    },
+    {
+      "name": "communities that will receive a draft template: 13 in production",
+      "sql": "SELECT count(*)::int FROM communities",
+      "expect": 13
+    },
+    {
+      "name": "every existing billing item uses an allowed source (manual / email), so the widened check validates",
+      "sql": "SELECT count(*)::int FROM billing_pending_items WHERE source NOT IN ('manual','email')",
+      "expect": 0
+    },
+    {
+      "name": "no ledger row already claims to be a collections notice fee",
+      "sql": "SELECT count(*)::int FROM homeowner_transactions WHERE raw_row_jsonb->>'source' = 'collection_notice_fee'",
+      "expect": 0
+    },
+    {
+      "name": "no journal entry already uses a collections notice reference",
+      "sql": "SELECT count(*)::int FROM journal_entries WHERE source_reference LIKE 'collnotice:%'",
+      "expect": 0
+    }
+  ],
+  "expected_changes": [
+    "communities gains collection_fee_autopost boolean NOT NULL DEFAULT false (every community reads false: no homeowner fee).",
+    "New tables collection_notice_templates (mixed), collection_notice_batches (workpaper), collection_notices (association_record); RLS on, service_role SELECT/INSERT/UPDATE only.",
+    "collection_notice_templates: +13 rows, one DRAFT per community (status draft, counsel_status questions_open). Nothing can be approved for mailing until the owner approves a template.",
+    "Unique keys: one approved template per community; one open notice per account; a USPS tracking number once; one homeowner fee row (homeowner_transactions expression index), one GL entry (journal_entries collnotice: reference) and one Bedrock billing item (billing_pending_items) per notice.",
+    "billing_pending_items source check also allows collection_notice; existing items unchanged."
+  ],
+  "objects": {
+    "added": [
+      "column:collection_notice_batches.approved_at",
+      "column:collection_notice_batches.approved_by",
+      "column:collection_notice_batches.batch_pdf_path",
+      "column:collection_notice_batches.batch_pdf_sha256",
+      "column:collection_notice_batches.cancelled_reason",
+      "column:collection_notice_batches.community_id",
+      "column:collection_notice_batches.created_at",
+      "column:collection_notice_batches.id",
+      "column:collection_notice_batches.notice_date",
+      "column:collection_notice_batches.prepared_at",
+      "column:collection_notice_batches.prepared_by",
+      "column:collection_notice_batches.printed_at",
+      "column:collection_notice_batches.printed_by",
+      "column:collection_notice_batches.record_ownership",
+      "column:collection_notice_batches.status",
+      "column:collection_notice_batches.template_id",
+      "column:collection_notice_batches.updated_at",
+      "column:collection_notice_batches.verification",
+      "column:collection_notice_batches.verified_at",
+      "column:collection_notice_batches.verified_by",
+      "column:collection_notice_templates.approved_at",
+      "column:collection_notice_templates.approved_by",
+      "column:collection_notice_templates.community_id",
+      "column:collection_notice_templates.counsel_questions",
+      "column:collection_notice_templates.counsel_status",
+      "column:collection_notice_templates.created_at",
+      "column:collection_notice_templates.cure_days",
+      "column:collection_notice_templates.id",
+      "column:collection_notice_templates.include_office_copy",
+      "column:collection_notice_templates.min_balance_cents",
+      "column:collection_notice_templates.name",
+      "column:collection_notice_templates.paragraphs",
+      "column:collection_notice_templates.recent_payment_days",
+      "column:collection_notice_templates.record_ownership",
+      "column:collection_notice_templates.required_elements",
+      "column:collection_notice_templates.source_note",
+      "column:collection_notice_templates.status",
+      "column:collection_notice_templates.subject_line",
+      "column:collection_notice_templates.updated_at",
+      "column:collection_notice_templates.version",
+      "column:collection_notices.account_number",
+      "column:collection_notices.amount_due_cents",
+      "column:collection_notices.batch_id",
+      "column:collection_notices.bedrock_billing_item_id",
+      "column:collection_notices.bedrock_fee_cents",
+      "column:collection_notices.cancelled_reason",
+      "column:collection_notices.certified_tracking_number",
+      "column:collection_notices.community_id",
+      "column:collection_notices.created_at",
+      "column:collection_notices.cure_days",
+      "column:collection_notices.deadline_date",
+      "column:collection_notices.eligibility",
+      "column:collection_notices.fee_cents",
+      "column:collection_notices.fee_homeowner_txn_id",
+      "column:collection_notices.fee_journal_entry_id",
+      "column:collection_notices.id",
+      "column:collection_notices.ledger_balance_cents",
+      "column:collection_notices.mailed_by",
+      "column:collection_notices.mailed_date",
+      "column:collection_notices.mailed_recorded_at",
+      "column:collection_notices.mailing_address",
+      "column:collection_notices.notice_date",
+      "column:collection_notices.owner_name",
+      "column:collection_notices.pdf_path",
+      "column:collection_notices.pdf_sha256",
+      "column:collection_notices.property_id",
+      "column:collection_notices.record_ownership",
+      "column:collection_notices.regular_mail_confirmed",
+      "column:collection_notices.snapshot_as_of",
+      "column:collection_notices.snapshot_sha256",
+      "column:collection_notices.statement_snapshot",
+      "column:collection_notices.status",
+      "column:collection_notices.template_id",
+      "column:collection_notices.template_version",
+      "column:collection_notices.tenure_id",
+      "column:collection_notices.updated_at",
+      "column:communities.collection_fee_autopost",
+      "constraint:collection_notice_batches.collection_notice_batches_community_id_fkey",
+      "constraint:collection_notice_batches.collection_notice_batches_pkey",
+      "constraint:collection_notice_batches.collection_notice_batches_record_ownership_check",
+      "constraint:collection_notice_batches.collection_notice_batches_status_check",
+      "constraint:collection_notice_batches.collection_notice_batches_template_id_fkey",
+      "constraint:collection_notice_templates.collection_notice_templates_community_id_fkey",
+      "constraint:collection_notice_templates.collection_notice_templates_community_id_version_key",
+      "constraint:collection_notice_templates.collection_notice_templates_counsel_status_check",
+      "constraint:collection_notice_templates.collection_notice_templates_cure_days_check",
+      "constraint:collection_notice_templates.collection_notice_templates_min_balance_cents_check",
+      "constraint:collection_notice_templates.collection_notice_templates_pkey",
+      "constraint:collection_notice_templates.collection_notice_templates_recent_payment_days_check",
+      "constraint:collection_notice_templates.collection_notice_templates_record_ownership_check",
+      "constraint:collection_notice_templates.collection_notice_templates_status_check",
+      "constraint:collection_notices.collection_notices_batch_id_fkey",
+      "constraint:collection_notices.collection_notices_bedrock_billing_item_id_fkey",
+      "constraint:collection_notices.collection_notices_check",
+      "constraint:collection_notices.collection_notices_check1",
+      "constraint:collection_notices.collection_notices_check2",
+      "constraint:collection_notices.collection_notices_community_id_fkey",
+      "constraint:collection_notices.collection_notices_cure_days_check",
+      "constraint:collection_notices.collection_notices_fee_cents_check",
+      "constraint:collection_notices.collection_notices_fee_homeowner_txn_id_fkey",
+      "constraint:collection_notices.collection_notices_fee_journal_entry_id_fkey",
+      "constraint:collection_notices.collection_notices_pkey",
+      "constraint:collection_notices.collection_notices_property_id_fkey",
+      "constraint:collection_notices.collection_notices_record_ownership_check",
+      "constraint:collection_notices.collection_notices_status_check",
+      "constraint:collection_notices.collection_notices_template_id_fkey",
+      "constraint:collection_notices.collection_notices_tenure_id_fkey",
+      "index:collection_notice_batches_pkey",
+      "index:collection_notice_templates_community_id_version_key",
+      "index:collection_notice_templates_pkey",
+      "index:collection_notices_pkey",
+      "index:idx_collection_batches_status",
+      "index:idx_collection_notices_batch",
+      "index:idx_collection_notices_property",
+      "index:uq_billing_pending_collection_notice",
+      "index:uq_collection_notice_open",
+      "index:uq_collection_notice_tracking",
+      "index:uq_collection_template_approved",
+      "index:uq_homeowner_txn_collection_notice_fee",
+      "index:uq_journal_entries_collection_notice",
+      "table:collection_notice_batches",
+      "table:collection_notice_templates",
+      "table:collection_notices"
+    ],
+    "changed": [
+      "constraint:billing_pending_items.billing_pending_items_source_check"
+    ],
+    "removed": []
+  },
+  "row_changes": {
+    "collection_notice_templates": 13,
+    "communities": 0,
+    "billing_pending_items": 0,
+    "journal_entries": 0,
+    "journal_entry_lines": 0,
+    "homeowner_transactions": 0
+  },
+  "protected": [
+    {
+      "table": "communities",
+      "order_by": "id"
+    },
+    {
+      "table": "billing_pending_items",
+      "order_by": "id"
+    },
+    {
+      "table": "journal_entries",
+      "order_by": "id"
+    },
+    {
+      "table": "journal_entry_lines",
+      "order_by": "id"
+    },
+    {
+      "table": "homeowner_transactions",
+      "order_by": "id"
+    }
+  ],
+  "verify": [
+    {
+      "name": "the three tables exist",
+      "sql": "SELECT count(*)::int FROM information_schema.tables WHERE table_schema = 'public' AND table_name IN ('collection_notice_templates','collection_notice_batches','collection_notices')",
+      "expect": 3
+    },
+    {
+      "name": "one draft template per community, counsel questions open",
+      "sql": "SELECT (SELECT count(*) FROM collection_notice_templates WHERE status = 'draft' AND counsel_status = 'questions_open' AND jsonb_array_length(counsel_questions) = 5) = (SELECT count(*) FROM communities) AND (SELECT count(*) FROM collection_notice_templates WHERE status <> 'draft') = 0",
+      "expect": true
+    },
+    {
+      "name": "no homeowner fee is on (collection_fee_autopost false everywhere)",
+      "sql": "SELECT count(*)::int FROM communities WHERE collection_fee_autopost",
+      "expect": 0
+    },
+    {
+      "name": "notice controls exist: cure >= 45 (templates and notices), deadline / amount / mailed checks",
+      "sql": "SELECT count(*)::int FROM pg_constraint k JOIN pg_class c ON c.oid = k.conrelid WHERE c.relname IN ('collection_notices','collection_notice_templates') AND k.contype = 'c' AND (pg_get_constraintdef(k.oid) LIKE '%cure_days >= 45%' OR pg_get_constraintdef(k.oid) LIKE '%deadline_date >= (notice_date + cure_days)%' OR pg_get_constraintdef(k.oid) LIKE '%amount_due_cents = (ledger_balance_cents + fee_cents)%' OR pg_get_constraintdef(k.oid) LIKE '%mailed_date = notice_date%')",
+      "expect": 5
+    },
+    {
+      "name": "unique keys exist (open notice, tracking, approved template, fee row, GL reference, billing item)",
+      "sql": "SELECT count(*)::int FROM pg_indexes WHERE schemaname = 'public' AND indexname IN ('uq_collection_notice_open','uq_collection_notice_tracking','uq_collection_template_approved','uq_homeowner_txn_collection_notice_fee','uq_journal_entries_collection_notice','uq_billing_pending_collection_notice')",
+      "expect": 6
+    },
+    {
+      "name": "billing_pending_items source check allows collection_notice and the existing sources",
+      "sql": "SELECT count(*)::int FROM pg_constraint WHERE conname = 'billing_pending_items_source_check' AND pg_get_constraintdef(oid) LIKE '%collection_notice%' AND pg_get_constraintdef(oid) LIKE '%manual%' AND pg_get_constraintdef(oid) LIKE '%email%'",
+      "expect": 1
+    },
+    {
+      "name": "service_role can write the notices; anon cannot read them",
+      "sql": "SELECT (has_table_privilege('service_role', 'public.collection_notices', 'INSERT') AND NOT has_table_privilege('anon', 'public.collection_notices', 'SELECT') AND has_table_privilege('service_role', 'public.collection_notice_templates', 'UPDATE') AND NOT has_table_privilege('anon', 'public.collection_notice_templates', 'SELECT'))::int",
+      "expect": 1
+    }
+  ]
+}
