@@ -3637,6 +3637,14 @@ router.post('/mail-queue/lock-and-batch', express.json(), async (req, res) => {
     if (explicitIds) q = q.in('id', explicitIds);
     const { data: letters, error } = await q;
     if (error) return res.status(500).json({ error: error.message });
+    // No letter is printed or mailed for a community Bedrock no longer manages (lib/community/lifecycle).
+    {
+      const LC = require('../lib/community/lifecycle');
+      const verdict = new Map();
+      for (const cid of [...new Set((letters || []).map((l) => l.community_id).filter(Boolean))]) verdict.set(cid, LC.evaluate('enforcement', await LC.getLifecycle(cid)));
+      const held = new Set((letters || []).filter((l) => verdict.get(l.community_id) && !verdict.get(l.community_id).allowed).map((l) => l.id));
+      if (held.size) { for (let i = letters.length - 1; i >= 0; i--) if (held.has(letters[i].id)) letters.splice(i, 1); console.warn('[enforcement] lock-and-batch held', held.size, 'letter(s) for communities no longer managed'); }
+    }
     if (!letters || letters.length === 0) {
       return res.status(404).json({ error: 'No pending letters match those filters.' });
     }
@@ -6895,7 +6903,11 @@ router.get('/cure-lapse/pending', async (req, res) => {
 // ---------------------------------------------------------------------------
 async function processCureLapses({ communityId = null, dryRun = false, limit = 100 } = {}) {
   const effLimit = Math.min(200, Number(limit) || 100);
-  const violations = await _findExpiredViolations(communityId, effLimit);
+  const violationsAll = await _findExpiredViolations(communityId, effLimit);
+  // Escalation runs only for communities Bedrock currently manages (lib/community/lifecycle).
+  const _LC = require('../lib/community/lifecycle'); const _ok = new Map();
+  for (const cid of [...new Set(violationsAll.map((v) => v.community_id))]) _ok.set(cid, _LC.evaluate('enforcement', await _LC.getLifecycle(cid)).allowed);
+  const violations = violationsAll.filter((v) => _ok.get(v.community_id) !== false);
   if (violations.length === 0) {
     return { processed: 0, bumped: 0, flagged_board: 0, fines_assessed: 0, errors: [], dry_run: dryRun, message: 'No violations have expired cure periods.' };
   }
@@ -9135,11 +9147,12 @@ async function processPostcardReminders({ communityId = null, dryRun = false, li
   // Pull communities that have postcard reminders enabled + their N-day setting
   let cq = supabase
     .from('communities')
-    .select('id, name, legal_name, postcard_reminder_enabled, postcard_reminder_days, logo_storage_path');
+    .select('id, name, legal_name, postcard_reminder_enabled, postcard_reminder_days, logo_storage_path, management_status, management_end_date, enforcement_active');
   if (communityId) cq = cq.eq('id', communityId);
   const { data: communities, error: cErr } = await cq;
   if (cErr) throw cErr;
-  const enabledCommunities = (communities || []).filter((c) => c.postcard_reminder_enabled !== false);
+  const _LCp = require('../lib/community/lifecycle');
+  const enabledCommunities = (communities || []).filter((c) => c.postcard_reminder_enabled !== false && _LCp.evaluate('enforcement', c).allowed);
   if (enabledCommunities.length === 0) {
     return { eligible: 0, drafted: 0, skipped: 0, errors: [], dry_run: dryRun };
   }

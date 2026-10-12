@@ -23,7 +23,7 @@ const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 15 * 1024 * 1024, files: 60 } });
 
 const who = (actor) => `${actorDisplayName(actor)}${actor && actor.email ? ` <${actor.email}>` : ''}`;
-const STATUS = { invalid_input: 400, too_large: 400, bad_type: 400, conflict: 409, duplicate: 409, possible_duplicate: 409, blocked: 409, no_match: 404, commit_pending: 502 };
+const STATUS = { community_not_operational: 409, invalid_input: 400, too_large: 400, bad_type: 400, conflict: 409, duplicate: 409, possible_duplicate: 409, blocked: 409, no_match: 404, commit_pending: 502 };
 function fail(res, err, where) {
   const missing = /homeowner_check_(receipts|deposits)|post_check_receipt_payment|undeposited_funds/.test(String(err && err.message)) && /does not exist|schema cache|not find/i.test(String(err && err.message));
   if (missing) return res.status(503).json({ error: 'migration_514_required', message: 'Check scanning needs migration 514 (Documents -> Migration status).' });
