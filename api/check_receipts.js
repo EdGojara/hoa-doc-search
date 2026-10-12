@@ -20,7 +20,15 @@ const CR = require('../lib/payments/check_receipts');
 
 const router = express.Router();
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 15 * 1024 * 1024, files: 60 } });
+// 40 MB per upload so a scanned multipage PDF fits; each check (page or image) is still held to
+// 15 MB by the reader (lib fileFrom).
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 40 * 1024 * 1024, files: 60 } });
+// Upload errors (too large, too many files) answer in plain language instead of a 500.
+const uploading = (mw) => (req, res, next) => mw(req, res, (err) => {
+  if (!err) return next();
+  const msg = err.code === 'LIMIT_FILE_SIZE' ? 'That file is larger than 40 MB. Scan fewer checks per file.' : err.code === 'LIMIT_FILE_COUNT' ? 'Too many files at once (60 at most).' : 'The upload did not complete. Try again.';
+  return res.status(400).json({ error: err.code === 'LIMIT_FILE_SIZE' ? 'too_large' : 'upload_failed', message: msg });
+});
 
 const who = (actor) => `${actorDisplayName(actor)}${actor && actor.email ? ` <${actor.email}>` : ''}`;
 const STATUS = { invalid_input: 400, too_large: 400, bad_type: 400, conflict: 409, duplicate: 409, possible_duplicate: 409, blocked: 409, no_match: 404, commit_pending: 502 };
@@ -100,28 +108,52 @@ router.get('/:id', async (req, res) => {
   } catch (e) { fail(res, e, 'detail'); }
 });
 
-// Scan one or many checks. Fields: community_id, front (1..n files), back (0..n files, same order).
-router.post('/scan', upload.fields([{ name: 'front', maxCount: 30 }, { name: 'back', maxCount: 30 }]), async (req, res) => {
+// Scan checks. Field 'files': any number of check images or PDFs; a scanned multipage PDF is one
+// check per page. Front only by default (a back can be attached later, POST /:id/back). Legacy
+// fields 'front' / 'back' (same order) still work. Reads, matches and checks duplicates only:
+// NOTHING is posted here. Recording is a separate staff action (POST /:id/record).
+function summarize(r) {
+  const cand = (r.match_candidates || []).find((c) => c.property_id === r.property_id) || (r.match_candidates || [])[0] || null;
+  return { receipt_id: r.id, status: r.status, exception_reason: r.exception_reason, check_number: r.check_number, amount_cents: r.amount_cents, check_date: r.check_date,
+    payer_name: r.payer_name, proposed: cand ? { property_id: cand.property_id, street_address: cand.street_address, owner_names: cand.owner_names || [], confidence: r.property_id ? r.match_confidence : cand.confidence, chosen: !!r.property_id } : null,
+    duplicate_findings: (r.duplicate_findings || []).map((d) => ({ severity: d.severity, detail: d.detail })) };
+}
+router.post('/scan', uploading(upload.fields([{ name: 'files', maxCount: 30 }, { name: 'front', maxCount: 30 }, { name: 'back', maxCount: 30 }])), async (req, res) => {
   try {
     const actor = await requireActingUser(req, res); if (!actor) return;
     const communityId = req.body.community_id;
     if (!communityId) return res.status(400).json({ error: 'community_id_required' });
-    const fronts = (req.files && req.files.front) || [];
+    const files = [...((req.files && req.files.files) || []), ...((req.files && req.files.front) || [])];
     const backs = (req.files && req.files.back) || [];
-    if (!fronts.length) return res.status(400).json({ error: 'front_required', message: 'Attach the front of at least one check.' });
-    const scanBatchId = crypto.randomUUID();
+    if (!files.length) return res.status(400).json({ error: 'file_required', message: 'Add at least one check image or PDF.' });
+    const scanBatchId = req.body.scan_batch_id && /^[0-9a-f-]{36}$/i.test(req.body.scan_batch_id) ? req.body.scan_batch_id : crypto.randomUUID();
     const results = [];
-    for (let i = 0; i < fronts.length; i++) {
-      try {
-        const r = await CR.intakeCheck(supabase, { communityId, front: fronts[i], back: backs[i] || null, scanBatchId, actor: who(actor) });
-        results.push({ file: fronts[i].originalname, ...(r.receipt ? { receipt_id: r.receipt.id, status: r.receipt.status, exception_reason: r.receipt.exception_reason, amount_cents: r.receipt.amount_cents, check_number: r.receipt.check_number } : r) });
-      } catch (e) {
-        if (/migration|does not exist|schema cache/i.test(e.message)) return fail(res, e, 'scan');
-        results.push({ file: fronts[i].originalname, error: e.code === 'extract_failed' ? 'The check could not be read; rescan it.' : e.message });
+    for (let i = 0; i < files.length; i++) {
+      let pages;
+      try { pages = await CR.splitUpload(files[i]); }
+      catch (e) { results.push({ file: files[i].originalname, error: e.message }); continue; }
+      for (const pg of pages) {
+        const label = { file: files[i].originalname, page: pg.page || null, pages: pg.pages || null };
+        try {
+          const r = await CR.intakeCheck(supabase, { communityId, front: pg, back: pages.length === 1 ? (backs[i] || null) : null, scanBatchId, actor: who(actor) });
+          results.push({ ...label, ...(r.receipt ? summarize(r.receipt) : { duplicate: true, receipt_id: r.receipt_id || null, status: r.status || null, detail: r.detail }) });
+        } catch (e) {
+          if (/migration|does not exist|schema cache/i.test(e.message)) return fail(res, e, 'scan');
+          results.push({ ...label, error: e.code === 'extract_failed' ? 'This check could not be read. Rescan it and try again.' : e.message });
+        }
       }
     }
     res.json({ scan_batch_id: scanBatchId, results });
   } catch (e) { fail(res, e, 'scan'); }
+});
+
+// Attach the back of a check later (deposit documentation, a dispute, a returned check).
+// Evidence only: never changes the receipt's status or any posting.
+router.post('/:id/back', uploading(upload.single('back')), async (req, res) => {
+  try {
+    const actor = await requireActingUser(req, res); if (!actor) return;
+    res.json({ receipt: await CR.attachBack(supabase, req.params.id, { back: req.file, actor: who(actor) }) });
+  } catch (e) { fail(res, e, 'attach back'); }
 });
 
 router.post('/:id/confirm', express.json(), async (req, res) => {
@@ -157,7 +189,7 @@ router.post('/:id/return', express.json(), async (req, res) => {
 });
 
 // Record the bank's remote-deposit confirmation for recorded checks (optional evidence file).
-router.post('/deposits', upload.single('evidence'), async (req, res) => {
+router.post('/deposits', uploading(upload.single('evidence')), async (req, res) => {
   try {
     const actor = await requireActingUser(req, res); if (!actor) return;
     const b = req.body || {};
