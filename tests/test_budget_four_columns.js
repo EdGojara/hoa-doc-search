@@ -114,7 +114,7 @@ t('proposed = the saved amount exactly (4030 $12,000 vs a $40,000 suggestion; 40
   assert.strictEqual(by['4010'].proposed_cents, -16400000, 'the $164,000 transfer keeps its saved amount and sign');
   assert.strictEqual(by['4100'].proposed_cents, 25000);
   assert.strictEqual(by['6999'].proposed_cents, 0, 'a line not in the saved draft is $0, never silently added');
-  assert.ok(by['6999'].flags.some((f) => f.type === 'not_in_draft'));
+  assert.ok(by['6999'].flags.some((f) => f.type === 'not_in_draft' && f.msg.includes('$777.00')), 'the suggestion amount keeps its dollar sign');
   assert.strictEqual(JSON.stringify(rows), before, 'input rows are not mutated');
   const fresh = applySavedDraft(rows, null);
   assert.ok(fresh.every((r) => r.proposed_source === 'system_suggestion' && r.proposed_cents === r.suggested_cents));
@@ -129,6 +129,8 @@ t('living-lines: no annualized forecast; one cutoff; adopted = approved budget o
   assert.ok(/baseYearCutoff\(/.test(route) && /period_end: ytdEnd/.test(route) && /as_of: cutoff\.as_of/.test(route), 'actual YTD and the forecast read the same cutoff');
   assert.ok(/\.in\('status', \['approved', 'active'\]\)/.test(route), 'adopted budget is the approved one');
   assert.ok(/applySavedDraft\(rows, savedDraft\)/.test(route) && /reconcileBaseYear\(/.test(route));
+  // every whole-dollar amount the route words keeps its $ (a bare figure reads as a count)
+  assert.ok(!/[^$(]\$\{Math\.round\([^`}]*?\/ 100\)\.toLocaleString\(\)\}/.test(route), 'no bare dollar figure in the living-lines wording');
 });
 t('screen: columns read Adopted / Actual thru <cutoff> / Forecast / Proposed, in that order, and no "run-rate" label remains', () => {
   const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'accounting.html'), 'utf8');
