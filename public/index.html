@@ -47793,8 +47793,11 @@ ${questionsPage}
           <b style="color:#0b1d34;">Homeowner legal bill-back</b>
           <span style="font-size:12px;color:#475569;">Billable to owners ${money(b.homeowner_cents)} · charged ${money(b.charged_cents)} · association ${money(b.association_cents)} · review ${apEsc(b.review_status)}</span>
         </div>
+        ${b.original ? `<div style="margin:8px 0 0;padding:8px 10px;background:#fff;border:1px dashed #cbd5e1;border-radius:6px;font-size:12.5px;">
+          <b style="color:#475569;">Original posted coding</b> <span style="color:#64748b;">(${apEsc(b.original.reference || '')} ${apEsc(b.original.posting_date || '')}, kept as posted)</span>:
+          ${b.original.lines.map((l) => l.debit_cents ? `Dr ${apEsc(l.account)} ${money(l.debit_cents)}` : `Cr ${apEsc(l.account)} ${money(l.credit_cents)}`).join(' · ')}</div>` : ''}
         ${b.final ? `<div style="margin:8px 0;padding:8px 10px;background:#f8fafc;border-radius:6px;font-size:12.5px;">
-          <b style="color:#0b1d34;">${b.final.posted ? 'Final accounting' : 'Accounting on approval'}:</b>
+          <b style="color:#0b1d34;">${b.final.posted ? 'Final economic treatment' : 'Economic treatment on approval'}:</b>
           Dr 1300 Homeowner AR ${money(b.final.ar_cents)}${b.final.owners ? ` (${b.final.owners} owner${b.final.owners === 1 ? '' : 's'})` : ''}
           ${b.final.expense.map((e) => ` · Dr ${apEsc(e.account)} ${money(e.cents)}`).join('')}${b.final.bedrock_cents ? ` · Dr Bedrock receivable ${money(b.final.bedrock_cents)}` : ''}
           · Cr Accounts Payable ${money(b.final.ap_cents)}

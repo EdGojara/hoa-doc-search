@@ -283,6 +283,21 @@ t('the team never approves, posts, pays or sends', () => {
     assert.ok(!/approveTreatment\s*\(|postJournalEntry|postHomeownerCharge|recordPayment|sendAs\s*\(|sendReplyAs|released_for_payment'\s*\}|legal_review_approve|legal_posting_claim/.test(s), f);
   }
 });
+t('accrual timing (Ed 2026-10-12): a held attorney invoice accrues in its own period; the review may delay it only to the hold day', () => {
+  process.env.SUPABASE_URL = process.env.SUPABASE_URL || 'http://localhost'; process.env.SUPABASE_KEY = process.env.SUPABASE_KEY || 'x';
+  const I = require('../lib/ap/intake');
+  const at = (s) => new Date(s + 'T17:00:00Z');
+  assert.strictEqual(I.legalAccrualDue('2026-10-10', at('2026-10-20')), false, 'current month: may wait for the review');
+  assert.strictEqual(I.legalAccrualDue('2026-09-30', at('2026-10-03')), false, 'last month, before the hold day: may wait');
+  assert.strictEqual(I.legalAccrualDue('2026-09-30', at('2026-10-05')), true, 'last month, on/after the hold day: accrue');
+  assert.strictEqual(I.legalAccrualDue('2026-08-31', at('2026-10-01')), true, 'two months back: accrue');
+  assert.strictEqual(I.legalAccrualDue(null, at('2026-10-01')), true, 'no reliable date: never hold');
+  assert.ok(I.legalLinesNameAnOwner([{ description: 'Keller, Jerry G. - 19711 Bluff Canyon Way - motion' }]) && !I.legalLinesNameAnOwner([{ description: 'General Matters - status report' }]));
+  const src2 = src('lib/accounting/monthly_runs.js');
+  assert.ok(/accrueHeldLegalInvoices\(/.test(src2), "Kat's daily tick runs the held-accrual backstop");
+  const ix = src('lib/ap/intake.js');
+  assert.ok(/legalLinesNameAnOwner\([\s\S]{0,200}!legalAccrualDue\(extracted\.invoice_date\)/.test(ix), 'intake never holds an invoice whose hold window has passed');
+});
 t('intake hands only a loaded (non-duplicate) attorney invoice to the team, in the background', () => {
   const s = src('lib/ap/intake.js');
   assert.ok(/if \(!suspected\) \{[\s\S]{0,400}is_legal_counsel[\s\S]{0,300}triggerFromIntake\(supabase, data\.id\)/.test(s));
