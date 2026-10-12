@@ -47780,6 +47780,7 @@ ${questionsPage}
       const b = j.billback;
       const money = (c) => '$' + (Number(c) / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
       const tag = (st) => st === 'charged' ? '<span style="background:#dcfce7;color:#166534;padding:1px 7px;border-radius:9px;font-size:10.5px;font-weight:700;">CHARGED TO OWNER</span>'
+        : st === 'association_final' ? '<span style="background:#f1f5f9;color:#334155;padding:1px 7px;border-radius:9px;font-size:10.5px;font-weight:700;">ASSOCIATION EXPENSE</span>'
         : st === 'needs_review' ? '<span style="background:#fef3c7;color:#92400e;padding:1px 7px;border-radius:9px;font-size:10.5px;font-weight:700;">NEEDS REVIEW</span>'
         : '<span style="background:#dbeafe;color:#1e40af;padding:1px 7px;border-radius:9px;font-size:10.5px;font-weight:700;">AWAITING APPROVAL</span>';
       const rows = b.rows.map((x) => `<tr style="border-top:1px solid #f1f5f9;">
@@ -47792,7 +47793,13 @@ ${questionsPage}
           <b style="color:#0b1d34;">Homeowner legal bill-back</b>
           <span style="font-size:12px;color:#475569;">Billable to owners ${money(b.homeowner_cents)} · charged ${money(b.charged_cents)} · association ${money(b.association_cents)} · review ${apEsc(b.review_status)}</span>
         </div>
-        <div style="font-size:12px;color:#64748b;margin:4px 0 8px;">The payable stays as entered. On approval each owner amount moves from legal expense to that owner's receivable, once, linked to this invoice.</div>
+        ${b.final ? `<div style="margin:8px 0;padding:8px 10px;background:#f8fafc;border-radius:6px;font-size:12.5px;">
+          <b style="color:#0b1d34;">${b.final.posted ? 'Final accounting' : 'Accounting on approval'}:</b>
+          Dr 1300 Homeowner AR ${money(b.final.ar_cents)}${b.final.owners ? ` (${b.final.owners} owner${b.final.owners === 1 ? '' : 's'})` : ''}
+          ${b.final.expense.map((e) => ` · Dr ${apEsc(e.account)} ${money(e.cents)}`).join('')}${b.final.bedrock_cents ? ` · Dr Bedrock receivable ${money(b.final.bedrock_cents)}` : ''}
+          · Cr Accounts Payable ${money(b.final.ap_cents)}
+          <div style="color:#64748b;font-size:11.5px;margin-top:2px;">${apEsc(b.final.method)}.</div></div>` : ''}
+        <div style="font-size:12px;color:#64748b;margin:4px 0 8px;">The payable stays as entered. Each owner amount reaches that owner's ledger once, linked to this invoice.</div>
         <table style="width:100%;border-collapse:collapse;font-size:12px;"><thead><tr style="color:#94a3b8;text-align:left;font-size:10.5px;text-transform:uppercase;"><th style="padding:4px 8px;">Owner / property</th><th style="padding:4px 8px;">Invoice line</th><th style="padding:4px 8px;text-align:right;">Amount</th><th style="padding:4px 8px;">Status</th></tr></thead><tbody>${rows || '<tr><td colspan="4" style="padding:8px;color:#64748b;">No reviewed draft yet.</td></tr>'}</tbody></table>
         ${b.blocking && b.blocking.length && b.charged_cents < b.homeowner_cents ? `<div style="margin-top:8px;font-size:12px;color:#92400e;"><b>Before approval:</b> ${apEsc(b.blocking.join(' · '))}</div>` : ''}
         <div style="margin-top:10px;"><a href="${apEsc(b.review_url)}" style="display:inline-block;padding:6px 12px;border-radius:6px;background:#0b1d34;color:#fff;font-weight:600;font-size:12px;text-decoration:none;">Open in Legal Invoice Review</a></div></div>`;
