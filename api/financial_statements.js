@@ -91,11 +91,14 @@ async function modelsFor(cid, q) {
       // funds=OPR,RES,... gives each fund its own statement; fund= one fund.
       // funds=active: every active fund of the community, Operating first (the Books screen).
       let list = q.funds ? String(q.funds).split(',').map((x) => x.trim()).filter(Boolean) : [q.fund || 'OPR'];
-      if (list.length === 1 && list[0] === 'active') {
+      // 'active' expands to every active fund (Operating first) and may be combined with 'all'
+      // (the whole association), e.g. funds=active,all for the Income Statement vs Budget print.
+      if (list.includes('active')) {
         const { data: fr, error: fe } = await supabase.from('account_funds').select('fund_code, display_order').eq('community_id', cid).eq('is_active', true).order('display_order');
         if (fe) throw fe;
         const codes = (fr || []).map((f) => f.fund_code);
-        list = [...codes.filter((c) => c === 'OPR'), ...codes.filter((c) => c !== 'OPR')];
+        const active = [...codes.filter((c) => c === 'OPR'), ...codes.filter((c) => c !== 'OPR')];
+        list = list.flatMap((x) => (x === 'active' ? active : [x])).filter((x, i, arr) => arr.indexOf(x) === i);
       }
       for (const f of list) out.push(await M.buildIncomeBudgetModel(supabase, { community_id: cid, period_end, fund: f }));
     } else if (s === 'reserve_activity') out.push(await M.buildReserveActivityModel(supabase, { community_id: cid, period_end, fund: q.fund || 'RES' }));

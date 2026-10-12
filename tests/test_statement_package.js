@@ -299,7 +299,7 @@ const find = (model, num) => { for (const s of model.sections) for (const g of s
     // bs / ib were built on the fresh fixture at the top of this file. Pinned content hashes: the
     // income statement is unchanged since #109; the balance sheet changed exactly once, when its
     // mapping state key was renamed final_ready -> mapping_complete (Ed 2026-10-10).
-    check('Drama Creek (converted): statement content hashes are the pinned values (income re-pinned 2026-10-11: seven-column board layout and the fund name in the subtitle; balance sheet unchanged)', bs.snapshot_sha256.startsWith('87999b8f716a') && ib.snapshot_sha256.startsWith('89ffb221dcb3') && bs.period.books_start === '2026-01-01', `${bs.snapshot_sha256} ${ib.snapshot_sha256}`);
+    check('Drama Creek (converted): statement content hashes are the pinned values (income re-pinned 2026-10-12: net income before transfers / after transfers labels and suppressed-section flag; balance sheet unchanged)', bs.snapshot_sha256.startsWith('87999b8f716a') && ib.snapshot_sha256.startsWith('c60e8ecfe69a') && bs.period.books_start === '2026-01-01', `${bs.snapshot_sha256} ${ib.snapshot_sha256}`);
   }
 
   console.log('balance-sheet subcategories and interfund elimination');
@@ -490,7 +490,7 @@ const find = (model, num) => { for (const s of model.sections) for (const g of s
     check('a transfer is neither revenue nor expense: it prints in its own section', !inSections(opr, '5900') && opr.transfers && opr.transfers.groups[0].lines[0].account_number === '5900' && !inSections(res, '4900') && res.transfers.groups[0].lines[0].account_number === '4900');
     const out = opr.transfers.total.values, inn = res.transfers.total.values;
     check('signed as the fund sees it: Operating transfer out is negative, Reserve transfer in is positive', out.mtd_actual === -1250000 && out.mtd_budget === -1250000 && inn.mtd_actual === 1250000 && inn.mtd_budget === 1250000, JSON.stringify({ out, inn }));
-    check('net change in fund balance = excess of revenue over expenses + transfers', opr.change.values.ytd_actual === opr.net.values.ytd_actual + out.ytd_actual && opr.net.label === 'Excess (deficit) of revenue over expenses' && opr.change.label === 'Net change in fund balance');
+    check('net change in fund balance = excess of revenue over expenses + transfers', opr.change.values.ytd_actual === opr.net.values.ytd_actual + out.ytd_actual && opr.net.label === 'Operating net income before transfers' && opr.change.label === 'Net change in fund balance after transfers');
     // An unpaid contribution: actual 0 against a budget is unfavorable to the receiving fund.
     const unpaid = { mtd_actual: 0, mtd_budget: 1250000 }; const v = unpaid.mtd_actual - unpaid.mtd_budget;
     check('variance on a transfer is actual - budget (an unpaid contribution is unfavorable to Reserve)', inn.mtd_var === inn.mtd_actual - inn.mtd_budget && v < 0);
@@ -516,7 +516,7 @@ const find = (model, num) => { for (const s of model.sections) for (const g of s
     const o2 = await M.buildIncomeBudgetModel(sbs, { community_id: F.CID, period_end: '2026-09-30', fund: 'OPR', now: NOW });
     const r2 = await M.buildIncomeBudgetModel(sbs, { community_id: F.CID, period_end: '2026-09-30', fund: 'RES', now: NOW });
     const ol = o2.transfers && o2.transfers.groups[0].lines.find((l) => l.account_number === '4900'), rl = r2.transfers.groups[0].lines.find((l) => l.account_number === '4900');
-    check('single account: Operating shows a transfer out of the budgeted amount, Reserve a transfer in of the same amount', ol && rl && ol.values.annual_budget < 0 && rl.values.annual_budget === -ol.values.annual_budget && /transfer to RES/.test(ol.account_name) && /transfer from OPR/.test(rl.account_name), JSON.stringify({ ol: ol && ol.values, rl: rl && rl.values }));
+    check('single account: Operating shows a transfer out of the budgeted amount, Reserve a transfer in of the same amount', ol && rl && ol.values.annual_budget < 0 && rl.values.annual_budget === -ol.values.annual_budget && /^Transfer to .*Fund$/.test(ol.account_name) && /^Transfer from .*Fund$/.test(rl.account_name), JSON.stringify({ ol: ol && ol.values, rl: rl && rl.values }));
     check('single account: actuals come from each fund\'s posted lines (none in Operating, the posted amount in Reserve)', ol.values.mtd_actual === 0 && rl.values.mtd_actual === 1250000 && ol.values.mtd_var === ol.values.mtd_actual - ol.values.mtd_budget);
     const c2 = await M.buildIncomeBudgetModel(sbs, { community_id: F.CID, period_end: '2026-09-30', fund: 'all', now: NOW });
     check('consolidated: the budgeted transfer nets to zero across funds', c2.transfers && c2.transfers.total.values.annual_budget === 0);
@@ -578,7 +578,7 @@ const find = (model, num) => { for (const s of model.sections) for (const g of s
     check('the month excludes them from operating results; year to date keeps them in their accounts', line(pp, '5210').values.mtd_actual === (line(base, '5210') ? line(base, '5210').values.mtd_actual : 0)
       && line(pp, '5210').values.ytd_actual === (line(base, '5210') ? line(base, '5210').values.ytd_actual : 0) + 40000);
     check('a void of a September invoice stays in the month (only reversals of entries dated on or before the cutoff move)', line(pp, '5300').values.mtd_actual === (line(base, '5300') ? line(base, '5300').values.mtd_actual : 0));
-    check('net change in fund balance = excess of revenue over expenses + prior-period items', pp.change && pp.change.values.mtd_actual === pp.net.values.mtd_actual - 18000 && pp.net.label === 'Excess (deficit) of revenue over expenses');
+    check('net change in fund balance = excess of revenue over expenses + prior-period items', pp.change && pp.change.values.mtd_actual === pp.net.values.mtd_actual - 18000 && pp.net.label === 'Operating net income');
     const ppr = R.renderHtml(pp, { mode: 'print', noStyle: true });
     check('printed: the prior-period section sits between the excess and the net change, with its note', ppr.indexOf('Excess (deficit) of revenue over expenses') < ppr.search(/<tr class="sec"><td[^>]*>Prior-period items recorded this month/) && ppr.search(/<tr class="sec"><td[^>]*>Prior-period items recorded this month/) < ppr.indexOf('Net change in fund balance') && pp.notes.some((n) => n.code === 'prior_period'));
   }
