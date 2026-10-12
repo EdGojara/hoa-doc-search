@@ -28,6 +28,7 @@
   ],
   "objects": {
     "added": [
+      "table:work_item_events",
       "column:work_items.workspace",
       "column:work_items.requested_by",
       "column:work_items.why",
