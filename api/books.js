@@ -1629,26 +1629,32 @@ Return ONLY a JSON array, one object per account, no prose:
 // budget. Never a straight-line annualization (12 / months elapsed overstated nothing
 // and understated assessments: Canyon Gate showed $924,682.50 for $1,027,425.00).
 // Each row also takes its ACCOUNT's fund, so a fund-specific view never mixes funds.
-async function applyWorkingForecast(community_id, fy, acc) {
+async function applyWorkingForecast(community_id, fy, acc, cutoff) {
   const ids = [...acc.keys()];
   if (ids.length) {
     const { data: coa, error } = await supabase.from('chart_of_accounts').select('id, fund_id, account_funds ( fund_code, fund_type )').in('id', ids);
     if (error) throw error;
     for (const c of coa || []) { const a = acc.get(c.id); if (a && c.account_funds) { a.fund_id = c.fund_id; a.fund_code = c.account_funds.fund_code; a.fund_type = c.account_funds.fund_type || null; } }
   }
-  const now = new Date(); const cy = now.getUTCFullYear();
-  if (fy - 1 !== cy || now.getUTCMonth() === 0) return { basis: 'annualized', note: 'Forecast is the year-to-date run-rate annualized (the working forecast needs a closed month in the base year).' };
+  // No annualized fallback (Ed 2026-10-12): without a completed month, or if the working
+  // forecast cannot be built, the forecast column is "not available" and says why.
+  for (const a of acc.values()) a.forecast = null;
+  if (!cutoff.as_of) return { basis: 'not_available', status: cutoff.status, note: cutoff.status === 'future' ? `${cutoff.base_year} has not started, so there is no ${cutoff.base_year} forecast yet.` : `No month of ${cutoff.base_year} is complete yet, so there is no ${cutoff.base_year} forecast yet.` };
   try {
-    const asOf = new Date(Date.UTC(cy, now.getUTCMonth(), 0)).toISOString().slice(0, 10);   // last day of the previous month
     const D = require('../lib/forecast/working_forecast_data'); const W = require('../lib/forecast/working_forecast');
-    const m = W.buildWorkingForecast(await D.loadWorkingForecastInput(supabase, { community_id, target_year: fy, as_of: asOf }));
-    const by = new Map();
-    for (const l of m.lines) { const k = l.account_id; const b = l.base_year || {}; const prev = by.get(k) || { cents: 0, notes: [] }; prev.cents += Number(b.current_forecast_cents || 0); if (l.base && l.base.note) prev.notes.push(l.base.note); by.set(k, prev); }
-    for (const a of acc.values()) { const f = by.get(a.account_id); if (f) { a.forecast = f.cents; a.forecast_note = f.notes.join(' '); } }
-    return { basis: 'working_forecast', as_of: asOf, note: `Forecast = actual through ${asOf} + the rest of the year by each account's method (recognition schedule, verified contract, or remaining approved budget).` };
+    const m = W.buildWorkingForecast(await D.loadWorkingForecastInput(supabase, { community_id, target_year: fy, as_of: cutoff.as_of }));
+    const by = W.baseYearByAccount(m);
+    for (const a of acc.values()) {
+      const f = by.get(a.account_id);
+      if (!f) { a.forecast = a.ytd_actual || 0; a.forecast_detail = { method: 'actual_only', ytd_cents: a.ytd_actual || 0, remaining_cents: 0, explanation: `No ${cutoff.base_year} budget line: the forecast is the actual through ${cutoff.as_of}.`, data_flags: [] }; continue; }
+      a.forecast = f.forecast_cents; a.forecast_ytd = f.ytd_cents;
+      a.forecast_detail = { method: f.methods.join(' + '), actual_through: f.actual_through, ytd_cents: f.ytd_cents, remaining_cents: f.remaining_cents, remaining_period: f.remaining_period, explanation: f.explanations.join(' '), data_flags: f.data_flags, post_cutover: f.post_cutover, funds: f.funds };
+    }
+    return { basis: 'working_forecast', status: cutoff.status, as_of: cutoff.as_of, base_budget: m.base_budget || null,
+      note: `${cutoff.base_year} Forecast = posted GL actual through ${cutoff.as_of} + each account's remaining ${cutoff.base_year} months by its method: the approved recognition schedule (assessments) or the remaining approved monthly budget. Interfund transfers count only when recorded. Never annualized.` };
   } catch (e) {
-    console.warn('[books] living-lines working forecast failed; annualized fallback:', e.message);
-    return { basis: 'annualized', note: `Forecast is the annualized run-rate because the working forecast could not be built (${e.message}).` };
+    console.warn('[books] living-lines working forecast failed:', e.message);
+    return { basis: 'not_available', status: 'error', as_of: cutoff.as_of, note: `The ${cutoff.base_year} forecast could not be built (${e.message}). It is shown as not available rather than estimated.` };
   }
 }
 
@@ -1662,8 +1668,15 @@ router.get('/budgets/living-lines', async (req, res) => {
     const isFor = (y) => incomeStatement({ community_id, period_start: `${y}-01-01`, period_end: `${y}-12-31` });
     const [is1, is2] = await Promise.all([isFor(fy - 1), isFor(fy - 2)]);
     const today = new Date(); const cy = today.getUTCFullYear(); const monthsElapsed = today.getUTCMonth() + 1;
-    const isYtd = await incomeStatement({ community_id, period_start: `${cy}-01-01`, period_end: today.toISOString().slice(0, 10) });
-    // Annualize the run-rate by the months the GL actually COVERS this year, not
+    // ONE cutoff for "Actual YTD" and the forecast (Ed 2026-10-12): the last day of the base
+    // year's last completed month. Actual YTD is posted GL activity of the BASE year (fy - 1)
+    // through that date, from the statement engine, so actual + remaining = forecast.
+    const W = require('../lib/forecast/working_forecast');
+    const cutoff = W.baseYearCutoff({ now: today, target_year: fy });
+    const ytdEnd = cutoff.as_of || (cutoff.status === 'no_completed_month' ? today.toISOString().slice(0, 10) : null);
+    const isYtd = ytdEnd ? await incomeStatement({ community_id, period_start: `${fy - 1}-01-01`, period_end: ytdEnd }) : { sections: { revenue: [], expenses: [] }, totals: { ytd: { revenue_cents: 0, expenses_cents: 0 } } };
+    // Vendor-commitment suggestions only (never the forecast): prior-year vendor spend is
+    // annualized by the months the GL actually COVERS this year, not
     // the calendar months elapsed. A mid-year cutover has fewer posted months
     // than elapsed months; dividing partial data by elapsed months understates
     // every line. Count the distinct months that actually have postings.
@@ -1681,10 +1694,19 @@ router.get('/budgets/living-lines', async (req, res) => {
     } catch (_) { /* fall back to calendar months */ }
     const annualize = coverageMonths > 0 ? 12 / coverageMonths : 1;
 
-    // Prior-year adopted budget (the "Budget" column).
+    // Base-year ADOPTED budget: the approved (or active) budget only, the same record the
+    // working forecast and Budget vs Actual read. A draft is never shown as adopted.
     const priorBudget = {};
-    const { data: pb } = await supabase.from('community_budgets').select('id').eq('community_id', community_id).eq('fiscal_year', fy - 1).maybeSingle();
-    if (pb) { const { data: bl } = await supabase.from('budget_line_items').select('account_id, annual_amount_cents').eq('budget_id', pb.id); (bl || []).forEach((l) => { priorBudget[l.account_id] = Number(l.annual_amount_cents) || 0; }); }
+    const { data: pbs, error: pbErr } = await supabase.from('community_budgets').select('id, status, approved_at, updated_at').eq('community_id', community_id).eq('fiscal_year', fy - 1).in('status', ['approved', 'active']).order('approved_at', { ascending: false }).limit(5);
+    if (pbErr) throw pbErr;
+    const pb = (pbs || [])[0] || null;
+    if (pb) { const { data: bl, error: blErr } = await supabase.from('budget_line_items').select('account_id, annual_amount_cents').eq('budget_id', pb.id).limit(5000); if (blErr) throw blErr; (bl || []).forEach((l) => { priorBudget[l.account_id] = (priorBudget[l.account_id] || 0) + (Number(l.annual_amount_cents) || 0); }); }
+    // The SAVED budget for the year being planned: its amounts are the proposed column, exactly.
+    const { data: svs, error: svErr } = await supabase.from('community_budgets').select('id, status, updated_at').eq('community_id', community_id).eq('fiscal_year', fy).order('updated_at', { ascending: false }).limit(5);
+    if (svErr) throw svErr;
+    const sv = (svs || [])[0] || null;
+    let savedDraft = null;
+    if (sv) { const { data: sl, error: slErr } = await supabase.from('budget_line_items').select('account_id, annual_amount_cents').eq('budget_id', sv.id).limit(5000); if (slErr) throw slErr; savedDraft = { id: sv.id, status: sv.status, updated_at: sv.updated_at, lines: sl || [] }; }
 
     const acc = new Map();
     const merge = (is, key, mult = 1) => {
@@ -1692,17 +1714,19 @@ router.get('/budgets/living-lines', async (req, res) => {
         for (const r of (is.sections?.[type] || [])) {
           let a = acc.get(r.account_id);
           if (!a) { a = { account_id: r.account_id, account_number: r.account_number, account_name: r.account_name, account_type: type === 'revenue' ? 'revenue' : 'expense', fund_id: r.fund_id || null, fund_code: r.fund_code || null, fy2: 0, fy1: 0, ytd_actual: 0, forecast: 0 }; acc.set(r.account_id, a); }
-          if (key === 'ytd') { a.ytd_actual = Math.round(ytdOf(r)); a.forecast = Math.round(ytdOf(r) * mult); }
-          else a[key] = Math.round(ytdOf(r));
+          // An account can carry activity in more than one fund: accumulate, never overwrite.
+          if (key === 'ytd') a.ytd_actual += Math.round(ytdOf(r));
+          else a[key] = (a[key] || 0) + Math.round(ytdOf(r));
         }
       }
     };
-    merge(is2, 'fy2'); merge(is1, 'fy1'); merge(isYtd, 'ytd', annualize);
+    merge(is2, 'fy2'); merge(is1, 'fy1'); merge(isYtd, 'ytd');
     for (const a of acc.values()) { if (yearNA(is2)) a.fy2 = null; if (yearNA(is1)) a.fy1 = null; }   // not available in trustEd: null, never $0
     // Include accounts that are BUDGETED but had no GL activity this year (e.g.
     // a reserve contribution transfer) — a budgeted line belongs in next year's
     // budget regardless of activity, and it would otherwise silently vanish.
-    const missingBudgeted = Object.keys(priorBudget).filter((aid) => !acc.has(aid));
+    // ...and accounts in the SAVED draft for the planned year, so a saved amount is never dropped.
+    const missingBudgeted = [...new Set([...Object.keys(priorBudget), ...((savedDraft && savedDraft.lines) || []).map((l) => l.account_id)])].filter((aid) => aid && !acc.has(aid));
     if (missingBudgeted.length) {
       const { data: metas, error: mErr } = await supabase.from('chart_of_accounts')
         .select('id, account_number, account_name, account_type, fund_id, account_funds ( fund_code, fund_type )')
@@ -1718,7 +1742,7 @@ router.get('/budgets/living-lines', async (req, res) => {
     }
 
     // After the budgeted-only accounts are in, so they get their fund and forecast too.
-    const forecastBasis = await applyWorkingForecast(community_id, fy, acc);
+    const forecastBasis = await applyWorkingForecast(community_id, fy, acc, cutoff);
 
     // Vendor commitments per expense account (prior year) — the "built from" source.
     const vendorByAcct = {};
@@ -1850,17 +1874,17 @@ router.get('/budgets/living-lines', async (req, res) => {
             : `FY${fy - 1} adopted budget $${Math.round(priorB / 100).toLocaleString()} — assessment income is set by the board, held flat. Change it here to propose a new rate.`;
         } else {
           source_type = 'prior_budget'; confidence = 'medium'; proposed_cents = Math.round(priorB * (1 + INFL));
-          built_from = `FY${fy - 1} adopted budget $${Math.round(priorB / 100).toLocaleString()} + ${Math.round(INFL * 100)}% inflation${a.forecast > 0 ? ` · this year pacing ~$${Math.round(a.forecast / 100).toLocaleString()} annualized` : ''}.`;
+          built_from = `FY${fy - 1} adopted budget $${Math.round(priorB / 100).toLocaleString()} + ${Math.round(INFL * 100)}% inflation${a.forecast != null ? ` · ${fy - 1} forecast ${Math.round(a.forecast / 100).toLocaleString()}` : ''}.`;
         }
       } else if (a.account_type === 'expense' && committedAnnual > 0 && committedAnnual >= a.forecast * 0.6) {
         source_type = 'vendor_commitment'; confidence = 'high';
         proposed_cents = Math.round(committedAnnual * (1 + ESC));
-        built_from = `${vendors[0].name}${vendors.length > 1 ? ` + ${vendors.length - 1} more` : ''} — $${Math.round(committedAnnual / 100).toLocaleString()}/yr + ${Math.round(ESC * 100)}% renewal`;
+        built_from = `${vendors[0].name}${vendors.length > 1 ? ` + ${vendors.length - 1} more` : ''} — ${Math.round(committedAnnual / 100).toLocaleString()}/yr${partialAnnualize !== 1 ? ` (${fy - 1} vendor postings over ${coverageMonths} month(s), scaled to 12)` : ''} + ${Math.round(ESC * 100)}% renewal`;
       } else if (a.forecast > 0 || a.fy1 > 0) {
         source_type = 'trend'; confidence = (a.fy2 > 0) ? 'medium' : 'low';
         const base = a.forecast || a.fy1;
         proposed_cents = Math.round(base * (1 + INFL));
-        built_from = `${cy} run-rate $${Math.round(a.forecast / 100).toLocaleString()} + ${Math.round(INFL * 100)}% inflation${a.fy2 > 0 ? ` (${cy - 1} actual $${Math.round(a.fy2 / 100).toLocaleString()})` : ''}`;
+        built_from = `${a.forecast ? `${fy - 1} forecast ${Math.round(a.forecast / 100).toLocaleString()} (no ${fy - 1} budget line, so actual only, not projected for the remaining months)` : `${fy - 1} actual ${Math.round((a.fy1 || 0) / 100).toLocaleString()}`} + ${Math.round(INFL * 100)}% inflation${a.fy2 > 0 ? ` (${fy - 2} actual ${Math.round(a.fy2 / 100).toLocaleString()})` : ''}`;
       } else {
         source_type = 'estimate'; confidence = 'low'; proposed_cents = 0;
         built_from = 'No prior budget or spending history — enter a number.';
@@ -1906,7 +1930,7 @@ router.get('/budgets/living-lines', async (req, res) => {
         account_id: a.account_id, account_number: a.account_number, account_name: a.account_name, account_type: a.account_type,
         fund_id: a.fund_id, fund_code: a.fund_code,
         prior_budget_cents: priorBudget[a.account_id] || 0,
-        forecast_cents: a.forecast, forecast_note: a.forecast_note || null, fund_type: a.fund_type || null, actual_ytd_cents: a.ytd_actual, fy1_actual_cents: a.fy1, fy2_actual_cents: a.fy2,
+        forecast_cents: a.forecast, forecast_detail: a.forecast_detail || null, fund_type: a.fund_type || null, actual_ytd_cents: a.ytd_actual, forecast_ytd_cents: a.forecast_ytd ?? null, fy1_actual_cents: a.fy1, fy2_actual_cents: a.fy2,
         proposed_cents, source_type, confidence, built_from, vendors, evidence, flags,
       };
     });
@@ -1925,10 +1949,20 @@ router.get('/budgets/living-lines', async (req, res) => {
     } catch (e) { console.warn('[books] living-lines transfer config unavailable:', e.message); }
 
     const { count: homeCount } = await supabase.from('properties').select('id', { count: 'exact', head: true }).eq('community_id', community_id);
+    // Proposed = the saved amounts, exactly, when a budget is saved for the year (server-side,
+    // so the screen, the PDF and the tests read one rule). The suggestion rides along.
+    const { applySavedDraft } = require('../lib/accounting/budget_merge');
+    const shown = applySavedDraft(rows, savedDraft);
+    // Actual YTD ties to the authoritative GL (the statement engine's income statement through
+    // the same cutoff) and to the forecast engine's own actuals, account by account.
+    const reconciliation = W.reconcileBaseYear(shown, isYtd.totals && isYtd.totals.ytd, { as_of: ytdEnd });
     const sum = (arr, k) => arr.reduce((s, r) => s + (r[k] || 0), 0);
-    const rev = rows.filter((r) => r.account_type === 'revenue'); const exp = rows.filter((r) => r.account_type === 'expense');
+    const rev = shown.filter((r) => r.account_type === 'revenue'); const exp = shown.filter((r) => r.account_type === 'expense');
     res.json({
-      community_id, fiscal_year: fy, forecast_year: cy, months_elapsed: monthsElapsed, forecast_basis: forecastBasis, home_count: homeCount || 0, rows,
+      community_id, fiscal_year: fy, base_year: fy - 1, forecast_year: fy - 1, months_elapsed: monthsElapsed, cutoff, forecast_basis: forecastBasis, home_count: homeCount || 0, rows: shown,
+      adopted_budget: pb ? { id: pb.id, fiscal_year: fy - 1, status: pb.status, approved_at: pb.approved_at || null } : null,
+      saved_budget: savedDraft ? { id: savedDraft.id, fiscal_year: fy, status: savedDraft.status, updated_at: savedDraft.updated_at, lines: savedDraft.lines.length } : null,
+      reconciliation,
       totals: {
         revenue_proposed_cents: sum(rev, 'proposed_cents'), expense_proposed_cents: sum(exp, 'proposed_cents'),
         revenue_forecast_cents: sum(rev, 'forecast_cents'), expense_forecast_cents: sum(exp, 'forecast_cents'),
