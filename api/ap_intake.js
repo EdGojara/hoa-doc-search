@@ -39,7 +39,17 @@ router.post('/ingest', upload.single('pdf'), async (req, res) => {
     const bodyCommunity = req.body && req.body.community_id;
     let community = null, communityCandidates = [];
     if (bodyCommunity) { const { data } = await supabase.from('communities').select('id, name').eq('id', bodyCommunity).maybeSingle(); community = data || null; }
-    else { const c = await resolveCommunity(extracted.community_hint); community = c.community; communityCandidates = c.candidates; }
+    else {
+      // Same association evidence and decision as Emma's intake (bill-to, ship-to,
+      // paying account; an ordering profile is never decisive). A conflict is shown
+      // as candidates for the operator to choose, never pre-selected.
+      const { associationEvidence, decideAssociation } = require('../lib/ap/intake');
+      const ev = await associationEvidence({ extracted });
+      const d = decideAssociation(ev);
+      extracted.association_resolution = { decision: d.decision, community_id: d.community_id || null, evidence: ev, at: new Date().toISOString() };
+      if (d.decision === 'selected') community = { id: d.community_id, name: d.community_name };
+      else { const c = await resolveCommunity(extracted.community_hint); communityCandidates = d.decision === 'conflict' ? ev.filter((i) => i.strength === 'strong').map((i) => ({ id: i.community_id, name: i.community_name })) : c.candidates; }
+    }
 
     // Dedup preview only when we can key it (needs vendor + community).
     let dedup = { verdict: 'unknown', matches: [] };
