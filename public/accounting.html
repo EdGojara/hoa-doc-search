@@ -373,15 +373,11 @@
   async function acctPrintBudgetIS(){
     const end = $('is-end') && $('is-end').value;
     if (!end) { alert('Pick the "to" date first, then print.'); return; }
-    let data;
-    try {
-      data = await (await fetch(`/api/books/budget-vs-actual?community_id=${CID}&period_end=${end}&grouped=1`)).json();
-      if (data.error) throw new Error(data.error);
-    } catch (e) { alert("Couldn't load budget vs actual: " + e.message); return; }
-    const monthName = new Date(end + 'T12:00:00').toLocaleDateString('en-US', { month:'long', year:'numeric' });
-    const sub = `Month of ${monthName} and Year to Date · through ${fmtDate(end)}`;
-    const body = _budgetISBody(data.rows || [], data.fiscal_year, data.has_budget, data.grouped);
-    await _acctPrintWindow('Income Statement vs Budget', sub, body);
+    // One statement renderer (Ed 2026-10-12): the board statement model (lib/statements), each
+    // active fund (Operating first) then the whole association, with Adopt-a-School only in its
+    // fund, zero-only accounts suppressed and interfund transfers below net income before
+    // transfers. The old browser-built table (_budgetISBody) is no longer used for print.
+    window.open(`/api/financial-statements/${CID}/render?format=print&statements=income_budget&funds=active,all&period_end=${encodeURIComponent(end)}`, '_blank');
   }
 
   // Toolbar button (non-print actions) — same look as the print buttons.
