@@ -292,6 +292,18 @@ t('accrual timing (Ed 2026-10-12): attorney invoices accrue at intake in their o
   assert.ok(!/holdForLegalReview|LEGAL_ACCRUAL_HOLD_DAY/.test(ix), 'intake never holds an attorney accrual for the review');
   assert.ok(/accrueHeldLegalInvoices\(/.test(src('lib/accounting/monthly_runs.js')), "Kat's daily tick keeps the backstop for any unaccrued attorney invoice");
 });
+t('a determination that answers Amanda\'s exact question stands on re-run; a new question reopens the line', () => {
+  const det = { kind: 'agent_determination', agent: 'amanda-ai@bedrocktx.com', confidence: 'high', basis: 'Bankruptcy dismissed 2026-06-17; all billed work is post-dismissal collection.', resolves: 'bankruptcy dismissed (report.pdf): whether these fees are recoverable after the case' };
+  const alloc = { id: 'a1', amount_cents: 1000, classification: 'homeowner_recoverable', property_id: 'p1', charge_category: 'legal_fees', note: 'Decision: recoverable.', evidence: [det] };
+  const d = { saved: { items: [{ source_line_ids: ['l1'], allocations: [alloc] }] } };
+  const same = { allocation_id: 'a1', classification: 'needs_review', recommendation: 'needs_decision', outcome_label: 'NEEDS DECISION', reason: det.resolves, verified: [], missing: [] };
+  const r1 = TEAM.applyRecommendations(d, [same]);
+  assert.strictEqual(r1.changed, false); assert.strictEqual(r1.items[0].allocations[0].classification, 'homeowner_recoverable');
+  assert.strictEqual(r1.items[0].allocations[0].determination.resolves, det.resolves);
+  const other = Object.assign({}, same, { reason: 'active bankruptcy (report.pdf): no owner charge without counsel' });
+  const r2 = TEAM.applyRecommendations(d, [other]);
+  assert.strictEqual(r2.items[0].allocations[0].classification, 'needs_review', 'a different question reopens it');
+});
 t('intake hands only a loaded (non-duplicate) attorney invoice to the team, in the background', () => {
   const s = src('lib/ap/intake.js');
   assert.ok(/if \(!suspected\) \{[\s\S]{0,400}is_legal_counsel[\s\S]{0,300}triggerFromIntake\(supabase, data\.id\)/.test(s));
