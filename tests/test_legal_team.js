@@ -329,6 +329,12 @@ t('a former client leaves the active legal AP list (records kept); Kat never acc
   assert.ok(/financialsDisabledIds\([\s\S]{0,300}disabled\.has\(inv\.community_id\)/.test(src('lib/ap/intake.js')), 'backstop skips associations whose books trustEd does not keep');
   assert.ok(/if \(failed\.length\) throw/.test(src('lib/accounting/monthly_runs.js')), 'a failed prepare or accrual fails the scheduled run');
 });
+t('a deed-restriction notice on file without certified-mail proof is held, never ready (280594 Adebo)', () => {
+  const f = RS.recommend({ signals: { owner_current: true, work_type: 'drv', drv_notice_content: true, drv_cert_blank: true, referral: { requested: 'September 19, 2025', demand: 'October 2, 2025', source: 'DRV report' } }, verified: [{ source: 'x', fact: 'y' }], references: [], unavailable: [], vendor: 'Daughtry & Farine' }, { charge_category: null });
+  assert.strictEqual(f.outcome, 'needs_information'); assert.ok(/certified mailing not verified/.test(f.reason));
+  const c = RS.recommend({ signals: { owner_current: true, work_type: 'drv', drv_notice_content: true, drv_notice_mailed: true }, verified: [{ source: 'x', fact: 'y' }], references: [], unavailable: [], vendor: 'D&F' }, { charge_category: null });
+  assert.strictEqual(c.outcome, 'ready', 'content plus certified mailing is ready');
+});
 t('intake hands only a loaded (non-duplicate) attorney invoice to the team, in the background', () => {
   const s = src('lib/ap/intake.js');
   assert.ok(/if \(!suspected\) \{[\s\S]{0,400}is_legal_counsel[\s\S]{0,300}triggerFromIntake\(supabase, data\.id\)/.test(s));
