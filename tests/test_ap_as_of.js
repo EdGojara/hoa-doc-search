@@ -43,6 +43,36 @@ t('a void only counts from its reversal date', () => {
 t('neutralized with no re-post never appears (duplicate posting)', () => {
   for (const d of ['2026-07-31', '2026-08-01', '2026-12-31']) assert.ok(!at(d).includes('dupe'));
 });
+// Canyon Gate 8/31 bridge (Ed 2026-10-12): three rules the GL already followed.
+{
+  const J = {
+    A: { id: 'A', reference: 'JE-A', posting_date: '2025-12-05' },
+    NA: { id: 'NA', reference: 'CONV-CGACR-20260731-NEUT-JE-A', posting_date: '2025-12-05', reverses_je_id: 'A', description: 'Conversion neutralization of JE-A (already in the source position)' },
+    D: { id: 'D', reference: 'JE-D', posting_date: '2026-07-31' },
+    ND: { id: 'ND', reference: 'CONV-CGACR-20260731-NEUT-JE-D', posting_date: '2026-07-31', reverses_je_id: 'D', description: 'Conversion neutralization of JE-D (owner decision accrued_in_legacy_books)' },
+    RD: { id: 'RD', reference: 'CONV-CGACR-20260731-RECLASS-JE-D', posting_date: '2026-08-01', source_reference: 'D' },
+    G: { id: 'G', reference: 'JE-G', posting_date: '2026-08-01' },
+  };
+  const iv = [inv('pool', { posting_journal_entry_id: 'A', status: 'paid' }), inv('reclass', { posting_journal_entry_id: 'D', status: 'paid' }), inv('gym', { posting_journal_entry_id: 'G', status: 'paid' })];
+  const ap = [{ payment_id: 'C1036', invoice_id: 'pool', applied_cents: 10000 }, { payment_id: 'C1030', invoice_id: 'reclass', applied_cents: 10000 },
+    { payment_id: 'C1006', invoice_id: 'gym', applied_cents: 10000 }, { payment_id: 'C1023', invoice_id: 'gym', applied_cents: 10000 }];
+  const pb = { C1036: { id: 'C1036', payment_date: '2026-09-28', status: 'completed' }, C1030: { id: 'C1030', payment_date: '2026-09-16', status: 'completed' },
+    C1006: { id: 'C1006', payment_date: '2026-08-14', status: 'voided', void_date: '2026-09-01' }, C1023: { id: 'C1023', payment_date: '2026-09-01', status: 'completed' } };
+  const cg = (asOf) => openApAsOf({ invoices: iv, jesById: J, applications: ap, paymentsById: pb, asOf, cutoverDate: '2026-08-01' }).map((r) => r.id).sort();
+  t('already in the source position: carried as open AP from the conversion date until paid', () => {
+    assert.ok(cg('2026-07-31').includes('pool') && cg('2026-08-31').includes('pool') && !cg('2026-09-30').includes('pool'));
+    assert.ok(!cg('2026-07-30').includes('pool'));
+  });
+  t('a conversion RECLASS re-posts like a REPOST (open 8/1 until paid 9/16)', () => {
+    assert.ok(!cg('2026-07-31').includes('reclass') && cg('2026-08-31').includes('reclass') && !cg('2026-09-30').includes('reclass'));
+  });
+  t('a payment voided after the as-of date still paid the invoice on that date', () => {
+    assert.ok(!cg('2026-08-31').includes('gym'), 'check 1006 (voided 9/1) paid it at 8/31');
+    assert.ok(!cg('2026-09-30').includes('gym'), 'check 1023 pays it after the void');
+    const noRepay = openApAsOf({ invoices: iv, jesById: J, applications: ap.filter((a) => a.payment_id !== 'C1023'), paymentsById: pb, asOf: '2026-09-30', cutoverDate: '2026-08-01' }).map((r) => r.id);
+    assert.ok(noRepay.includes('gym'), 'once the void date passes with no repayment it is open again');
+  });
+}
 t('no invoice appears twice', () => { const r = at('2026-08-01'); assert.strictEqual(r.length, new Set(r).size); });
 
 console.log(failed ? `\n${failed} failure(s)` : '\nall passed');
