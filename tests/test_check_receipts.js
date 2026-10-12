@@ -139,6 +139,17 @@ function fakeDb(seed = {}, rpc = {}) {
     assert.strictEqual(db2.calls.rpc.length, 0, 'nothing reached the ledger');
   });
 
+  await t('one payment path: the old Record payment form and the ar_engine payment writer are retired; the account screen links to Check Receipts', () => {
+    const gl = fs.readFileSync(path.join(__dirname, '..', 'api', 'gl.js'), 'utf8');
+    const route = gl.slice(gl.indexOf("router.post('/:communityId/owners/:propertyId/payment'"), gl.indexOf("router.post('/:communityId/owners/:propertyId/payment'") + 400);
+    assert.ok(/status\(410\)/.test(route) && !/recordHomeownerPayment\(/.test(route), 'the old endpoint posts nothing');
+    const ar = fs.readFileSync(path.join(__dirname, '..', 'api', 'ar.js'), 'utf8');
+    assert.ok(/router\.post\('\/payments', \(req, res\) => res\.status\(410\)/.test(ar) && !/await recordPayment\(/.test(ar), 'POST /api/ar/payments posts nothing');
+    const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'accounting.html'), 'utf8');
+    for (const gone of ['payForm', 'pay_amount', 'window.recordPayment', 'payToggle']) assert.ok(!html.includes(gone), `${gone} removed`);
+    assert.ok(/showView\('checkscan'\)/.test(html) && /window\.showView = function/.test(html), 'Record a check opens Check Receipts');
+  });
+
   await t('controls: scanning never posts; the migration keeps the duplicate keys and the received date', () => {
     const src = fs.readFileSync(path.join(__dirname, '..', 'lib', 'payments', 'check_receipts.js'), 'utf8');
     const intake = src.slice(src.indexOf('async function intakeCheck'), src.indexOf('// 5) Staff confirmation'));

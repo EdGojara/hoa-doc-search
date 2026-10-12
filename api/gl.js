@@ -704,21 +704,15 @@ router.put('/:communityId/billing-policy', express.json(), async (req, res) => {
   }
 });
 
-// Record a homeowner payment (check / lockbox / online) — record-only.
-router.post('/:communityId/owners/:propertyId/payment', express.json(), async (req, res) => {
-  try {
-    const { recordHomeownerPayment } = require('../lib/accounting/record_payment');
-    const r = await recordHomeownerPayment({
-      supabase, communityId: req.params.communityId, propertyId: req.params.propertyId,
-      amountCents: Math.round(Number(req.body.amount_dollars) * 100), paymentDate: req.body.payment_date,
-      source: req.body.source, reference: req.body.reference, dryRun: req.body.dryRun === true,
-    });
-    res.json(r);
-  } catch (err) {
-    console.error('[gl] record payment failed:', err.message);
-    res.status(400).json({ error: safeErrorMessage(err) });
-  }
-});
+// RETIRED (Ed 2026-10-12): the old Record payment form wrote ar_payments + a hand-built
+// journal entry that skipped postJournalEntry (period / cutover guards) and never reached the
+// homeowner ledger (homeowner_transactions) the statements and AR read. Homeowner payments
+// post only through the authoritative routine: paper checks via Check Receipts
+// (lib/payments/check_receipts.js, post_check_receipt_payment); online payments via Stripe.
+// Never used in production (no JE-PMT entries). lib/accounting/record_payment.js is unreachable.
+router.post('/:communityId/owners/:propertyId/payment', (req, res) => res.status(410).json({
+  error: 'retired', message: 'Record payment has moved: scan or enter the check under Homeowners -> Check Receipts, which posts it once through the homeowner ledger and Undeposited Funds.',
+}));
 
 // Late fee + interest run (and one-click reversal).
 router.post('/:communityId/late-fee-run', express.json(), async (req, res) => {

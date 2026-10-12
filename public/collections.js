@@ -44,8 +44,9 @@
         <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;"><h2 class="sec" style="margin:0;">Accounts (${eligible.length} eligible of ${accts.length} with a balance)</h2>
           <div style="font-size:12px;">Notice date (= mailing date) <input type="date" id="cl-date" value="${today()}"> <button id="cl-prep" style="padding:7px 14px; border:none; border-radius:7px; background:#0B1D34; color:#fff; font-weight:600; cursor:pointer;">Prepare notices for selected</button></div></div>
         <table style="margin-top:8px;"><thead><tr><th></th><th>Property</th><th>Owner</th><th class="num">Balance</th><th class="num">Days past due</th><th>Status</th></tr></thead><tbody>
-        ${accts.map((a) => `<tr><td>${a.eligible ? `<input type="checkbox" class="cl-pick" value="${a.property_id}" checked>` : ''}</td><td>${esc(a.street_address || '')}</td><td>${esc(a.owner_name || '')}</td><td class="num">${fmt(a.balance_cents)}</td><td class="num">${a.oldest_assessment_due ? a.days_past_due : ''}</td><td>${a.eligible ? '<span style="color:#166534; font-weight:600;">Eligible</span>' : `<span class="muted" style="font-size:11.5px;">${esc(a.holds.join('; '))}</span>`}</td></tr>`).join('') || '<tr><td colspan="6" class="muted" style="text-align:center; padding:14px;">No balances due.</td></tr>'}
+        ${accts.map((a) => `<tr><td>${a.eligible ? `<input type="checkbox" class="cl-pick" value="${a.property_id}" checked>` : ''}</td><td>${esc(a.street_address || '')}</td><td>${esc(a.owner_name || '')}</td><td class="num">${fmt(a.balance_cents)}</td><td class="num">${a.oldest_assessment_due ? a.days_past_due : ''}</td><td>${a.eligible ? '<span style="color:#166534; font-weight:600;">Eligible</span>' : `<span class="muted" style="font-size:11.5px;">${esc(a.holds.join('; '))}</span>`}${a.holds.some((h) => /Legal status|collections counsel|attorney invoice|re-confirm/.test(h)) ? `<div style="margin-top:3px;"><button class="cl-ls" data-p="${a.property_id}" data-s="not_with_counsel" style="font-size:11px; padding:2px 8px;">Not with counsel</button> <button class="cl-ls" data-p="${a.property_id}" data-s="with_counsel" style="font-size:11px; padding:2px 8px;">With counsel</button></div>` : ''}</td></tr>`).join('') || '<tr><td colspan="6" class="muted" style="text-align:center; padding:14px;">No balances due.</td></tr>'}
         </tbody></table>
+        <div class="muted" style="font-size:11.5px; margin-top:8px;">An account is eligible only after staff confirm its legal status against collections counsel's current account list (recorded on the account's legal status, good for 90 days). Attorney fees or an attorney invoice dated after the confirmation hold it again.</div>
         <div id="cl-prep-out" style="margin-top:8px; font-size:12.5px;"></div>
       </div>
       <div class="card"><h2 class="sec" style="margin:0 0 8px;">Batches</h2>
@@ -53,6 +54,12 @@
         ${(bs.batches || []).map((b) => `<tr><td>${esc(b.notice_date)}</td><td>${pill(b.status)}</td><td class="num">${b.notices}</td><td class="num">${b.mailed}</td><td class="num">${fmt(b.total_due_cents)}</td><td class="muted" style="font-size:11.5px;">${esc(b.prepared_by)}</td><td><button data-b="${b.id}" style="padding:4px 10px; border:1px solid #cbd5e1; border-radius:6px; background:#fff; cursor:pointer;">Open</button></td></tr>`).join('') || '<tr><td colspan="7" class="muted" style="text-align:center; padding:14px;">No batches yet.</td></tr>'}
         </tbody></table><div id="cl-batch" style="margin-top:12px;"></div></div>`;
     root.querySelector('#cl-prep').addEventListener('click', prepare);
+    root.querySelectorAll('.cl-ls').forEach((x) => x.addEventListener('click', async () => {
+      const withCounsel = x.dataset.s === 'with_counsel';
+      const firm = withCounsel ? prompt('Which attorney firm has this account?') : null; if (withCounsel && !firm) return;
+      const source = prompt(withCounsel ? "What shows it (for example the firm's status report and its date)?" : "What did you check it against (collections counsel's current account list and its date)?"); if (!source) return;
+      try { await post(`/api/collections/legal-status/${x.dataset.p}`, { status: x.dataset.s, source, attorney_firm: firm }); render(CID, ROOT); } catch (e) { alert(e.message); }
+    }));
     root.querySelectorAll('[data-b]').forEach((x) => x.addEventListener('click', () => openBatch(x.dataset.b)));
     const tb = root.querySelector('#cl-tpl'); if (tb) tb.addEventListener('click', async () => { if (!confirm('Approve this wording for mailing? It is the association\'s current letter; the counsel questions stay attached.')) return; try { await post(`/api/collections/templates/${tb.dataset.id}/approve`); render(CID, ROOT); } catch (e) { alert(e.message); } });
     root.querySelector('#cl-fee-save').addEventListener('click', async () => { const v = root.querySelector('#cl-fee').value.trim(); if (!v) return alert('Enter the fee in dollars.'); try { await api('/api/collections/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ community_id: CID, fee_cents: Math.round(Number(v.replace(/[$,]/g, '')) * 100), autopost: root.querySelector('#cl-auto').checked }) }); render(CID, ROOT); } catch (e) { alert(e.message); } });
@@ -85,6 +92,7 @@
           ${b.status === 'approved' ? '<button data-act="printed">Mark printed</button>' : ''}
           ${['prepared', 'verified', 'verification_failed', 'approved', 'printed'].includes(b.status) ? '<button data-act="redate">Re-date</button><button data-act="cancel">Cancel batch</button>' : ''}
         </div></div>
+      ${v.approval_attestation ? `<div style="margin:8px 0; font-size:12px; color:#334155;">Approver confirmed: checked against ${esc(v.approval_attestation.counsel_list_source)}; Vantaca letters checked through ${esc(v.approval_attestation.vantaca_checked_through)} (${esc(v.approval_attestation.attested_by)}).</div>` : ''}
       ${v.results ? `<div style="margin:8px 0; font-size:12.5px;">Kat's check: ${v.ok ? '<strong style="color:#166534;">every notice ties to the ledger, the fee setting and its dates</strong>' : `<strong style="color:#991b1b;">${v.failed} of ${v.notices} notice(s) failed</strong>`}.</div>` : ''}
       <table style="font-size:12.5px;"><thead><tr><th>Owner / property</th><th class="num">Ledger</th><th class="num">Fee</th><th class="num">Amount due</th><th>Deadline</th><th>Notice</th><th>Mailing</th></tr></thead><tbody>
       ${j.notices.map((n) => { const r = R[n.id]; return `<tr><td>${esc(n.owner_name || '')}<div class="muted" style="font-size:11px;">${esc((n.mailing_address || {}).street || '')} &middot; acct ${esc(n.account_number || '')}</div>${r && !r.ok ? `<div style="color:#991b1b; font-size:11px;">${r.errors.map(esc).join('<br>')}</div>` : ''}</td>
@@ -99,7 +107,15 @@
       const act = x.dataset.act;
       try {
         if (act === 'verify') await post(`/api/collections/batches/${id}/verify`);
-        if (act === 'approve') { if (!confirm(`Approve ${j.notices.filter((n) => n.status === 'draft').length} notice(s) for printing? Kat re-checks every notice first; the issued PDFs are then fixed.`)) return; msg('Approving and rendering the issued PDFs...'); await post(`/api/collections/batches/${id}/approve`); }
+        if (act === 'approve') {
+          const n = j.notices.filter((x) => x.status === 'draft').length;
+          const src = prompt(`Before approving ${n} notice(s): which collections counsel account list did you check these accounts against? (firm and list date)`); if (!src) return;
+          if (!confirm('I checked every account in this batch against that list and none is with collections counsel.')) return;
+          const thru = prompt('Date you checked Vantaca for collections letters mailed to these accounts in the last 45 days (YYYY-MM-DD):', today()); if (!thru) return;
+          if (!confirm('No Vantaca collections letter was mailed to these accounts in the last 45 days.')) return;
+          msg('Approving: Kat re-checks every notice, then the issued PDFs are rendered...');
+          await post(`/api/collections/batches/${id}/approve`, { attestation: { counsel_list_checked: true, counsel_list_source: src, vantaca_letters_checked: true, vantaca_checked_through: thru } });
+        }
         if (act === 'printed') await post(`/api/collections/batches/${id}/printed`);
         if (act === 'redate') { const d = prompt('New notice date (the day it will be mailed), YYYY-MM-DD:', today()); if (!d) return; const r = await post(`/api/collections/batches/${id}/redate`, { notice_date: d }); await render(CID, ROOT); if (r.batch) openBatch(r.batch.id); return; }
         if (act === 'cancel') { const why = prompt('Why cancel this batch? (nothing has been mailed or charged)'); if (!why) return; await post(`/api/collections/batches/${id}/cancel`, { reason: why }); }
