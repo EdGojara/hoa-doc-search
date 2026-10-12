@@ -226,6 +226,16 @@ t('Kat: a credit to AP, a missing 1300 debit, a duplicate owner charge or a live
   assert.ok(!other.verified && other.checks.some((c) => !c.ok && /accrued to/.test(c.name)));
 });
 
+t('Kat: an approved, posted treatment is not its own duplicate; a second live posting still fails (350881)', async () => {
+  const ad = Object.assign({}, kd, { saved: { review: { status: 'approved' } } });
+  const once = await verifyTreatment(katDb([{ property_id: 'p1', txn_type: 'charge', description: 'Legal Fees / 280595' }]), ad, plan(), { livePostings: 1 });
+  assert.ok(once.checks.every((c) => c.ok || !/posted exactly once|charged twice/.test(c.name)), JSON.stringify(once.checks.filter((c) => !c.ok)));
+  const twice = await verifyTreatment(katDb(), ad, plan(), { livePostings: 2 });
+  assert.ok(!twice.verified && twice.checks.some((c) => !c.ok && /posted exactly once/.test(c.name)));
+  const charged2 = await verifyTreatment(katDb([{ property_id: 'p1', txn_type: 'charge', description: '280595' }, { property_id: 'p1', txn_type: 'charge', description: 'again 280595' }]), ad, plan(), { livePostings: 1 });
+  assert.ok(!charged2.verified && charged2.checks.some((c) => !c.ok && /charged twice/.test(c.name)));
+});
+
 // ---- the activities (payment / recovery / documentation) --------------------------
 const row = (o) => Object.assign({ id: 'inv', community_id: 'c', invoice_number: '280595', vendor: 'D&F', total_cents: 474061, ap_status: 'awaiting_approval', paid: false, released: false,
   manager_approved: true, read_only: null, review_status: 'draft', has_draft: true, homeowner_cents: 0, recoverable_count: 0, exceptions: [], docs: { missing: [], inaccessible: [] }, postings: { pending: 0, posted: 0 } }, o || {});
