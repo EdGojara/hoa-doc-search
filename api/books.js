@@ -1767,6 +1767,7 @@ router.get('/budgets/living-lines', async (req, res) => {
     // (vendor, annual cost, end date, linked PDF). Match them to the account by
     // vendor name, budget at the contract amount, and attach the contract PDF as
     // evidence — the number literally IS the contract. (Ed 2026-08-10.)
+    const usd0 = (c) => { const t = `$${Math.round(Math.abs(Number(c) || 0) / 100).toLocaleString('en-US')}`; return Number(c) < 0 ? `(${t})` : t; };   // whole dollars, negatives in parentheses
     const ESC = 0.04; // default renewal escalation for vendor-committed lines
     const INFL = 0.03; // default inflation on trend lines
     // Contract-VERIFIED source. Two feeds, one shape: amenity operating
@@ -1871,20 +1872,22 @@ router.get('/budgets/living-lines', async (req, res) => {
           proposed_cents = isReserveFund ? Math.abs(priorB) : priorB;
           built_from = isReserveFund
             ? `FY${fy - 1} adopted reserve contribution $${Math.round(Math.abs(priorB) / 100).toLocaleString()} — held flat; change it here to fund more or less into reserves.`
-            : `FY${fy - 1} adopted budget $${Math.round(priorB / 100).toLocaleString()} — assessment income is set by the board, held flat. Change it here to propose a new rate.`;
+            : /assessment|dues|maintenance fee/i.test(a.account_name || '')
+              ? `FY${fy - 1} adopted budget $${Math.round(priorB / 100).toLocaleString()} — assessment income is set by the board, held flat. Change it here to propose a new rate.`
+              : `FY${fy - 1} adopted budget $${Math.round(priorB / 100).toLocaleString()}, held flat (revenue is not inflated by the model).`;
         } else {
           source_type = 'prior_budget'; confidence = 'medium'; proposed_cents = Math.round(priorB * (1 + INFL));
-          built_from = `FY${fy - 1} adopted budget $${Math.round(priorB / 100).toLocaleString()} + ${Math.round(INFL * 100)}% inflation${a.forecast != null ? ` · ${fy - 1} forecast ${Math.round(a.forecast / 100).toLocaleString()}` : ''}.`;
+          built_from = `FY${fy - 1} adopted budget $${Math.round(priorB / 100).toLocaleString()} + ${Math.round(INFL * 100)}% inflation${a.forecast != null ? ` · ${fy - 1} forecast ${usd0(a.forecast)}` : ''}.`;
         }
       } else if (a.account_type === 'expense' && committedAnnual > 0 && committedAnnual >= a.forecast * 0.6) {
         source_type = 'vendor_commitment'; confidence = 'high';
         proposed_cents = Math.round(committedAnnual * (1 + ESC));
-        built_from = `${vendors[0].name}${vendors.length > 1 ? ` + ${vendors.length - 1} more` : ''} — ${Math.round(committedAnnual / 100).toLocaleString()}/yr${partialAnnualize !== 1 ? ` (${fy - 1} vendor postings over ${coverageMonths} month(s), scaled to 12)` : ''} + ${Math.round(ESC * 100)}% renewal`;
+        built_from = `${vendors[0].name}${vendors.length > 1 ? ` + ${vendors.length - 1} more` : ''} — ${usd0(committedAnnual)}/yr${partialAnnualize !== 1 ? ` (${fy - 1} vendor postings over ${coverageMonths} month(s), scaled to 12)` : ''} + ${Math.round(ESC * 100)}% renewal`;
       } else if (a.forecast > 0 || a.fy1 > 0) {
         source_type = 'trend'; confidence = (a.fy2 > 0) ? 'medium' : 'low';
         const base = a.forecast || a.fy1;
         proposed_cents = Math.round(base * (1 + INFL));
-        built_from = `${a.forecast ? `${fy - 1} forecast ${Math.round(a.forecast / 100).toLocaleString()} (no ${fy - 1} budget line, so actual only, not projected for the remaining months)` : `${fy - 1} actual ${Math.round((a.fy1 || 0) / 100).toLocaleString()}`} + ${Math.round(INFL * 100)}% inflation${a.fy2 > 0 ? ` (${fy - 2} actual ${Math.round(a.fy2 / 100).toLocaleString()})` : ''}`;
+        built_from = `${a.forecast ? `${fy - 1} forecast ${usd0(a.forecast)} (no ${fy - 1} budget line, so actual only, not projected for the remaining months)` : `${fy - 1} actual ${usd0(a.fy1 || 0)}`} + ${Math.round(INFL * 100)}% inflation${a.fy2 > 0 ? ` (${fy - 2} actual ${usd0(a.fy2)})` : ''}`;
       } else {
         source_type = 'estimate'; confidence = 'low'; proposed_cents = 0;
         built_from = 'No prior budget or spending history — enter a number.';
