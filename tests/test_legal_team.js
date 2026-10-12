@@ -321,6 +321,14 @@ t('a Deed Restriction Status Report is DRV work even when the passage mentions a
   assert.strictEqual(RS.readStatusPassage(passage).work_type, 'collection', 'no title: passage rules as before');
   assert.ok(/workType === 'collection' \? referralProcedure/.test(src('lib/legal/research.js')), "counsel's collection procedure never stands in for a deed-restriction notice");
 });
+t('a former client leaves the active legal AP list (records kept); Kat never accrues for it; a failed tick is recorded as failed', () => {
+  const RD = require('../lib/legal/review_data');
+  assert.ok(RD.isFormerClient({ management_status: 'terminating' }) && RD.isFormerClient({ management_status: 'terminated' }));
+  assert.ok(!RD.isFormerClient({ management_status: 'active' }) && !RD.isFormerClient(null));
+  assert.ok(/rows = all\.filter\(\(i\) => !isFormerClient/.test(src('lib/legal/review_data.js')));
+  assert.ok(/financialsDisabledIds\([\s\S]{0,300}disabled\.has\(inv\.community_id\)/.test(src('lib/ap/intake.js')), 'backstop skips associations whose books trustEd does not keep');
+  assert.ok(/if \(failed\.length\) throw/.test(src('lib/accounting/monthly_runs.js')), 'a failed prepare or accrual fails the scheduled run');
+});
 t('intake hands only a loaded (non-duplicate) attorney invoice to the team, in the background', () => {
   const s = src('lib/ap/intake.js');
   assert.ok(/if \(!suspected\) \{[\s\S]{0,400}is_legal_counsel[\s\S]{0,300}triggerFromIntake\(supabase, data\.id\)/.test(s));
