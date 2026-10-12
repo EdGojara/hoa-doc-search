@@ -139,6 +139,53 @@ function fakeDb(seed = {}, rpc = {}) {
     assert.strictEqual(db2.calls.rpc.length, 0, 'nothing reached the ledger');
   });
 
+  await t('scanned PDFs: one check per page, the same scan always splits to the same bytes; images and 1-page PDFs pass through; damaged or oversized scans are refused', async () => {
+    const { PDFDocument } = require('pdf-lib');
+    const crypto = require('crypto');
+    const mk = async (n) => { const d = await PDFDocument.create(); for (let i = 0; i < n; i++) d.addPage([612, 280]).drawText(`Check ${1000 + i}`, { x: 50, y: 200 }); return Buffer.from(await d.save()); };
+    const three = { buffer: await mk(3), mimetype: 'application/pdf', originalname: 'scan.pdf' };
+    const a = await CR.splitUpload(three); const b = await CR.splitUpload(three);
+    assert.strictEqual(a.length, 3); assert.deepStrictEqual(a.map((x) => [x.page, x.pages]), [[1, 3], [2, 3], [3, 3]]);
+    const h = (x) => crypto.createHash('sha256').update(x.buffer).digest('hex');
+    assert.deepStrictEqual(a.map(h), b.map(h), 'a re-uploaded scan hashes the same, so the duplicate-image guard still works');
+    assert.strictEqual(new Set(a.map(h)).size, 3, 'each page is a distinct check');
+    for (const p of a) assert.strictEqual((await PDFDocument.load(p.buffer)).getPageCount(), 1);
+    const img = { buffer: Buffer.from('jpg'), mimetype: 'image/jpeg', originalname: 'c.jpg' };
+    assert.deepStrictEqual(await CR.splitUpload(img), [img]);
+    const one = { buffer: await mk(1), mimetype: 'application/pdf', originalname: 'one.pdf' };
+    assert.deepStrictEqual(await CR.splitUpload(one), [one]);
+    await assert.rejects(CR.splitUpload({ buffer: await mk(CR.MAX_PAGES + 1), mimetype: 'application/pdf', originalname: 'big.pdf' }), /pages; scan at most/);
+    await assert.rejects(CR.splitUpload({ buffer: Buffer.from('not a pdf'), mimetype: 'application/pdf', originalname: 'bad.pdf' }), /could not be opened/);
+  });
+
+  await t('attach a back later: evidence only (status, ledger and GL untouched); never overwrites an existing back', async () => {
+    const db = fakeDb({ homeowner_check_receipts: [receipt({ status: 'recorded', homeowner_txn_id: 'h1', journal_entry_id: 'je1', back_document_id: null })], library_documents: [], communities: [{ id: 'c1', management_company_id: 'mc' }] });
+    db.storage = { from: () => ({ upload: async () => ({ error: null }) }) };
+    const back = { buffer: Buffer.from('back-image-bytes'), mimetype: 'image/jpeg', originalname: 'back.jpg' };
+    await CR.attachBack(db, 'rc1', { back, actor: 'staff' });
+    const rc = db.T.homeowner_check_receipts[0];
+    assert.ok(rc.back_document_id && rc.back_sha256); assert.strictEqual(rc.status, 'recorded'); assert.strictEqual(rc.journal_entry_id, 'je1');
+    assert.strictEqual(db.calls.rpc.length, 0, 'no posting function was called');
+    await assert.rejects(CR.attachBack(db, 'rc1', { back, actor: 'staff' }), /already attached/);
+    await assert.rejects(CR.attachBack(db, 'rc1', { back: null, actor: 'staff' }), /choose the image/);
+  });
+
+  await t('upload screen: one keyboard-operable drop zone, reading starts on drop, front only, and Record is never automatic', () => {
+    const ui = fs.readFileSync(path.join(__dirname, '..', 'public', 'check-receipts.js'), 'utf8');
+    assert.ok(/id="cr-drop" role="button" tabindex="0"/.test(ui) && /e\.key === 'Enter' \|\| e\.key === ' '/.test(ui), 'drop zone is a keyboard-operable button');
+    assert.ok(/addEventListener\('drop'/.test(ui) && /input type="file" id="cr-file" multiple accept="image\/\*,application\/pdf"/.test(ui), 'drag-and-drop and click-to-browse, images and PDFs');
+    assert.ok(/aria-live="polite"/.test(ui), 'progress is announced');
+    for (const gone of ['id="cr-front"', 'id="cr-back"', 'Read checks']) assert.ok(!ui.includes(gone), `${gone} removed`);
+    // every call to /record sits behind a confirm() in the same function
+    const fns = ui.split(/\n  (?:async )?function /);
+    for (const f of fns.filter((x) => /\/record`/.test(x))) assert.ok(/confirm\(/.test(f), 'a /record call without a confirm');
+    const up = ui.slice(ui.indexOf('function upload(it)'), ui.indexOf('function paintQueue'));
+    assert.ok(!/\/record/.test(up) && /\/api\/check-receipts\/scan/.test(up), 'the upload path only scans');
+    const api = fs.readFileSync(path.join(__dirname, '..', 'api', 'check_receipts.js'), 'utf8');
+    const scan = api.slice(api.indexOf("router.post('/scan'"), api.indexOf("router.post('/:id/back'"));
+    assert.ok(!/recordReceipt|post_check_receipt_payment|postJournalEntry/.test(scan), 'the scan route never posts');
+  });
+
   await t('one payment path: the old Record payment form and the ar_engine payment writer are retired; the account screen links to Check Receipts', () => {
     const gl = fs.readFileSync(path.join(__dirname, '..', 'api', 'gl.js'), 'utf8');
     const route = gl.slice(gl.indexOf("router.post('/:communityId/owners/:propertyId/payment'"), gl.indexOf("router.post('/:communityId/owners/:propertyId/payment'") + 400);

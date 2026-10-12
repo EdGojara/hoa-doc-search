@@ -36,14 +36,18 @@
     const chip = (k, label, n) => `<span data-f="${k}" style="cursor:pointer; padding:4px 10px; border-radius:14px; font-size:12px; border:1px solid ${FILTER === k ? '#0B1D34' : '#e2e8f0'}; background:${FILTER === k ? '#0B1D34' : '#fff'}; color:${FILTER === k ? '#fff' : '#334155'};">${label} ${n != null ? `<strong>${n}</strong>` : ''}</span>`;
     root.innerHTML = `
       <div class="card" style="margin-bottom:14px;">
-        <h2 class="sec" style="margin:0 0 6px;">Scan homeowner checks</h2>
-        <div class="muted" style="font-size:12.5px; margin-bottom:10px;">Scan the front (and back when you have it) of each check. trustEd reads it, proposes the owner account from the account number, the property address, prior checks from the same bank account and the owner's name together (never the name alone), and checks for duplicates. Nothing posts until you confirm and record it. Recording posts <strong>Dr Undeposited Funds / Cr Accounts Receivable</strong>; cash moves only when you record the bank's deposit confirmation.</div>
-        <div style="display:flex; gap:14px; flex-wrap:wrap; align-items:flex-end;">
-          <label style="font-size:12px;">Fronts (one or many)<br><input type="file" id="cr-front" multiple accept="image/*,application/pdf"></label>
-          <label style="font-size:12px;">Backs (same order, optional)<br><input type="file" id="cr-back" multiple accept="image/*,application/pdf"></label>
-          <button id="cr-scan" style="padding:8px 16px; border:none; border-radius:7px; background:#0B1D34; color:#fff; font-weight:600; cursor:pointer;">Read checks</button>
+        <h2 class="sec" style="margin:0 0 8px;">Add checks</h2>
+        <div id="cr-drop" role="button" tabindex="0" aria-label="Add checks: drop check images or PDFs here, or press Enter to choose files" aria-describedby="cr-drop-help"
+          style="border:2px dashed #94a3b8; border-radius:12px; padding:30px 18px; text-align:center; cursor:pointer; background:#f8fafc; transition:background .15s, border-color .15s;">
+          <div style="font-size:17px; font-weight:700; color:#0B1D34;">Drop checks here</div>
+          <div style="font-size:13px; color:#334155; margin-top:4px;">or <span style="text-decoration:underline;">click to choose files</span></div>
+          <div id="cr-drop-help" class="muted" style="font-size:12px; margin-top:8px;">Photos or scans of the front of each check, or a PDF from the scanner (one check per page). Reading starts right away. You can attach a back later if you need it.</div>
+          <input type="file" id="cr-file" multiple accept="image/*,application/pdf" style="display:none;">
         </div>
-        <div id="cr-scan-out" style="margin-top:10px; font-size:12.5px;"></div>
+        <div id="cr-up-status" role="status" aria-live="polite" style="font-size:12.5px; margin-top:8px;"></div>
+        <div id="cr-queue" style="margin-top:6px;"></div>
+        <div id="cr-batch" style="margin-top:10px;"></div>
+        <div class="muted" style="font-size:11.5px; margin-top:8px;">Nothing is posted when a check is read. trustEd proposes the owner account (from the account number, the property address, earlier checks from the same bank account and the owner's name together, never the name alone) and checks for duplicates. A payment posts only when you press Record and confirm: <strong>Dr Undeposited Funds / Cr Accounts Receivable</strong>. Cash moves when you record the bank's deposit.</div>
       </div>
       <div class="card" style="margin-bottom:14px;">
         <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:10px;">
@@ -77,25 +81,140 @@
     root.querySelectorAll('[data-f]').forEach((el) => el.addEventListener('click', () => { FILTER = el.dataset.f; render(CID, ROOT); }));
     root.querySelectorAll('[data-open]').forEach((el) => el.addEventListener('click', () => openReceipt(el.dataset.open)));
     root.querySelectorAll('[data-rec]').forEach((el) => el.addEventListener('click', () => reconcile(el.dataset.rec)));
-    root.querySelector('#cr-scan').addEventListener('click', scan);
+    bindDrop();
+    paintQueue();
+    paintBatch();
+    if (Q.msg) status(Q.msg);   // the last upload message survives a list refresh
     const depTotal = () => { const t = [...root.querySelectorAll('.cr-dep:checked')].reduce((s, x) => s + Number(x.dataset.amt), 0); const el = root.querySelector('#cr-dep-total'); if (el) el.textContent = fmt(t); };
     root.querySelectorAll('.cr-dep').forEach((x) => x.addEventListener('change', depTotal)); depTotal();
     const go = root.querySelector('#cr-dep-go'); if (go) go.addEventListener('click', deposit);
   }
 
-  async function scan() {
-    const out = ROOT.querySelector('#cr-scan-out');
-    const fronts = ROOT.querySelector('#cr-front').files; const backs = ROOT.querySelector('#cr-back').files;
-    if (!fronts.length) { out.textContent = 'Choose at least one front image.'; return; }
-    const fd = new FormData(); fd.append('community_id', CID);
-    [...fronts].forEach((f) => fd.append('front', f)); [...backs].forEach((f) => fd.append('back', f));
-    out.textContent = `Reading ${fronts.length} check(s)...`;
-    try {
-      const j = await api('/api/check-receipts/scan', { method: 'POST', body: fd });
-      out.innerHTML = (j.results || []).map((r) => `<div>${esc(r.file)}: ${r.error ? `<span style="color:#991b1b;">${esc(r.error)}</span>` : r.duplicate ? `<span style="color:#92400e;">${esc(r.detail)}</span>` : `${pill(r.status)} #${esc(r.check_number || '?')} ${fmt(r.amount_cents)} ${r.exception_reason ? `<span class="muted">${esc(r.exception_reason)}</span>` : ''}`}</div>`).join('');
-      setTimeout(() => render(CID, ROOT), 1200);
-    } catch (e) { out.innerHTML = `<span style="color:#991b1b;">${esc(e.message)}</span>`; }
+  // ---- Upload: drop zone -> per-file upload (progress) -> reading -> batch review --------
+  // State lives here, not in the DOM, so refreshing the checks list never loses an upload in
+  // progress. Uploading or reading a check NEVER posts: Record is a separate confirmed click.
+  const Q = { items: [], results: [], batchId: null, running: 0, seq: 0, msg: '' };
+  const CONCURRENCY = 2;
+  const OK_TYPE = (f) => /^image\//.test(f.type) || f.type === 'application/pdf' || /\.(pdf|jpe?g|png|heic|webp|gif)$/i.test(f.name);
+  const kb = (n) => (n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`);
+  const status = (t) => { Q.msg = t; const el = ROOT && ROOT.querySelector('#cr-up-status'); if (el) el.textContent = t; };
+
+  function bindDrop() {
+    const zone = ROOT.querySelector('#cr-drop'); const input = ROOT.querySelector('#cr-file');
+    if (!zone || !input) return;
+    const hot = (on) => { zone.style.background = on ? '#eef6ff' : '#f8fafc'; zone.style.borderColor = on ? '#1e40af' : '#94a3b8'; };
+    zone.addEventListener('click', (e) => { if (e.target !== input) input.click(); });
+    zone.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); input.click(); } });
+    ['dragenter', 'dragover'].forEach((ev) => zone.addEventListener(ev, (e) => { e.preventDefault(); e.stopPropagation(); hot(true); }));
+    ['dragleave', 'dragend'].forEach((ev) => zone.addEventListener(ev, () => hot(false)));
+    zone.addEventListener('drop', (e) => { e.preventDefault(); e.stopPropagation(); hot(false); addFiles(e.dataTransfer && e.dataTransfer.files); });
+    input.addEventListener('change', () => { addFiles(input.files); input.value = ''; });
   }
+
+  function addFiles(list) {
+    const files = [...(list || [])];
+    if (!files.length) return;
+    if (!Q.batchId) Q.batchId = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : null;
+    for (const f of files) Q.items.push({ id: ++Q.seq, file: f, status: OK_TYPE(f) ? 'queued' : 'error', pct: 0, error: OK_TYPE(f) ? null : 'This is not an image or a PDF.', checks: 0 });
+    status(`${files.length} file${files.length === 1 ? '' : 's'} added. Reading starts now.`);
+    paintQueue(); pump();
+  }
+
+  function pump() {
+    while (Q.running < CONCURRENCY) { const it = Q.items.find((x) => x.status === 'queued'); if (!it) break; upload(it); }
+    if (!Q.running && Q.items.length && !Q.items.some((x) => x.status === 'queued')) {
+      const found = Q.results.filter((r) => !r.error).length; const bad = Q.items.filter((x) => x.status === 'error').length;
+      status(`Done: ${found} check${found === 1 ? '' : 's'} read${bad ? `, ${bad} file${bad === 1 ? ' needs' : 's need'} attention` : ''}. Review each check below; nothing is posted until you press Record.`);
+      refreshList();
+    }
+  }
+
+  function upload(it) {
+    it.status = 'uploading'; it.pct = 0; it.error = null; Q.running++; paintQueue();
+    const fd = new FormData(); fd.append('community_id', CID); if (Q.batchId) fd.append('scan_batch_id', Q.batchId); fd.append('files', it.file, it.file.name);
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', '/api/check-receipts/scan');
+    xhr.upload.onprogress = (e) => { if (e.lengthComputable) { it.pct = Math.round((e.loaded / e.total) * 100); paintQueue(); } };
+    xhr.upload.onload = () => { it.status = 'reading'; paintQueue(); };
+    const done = () => { Q.running--; paintQueue(); paintBatch(); pump(); };
+    xhr.onload = () => {
+      let j = {}; try { j = JSON.parse(xhr.responseText || '{}'); } catch (_) { /* not JSON */ }
+      if (xhr.status >= 400) { it.status = 'error'; it.error = j.message || (j.error === 'migration_514_required' ? 'Check scanning is not switched on yet (migration 514).' : j.error) || `The server answered ${xhr.status}.`; return done(); }
+      const rs = j.results || [];
+      Q.results = Q.results.filter((r) => r._item !== it.id);
+      for (const r of rs) Q.results.push({ ...r, _item: it.id });
+      it.checks = rs.filter((r) => !r.error).length;
+      const errs = rs.filter((r) => r.error);
+      if (!rs.length || errs.length === rs.length) { it.status = 'error'; it.error = errs.length ? errs.map((r) => r.error).join(' ') : 'No check was found in this file.'; }
+      else it.status = 'done';
+      done();
+    };
+    xhr.onerror = () => { it.status = 'error'; it.error = 'The upload did not reach the server. Check the connection and press Retry.'; done(); };
+    xhr.send(fd);
+  }
+
+  function paintQueue() {
+    const box = ROOT && ROOT.querySelector('#cr-queue'); if (!box) return;
+    if (!Q.items.length) { box.innerHTML = ''; return; }
+    const label = (it) => ({ queued: 'Waiting', uploading: `Uploading ${it.pct}%`, reading: 'Reading the check...', done: `${it.checks} check${it.checks === 1 ? '' : 's'} found`, error: 'Needs attention' })[it.status];
+    box.innerHTML = `<div style="display:flex; justify-content:space-between; align-items:center;"><strong style="font-size:13px;">Files</strong>${Q.running ? '' : '<button id="cr-clear" style="font-size:11.5px; padding:3px 10px; border:1px solid #cbd5e1; border-radius:6px; background:#fff; cursor:pointer;">Clear this batch</button>'}</div>
+      ${Q.items.map((it) => `<div style="display:grid; grid-template-columns:minmax(0,1fr) 170px 70px; gap:10px; align-items:center; padding:6px 0; border-bottom:1px solid #f1f5f9; font-size:12.5px;">
+        <div><div style="white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${esc(it.file.name)} <span class="muted">${kb(it.file.size)}</span></div>
+          ${it.error ? `<div style="color:#991b1b; font-size:12px;">${esc(it.error)}</div>` : ''}</div>
+        <div><div style="font-size:11.5px; color:${it.status === 'error' ? '#991b1b' : it.status === 'done' ? '#166534' : '#334155'};">${label(it)}</div>
+          ${['uploading', 'reading'].includes(it.status) ? `<div style="height:5px; background:#e2e8f0; border-radius:3px; margin-top:3px;"><div style="height:5px; border-radius:3px; background:#1e40af; width:${it.status === 'reading' ? 100 : it.pct}%; ${it.status === 'reading' ? 'opacity:.5;' : ''}"></div></div>` : ''}</div>
+        <div>${it.status === 'error' && OK_TYPE(it.file) ? `<button data-retry="${it.id}" style="font-size:11.5px; padding:3px 10px; border:1px solid #1e40af; color:#1e40af; border-radius:6px; background:#fff; cursor:pointer;">Retry</button>` : ''}</div></div>`).join('')}`;
+    box.querySelectorAll('[data-retry]').forEach((b) => b.addEventListener('click', () => { const it = Q.items.find((x) => x.id === Number(b.dataset.retry)); if (!it) return; it.status = 'queued'; it.error = null; status(`Retrying ${it.file.name}.`); paintQueue(); pump(); }));
+    const clr = box.querySelector('#cr-clear'); if (clr) clr.addEventListener('click', () => { Q.items = []; Q.results = []; Q.batchId = null; paintQueue(); paintBatch(); status(''); });
+  }
+
+  function paintBatch() {
+    const box = ROOT && ROOT.querySelector('#cr-batch'); if (!box) return;
+    const rows = Q.results;
+    if (!rows.length) { box.innerHTML = ''; return; }
+    const conf = (c) => (c ? `<span class="muted" style="font-size:11px;">(${esc(c)} confidence)</span>` : '');
+    box.innerHTML = `<strong style="font-size:13px;">This batch: review each check</strong>
+      <table style="margin-top:4px;"><thead><tr><th>File / page</th><th>Check #</th><th class="num">Amount</th><th>Payer</th><th>Proposed account</th><th>Warnings</th><th>Status</th><th></th></tr></thead><tbody>
+      ${rows.map((r, i) => {
+        const where = `${esc(r.file || '')}${r.page ? ` <span class="muted">p.${r.page}/${r.pages}</span>` : ''}`;
+        if (r.error) return `<tr><td>${where}</td><td colspan="7" style="color:#991b1b;">${esc(r.error)}</td></tr>`;
+        if (r.duplicate) return `<tr><td>${where}</td><td colspan="5" style="color:#92400e;">${esc(r.detail || 'Already in trustEd.')}</td><td>${r.status ? pill(r.status) : ''}</td><td>${r.receipt_id ? `<button data-rev="${r.receipt_id}">Review</button>` : ''}</td></tr>`;
+        const warns = [r.exception_reason, ...(r.duplicate_findings || []).map((d) => d.detail)].filter(Boolean);
+        const p = r.proposed;
+        return `<tr><td>${where}</td><td>${esc(r.check_number || '?')}</td><td class="num">${fmt(r.amount_cents)}</td><td>${esc(r.payer_name || '')}</td>
+          <td>${p ? `${esc(p.street_address || '')} ${conf(p.confidence)}${p.chosen ? '' : '<div class="muted" style="font-size:11px;">possible match only</div>'}` : '<span class="muted">none found</span>'}</td>
+          <td style="max-width:280px; font-size:11.5px; color:${warns.length ? '#92400e' : '#64748b'};">${warns.length ? warns.map(esc).join('<br>') : 'None'}</td>
+          <td>${pill(r.status)}</td>
+          <td style="white-space:nowrap;"><button data-rev="${r.receipt_id}">Review</button>${r.status === 'matched' ? ` <button data-rec="${i}" style="background:#166534; color:#fff; border:none;">Record</button>` : ''}</td></tr>`;
+      }).join('')}</tbody></table>`;
+    box.querySelectorAll('button').forEach((b) => { b.style.cssText += 'font-size:11.5px; padding:3px 10px; border-radius:6px; cursor:pointer;' + (b.dataset.rec ? '' : ' border:1px solid #cbd5e1; background:#fff;'); });
+    box.querySelectorAll('[data-rev]').forEach((b) => b.addEventListener('click', () => openReceipt(b.dataset.rev)));
+    box.querySelectorAll('[data-rec]').forEach((b) => b.addEventListener('click', () => recordFromBatch(Number(b.dataset.rec))));
+  }
+
+  // Record from the batch list: the same confirmed, once-only action as the review window.
+  async function recordFromBatch(i) {
+    const r = Q.results[i]; if (!r || r.status !== 'matched') return;
+    if (!confirm(`Record check #${r.check_number} for ${fmt(r.amount_cents)} to ${(r.proposed && r.proposed.street_address) || 'the proposed account'}?\n\nPosts Dr Undeposited Funds / Cr Accounts Receivable.`)) return;
+    const send = (note) => api(`/api/check-receipts/${r.receipt_id}/record`, json({ override_note: note || null }));
+    try {
+      let j;
+      try { j = await send(null); }
+      catch (e) {
+        if (!(e.body && e.body.error === 'possible_duplicate')) throw e;
+        const why = prompt(`${e.message}\n\nIf this is a different payment, say why to record it anyway:`);
+        if (!why) return;
+        j = await send(why);
+      }
+      r.status = 'recorded'; r.exception_reason = null; paintBatch();
+      status(`Recorded check #${r.check_number} (${j.journal_reference || 'already recorded'}).`);
+      refreshList();
+    } catch (e) { alert(e.message); }
+  }
+
+  // Refresh the checks list and deposit section without touching the upload state.
+  let refreshTimer = null;
+  function refreshList() { clearTimeout(refreshTimer); refreshTimer = setTimeout(() => { if (!Q.running) render(CID, ROOT); }, 400); }
 
   async function openReceipt(id) {
     const m = ROOT.querySelector('#cr-modal');
@@ -112,7 +231,7 @@
         ${r.exception_reason ? `<div style="margin:8px 0; padding:8px 12px; background:#fffbeb; border:1px solid #fde68a; border-radius:7px; font-size:12.5px; color:#92400e;">${esc(r.exception_reason)}</div>` : ''}
         <div style="display:grid; grid-template-columns:minmax(0,1.2fr) minmax(0,1fr); gap:18px; margin-top:10px;">
           <div>${r.front_url ? `<a href="${esc(r.front_url)}" target="_blank" rel="noopener"><img src="${esc(r.front_url)}" style="width:100%; border:1px solid #e2e8f0; border-radius:6px;" alt="check front"></a>` : '<div class="muted">No front image.</div>'}
-            ${r.back_url ? `<a href="${esc(r.back_url)}" target="_blank" rel="noopener"><img src="${esc(r.back_url)}" style="width:100%; border:1px solid #e2e8f0; border-radius:6px; margin-top:8px;" alt="check back"></a>` : '<div class="muted" style="font-size:12px; margin-top:6px;">No back image.</div>'}</div>
+            ${r.back_url ? `<a href="${esc(r.back_url)}" target="_blank" rel="noopener"><img src="${esc(r.back_url)}" style="width:100%; border:1px solid #e2e8f0; border-radius:6px; margin-top:8px;" alt="check back"></a>` : `<div style="font-size:12px; margin-top:8px; padding:8px 10px; border:1px dashed #cbd5e1; border-radius:6px;"><span class="muted">No back attached. It is not needed to record the payment; add it when you have it (deposit records, a dispute, a returned check).</span><br><label style="display:inline-block; margin-top:6px; cursor:pointer; color:#1e40af; text-decoration:underline;">Attach the back<input type="file" id="cr-back-file" accept="image/*,application/pdf" style="display:none;"></label> <span id="cr-back-msg"></span></div>`}</div>
           <div style="font-size:12.5px;">
             <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
               <label>Check #${input('check_number', r.check_number)}</label>
@@ -144,6 +263,14 @@
             <div id="cr-msg" style="margin-top:8px;"></div>
           </div></div></div></div>`;
     const close = () => { m.innerHTML = ''; };
+    const backIn = m.querySelector('#cr-back-file');
+    if (backIn) backIn.addEventListener('change', async () => {
+      const f = backIn.files[0]; if (!f) return;
+      const bm = m.querySelector('#cr-back-msg'); bm.textContent = 'Uploading...';
+      const fd = new FormData(); fd.append('back', f, f.name);
+      try { await api(`/api/check-receipts/${id}/back`, { method: 'POST', body: fd }); openReceipt(id); }
+      catch (e) { bm.innerHTML = `<span style="color:#991b1b;">${esc(e.message)}</span>`; }
+    });
     m.querySelector('#cr-x').addEventListener('click', close);
     const msg = (t, bad) => { m.querySelector('#cr-msg').innerHTML = `<span style="color:${bad ? '#991b1b' : '#166534'};">${esc(t)}</span>`; };
     const note = () => (m.querySelector('#cr-note') || {}).value || '';
