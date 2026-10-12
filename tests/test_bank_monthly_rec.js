@@ -118,5 +118,14 @@ check('no fee account configured: fee is an exception, nothing invented', !nofee
 const off = reconcileAccountMonth({ ...base, glLines: [...glLines, gl('2026-08-30', 100, 'stray', 'JE-X')] });
 check('a book-only stray is outstanding, never forced to balance', off.items.some((i) => i.gl_ref === 'JE-X' && i.category === 'deposit_in_transit'));
 
+console.log('fund split on the cash account');
+{
+  // JE-2026-00429 shape: two lines on the same cash account in different funds, netting to 0.
+  const split = [gl('2026-08-01', -697130, 'Reimbursement (AAS fund)', 'JE-FS', { je_id: 'jeFS', source_module: 'manual' }), gl('2026-08-01', 697130, 'Clear Operating-fund share', 'JE-FS', { je_id: 'jeFS', source_module: 'manual' })];
+  const rs = reconcileAccountMonth({ ...base, glLines: [...glLines, ...split] });
+  check('a same-entry fund split netting to zero is not an outstanding item or exception', !rs.items.some((i) => i.gl_ref === 'JE-FS') && !rs.exceptions.some((e) => e.gl_ref === 'JE-FS'), JSON.stringify(rs.items.filter((i) => i.gl_ref === 'JE-FS')));
+  check('...and does not change the difference or the void-pair count', rs.totals.difference_cents === t.difference_cents && rs.totals.internal_pairs === t.internal_pairs);
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
