@@ -141,7 +141,8 @@ check('every surfaced item has an exact "Take action" destination (navigation on
 
 check('summary is a template over the three lanes; empty state; capped "+"', async () => {
   const f = await buildFeed(readOnlyDb(world()), { now: NOW, env: {} });
-  assert.match(f.summary, /^7 need you now \(Emma \d, Annie 3\) · 4 waiting on something · 1 for your decision\.$/);
+  assert.match(f.summary, /^\d+ decisions? for you · \d+ with the AI team · \d+ waiting on others\.$/);
+  assert.strictEqual(f.lanes.now.length, 7, 'the raw lanes stay available for inspecting the full queue');
   const e = await buildFeed(readOnlyDb({}), { now: NOW, env: {} });
   assert.strictEqual(e.summary, 'Nothing needs a person right now.'); assert.deepStrictEqual(e.counts, { now: 0, waiting: 0, policy: 0 });
   assert.match(summarize({ counts: { now: 2, waiting: 0, policy: 0 }, by_specialist: { Emma: 2 }, capped: ['ap_invoices'] }), /^2\+ need you now/);

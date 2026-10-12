@@ -35,6 +35,20 @@
   .th-am-summary { margin: 12px 0 4px; font-size: 14.5px; color: var(--tx-text); line-height: 1.5; }
   .th-am-meta { font-size: 12px; color: var(--tx-muted); }
   .th-am-sec { margin-top: 16px; }
+  .th-own { margin-top: 18px; }
+  .th-own > h3 { display: flex; align-items: baseline; gap: 8px; font-size: 13px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--navy); margin: 0 0 4px; }
+  .th-own > h3 small { font-weight: 500; text-transform: none; letter-spacing: 0; color: var(--tx-muted); font-size: 12px; }
+  .th-own--you > h3 { color: var(--navy); }
+  .th-own-card { border: 1px solid var(--tx-rule-soft); border-left: 3px solid var(--gold); border-radius: 8px; padding: 10px 12px; margin-top: 8px; background: var(--tx-surface, #fff); }
+  .th-own-card.is-urgent { border-left-color: var(--tx-bad); }
+  .th-own-row { display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; gap: 10px; align-items: start; border-top: 1px solid var(--tx-rule-soft); padding: 10px 0; }
+  .th-own-meta { font-size: 12px; color: var(--tx-muted); }
+  .th-own-next { font-size: 12.5px; color: var(--tx-ink, #1f2a37); margin-top: 3px; }
+  .th-own-members { margin: 6px 0 0; padding-left: 18px; font-size: 12.5px; }
+  .th-own-members li { margin: 2px 0; }
+  .th-em-wrap > summary { cursor: pointer; font-size: 13px; padding: 10px 0 4px; color: var(--navy); font-weight: 600; }
+  .th-em-wrap > summary small { font-weight: 400; color: var(--tx-muted); }
+  @media (max-width: 640px) { .th-own-row { grid-template-columns: 28px minmax(0, 1fr); } .th-own-row > .tx-btn, .th-own-row > a { grid-column: 2; justify-self: start; } }
   .th-am-sec h3 { font-size: 12px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--tx-muted); margin: 0 0 6px; }
   .th-fi { display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; gap: 12px; align-items: start; width: 100%; text-align: left; background: none; border: 0; border-top: 1px solid var(--tx-rule-soft); padding: 11px 0; cursor: pointer; font: inherit; color: inherit; }
   .th-fi:hover .th-fi-t { text-decoration: underline; }
@@ -170,12 +184,15 @@
       <div class="th-am-head">
         <span class="th-av" data-p="amanda" aria-hidden="true">A</span>
         <span id="th-am-title" style="font-size:15px;font-weight:600;color:var(--navy)">Amanda · Operations</span>
-        <span class="tx-pill tx-pill--mute">Read-only · nothing is done for you</span>
+        <span class="tx-pill tx-pill--mute">Read-only view · approvals happen in each linked screen</span>
         <span class="th-am-scope" role="group" aria-label="Scope">
           <button type="button" id="th-am-all" aria-pressed="true">All communities</button>
           <button type="button" id="th-am-one" aria-pressed="false">This community</button>
         </span>
       </div>
+      <div id="th-am-body"><div class="tx-skel" style="height:40px;width:70%;margin-top:12px"></div></div>
+      <details class="th-em-wrap" id="th-em-wrap">
+      <summary>Amanda&rsquo;s email desk <small id="th-em-sum">loading&hellip;</small></summary>
       <section class="th-em" id="th-em" aria-label="Amanda's email desk">
         <div class="th-em-tabs" role="tablist">
           <button type="button" role="tab" id="th-em-t-inbox" aria-selected="true" data-tab="inbox">Inbox<span class="th-em-n" id="th-em-n-inbox">&middot;</span></button>
@@ -206,13 +223,13 @@
         </form>
         <div class="th-em-panel" id="th-em-p-activity" role="tabpanel" hidden><div class="tx-muted" style="font-size:13px">Loading&hellip;</div></div>
       </section>
+      </details>
       <form class="th-ask" id="th-ask" autocomplete="off">
         <label for="th-ask-text" class="tx-lbl" style="display:block;margin-bottom:4px">Message Amanda</label>
         <textarea id="th-ask-text" maxlength="2000" placeholder="Ask a question or hand her something to work on, e.g. what still needs me today?"></textarea>
         <div class="th-ask-bar"><span class="th-ask-note">Proposals only. Amanda doesn’t approve, pay, send or change anything from here.</span><button type="submit" class="tx-btn tx-btn--pri" id="th-ask-send">Send to Amanda</button></div>
         <div class="th-ask-out" id="th-ask-out" aria-live="polite"></div>
       </form>
-      <div id="th-am-body"><div class="tx-skel" style="height:40px;width:70%;margin-top:12px"></div></div>
     </section>
     <div id="th-drawer-root"></div>
 
@@ -402,6 +419,48 @@
     return '<div class="th-am-sec"><h3>' + esc(title) + ' · ' + items.length + '</h3>' + shown.map(feedRow).join('') +
       (more.length ? '<details style="margin-top:4px"><summary class="tx-muted" style="font-size:12.5px;cursor:pointer;padding:6px 0">' + more.length + ' more</summary>' + more.map(feedRow).join('') + '</details>' : '') + '</div>';
   }
+  // ---- ownership sections (Ed 2026-10-12) ----------------------------------------
+  // YOUR DECISIONS: only the owner's authority. AI TEAM WORKING: the agent, its next
+  // step and when it last moved (stale is shown as stale, never as progress).
+  // WAITING ON OTHERS: the outside party, the responsible agent and the follow-up date.
+  function fmtDay(iso) { if (!iso) return ''; var d = new Date(iso); return isNaN(d) ? '' : d.toLocaleDateString('en-US', { timeZone: 'America/Chicago', month: 'short', day: 'numeric' }); }
+  function actLink(a) { return a ? '<a class="tx-btn tx-btn--sec" href="' + esc(a.href) + '" title="' + esc(a.where || '') + '">' + esc(a.label || 'Open') + '</a>' : ''; }
+  function decisionCard(c) {
+    var urgent = c.priority === 'high' || c.priority === 'critical';
+    var members = (c.members || []).length ? '<details><summary class="tx-muted" style="font-size:12.5px;cursor:pointer;margin-top:4px">' + c.members.length + ' item' + (c.members.length === 1 ? '' : 's') + '</summary><ul class="th-own-members">' + c.members.map(function (m) { return '<li>' + (m.action ? '<a href="' + esc(m.action.href) + '">' + esc(m.title) + '</a>' : esc(m.title)) + (m.community ? ' <span class="tx-muted">&middot; ' + esc(m.community) + '</span>' : '') + '</li>'; }).join('') + '</ul></details>' : '';
+    var open = c.kind !== 'group' ? ' data-key="' + esc(c.key) + '"' : '';
+    return '<div class="th-own-card' + (urgent ? ' is-urgent' : '') + '"><div style="display:flex;gap:10px;justify-content:space-between;align-items:flex-start;flex-wrap:wrap"><div style="min-width:0;flex:1 1 240px">' +
+      '<div class="th-fi-t"' + open + (open ? ' style="cursor:pointer" role="button" tabindex="0"' : '') + '>' + esc(c.title) + (urgent ? ' <b style="color:var(--tx-bad)">&middot; urgent</b>' : '') + '</div>' +
+      '<div class="th-own-meta">' + esc(c.why || '') + (c.community ? ' &middot; ' + esc(c.community) : '') + '</div>' +
+      '<div class="th-own-next">' + esc(c.next_action || '') + '</div>' + members + '</div>' + actLink(c.action) + '</div></div>';
+  }
+  function agentRow(c, waiting) {
+    var who = c.owner || c.specialist || {};
+    var pill = waiting ? (c.follow_up_due ? '<span class="tx-pill tx-pill--warn">Follow-up due</span>' : '<span class="tx-pill tx-pill--mute">Waiting</span>')
+      : (c.status === 'stale' ? '<span class="tx-pill tx-pill--warn">Stale</span>' : '<span class="tx-pill tx-pill--info">Assigned</span>');
+    var meta = esc(who.name || '') + (who.role ? ' &middot; ' + esc(who.role) : '') + (c.community ? ' &middot; ' + esc(c.community) : '') +
+      (waiting ? (c.follow_up ? ' &middot; follow up ' + esc(fmtDay(c.follow_up)) : '') : (c.last_activity ? ' &middot; last activity ' + esc(fmtDay(c.last_activity)) : ''));
+    var detail = waiting ? 'Waiting on ' + esc(c.waiting_on || 'an outside party') + (c.next_action && c.next_action !== c.waiting_on ? '. ' + esc(c.next_action) : '') : 'Next: ' + esc(c.next_action || '');
+    var also = (c.also || []).length ? '<div class="th-own-meta">Also covers: ' + c.also.map(function (a) { return esc(a.title); }).join('; ') + '</div>' : '';
+    return '<div class="th-own-row"><span class="th-av" data-p="' + esc(who.key || '') + '" aria-hidden="true">' + esc(initials(who.name)) + '</span>' +
+      '<button type="button" class="th-fi th-fi-main" data-key="' + esc(c.key) + '" style="border:0;padding:0;grid-template-columns:1fr"><span class="th-fi-who">' + meta + '</span><span class="th-fi-t" style="display:block">' + esc(c.title) + '</span>' +
+      '<span class="th-own-next" style="display:block">' + detail + '</span>' + (c.status === 'stale' && c.status_text ? '<span class="th-own-meta" style="display:block;color:var(--tx-warn)">' + esc(c.status_text) + '</span>' : '') + also + '</button>' + pill + '</div>';
+  }
+  function ownList(items, render, cap) {
+    var shown = items.slice(0, cap), more = items.slice(cap);
+    return shown.map(render).join('') + (more.length ? '<details><summary class="tx-muted" style="font-size:12.5px;cursor:pointer;padding:6px 0">' + more.length + ' more</summary>' + more.map(render).join('') + '</details>' : '');
+  }
+  function ownSections(S, none) {
+    var stale = S.ai_working.filter(function (c) { return c.status === 'stale'; }).length;
+    var due = S.waiting.filter(function (c) { return c.follow_up_due; }).length;
+    var h = '<section class="th-own th-own--you"><h3>Your decisions <small>' + S.decisions.length + ' &middot; only what needs your authority</small></h3>' +
+      (S.decisions.length ? S.decisions.map(decisionCard).join('') : '<div class="tx-muted" style="font-size:13px;padding:6px 0">' + esc(none || 'Nothing needs your decision right now.') + '</div>') + '</section>';
+    h += '<section class="th-own"><h3>AI team working <small>' + S.ai_working.length + (stale ? ' &middot; ' + stale + ' stale' : '') + '</small></h3>' +
+      (S.ai_working.length ? ownList(S.ai_working, function (c) { return agentRow(c, false); }, 6) : '<div class="tx-muted" style="font-size:13px;padding:6px 0">No work assigned to the agents.</div>') + '</section>';
+    h += '<section class="th-own"><h3>Waiting on others <small>' + S.waiting.length + (due ? ' &middot; ' + due + ' follow-up due' : '') + '</small></h3>' +
+      (S.waiting.length ? ownList(S.waiting, function (c) { return agentRow(c, true); }, 4) : '<div class="tx-muted" style="font-size:13px;padding:6px 0">Nothing is waiting on an outside party.</div>') + '</section>';
+    return h;
+  }
   function renderFeed(res) {
     var box = $('th-amanda');
     if (!res) { box.hidden = true; return; }
@@ -420,9 +479,13 @@
     if ((d.capped || []).length) html += '<div class="tx-muted" style="font-size:12px;margin-top:6px">Showing the oldest items first; more are waiting in ' + esc(d.capped.join(', ')) + '.</div>';
     var L = d.lanes || { now: [], waiting: [], policy: [] };
     var none = fails.length ? 'Nothing found in the sources that answered.' : null;
-    html += laneHtml('Needs you now', L.now, none || 'Nothing needs you right now.', 5);
-    html += laneHtml('Waiting on something', L.waiting, none || 'Nothing is waiting.', 3);
-    if (L.policy.length) html += laneHtml('Policy / Ed decision', L.policy, '', 3);
+    if (d.sections) {
+      html += ownSections(d.sections, none);
+    } else {
+      html += laneHtml('Needs you now', L.now, none || 'Nothing needs you right now.', 5);
+      html += laneHtml('Waiting on something', L.waiting, none || 'Nothing is waiting.', 3);
+      if (L.policy.length) html += laneHtml('Policy / Ed decision', L.policy, '', 3);
+    }
     var e = d.elsewhere || {};
     var kept = [];
     if (e.ap_routine_in_payables) kept.push(e.ap_routine_in_payables + ' routine bill approval' + (e.ap_routine_in_payables === 1 ? '' : 's') + ' in Payables');
@@ -431,12 +494,12 @@
     if (e.acc_possible_duplicates) kept.push(e.acc_possible_duplicates + ' possible duplicate ACC case' + (e.acc_possible_duplicates === 1 ? '' : 's'));
     if (e.acc_legacy_or_incomplete) kept.push(e.acc_legacy_or_incomplete + ' legacy or incomplete ACC record' + (e.acc_legacy_or_incomplete === 1 ? '' : 's'));
     if (kept.length) html += '<div class="tx-muted" style="font-size:12px;margin-top:10px">Not in this list on purpose: ' + esc(kept.join(' · ')) + '. Nothing was changed or closed.</div>';
-    html += '<div class="th-am-sec"><h3>Recently handled or changed</h3>' + ((d.recent || []).length ? d.recent.slice(0, 5).map(function (r) {
+    html += '<details class="th-am-sec"><summary class="tx-muted" style="font-size:12.5px;cursor:pointer;padding:6px 0">Completed and recently handled (' + ((d.sections && d.sections.completed) || d.recent || []).length + ')</summary>' + (((d.sections && d.sections.completed.filter(function (c) { return c.kind; })) || []).map(function (c) { return '<div class="th-own-meta" style="padding:4px 0">' + esc(c.title) + ' &middot; <b>' + esc(c.reason || 'done') + '</b></div>'; }).join('')) + ((d.recent || []).length ? d.recent.slice(0, 5).map(function (r) {
       return '<button type="button" class="th-fi" data-key="' + esc(r.key) + '"><span class="th-av" data-p="' + esc(r.specialist.key) + '" aria-hidden="true">' + esc(initials(r.specialist.name)) + '</span><span><span class="th-fi-who">' + esc(r.specialist.name) + ' · ' + esc(fmtWhen(r.when)) + (r.community ? ' · ' + esc(r.community) : '') + '</span><span class="th-fi-t" style="display:block">' + esc(r.title) + '</span><span class="th-fi-d" style="display:block">' + esc(r.reason || 'Resolved') + '</span></span><span class="tx-pill tx-pill--ok th-fi-tag">Cleared</span></button>';
-    }).join('') : '') + '<div class="tx-muted" style="font-size:12.5px;padding:6px 0">' + (d.routine_24h == null ? 'Routine count unavailable.' : d.routine_24h + ' routine bill' + (d.routine_24h === 1 ? '' : 's') + ' continued on the normal path in the last 24 hours (you still release payments).') + '</div></div>';
+    }).join('') : '') + '<div class="tx-muted" style="font-size:12.5px;padding:6px 0">' + (d.routine_24h == null ? 'Routine count unavailable.' : d.routine_24h + ' routine bill' + (d.routine_24h === 1 ? '' : 's') + ' continued on the normal path in the last 24 hours (you still release payments).') + '</div></details>';
     $('th-am-body').innerHTML = html;
   }
-  $('th-am-body').addEventListener('click', function (e) { var b = e.target.closest('.th-fi'); if (b) openDrawer(b.getAttribute('data-key'), b); });
+  $('th-am-body').addEventListener('click', function (e) { if (e.target.closest('a')) return; var b = e.target.closest('.th-fi, .th-fi-t[data-key]'); if (b && b.getAttribute('data-key')) openDrawer(b.getAttribute('data-key'), b); });
   $('th-am-all').addEventListener('click', function () { feedScope = 'all'; store('tx.feed.scope', 'all'); loadFeed(); });
   $('th-am-one').addEventListener('click', function () { feedScope = 'one'; store('tx.feed.scope', 'one'); loadFeed(); });
 
@@ -558,7 +621,7 @@
       var err = '<div class="tx-err">' + icon('alert', { size: 16 }) + '<span>Couldn’t load Amanda’s email. Nothing here is counted as clear.</span></div>';
       $('th-em-p-outbox').innerHTML = err; $('th-em-p-activity').innerHTML = err; emCount('th-em-n-outbox', null); emCount('th-em-n-activity', null); return;
     }
-    emLast = d;
+    emLast = d; emSummary();
     var se = d.source_errors || {}; var seKeys = Object.keys(se);
     var warn = seKeys.length ? '<div class="tx-err" style="margin-bottom:8px">' + icon('alert', { size: 16 }) + '<span>Some sources didn’t answer (' + esc(seKeys.join(', ')) + '), so this may be incomplete.</span></div>' : '';
     var ob = d.outbox || [];
@@ -638,7 +701,27 @@
     auto_replied: ['tx-pill--ok', 'Auto-replied'], handled: ['tx-pill--mute', 'Handled'],
   };
   function ibPill(st) { var p = IB_STATUS[st] || ['tx-pill--mute', st || '?']; return '<span class="tx-pill ' + p[0] + '">' + esc(p[1]) + '</span>'; }
-  var ibLast = null; var ibOpen = null;
+  var ibLast = null; var ibOpen = null; var ibSummary = null;
+  // One honest line: replies actually sent, drafts waiting on a person, mail still in
+  // Amanda's queue, and mail she only classified or filed. Nothing is called done
+  // unless the reply was recorded as sent.
+  function emSummary() {
+    var el = $('th-em-sum'); if (!el) return;
+    var parts = [];
+    if (ibSummary) {
+      parts.push(ibSummary.needs + ' in Amanda\u2019s reply queue');
+      parts.push(ibSummary.staged + ' repl' + (ibSummary.staged === 1 ? 'y' : 'ies') + ' drafted, awaiting approval');
+      parts.push(ibSummary.replied + ' replied (sent)');
+      parts.push(ibSummary.filed + ' classified or filed only');
+    }
+    if (emLast) {
+      var sent = (emLast.activity || []).filter(function (x) { return x.status === 'sent'; }).length;
+      var waitingSend = (emLast.outbox || []).length;
+      parts.push(waitingSend + ' in her outbox waiting to send');
+      parts.push(sent + ' sent in 14 days');
+    }
+    el.textContent = parts.length ? '\u00b7 ' + parts.join(' \u00b7 ') : '';
+  }
   function ibRow(i) {
     var who = esc(i.from_name ? i.from_name + ' <' + (i.from_email || '') + '>' : (i.from_email || ''));
     var routed = i.routed_to && i.routed_to !== 'amanda' ? ' · filed under ' + esc(i.routed_to.charAt(0).toUpperCase() + i.routed_to.slice(1)) : '';
@@ -655,6 +738,9 @@
     ibLast = d;
     var items = d.items || [];
     emCount('th-em-n-inbox', d.needs_reply, d.needs_reply > 0);
+    var byState = {}; items.forEach(function (x) { byState[x.reply_status] = (byState[x.reply_status] || 0) + 1; });
+    ibSummary = { needs: byState.needs_reply || 0, staged: byState.reply_staged || 0, replied: (byState.replied || 0) + (byState.auto_replied || 0), filed: byState.handled || 0 };
+    emSummary();
     var se = Object.keys(d.source_errors || {});
     $('th-em-p-inbox').innerHTML = (se.length ? '<div class="tx-err" style="margin-bottom:8px">' + icon('alert', { size: 16 }) + '<span>Some reply statuses couldn’t be checked (' + esc(se.join(', ')) + ').</span></div>' : '') +
       (items.length ? items.map(ibRow).join('') : '<div class="tx-muted" style="font-size:13px;padding:4px 0">No email to Amanda in the last 30 days.</div>') +

@@ -140,7 +140,7 @@ check('AP exception becomes the expected deterministic state: missing piece -> B
   const b = by(e1.id);
   assert.strictEqual(b.autonomy_class, 'BLOCK'); assert.match(b.blocked_reason, /community/);
   assert.deepStrictEqual(b.depends_on, [{ table: 'ap_intake_exceptions', id: e1.id, condition: 'not_pending' }]);
-  assert.strictEqual(b.accountable_persona, 'amanda'); assert.strictEqual(b.owner_kind, 'workflow'); assert.strictEqual(b.owner_key, 'ap.intake'); assert.strictEqual(b.domain, 'ap'); assert.strictEqual(b.needs_reasoning, false);
+  assert.strictEqual(b.accountable_persona, 'emma'); assert.match(b.next_action, /^Emma establishes/); assert.strictEqual(b.owner_kind, 'workflow'); assert.strictEqual(b.owner_key, 'ap.intake'); assert.strictEqual(b.domain, 'ap'); assert.strictEqual(b.needs_reasoning, false);
   assert.strictEqual(by(e2.id).autonomy_class, 'REVIEW'); assert.match(by(e2.id).next_action, /HEIC/);
   assert.strictEqual(by(i.id).autonomy_class, 'REVIEW'); assert.strictEqual(by(i.id).priority, 'high');
 });
