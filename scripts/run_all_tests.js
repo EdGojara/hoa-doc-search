@@ -62,6 +62,7 @@ const CHECKS = [
   'tests/test_forecast_engine.js',
   'tests/test_budget_four_columns.js',
   'tests/test_check_receipts.js',
+  'tests/test_collection_notices.js',
   'tests/test_legal_review_suggest.js',
   'tests/test_legal_review_data.js',
   'tests/test_legal_pdf_matters.js',

@@ -82,7 +82,7 @@
   // Five workflow groups — daily work (Homeowners, Bills) first; technical
   // setup (chart, journal entries, policy) tucked into Setup at the end.
   const GROUPS = [
-    { id:'homeowners', label:'👤 Homeowners', views:[['owners','Accounts'],['ar','AR Aging'],['checkscan','Check Receipts'],['formerowners','Former Owners']] },
+    { id:'homeowners', label:'👤 Homeowners', views:[['owners','Accounts'],['ar','AR Aging'],['checkscan','Check Receipts'],['collections','Collections'],['formerowners','Former Owners']] },
     { id:'bills',      label:'🧾 Bills (AP)', views:[['ap','AP Aging'],['checks','Print Checks']] },
     { id:'bank',       label:'🏦 Bank Rec',   views:[['bankrec','Reconciliation']] },
     { id:'financials', label:'📊 Financials', views:[['bs','Balance Sheet'],['is','Income Statement'],['eq','Equity'],['undeposited','Undeposited'],['trial','Trial Balance'],['tieout','Tie-Out']] },
@@ -156,6 +156,7 @@
       if (VIEW==='policy') return renderBillingPolicy();
       if (VIEW==='owners') return renderOwners();
       if (VIEW==='ar') return renderArAging();
+      if (VIEW==='collections') return window.renderCollections ? window.renderCollections(CID, $('body')) : ($('body').innerHTML = '<div class="card">Collections did not load; refresh the page.</div>');
       if (VIEW==='checkscan') return window.renderCheckReceipts ? window.renderCheckReceipts(CID, $('body')) : ($('body').innerHTML = '<div class="card">Check receipts did not load; refresh the page.</div>');
       if (VIEW==='formerowners') return await renderFormerOwnerReport();
       if (VIEW==='ap') return renderApAging();
@@ -2370,6 +2371,7 @@
           <tbody>${charges||'<tr><td colspan=5 class=muted>No open charges.</td></tr>'}</tbody></table></div>
       </div>
       <div id="ownerChecks" style="margin-top:14px;"></div>
+      <div id="ownerNotices" style="margin-top:14px;"></div>
       ${renderLedger(j)}
       </div>`;
     d.scrollIntoView({behavior:'smooth', block:'nearest'});
@@ -2377,6 +2379,11 @@
     fetch(`/api/check-receipts/property/${o.property_id}`).then((r) => r.ok ? r.json() : null).then((cj) => {
       const el = $('ownerChecks'); if (!el || !cj || !(cj.receipts || []).length) return;
       el.innerHTML = `<h4 class="sec" style="font-size:13px; margin:0 0 6px;">Checks received</h4><table><thead><tr><th>Received</th><th>Check #</th><th class="num">Amount</th><th>Status</th><th>Images</th></tr></thead><tbody>${cj.receipts.map((c) => `<tr><td>${esc(c.received_date)}</td><td>${esc(c.check_number || '')}</td><td class="num">${fmt(c.amount_cents)}</td><td>${esc(c.status)}${c.return_reason ? ' (' + esc(c.return_reason) + ')' : ''}</td><td>${c.front_url ? `<a href="${esc(c.front_url)}" target="_blank" rel="noopener">front</a>` : ''} ${c.back_url ? `<a href="${esc(c.back_url)}" target="_blank" rel="noopener">back</a>` : ''}</td></tr>`).join('')}</tbody></table>`;
+    }).catch(() => {});
+    // Collections notices issued on this account: the PDF, tracking and mailing evidence (mig 515).
+    fetch(`/api/collections/property/${o.property_id}`).then((r) => r.ok ? r.json() : null).then((nj) => {
+      const el = $('ownerNotices'); if (!el || !nj || !(nj.notices || []).length) return;
+      el.innerHTML = `<h4 class="sec" style="font-size:13px; margin:0 0 6px;">Collections notices</h4><table><thead><tr><th>Notice date</th><th>Deadline</th><th class="num">Amount due</th><th>Status</th><th>USPS certified</th><th></th></tr></thead><tbody>${nj.notices.map((n) => `<tr><td>${esc(n.notice_date)}</td><td>${esc(n.deadline_date)}</td><td class="num">${fmt(n.amount_due_cents)}</td><td>${esc(n.status)}</td><td>${esc(n.certified_tracking_number || '')}${n.regular_mail_confirmed ? ' (+ regular mail)' : ''}</td><td>${n.pdf_url ? `<a href="${esc(n.pdf_url)}" target="_blank" rel="noopener">PDF</a>` : ''}</td></tr>`).join('')}</tbody></table>`;
     }).catch(() => {});
   };
 
@@ -3540,6 +3547,7 @@
 <script src="/js/reserve_plan_core.js"></script>
 <script src="/close.js"></script>
 <script src="/check-receipts.js"></script>
+<script src="/collections.js"></script>
 <script src="/deploy-watcher.js"></script>
 </body>
 </html>
