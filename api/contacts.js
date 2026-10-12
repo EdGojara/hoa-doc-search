@@ -1286,7 +1286,7 @@ router.get('/property-enforcement-state/:propertyId', async (req, res) => {
 //   - bankruptcy state requires bankruptcy_case_number + bankruptcy_chapter
 //   - on_payment_plan requires payment_plan_terms_text or monthly_cents
 //   - at_legal / in_collections require attorney_name or attorney_firm
-router.post('/property-enforcement-state/:propertyId', express.json(), async (req, res) => {
+async function setEnforcementState(req, res) {
   try {
     const propertyId = req.params.propertyId;
     const b = req.body || {};
@@ -1410,7 +1410,8 @@ router.post('/property-enforcement-state/:propertyId', express.json(), async (re
     console.error('[enforcement-state] set failed:', err.message);
     res.status(500).json({ error: err.message });
   }
-});
+}
+router.post('/property-enforcement-state/:propertyId', express.json(), setEnforcementState);
 
 // POST /api/property-enforcement-state/:propertyId/end — lift the active state
 // (e.g., bankruptcy dismissed, payment plan completed). Returns to default
@@ -3022,4 +3023,6 @@ router.get('/property-lookup', async (req, res) => {
   }
 });
 
-module.exports = { router };
+// setEnforcementState is shared with the collections queue (api/collections.js) so a legal-status
+// confirmation there runs the same validation, write and audit trail as here.
+module.exports = { router, setEnforcementState };

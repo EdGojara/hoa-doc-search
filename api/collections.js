@@ -23,7 +23,7 @@ const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY
 router.use(express.json({ limit: '256kb' }));
 
 const who = (actor) => `${actorDisplayName(actor)}${actor && actor.email ? ` <${actor.email}>` : ''}`;
-const STATUS = { invalid_input: 400, not_eligible: 409, conflict: 409, duplicate: 409, date_mismatch: 409, blocked: 409, template_not_approved: 409, verification_failed: 409, forbidden: 403 };
+const STATUS = { attestation_required: 409, invalid_input: 400, not_eligible: 409, conflict: 409, duplicate: 409, date_mismatch: 409, blocked: 409, template_not_approved: 409, verification_failed: 409, forbidden: 403 };
 function fail(res, err, where) {
   const msg = String(err && err.message);
   if (/collection_notice|collection_fee_autopost/.test(msg) && /does not exist|schema cache|not find/i.test(msg)) return res.status(503).json({ error: 'migration_515_required', message: 'Collections notices need migration 515 (Documents -> Migration status).' });
@@ -78,7 +78,7 @@ router.post('/batches/:id/verify', async (req, res) => {
   try { const actor = await requireActingUser(req, res); if (!actor) return; res.json(await N.verifyBatch(supabase, req.params.id)); } catch (e) { fail(res, e, 'verify'); }
 });
 router.post('/batches/:id/approve', async (req, res) => {
-  try { const actor = await requireActingUser(req, res); if (!actor) return; res.json({ batch: await N.approveBatch(supabase, req.params.id, { actor: who(actor) }) }); } catch (e) { fail(res, e, 'approve'); }
+  try { const actor = await requireActingUser(req, res); if (!actor) return; res.json({ batch: await N.approveBatch(supabase, req.params.id, { actor: who(actor), attestation: (req.body || {}).attestation || null }) }); } catch (e) { fail(res, e, 'approve'); }
 });
 router.post('/batches/:id/printed', async (req, res) => {
   try { const actor = await requireActingUser(req, res); if (!actor) return; res.json(await N.markPrinted(supabase, req.params.id, { actor: who(actor) })); } catch (e) { fail(res, e, 'printed'); }
@@ -123,6 +123,28 @@ router.get('/property/:propertyId', async (req, res) => {
     if (error) throw error;
     res.json({ notices: await Promise.all((data || []).map(async (n) => ({ ...n, pdf_url: await signed(n.pdf_path) }))) });
   } catch (e) { fail(res, e, 'property'); }
+});
+
+// Staff confirm an account's legal status before it can receive a collections notice.
+// Writes the legal-status record (property_enforcement_states) through the SAME handler the
+// property screens use (api/contacts.js setEnforcementState: validation, history, audit row),
+// as the signed-in staff member. Body: { status: 'not_with_counsel' | 'with_counsel', source,
+// attorney_firm (with_counsel) }.
+router.post('/legal-status/:propertyId', async (req, res) => {
+  try {
+    const actor = await requireActingUser(req, res); if (!actor) return;
+    const b = req.body || {};
+    const source = String(b.source || '').trim();
+    if (!['not_with_counsel', 'with_counsel'].includes(b.status)) return res.status(400).json({ error: 'invalid_input', message: "status must be 'not_with_counsel' or 'with_counsel'" });
+    if (!source) return res.status(400).json({ error: 'invalid_input', message: "Name what you checked (for example the attorney's current account list and its date)." });
+    if (b.status === 'with_counsel' && !String(b.attorney_firm || '').trim()) return res.status(400).json({ error: 'invalid_input', message: 'Name the attorney firm.' });
+    const { setEnforcementState } = require('./contacts');
+    return setEnforcementState({ params: { propertyId: req.params.propertyId }, ip: req.ip, body: {
+      state: b.status === 'with_counsel' ? 'at_legal' : 'current',
+      reason: b.status === 'with_counsel' ? `With collections counsel (${String(b.attorney_firm).trim()}), confirmed for collections: ${source}` : `Confirmed not with collections counsel, for collections notices: ${source}`,
+      performed_by: who(actor), attorney_firm: b.status === 'with_counsel' ? String(b.attorney_firm).trim() : null,
+    } }, res);
+  } catch (e) { fail(res, e, 'legal status'); }
 });
 
 // Owner: approve a template's wording for mailing (counsel questions travel with it).

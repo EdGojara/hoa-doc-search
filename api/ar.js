@@ -99,19 +99,10 @@ router.get('/payments', async (req, res) => {
   }
 });
 
-router.post('/payments', express.json(), async (req, res) => {
-  try {
-    const result = await recordPayment(req.body || {});
-    res.json(result);
-  } catch (err) {
-    if (err.code === 'invalid_input' || err.code === 'invalid_state' || err.code === 'period_closed') {
-      return res.status(400).json({ error: err.message, code: err.code });
-    }
-    console.error('[ar] record payment failed:', err);
-    res.status(500).json({ error: safeErrorMessage(err) });
-  }
-});
-
+// RETIRED (Ed 2026-10-12): ar_engine.recordPayment hard-codes GL 10100 / 12000 and writes the
+// native ar_payments subledger, not the homeowner ledger. No screen calls it. Homeowner payments
+// post only through Check Receipts (checks) or Stripe (online). The read route above stays.
+router.post('/payments', (req, res) => res.status(410).json({ error: 'retired', message: 'Homeowner payments are recorded under Homeowners -> Check Receipts.' }));
 router.post('/payments/:id/apply', express.json(), async (req, res) => {
   try {
     const { id } = req.params;
