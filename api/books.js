@@ -1134,15 +1134,57 @@ router.get('/reserve-budget', async (req, res) => {
   try {
     const { community_id, fiscal_year } = req.query;
     if (!community_id || !fiscal_year) return res.status(400).json({ error: 'community_id_and_fiscal_year_required' });
-    const { data, error } = await supabase.from('reserve_budget_items')
-      .select('id, project_name, category, planned_amount_cents, note, sort_order')
-      .eq('community_id', community_id).eq('fiscal_year', parseInt(fiscal_year, 10))
-      .order('sort_order', { ascending: true }).order('created_at', { ascending: true });
-    if (error) throw error;
-    const items = data || [];
-    res.json({ items, total_cents: items.reduce((s, i) => s + (i.planned_amount_cents || 0), 0) });
+    const { loadReservePlanProjects } = require('../lib/accounting/reserve_plan');
+    const { projects: items, columns_ready } = await loadReservePlanProjects(supabase, { community_id, fiscal_year });
+    res.json({ items, columns_ready, total_cents: items.reduce((s, i) => s + (i.planned_amount_cents || 0), 0) });
   } catch (err) {
     console.error('[books] reserve-budget list failed:', err);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// The Reserve Budget as the proposed-budget statement computes it (lib/statements/model.js
+// buildProposedBudgetModel for the reserve fund): projects, legacy saved amounts flagged for
+// review, funding, the projected beginning balance and the prior-year reference history.
+// The editor recalculates live with the same public/js/reserve_plan_core.js.
+router.get('/reserve-plan', async (req, res) => {
+  try {
+    const { community_id, fiscal_year } = req.query;
+    if (!community_id || !fiscal_year) return res.status(400).json({ error: 'community_id_and_fiscal_year_required' });
+    const fy = parseInt(fiscal_year, 10);
+    const { data: funds, error: fErr } = await supabase.from('account_funds').select('id, fund_code, fund_name, fund_type').eq('community_id', community_id).limit(50);
+    if (fErr) throw fErr;
+    const rf = (funds || []).find((f) => f.fund_type === 'reserve');
+    if (!rf) return res.json({ available: false, reason: 'no_reserve_fund' });
+    const { data: accts, error: aErr } = await supabase.from('chart_of_accounts').select('id, account_number, account_name, account_type, fund_id, is_active')
+      .eq('community_id', community_id).eq('fund_id', rf.id).eq('account_type', 'expense').limit(500);
+    if (aErr) throw aErr;
+    const accounts = (accts || []).filter((a) => a.is_active !== false).map((a) => ({ id: a.id, account_number: a.account_number, account_name: a.account_name }))
+      .sort((a, b) => String(a.account_name).localeCompare(String(b.account_name)));
+    const now = new Date(); const cy = now.getUTCFullYear();
+    // The base year's last closed month (the working forecast's as-of); a past base year uses its year end.
+    let asOf = fy - 1 === cy ? new Date(Date.UTC(cy, now.getUTCMonth(), 0)).toISOString().slice(0, 10) : `${fy - 1}-12-31`;
+    if (asOf < `${fy - 1}-01-31`) asOf = `${fy - 1}-01-31`;
+    const M = require('../lib/statements/model');
+    let m;
+    try { m = await M.buildProposedBudgetModel(supabase, { community_id, target_year: fy, as_of: asOf, fund: rf.fund_code }); }
+    catch (e) {
+      if (e.code !== 'not_found') throw e;
+      const { loadReservePlanProjects } = require('../lib/accounting/reserve_plan');
+      const { columns_ready } = await loadReservePlanProjects(supabase, { community_id, fiscal_year: fy });
+      return res.json({ available: false, reason: 'no_draft_budget', detail: e.message, fund_code: rf.fund_code, fund_id: rf.id, columns_ready, accounts });
+    }
+    const history = [];
+    for (const sec of m.sections) if (sec.key === 'expense') for (const g of sec.groups) for (const l of g.lines) history.push({ account_id: l.account_id, account_number: l.account_number, account_name: l.account_name, approved_cents: l.values.appr, ytd_cents: l.values.ytd, projected_cents: l.values.proj });
+    const rp = m.reserve_plan;
+    res.json({
+      available: true, fund_code: rf.fund_code, fund_name: rf.fund_name, fund_id: rf.id, base_year: fy - 1, as_of: m.period.as_of, accounts, history,
+      projects: rp.projects, review_items: rp.review_items, columns_ready: rp.columns_ready, plan_saved: rp.projects.some((p) => p.account_id),
+      saved_lines: rp.review_items.map((r) => ({ account_id: r.account_id, amount_cents: r.amount_cents })),
+      beginning_cents: rp.totals.beginning_cents, totals: rp.totals, warnings: m.warnings,
+    });
+  } catch (err) {
+    console.error('[books] reserve-plan failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
   }
 });
@@ -1169,8 +1211,30 @@ router.post('/reserve-budget', express.json({ limit: '512kb' }), async (req, res
         planned_amount_cents: Math.round(Number(it.planned_amount_cents) || 0),
         note: it.note ? String(it.note).trim() : null,
         sort_order: Number.isFinite(Number(it.sort_order)) ? Number(it.sort_order) : i,
+        account_id: it.account_id || null,
+        planned_month: it.planned_month ? parseInt(it.planned_month, 10) : null,
+        review_status: it.review_status === 'needs_review' ? 'needs_review' : 'planned',
       }))
       .filter((r) => r.project_name);
+    // Each project's GL account must be a reserve-fund expense account of THIS community.
+    const acctIds = [...new Set(rows.map((r) => r.account_id).filter(Boolean))];
+    if (acctIds.length) {
+      const { data: ok, error: aErr } = await supabase.from('chart_of_accounts').select('id, account_type, account_funds ( fund_type )').eq('community_id', community_id).in('id', acctIds);
+      if (aErr) throw aErr;
+      const good = new Set((ok || []).filter((a) => a.account_type === 'expense' && a.account_funds && a.account_funds.fund_type === 'reserve').map((a) => a.id));
+      if (acctIds.some((id) => !good.has(id))) return res.status(400).json({ error: 'reserve_project_account_invalid', detail: 'Each project must use a reserve-fund expense account of this community.' });
+    }
+    if (rows.some((r) => r.planned_month !== null && !(r.planned_month >= 1 && r.planned_month <= 12))) return res.status(400).json({ error: 'planned_month_invalid' });
+    const { loadReservePlanProjects } = require('../lib/accounting/reserve_plan');
+    const { columns_ready } = await loadReservePlanProjects(supabase, { community_id, fiscal_year: fy });
+    if (!columns_ready) {
+      // Before migration 512 a project cannot keep its GL account, timing or review flag.
+      // Refuse rather than silently drop them (nothing is deleted or written).
+      if (rows.some((r) => r.account_id || r.planned_month || r.review_status !== 'planned')) {
+        return res.status(409).json({ error: 'migration_512_required', detail: 'Planned projects need migration 512 (GL account, timing, review status) before they can be saved. Nothing was changed.' });
+      }
+      for (const r of rows) { delete r.account_id; delete r.planned_month; delete r.review_status; }
+    }
     await supabase.from('reserve_budget_items').delete().eq('community_id', community_id).eq('fiscal_year', fy);
     if (rows.length) {
       const { error } = await supabase.from('reserve_budget_items').insert(rows);
@@ -1635,25 +1699,26 @@ router.get('/budgets/living-lines', async (req, res) => {
     };
     merge(is2, 'fy2'); merge(is1, 'fy1'); merge(isYtd, 'ytd', annualize);
     for (const a of acc.values()) { if (yearNA(is2)) a.fy2 = null; if (yearNA(is1)) a.fy1 = null; }   // not available in trustEd: null, never $0
-    const forecastBasis = await applyWorkingForecast(community_id, fy, acc);
-
     // Include accounts that are BUDGETED but had no GL activity this year (e.g.
     // a reserve contribution transfer) — a budgeted line belongs in next year's
     // budget regardless of activity, and it would otherwise silently vanish.
     const missingBudgeted = Object.keys(priorBudget).filter((aid) => !acc.has(aid));
     if (missingBudgeted.length) {
       const { data: metas, error: mErr } = await supabase.from('chart_of_accounts')
-        .select('id, account_number, account_name, account_type, fund_id, account_funds ( fund_code )')
+        .select('id, account_number, account_name, account_type, fund_id, account_funds ( fund_code, fund_type )')
         .in('id', missingBudgeted);
       if (mErr) throw mErr;
       for (const m of (metas || [])) {
         if (!['revenue', 'expense'].includes(m.account_type)) continue;
-        acc.set(m.id, { account_id: m.id, account_number: m.account_number, account_name: m.account_name, account_type: m.account_type, fund_id: m.fund_id || null, fund_code: (m.account_funds && m.account_funds.fund_code) || null,
+        acc.set(m.id, { account_id: m.id, account_number: m.account_number, account_name: m.account_name, account_type: m.account_type, fund_id: m.fund_id || null, fund_code: (m.account_funds && m.account_funds.fund_code) || null, fund_type: (m.account_funds && m.account_funds.fund_type) || null,
           // A prior year not available in trustEd (converted-community pre-history) is null, never $0,
           // exactly like the rows with activity above. A year that IS available and had no activity is a real 0.
           fy2: yearNA(is2) ? null : 0, fy1: yearNA(is1) ? null : 0, ytd_actual: 0, forecast: 0 });
       }
     }
+
+    // After the budgeted-only accounts are in, so they get their fund and forecast too.
+    const forecastBasis = await applyWorkingForecast(community_id, fy, acc);
 
     // Vendor commitments per expense account (prior year) — the "built from" source.
     const vendorByAcct = {};
@@ -1746,7 +1811,14 @@ router.get('/budgets/living-lines', async (req, res) => {
       const contract = contractByAccount[a.account_id] || null;
       const priorB = priorBudget[a.account_id] || 0;
       const isNonCash = /unrealized|realized gain|market value|investment gain|gain\s*\/\s*loss|gains?\s+(?:and|&|or)\s+loss|mark[- ]to[- ]market/i.test(a.account_name || '');
-      if (isNonCash) {
+      const isReserveExpense = a.account_type === 'expense' && a.fund_type === 'reserve';
+      if (isReserveExpense) {
+        // Capital projects are nonrecurring (Ed 2026-10-11): a reserve expenditure is
+        // budgeted only from an explicitly planned project (the Reserve Budget's project
+        // list), never from prior-year spending, a run-rate or a forecast.
+        source_type = 'capital_plan'; confidence = 'high'; proposed_cents = 0;
+        built_from = `Reserve expenditures come only from planned capital projects. ${fy - 1} spending${a.forecast ? ` ($${(a.forecast / 100).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} projected)` : ''} is history for reference and is not carried into ${fy}.`;
+      } else if (isNonCash) {
         // Non-cash market valuations (unrealized gains/losses) aren't budgeted —
         // they can't be assessed for or spent, and annualizing them is nonsense.
         source_type = 'excluded'; confidence = 'high'; proposed_cents = 0;
@@ -1838,6 +1910,19 @@ router.get('/budgets/living-lines', async (req, res) => {
         proposed_cents, source_type, confidence, built_from, vendors, evidence, flags,
       };
     });
+
+    // Configured interfund transfers (e.g. the Reserve contribution): the editor shows them as
+    // a transfer out of the paying fund and into the receiving fund, never as revenue.
+    try {
+      const { transferConfig } = require('../lib/forecast/working_forecast_data');
+      const [{ data: tf, error: tfErr }, { data: fl, error: flErr }] = await Promise.all([
+        supabase.from('chart_of_accounts').select('id, fund_id, account_subtype, interfund_from_fund_id, interfund_to_fund_id').in('id', rows.map((r) => r.account_id)),
+        supabase.from('account_funds').select('id, fund_code, fund_type').eq('community_id', community_id).limit(50),
+      ]);
+      if (tfErr || flErr) throw (tfErr || flErr);
+      const byId = new Map((tf || []).map((a) => [a.id, a]));
+      for (const r of rows) { const cfg = transferConfig(byId.get(r.account_id), fl || []); if (cfg.transfer) r.transfer = { from_fund_code: cfg.transfer.from_fund_code, from_fund_type: cfg.transfer.from_fund_type, to_fund_code: cfg.transfer.to_fund_code, to_fund_type: cfg.transfer.to_fund_type }; }
+    } catch (e) { console.warn('[books] living-lines transfer config unavailable:', e.message); }
 
     const { count: homeCount } = await supabase.from('properties').select('id', { count: 'exact', head: true }).eq('community_id', community_id);
     const sum = (arr, k) => arr.reduce((s, r) => s + (r[k] || 0), 0);
