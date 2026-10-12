@@ -193,19 +193,21 @@ check('sweep run is bounded (MANAGER_MAX_CANDIDATES) and leaves the rest for the
   assert.strictEqual(db.T.objectives.length, 10);
 });
 
-check('no autonomous action in Phase 1: writes touch only objectives / objective_events / manager_wakes; no model, mail or AP-mutation code is reachable', async () => {
+check('state-only mode (MANAGER_EXECUTE=off) writes only objectives / objective_events / manager_wakes; executors use only allowlisted existing capabilities and never send, notify or call a model directly', async () => {
   const i = inv({ needs_review: true }); const e = exc();
   const db = fakeDb({ ap_invoices: [i], ap_intake_exceptions: [e], board_packets: [{ id: 'bp1', community_id: 'C1', period_label: 'Oct', meeting_date: '2026-10-06', status: 'in_review' }] });
   await wakeFor(db, 'ap_invoice', i); await wakeFor(db, 'ap_exception', e);
   const snap = JSON.stringify([db.T.ap_invoices, db.T.ap_intake_exceptions, db.T.board_packets]);
-  await runSweep({ supabase: db, now: NOW, env: {} });
+  await runSweep({ supabase: db, now: NOW, env: { MANAGER_EXECUTE: 'off' } });
   assert.deepStrictEqual([...new Set(db.writes.map((w) => w.t))].sort(), ['manager_wakes', 'objective_events', 'objectives']);
   assert.strictEqual(JSON.stringify([db.T.ap_invoices, db.T.ap_intake_exceptions, db.T.board_packets]), snap, 'source records untouched');
   const dir = path.join(__dirname, '..', 'lib', 'manager');
   for (const f of fs.readdirSync(dir)) {
     const src = fs.readFileSync(path.join(dir, f), 'utf8');
     const reqs = [...src.matchAll(/require\(['"]([^'"]+)['"]\)/g)].map((m) => m[1]);
-    for (const r of reqs) assert.ok(!/ai\/|anthropic|openai|graph_send|notifications|\/ap\/|sms|resend|email/.test(r), `${f} requires ${r}`);
+    // Execution (Ed 2026-10-12) reaches only these existing capabilities; every email is a draft.
+    const ALLOWED = ['../email/outbound_drafts', '../ap/intake', '../ap/intake_exceptions', '../legal/team', '../acc/pending_intake', '../feed/build', '../accounting/ownership'];
+    for (const r of reqs) assert.ok(ALLOWED.includes(r) || !/ai\/|anthropic|openai|graph_send|notifications|\/ap\/|sms|resend|email/.test(r), `${f} requires ${r}`);
     assert.ok(!/messages\.create|sendAs|sendEmail|textOwner/.test(src), `${f} calls a model or sends`);
   }
 });

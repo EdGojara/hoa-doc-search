@@ -434,28 +434,31 @@
       '<div class="th-own-meta">' + esc(c.why || '') + (c.community ? ' &middot; ' + esc(c.community) : '') + '</div>' +
       '<div class="th-own-next">' + esc(c.next_action || '') + '</div>' + members + '</div>' + actLink(c.action) + '</div></div>';
   }
+  // What actually happened, from the execution record (never inferred from assignment).
+  var STATUS_PILL = { executed: ['tx-pill--ok', 'Done by agent'], awaiting_send: ['tx-pill--info', 'Drafted, awaiting send'], queued: ['tx-pill--mute', 'Queued'], retrying: ['tx-pill--warn', 'Retrying'], escalated: ['tx-pill--bad', 'Escalated'], not_automated: ['tx-pill--mute', 'Not automated'], stale: ['tx-pill--warn', 'Stale'] };
   function agentRow(c, waiting) {
     var who = c.owner || c.specialist || {};
     var pill = waiting ? (c.follow_up_due ? '<span class="tx-pill tx-pill--warn">Follow-up due</span>' : '<span class="tx-pill tx-pill--mute">Waiting</span>')
-      : (c.status === 'stale' ? '<span class="tx-pill tx-pill--warn">Stale</span>' : '<span class="tx-pill tx-pill--info">Assigned</span>');
+      : (STATUS_PILL[c.status] ? '<span class="tx-pill ' + STATUS_PILL[c.status][0] + '">' + STATUS_PILL[c.status][1] + '</span>' : '<span class="tx-pill tx-pill--mute">Assigned</span>');
     var meta = esc(who.name || '') + (who.role ? ' &middot; ' + esc(who.role) : '') + (c.community ? ' &middot; ' + esc(c.community) : '') +
       (waiting ? (c.follow_up ? ' &middot; follow up ' + esc(fmtDay(c.follow_up)) : '') : (c.last_activity ? ' &middot; last activity ' + esc(fmtDay(c.last_activity)) : ''));
     var detail = waiting ? 'Waiting on ' + esc(c.waiting_on || 'an outside party') + (c.next_action && c.next_action !== c.waiting_on ? '. ' + esc(c.next_action) : '') : 'Next: ' + esc(c.next_action || '');
     var also = (c.also || []).length ? '<div class="th-own-meta">Also covers: ' + c.also.map(function (a) { return esc(a.title); }).join('; ') + '</div>' : '';
     return '<div class="th-own-row"><span class="th-av" data-p="' + esc(who.key || '') + '" aria-hidden="true">' + esc(initials(who.name)) + '</span>' +
       '<button type="button" class="th-fi th-fi-main" data-key="' + esc(c.key) + '" style="border:0;padding:0;grid-template-columns:1fr"><span class="th-fi-who">' + meta + '</span><span class="th-fi-t" style="display:block">' + esc(c.title) + '</span>' +
-      '<span class="th-own-next" style="display:block">' + detail + '</span>' + (c.status === 'stale' && c.status_text ? '<span class="th-own-meta" style="display:block;color:var(--tx-warn)">' + esc(c.status_text) + '</span>' : '') + also + '</button>' + pill + '</div>';
+      '<span class="th-own-next" style="display:block">' + detail + '</span>' + (c.status_text ? '<span class="th-own-meta" style="display:block' + (['retrying', 'escalated', 'stale'].indexOf(c.status) >= 0 ? ';color:var(--tx-warn)' : '') + '">' + esc(c.status_text) + '</span>' : '') + also + '</button>' + pill + '</div>';
   }
   function ownList(items, render, cap) {
     var shown = items.slice(0, cap), more = items.slice(cap);
     return shown.map(render).join('') + (more.length ? '<details><summary class="tx-muted" style="font-size:12.5px;cursor:pointer;padding:6px 0">' + more.length + ' more</summary>' + more.map(render).join('') + '</details>' : '');
   }
   function ownSections(S, none) {
-    var stale = S.ai_working.filter(function (c) { return c.status === 'stale'; }).length;
+    var stale = S.ai_working.filter(function (c) { return c.status === 'not_automated'; }).length;
+    var ran = S.ai_working.filter(function (c) { return c.status === 'executed' || c.status === 'awaiting_send'; }).length;
     var due = S.waiting.filter(function (c) { return c.follow_up_due; }).length;
     var h = '<section class="th-own th-own--you"><h3>Your decisions <small>' + S.decisions.length + ' &middot; only what needs your authority</small></h3>' +
       (S.decisions.length ? S.decisions.map(decisionCard).join('') : '<div class="tx-muted" style="font-size:13px;padding:6px 0">' + esc(none || 'Nothing needs your decision right now.') + '</div>') + '</section>';
-    h += '<section class="th-own"><h3>AI team working <small>' + S.ai_working.length + (stale ? ' &middot; ' + stale + ' stale' : '') + '</small></h3>' +
+    h += '<section class="th-own"><h3>AI team working <small>' + S.ai_working.length + ' &middot; ' + ran + ' executed' + (stale ? ' &middot; ' + stale + ' not automated' : '') + '</small></h3>' +
       (S.ai_working.length ? ownList(S.ai_working, function (c) { return agentRow(c, false); }, 6) : '<div class="tx-muted" style="font-size:13px;padding:6px 0">No work assigned to the agents.</div>') + '</section>';
     h += '<section class="th-own"><h3>Waiting on others <small>' + S.waiting.length + (due ? ' &middot; ' + due + ' follow-up due' : '') + '</small></h3>' +
       (S.waiting.length ? ownList(S.waiting, function (c) { return agentRow(c, true); }, 4) : '<div class="tx-muted" style="font-size:13px;padding:6px 0">Nothing is waiting on an outside party.</div>') + '</section>';
