@@ -304,6 +304,13 @@ t('a determination that answers Amanda\'s exact question stands on re-run; a new
   const r2 = TEAM.applyRecommendations(d, [other]);
   assert.strictEqual(r2.items[0].allocations[0].classification, 'needs_review', 'a different question reopens it');
 });
+t('a Deed Restriction Status Report is DRV work even when the passage mentions a demand letter (280594 Adebo)', () => {
+  const passage = 'ADEBO, ADEDIRAN & MOPELOLA – 19723 Canyon Gate Ct. 2706.0004 Violations: 1. Failure to remove inoperable vehicle. 10/14/25 Received request to send initial demand letter on September 19, 2025. Mailed initial demand letter on October 2, 2025. Balance Due: $213.00';
+  assert.strictEqual(RS.readStatusPassage(passage, 'Canyon Gate - Deed Restriction Status Report - July 2026').work_type, 'drv');
+  assert.strictEqual(RS.readStatusPassage(passage, '08-12-26-Canyon Gate at Cinco Ranch - Collection Status Report.pdf').work_type, 'collection');
+  assert.strictEqual(RS.readStatusPassage(passage).work_type, 'collection', 'no title: passage rules as before');
+  assert.ok(/workType === 'collection' \? referralProcedure/.test(src('lib/legal/research.js')), "counsel's collection procedure never stands in for a deed-restriction notice");
+});
 t('intake hands only a loaded (non-duplicate) attorney invoice to the team, in the background', () => {
   const s = src('lib/ap/intake.js');
   assert.ok(/if \(!suspected\) \{[\s\S]{0,400}is_legal_counsel[\s\S]{0,300}triggerFromIntake\(supabase, data\.id\)/.test(s));
