@@ -1,0 +1,63 @@
+{
+  "migration": "512_reserve_budget_projects.sql",
+  "summary": "Reserve budget projects carry a GL account, an expected month and a review status, so reserve expenditures come only from planned capital projects (aggregated by GL account for the budget and statements). Adds three nullable/defaulted columns, a foreign key, two checks and an index to reserve_budget_items. Creates no journal entry, budget line or ledger row.",
+  "requires": [
+    "362_reserve_budget_items.sql"
+  ],
+  "preflight": [
+    {
+      "name": "reserve_budget_items exists",
+      "sql": "SELECT count(*)::int FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'reserve_budget_items'",
+      "expect": 1
+    },
+    {
+      "name": "account_id not added yet",
+      "sql": "SELECT count(*)::int FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'reserve_budget_items' AND column_name = 'account_id'",
+      "expect": 0
+    }
+  ],
+  "expected_changes": [
+    "reserve_budget_items gains account_id (FK chart_of_accounts, RESTRICT), planned_month (1-12) and review_status ('planned' | 'needs_review', default 'planned')."
+  ],
+  "objects": {
+    "added": [
+      "column:reserve_budget_items.account_id",
+      "column:reserve_budget_items.planned_month",
+      "column:reserve_budget_items.review_status",
+      "constraint:reserve_budget_items.reserve_budget_items_account_fkey",
+      "constraint:reserve_budget_items.reserve_budget_items_planned_month_check",
+      "constraint:reserve_budget_items.reserve_budget_items_review_status_check",
+      "index:ix_reserve_budget_items_account"
+    ],
+    "removed": [],
+    "changed": []
+  },
+  "row_changes": {
+    "journal_entries": 0,
+    "journal_entry_lines": 0,
+    "budget_line_items": 0,
+    "reserve_budget_items": 0
+  },
+  "protected": [
+    {
+      "table": "journal_entry_lines",
+      "order_by": "id"
+    },
+    {
+      "table": "budget_line_items",
+      "order_by": "id"
+    }
+  ],
+  "verify": [
+    {
+      "name": "three columns exist",
+      "sql": "SELECT count(*)::int FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'reserve_budget_items' AND column_name IN ('account_id', 'planned_month', 'review_status')",
+      "expect": 3
+    },
+    {
+      "name": "existing rows default to planned",
+      "sql": "SELECT count(*)::int FROM reserve_budget_items WHERE review_status <> 'planned'",
+      "expect": 0
+    }
+  ]
+}

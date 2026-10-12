@@ -1312,22 +1312,44 @@
       bdgPlanRecalc();
     } catch(e){ $('bp-grid').innerHTML=`<div style="color:var(--err); padding:12px;">Couldn't load: ${esc(e.message)}</div>`; }
   };
-  function bdgPlanVal(i){ const el=document.querySelector('#bp-grid input[data-i="'+i+'"]'); return el ? Math.round((parseFloat(el.value)||0)*100) : 0; }
+  function bdgPlanVal(i){ const el=document.querySelector('#bp-grid input[data-i="'+i+'"]'); if(!el) return 0; const v=Math.round((parseFloat(el.value)||0)*100); return el.dataset.tsign? v*Number(el.dataset.tsign) : v; }
+  // Reserve Budget (Ed 2026-10-11): reserve expenditures come ONLY from planned capital
+  // projects; the reserve expense GL lines are their per-account sums. One calculation,
+  // public/js/reserve_plan_core.js, shared with the proposed-budget PDF.
+  const _isTransferRow=(r)=>!!r.transfer;
+  const _isResvExpRow=(r)=>r.account_type==='expense' && _isResvRow(r) && !_isTransferRow(r);
+  function bdgReservePlan(){
+    const rp=window._rp||{}; const core=window.ReservePlanCore; if(!core) return null;
+    const accounts={}; (rp.accounts||[]).forEach(a=>{accounts[a.id]={account_number:a.account_number,account_name:a.account_name};});
+    _bdgPlanRows.forEach(r=>{ if(!accounts[r.account_id]) accounts[r.account_id]={account_number:r.account_number,account_name:r.account_name}; });
+    const funding=[]; let opTransfers=0;
+    _bdgPlanRows.forEach((r,i)=>{ const c=bdgPlanVal(i);
+      if(_isTransferRow(r)){ const into=core.transferIntoReserve({account_type:r.account_type, amount_cents:c, to_fund_type:r.transfer.to_fund_type, from_fund_type:r.transfer.from_fund_type});
+        if(into) funding.push({account_id:r.account_id, label:r.account_name, kind:'transfer', amount_cents:into});
+        if(r.transfer.from_fund_type==='operating') opTransfers-=Math.abs(into||(r.account_type==='expense'?c:Math.abs(c))); else if(r.transfer.to_fund_type==='operating') opTransfers+=Math.abs(c); }
+      else if(_isResvRow(r) && r.account_type==='revenue' && c) funding.push({account_id:r.account_id, label:r.account_name, kind:'revenue', amount_cents:c}); });
+    const plan=core.computeReservePlan({ projects:window._reserveProjects||[], saved_lines:[], plan_saved:true, funding, beginning_cents: rp.beginning_cents==null?null:rp.beginning_cents, accounts });
+    plan.operating_transfers_cents=opTransfers; return plan;
+  }
   const _isResvRow=(r)=>{ if(r.fund_type==='reserve')return true; const f=String(r.fund_code||'').toUpperCase(); if(f==='RES')return true; if(f==='OPR'||r.fund_type==='operating')return false; if(r.fund_type||f)return false; return /\breserve\b/i.test(r.account_name||''); };
   // A fund that is neither operating nor reserve (e.g. the Adopt a School Fund) is its own budget,
   // never part of the Operating budget or its totals (Ed 2026-10-11).
   const _isOtherFundRow=(r)=>{ if(_isResvRow(r))return false; if(r.fund_type) return r.fund_type!=='operating'; const f=String(r.fund_code||'').toUpperCase(); return !!f && f!=='OPR' && f!=='RES'; };
   window.bdgLivingRenderReserveProjects=function(){
     const box=$('bl-reserve-projects'); if(!box) return; const ps=window._reserveProjects||[];
+    const accts=((window._rp||{}).accounts||[]).length ? window._rp.accounts : _bdgPlanRows.filter(r=>_isResvExpRow(r)).map(r=>({id:r.account_id, account_number:r.account_number, account_name:r.account_name})).sort((a,b)=>String(a.account_name).localeCompare(String(b.account_name))); const MON=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    const ist='padding:5px 8px; border:1px solid var(--rule); border-radius:5px; font-size:12.5px;';
     box.innerHTML = ps.length ? ps.map((p,i)=>`
-      <div style="display:grid; grid-template-columns:1.3fr 1.2fr 120px 34px; gap:8px; align-items:center; padding:4px 6px; border-bottom:1px solid #f1f5f9;">
-        <input value="${esc(p.project_name||'')}" placeholder="Project name" oninput="window._reserveProjects[${i}].project_name=this.value" style="padding:5px 8px; border:1px solid var(--rule); border-radius:5px; font-size:12.5px;">
-        <input value="${esc(p.note||'')}" placeholder="Note (optional)" oninput="window._reserveProjects[${i}].note=this.value" style="padding:5px 8px; border:1px solid var(--rule); border-radius:5px; font-size:12px; color:#5a7390;">
-        <input value="${((p.planned_amount_cents||0)/100).toFixed(2)}" oninput="window._reserveProjects[${i}].planned_amount_cents=Math.round((parseFloat(this.value)||0)*100); bdgPlanRecalc();" style="text-align:right; padding:5px 8px; border:1px solid var(--rule); border-radius:5px; font-variant-numeric:tabular-nums; font-size:12.5px;">
-        <button onclick="window._reserveProjects.splice(${i},1); bdgLivingRenderReserveProjects(); bdgPlanRecalc();" title="Remove" style="border:1px solid #fecaca; background:#fff; color:var(--err); border-radius:5px; cursor:pointer; font-size:12px;">🗑</button>
-      </div>`).join('') : '<div class="muted" style="padding:8px; font-size:12px;">No reserve projects yet — add one, or upload a budget workbook that has a reserve sheet.</div>';
+      <div style="display:grid; grid-template-columns:1.4fr 1.3fr 96px 120px 92px 34px; gap:8px; align-items:center; padding:4px 6px; border-bottom:1px solid #f1f5f9;${p.review_status==='needs_review'?' background:#fffbeb;':''}">
+        <input value="${esc(p.project_name||'')}" placeholder="Project description" oninput="window._reserveProjects[${i}].project_name=this.value" style="${ist}">
+        <select onchange="window._reserveProjects[${i}].account_id=this.value||null; bdgPlanRecalc();" style="${ist}"><option value="">GL account…</option>${accts.map(a=>`<option value="${esc(a.id)}"${a.id===p.account_id?' selected':''}>${esc(a.account_name)} (${esc(a.account_number)})</option>`).join('')}</select>
+        <select onchange="window._reserveProjects[${i}].planned_month=parseInt(this.value,10)||null; bdgPlanRecalc();" style="${ist}"><option value="">Timing…</option>${MON.map((m,k)=>`<option value="${k+1}"${p.planned_month===k+1?' selected':''}>${m}</option>`).join('')}</select>
+        <input value="${((p.planned_amount_cents||0)/100).toFixed(2)}" oninput="window._reserveProjects[${i}].planned_amount_cents=Math.round((parseFloat(this.value)||0)*100); bdgPlanRecalc();" style="text-align:right; ${ist} font-variant-numeric:tabular-nums;">
+        ${p.review_status==='needs_review'?`<button onclick="window._reserveProjects[${i}].review_status='planned'; bdgLivingRenderReserveProjects(); bdgPlanRecalc();" title="Carried from the saved budget with no project behind it. Click once you have confirmed it as a planned project." style="border:1px solid #fde68a; background:#fef3c7; color:#92400e; border-radius:5px; cursor:pointer; font-size:10.5px; font-weight:700; padding:4px 2px;">NEEDS REVIEW</button>`:'<span style="font-size:10.5px; color:#166534; font-weight:700; text-align:center;">PLANNED</span>'}
+        <button onclick="if(confirm('Remove this project from the plan?')){ window._reserveProjects.splice(${i},1); bdgLivingRenderReserveProjects(); bdgPlanRecalc(); }" title="Remove" style="border:1px solid #fecaca; background:#fff; color:var(--err); border-radius:5px; cursor:pointer; font-size:12px;">🗑</button>
+      </div>`).join('') : '<div class="muted" style="padding:8px; font-size:12px;">No capital projects planned. Reserve expenditures are $0.00 until you add one: description, GL account, timing and amount.</div>';
   };
-  window.bdgAddReserveProject=function(){ (window._reserveProjects=window._reserveProjects||[]).push({project_name:'',planned_amount_cents:0,note:null}); bdgLivingRenderReserveProjects(); };
+  window.bdgAddReserveProject=function(){ (window._reserveProjects=window._reserveProjects||[]).push({project_name:'',account_id:null,planned_month:null,planned_amount_cents:0,review_status:'planned',note:null}); bdgLivingRenderReserveProjects(); };
   // Assessment income = rate/home × homes, with a cap on the annual increase.
   window.bdgApplyRate=function(){
     const homes=window._blHomes||0; const inEl=$('bl-rate-input'); if(!homes||window._assessI==null||!inEl) return;
@@ -1366,16 +1388,22 @@
     }catch(e){ if(cite) cite.innerHTML=`Couldn't read the cap from docs — using ${esc(capEl.value)}%.`; }
   };
   window.bdgPlanRecalc = function(){
-    let opRev=0, opExp=0, otherIncome=0, assessIncome=0, resvIncome=0;
+    let opRev=0, opExp=0, otherIncome=0, assessIncome=0;
     _bdgPlanRows.forEach((r,i)=>{ const c=bdgPlanVal(i);
-      if(_isResvRow(r)){ if(r.account_type==='revenue') resvIncome+=c; }
+      if(_isTransferRow(r)){ /* a transfer between funds is neither revenue nor expense */ }
+      else if(_isResvRow(r)){ /* reserve fund: summarized by the reserve plan below */ }
       else if(_isOtherFundRow(r)){ /* separate fund: not in the Operating totals */ }
       else if(r.account_type==='revenue'){ opRev+=c; if(/assessment|dues|maintenance fee/i.test(r.account_name||'')) assessIncome+=c; else otherIncome+=c; }
       else opExp+=c; });
-    const resvProjects=(window._reserveProjects||[]).reduce((s,p)=>s+(p.planned_amount_cents||0),0);
-    const resvNet=resvIncome-resvProjects;
-    const el=$('bp-totals'); if(el) el.innerHTML=`<span>Operating revenue: <strong>${fmt(opRev)}</strong></span><span>Operating expenses: <strong>${fmt(opExp)}</strong></span><span>Operating surplus: <strong style="color:${opRev-opExp>=0?'#166534':'#991b1b'};">${fmt(opRev-opExp)}</strong></span>`;
-    const rn=$('bl-reserve-net'); if(rn) rn.innerHTML=`<span>Reserve contributions: <strong>${fmt(resvIncome)}</strong></span><span>Reserve expenditures: <strong>${fmt(resvProjects)}</strong></span><span>Net to reserves: <strong style="color:${resvNet>=0?'#166534':'#991b1b'};">${fmt(resvNet)}</strong></span>`;
+    const plan=bdgReservePlan(); const opT=plan?plan.operating_transfers_cents:0; const opNet=opRev-opExp;
+    const el=$('bp-totals'); if(el) el.innerHTML=`<span>Operating revenue: <strong>${fmt(opRev)}</strong></span><span>Operating expenses: <strong>${fmt(opExp)}</strong></span><span>Excess of revenue over expenses: <strong style="color:${opNet>=0?'#166534':'#991b1b'};">${fmt(opNet)}</strong></span>${opT?`<span>Transfer to Reserve Fund: <strong>${fmt(opT)}</strong></span><span>Net change in Operating Fund: <strong style="color:${opNet+opT>=0?'#166534':'#991b1b'};">${fmt(opNet+opT)}</strong></span>`:''}`;
+    const rn=$('bl-reserve-net'); if(rn && plan){ const t=plan.totals; const rp=window._rp||{}; const fy=$('bp-fy').value;
+      rn.innerHTML=`<span>Total reserve funding: <strong>${fmt(t.funding_cents)}</strong></span><span>Planned capital expenditures: <strong>${fmt(t.capex_cents)}</strong>${t.review_cents?` <span style="font-size:11px; color:#92400e;">(incl. ${fmt(t.review_cents)} needs review)</span>`:''}</span><span>Net change in Reserve Fund: <strong style="color:${t.net_change_cents>=0?'#166534':'#991b1b'};">${fmt(t.net_change_cents)}</strong></span><span>Projected beginning balance: <strong>${t.beginning_cents==null?'n/a':fmt(t.beginning_cents)}</strong></span><span>Projected ending reserve balance ${esc(String(fy))}: <strong>${t.ending_cents==null?'n/a':fmt(t.ending_cents)}</strong></span>`;
+      const ba=$('bl-reserve-byacct'); if(ba){ const hist=new Map((rp.history||[]).map(h=>[h.account_id,h])); const ids=[...new Set([...(rp.history||[]).map(h=>h.account_id), ...plan.by_account.map(b=>b.account_id)])];
+        const pb=new Map(plan.by_account.map(b=>[b.account_id,b]));
+        const rowsH=ids.map(id=>{ const h=hist.get(id)||{}; const b=pb.get(id)||{}; const a=(rp.accounts||[]).find(x=>x.id===id)||h; return `<div style="display:grid; grid-template-columns:56px 1fr 120px 120px 120px; gap:8px; padding:5px 6px; font-size:12.5px; border-bottom:1px solid #f1f5f9;"><span style="font-family:ui-monospace,monospace; color:#94a3b8; font-size:11px;">${esc((b.account_number||a.account_number||''))}</span><span>${esc(b.account_name||a.account_name||'GL account not chosen')}</span><span class="num" style="color:#94a3b8;">${h.ytd_cents==null?'':fmt(h.ytd_cents)}</span><span class="num" style="color:#94a3b8;">${h.projected_cents==null?'':fmt(h.projected_cents)}</span><span class="num" style="font-weight:600;">${fmt(b.total_cents||0)}${b.review_cents?' <span title="includes an amount that needs review" style="color:#92400e;">⚠</span>':''}</span></div>`; }).join('');
+        ba.innerHTML=rowsH||'<div class="muted" style="padding:8px; font-size:12px;">No reserve expense accounts yet.</div>'; }
+      const rw=$('bl-reserve-warn'); if(rw) rw.innerHTML=plan.warnings.map(w=>`<div style="margin-top:4px; color:#92400e; font-size:12px;">⚠ ${esc(w.text)}</div>`).join(''); }
     // Assessment summary (operating): revenue requirement / homes.
     const as=$('bl-assess'); const homes=window._blHomes||0;
     if(as){
@@ -1394,9 +1422,14 @@
   window.bdgPlanSave = async function(status){
     const fy=parseInt($('bp-fy').value,10);
     if(!fy){ alert('Enter a fiscal year.'); return; }
-    const line_items=_bdgPlanRows.map((r,i)=>({account_id:r.account_id, fund_id:r.fund_id||null, annual_amount_cents:bdgPlanVal(i)})).filter(li=>li.account_id);
+    const plan=window.ReservePlanCore ? bdgReservePlan() : null;
+    const resvFundId=(window._rp||{}).fund_id || ((_bdgPlanRows.find(r=>_isResvExpRow(r))||{}).fund_id) || null;
+    const line_items=_bdgPlanRows.filter(r=>!(plan && _isResvExpRow(r))).map((r)=>({account_id:r.account_id, fund_id:r.fund_id||null, annual_amount_cents:bdgPlanVal(_bdgPlanRows.indexOf(r))})).filter(li=>li.account_id);
+    if(plan) for(const b of plan.by_account){ if(b.account_id) line_items.push({account_id:b.account_id, fund_id:resvFundId, annual_amount_cents:b.total_cents}); }
     if(!line_items.length){ alert('Nothing to save — load a starting point first.'); return; }
-    const resvItems=(window._reserveProjects||[]).filter(p=>(p.project_name||'').trim());
+    const resvItems=(window._reserveProjects||[]).filter(p=>(p.project_name||'').trim()).map(p=>({project_name:p.project_name, account_id:p.account_id||null, planned_month:p.planned_month||null, planned_amount_cents:p.planned_amount_cents||0, review_status:p.review_status||'planned', note:p.note||null}));
+    if(plan && plan.by_account.some(b=>!b.account_id && b.total_cents)){ alert('Choose a GL account for every planned project before saving.'); return; }
+    if(window._rp && window._rp.columns_ready===false && resvItems.some(p=>p.account_id||p.planned_month||p.review_status!=='planned')){ alert('Planned projects need migration 512 (GL account, timing, review status) before they can be saved. Nothing was changed.'); return; }
     const isFinal=status==='approved';
     if(!confirm(`${isFinal?'Finalize':'Save a draft of'} the FY ${fy} budget — ${line_items.length} operating lines + ${resvItems.length} reserve project${resvItems.length===1?'':'s'}?${isFinal?'\n\nFinalizing marks it approved and locks it. It flows to Budget vs Actual and the board packet, and it can\'t be edited afterward unless the owner reopens it with a reason.':''}`)) return;
     try {
@@ -1448,19 +1481,24 @@
   // / YTD Actual / Proposed, with the derivation it was built from and a
   // confidence grade. Not a spreadsheet cell; a number that traces to its source.
   // Badge = WHERE the number came from (source), not just how sure we are.
-  const _SRC={ contract:{c:'#166534',bg:'#dcfce7',t:'📄 Contract-verified'}, vendor_commitment:{c:'#166534',bg:'#dcfce7',t:'Vendor commitment'}, prior_budget:{c:'#1e40af',bg:'#dbeafe',t:'Adopted budget'}, trend:{c:'#92400e',bg:'#fef3c7',t:'Trend'}, one_time_adjusted:{c:'#9a3412',bg:'#ffedd5',t:'One-time removed'}, excluded:{c:'#64748b',bg:'#f1f5f9',t:'Not budgeted'}, estimate:{c:'#64748b',bg:'#f1f5f9',t:'Estimate'} };
+  const _SRC={ contract:{c:'#166534',bg:'#dcfce7',t:'📄 Contract-verified'}, vendor_commitment:{c:'#166534',bg:'#dcfce7',t:'Vendor commitment'}, prior_budget:{c:'#1e40af',bg:'#dbeafe',t:'Adopted budget'}, trend:{c:'#92400e',bg:'#fef3c7',t:'Trend'}, one_time_adjusted:{c:'#9a3412',bg:'#ffedd5',t:'One-time removed'}, excluded:{c:'#64748b',bg:'#f1f5f9',t:'Not budgeted'}, capital_plan:{c:'#1e40af',bg:'#dbeafe',t:'Capital plan'}, estimate:{c:'#64748b',bg:'#f1f5f9',t:'Estimate'} };
   window.bdgLivingLoad = async function(){
     const fy=$('bp-fy').value;
     $('bp-grid').innerHTML='<div class="muted" style="padding:14px;">🧬 Building the living budget — reading actuals, this year\'s run-rate, and vendor commitments…</div>';
     try{
       const [r,rbR,blR]=await Promise.all([
         fetch(`/api/books/budgets/living-lines?community_id=${CID}&fiscal_year=${encodeURIComponent(fy)}`),
-        fetch(`/api/books/reserve-budget?community_id=${CID}&fiscal_year=${encodeURIComponent(fy)}`),
+        fetch(`/api/books/reserve-plan?community_id=${CID}&fiscal_year=${encodeURIComponent(fy)}`),
         fetch(`/api/books/budgets?community_id=${CID}&fiscal_year=${encodeURIComponent(fy)}`),
       ]);
       const j=await r.json();
       if(j.error) throw new Error(j.error);
-      let rbItems=[]; try{ const rb=await rbR.json(); if(!rb.error) rbItems=rb.items||[]; }catch(_){/* reserve optional */}
+      let rbItems=[]; window._rp={available:false};
+      try{ const rb=await rbR.json(); if(!rb.error){ window._rp=rb;
+        // A saved reserve amount with no project behind it is carried as a "needs review" project:
+        // counted once, never dropped or treated as approved (Ed 2026-10-11).
+        rbItems=[...(rb.projects||[]), ...((rb.review_items||[]).map(r=>({project_name:`Carried from the saved budget: ${r.account_name||''}`.trim(), account_id:r.account_id, planned_month:null, planned_amount_cents:r.amount_cents, review_status:'needs_review', note:null})))]; } }
+      catch(_){ /* reserve plan unavailable: the reserve section says so */ }
       // Load a SAVED budget for this year (if any) so your adjustments persist —
       // the live proposal is only the STARTING point until you save it.
       let savedInfo=null; const savedMap={};
@@ -1472,7 +1510,13 @@
         }
       }catch(_){/* saved overlay optional */}
       window._bdgSavedInfo=savedInfo;
-      _bdgPlanRows=(j.rows||[]).map(x=>{ const o={...x}; if(savedMap[o.account_id]!=null){ o.proposed_cents=savedMap[o.account_id]; o._saved=true; } return o; });
+      // With a saved draft, the screen shows exactly the saved amounts (what the PDF prints).
+      // A line the draft does not contain shows $0 and its suggestion is flagged, never
+      // silently added to the totals (Ed 2026-10-11: one set of numbers, editor = PDF).
+      _bdgPlanRows=(j.rows||[]).map(x=>{ const o={...x}; o.flags=[...(o.flags||[])];
+        if(savedMap[o.account_id]!=null){ o.proposed_cents=savedMap[o.account_id]; o._saved=true; }
+        else if(savedInfo && !_isResvExpRow(o) && o.proposed_cents){ o.flags.push({type:'not_in_draft', severity:'medium', msg:`Not in the saved FY ${fy} draft. The system suggests ${fmt(o.proposed_cents)} (${o.built_from||o.source_type}); it is not included until you enter it and save.`}); o.proposed_cents=0; }
+        if(_isResvExpRow(o)) o.proposed_cents=0; return o; });
       if(!_bdgPlanRows.length){ $('bp-grid').innerHTML='<div class="muted" style="padding:14px;">No revenue/expense history to build from yet — post some GL activity first.</div>'; return; }
       const idx=_bdgPlanRows.map((x,i)=>({x,i}));
       const rev=idx.filter(o=>o.x.account_type==='revenue'), exp=idx.filter(o=>o.x.account_type==='expense');
@@ -1483,7 +1527,7 @@
         const eviden=(x.evidence||[]).map(e=>`<a href="${esc(e.url)}" target="_blank" rel="noopener" style="color:#166534; font-weight:700; text-decoration:underline;">📄 ${esc(e.label)}</a>`).join(' · ');
         const flags=(x.flags||[]);
         const flagChip=flags.length?`<span style="margin-left:6px; font-size:9.5px; font-weight:700; padding:1px 6px; border-radius:7px; background:${flags.some(f=>f.severity==='high')?'#fee2e2':'#fef3c7'}; color:${flags.some(f=>f.severity==='high')?'#991b1b':'#92400e'};" title="${esc(flags.map(f=>f.msg).join(' · '))}">⚠ REVIEW</span>`:'';
-        const flagDetail=flags.length?flags.map(f=>`<div style="margin-top:3px; color:${f.severity==='high'?'#991b1b':'#92400e'};"><strong>⚠ ${f.type==='one_time'?'Likely one-time':f.type==='below_approved'?'Below approved budget':'Check postings'}:</strong> ${esc(f.msg)}</div>`).join(''):'';
+        const flagDetail=flags.length?flags.map(f=>`<div style="margin-top:3px; color:${f.severity==='high'?'#991b1b':'#92400e'};"><strong>⚠ ${f.type==='one_time'?'Likely one-time':f.type==='below_approved'?'Below approved budget':f.type==='not_in_draft'?'Not in saved draft':'Check postings'}:</strong> ${esc(f.msg)}</div>`).join(''):'';
         return `<div style="border-bottom:1px solid #f1f5f9;">
           <div style="display:grid; grid-template-columns:56px 1fr 96px 96px 96px 120px; gap:8px; align-items:center; padding:7px 6px; font-size:12.5px;">
             <span style="font-family:ui-monospace,monospace; color:#94a3b8; font-size:11px;">${esc(x.account_number)}</span>
@@ -1506,11 +1550,12 @@
       // Split by FUND: operating (OPR / unknown) vs reserve (RES). The reserve
       // side pairs its contribution income with the planned capital projects.
       const isResv=_isResvRow, isOther=_isOtherFundRow;
-      const opRev=rev.filter(o=>!isResv(o.x)&&!isOther(o.x)), opExp=exp.filter(o=>!isResv(o.x)&&!isOther(o.x));
-      const resvGl=idx.filter(o=>isResv(o.x));
+      const opRev=rev.filter(o=>!isResv(o.x)&&!isOther(o.x)&&!_isTransferRow(o.x)), opExp=exp.filter(o=>!isResv(o.x)&&!isOther(o.x)&&!_isTransferRow(o.x));
+      const resvFund=idx.filter(o=>isResv(o.x) && !_isResvExpRow(o.x) && !_isTransferRow(o.x));
+      const transferRows=idx.filter(o=>_isTransferRow(o.x));
       const otherGl=idx.filter(o=>isOther(o.x));
       // Reserve projects (capital expenditure plan) — fetched alongside.
-      window._reserveProjects=(rbItems||[]).map(p=>({project_name:p.project_name,planned_amount_cents:p.planned_amount_cents,note:p.note||null}));
+      window._reserveProjects=(rbItems||[]).map(p=>({project_name:p.project_name,account_id:p.account_id||null,planned_month:p.planned_month||null,planned_amount_cents:p.planned_amount_cents,review_status:p.review_status||'planned',note:p.note||null}));
       const sec=(t,c)=>`<div style="font-weight:700; color:${c}; padding:6px; background:${c==='#166534'?'#f0fdf4':'#fef7f0'}; margin-top:6px;">${t}</div>`;
       // Assessment income = per-home RATE × number of homes, with a cap on the
       // annual increase (declarations commonly limit board-only raises). The
@@ -1554,12 +1599,22 @@
         ${hdr}${otherGl.map(o=>rowHtml(o.x,o.i)).join('')}`:''}
 
         <div style="font-family:var(--font-serif); font-size:19px; color:var(--navy); font-weight:600; margin:22px 0 4px;">Reserve Budget</div>
-        <div class="muted" style="font-size:12px; margin-bottom:6px;">Contributions into reserves, less the planned capital projects, net to the change in your reserve balance.</div>
+        <div class="muted" style="font-size:12px; margin-bottom:6px;">Funding into the Reserve Fund, less the planned capital projects, is the change in the reserve balance. Reserve expenditures come only from the projects you plan below; prior-year spending is shown for reference and is never carried forward.</div>
+        ${!(window._rp||{}).available?`<div style="padding:9px 13px; background:#fffbeb; border:1px solid #fde68a; border-radius:8px; font-size:12px; color:#92400e; margin-bottom:8px;">The reserve plan could not be loaded${(window._rp||{}).reason==='no_draft_budget'?': save a draft budget for this year first':''}. Reserve totals below may be incomplete.</div>`:''}
+        ${(window._rp||{}).available && !(window._rp||{}).columns_ready?`<div style="padding:9px 13px; background:#eff6ff; border:1px solid #bfdbfe; border-radius:8px; font-size:12px; color:#1e40af; margin-bottom:8px;">Projects can be planned and totaled here now. Saving a project's GL account and timing needs migration 512 (Documents → Migration status).</div>`:''}
         ${hdr}
-        ${sec('Reserve contributions','#166534')}${resvGl.length?resvGl.map(o=>rowHtml(o.x,o.i)).join(''):'<div class="muted" style="padding:8px;">No reserve contribution line in the ledger yet.</div>'}
-        <div style="font-weight:700; color:#991b1b; padding:6px; background:#fef7f0; margin-top:6px; display:flex; justify-content:space-between; align-items:center;"><span>Reserve expenditures — capital projects</span><button onclick="bdgAddReserveProject()" style="border:1px solid var(--rule); background:#fff; border-radius:6px; padding:3px 10px; cursor:pointer; font-size:11.5px; font-weight:600;">+ Add project</button></div>
-        <div style="display:grid; grid-template-columns:1.3fr 1.2fr 120px 34px; gap:8px; padding:3px 6px; font-size:10px; text-transform:uppercase; letter-spacing:.04em; color:#94a3b8; font-weight:700;"><span>Project</span><span>Note</span><span class="num">Amount</span><span></span></div>
+        ${sec('Funding','#166534')}
+        ${transferRows.map(o=>{ const x=o.x, i=o.i; const into=(x.transfer||{}).to_fund_type==='reserve'; const stored=Number(x.proposed_cents||0); const sign=(x.account_type!=='expense' && stored<0)?-1:1;
+          return `<div style="display:grid; grid-template-columns:56px 1fr 96px 96px 96px 120px; gap:8px; align-items:center; padding:7px 6px; font-size:12.5px; border-bottom:1px solid #f1f5f9;"><span style="font-family:ui-monospace,monospace; color:#94a3b8; font-size:11px;">${esc(x.account_number)}</span><span style="font-weight:600;">${esc(x.account_name)} <span class="muted" style="font-weight:400; font-size:11.5px;">${into?`transfer in from ${esc(x.transfer.from_fund_code)}`:`transfer out to ${esc(x.transfer.to_fund_code)}`} · shown as ${into?'+':'-'} in the Reserve Fund and the opposite in ${esc(into?x.transfer.from_fund_code:x.transfer.to_fund_code)}</span></span><span class="num" style="color:#94a3b8;">${fmt(Math.abs(x.prior_budget_cents||0))}</span><span class="num" style="color:#475569;">${fmt(Math.abs(x.forecast_cents||0))}</span><span class="num" style="color:#94a3b8;">${fmt(Math.abs(x.actual_ytd_cents||0))}</span><span class="num"><input data-i="${i}" data-tsign="${sign}" oninput="bdgPlanRecalc()" value="${(Math.abs(stored)/100).toFixed(2)}" title="Amount moved between funds (always entered as a positive amount)" style="width:108px; text-align:right; padding:5px 7px; border:1px solid var(--rule); border-radius:5px; background:#f0f7ff; font-variant-numeric:tabular-nums;"></span></div>`; }).join('')}
+        ${resvFund.filter(o=>o.x.account_type==='revenue').map(o=>rowHtml(o.x,o.i)).join('')}
+        ${!transferRows.length && !resvFund.length?'<div class="muted" style="padding:8px;">No reserve funding line yet.</div>':''}
+        <div style="font-weight:700; color:#991b1b; padding:6px; background:#fef7f0; margin-top:6px; display:flex; justify-content:space-between; align-items:center;"><span>Planned capital projects</span><button onclick="bdgAddReserveProject()" style="border:1px solid var(--rule); background:#fff; border-radius:6px; padding:3px 10px; cursor:pointer; font-size:11.5px; font-weight:600;">+ Add project</button></div>
+        <div style="display:grid; grid-template-columns:1.4fr 1.3fr 96px 120px 92px 34px; gap:8px; padding:3px 6px; font-size:10px; text-transform:uppercase; letter-spacing:.04em; color:#94a3b8; font-weight:700;"><span>Description</span><span>GL account</span><span>Timing</span><span class="num">Amount</span><span>Status</span><span></span></div>
         <div id="bl-reserve-projects"></div>
+        <div style="font-weight:700; color:#0B1D34; padding:6px; background:#f5f8fc; margin-top:10px;">Reserve expenditures by GL account</div>
+        <div style="display:grid; grid-template-columns:56px 1fr 120px 120px 120px; gap:8px; padding:3px 6px; font-size:10px; text-transform:uppercase; letter-spacing:.04em; color:#94a3b8; font-weight:700;"><span>Acct</span><span>Account</span><span class="num">${esc(String((window._rp||{}).base_year||''))} actual (reference)</span><span class="num">${esc(String((window._rp||{}).base_year||''))} projected (reference)</span><span class="num">FY ${esc(String(j.fiscal_year))} planned</span></div>
+        <div id="bl-reserve-byacct"></div>
+        <div id="bl-reserve-warn"></div>
         <div id="bl-reserve-net" style="margin-top:10px; padding:12px; background:#f5f8fc; border-radius:8px; display:flex; gap:24px; flex-wrap:wrap; font-weight:600;"></div>
 
         <div style="margin-top:18px; display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
@@ -3458,6 +3513,7 @@
 
   init();
 </script>
+<script src="/js/reserve_plan_core.js"></script>
 <script src="/close.js"></script>
 <script src="/deploy-watcher.js"></script>
 </body>
