@@ -1,0 +1,93 @@
+{
+  "migration": "513_mission_control.sql",
+  "summary": "Mission Control on the existing work_items ledger: workspace (operations | platform), requested_by, why, blocks (dependency keys), next_step, evidence_required, action_url, module_key, horizon (now/next/later), links (GitHub issues, PRs, deployments); source_type gains agent and platform; an open item's source_ref is unique (agent de-duplication); work_item_events audit trail. Creates no journal entry, ledger row or balance.",
+  "requires": [
+    "256_work_items.sql"
+  ],
+  "preflight": [
+    {
+      "name": "work_items exists",
+      "sql": "SELECT count(*)::int FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'work_items'",
+      "expect": 1
+    },
+    {
+      "name": "workspace not added yet",
+      "sql": "SELECT count(*)::int FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'work_items' AND column_name = 'workspace'",
+      "expect": 0
+    },
+    {
+      "name": "no duplicate open source_ref",
+      "sql": "SELECT count(*)::int FROM (SELECT source_ref FROM work_items WHERE source_ref IS NOT NULL AND status IN ('new','in_progress','waiting') GROUP BY source_ref HAVING count(*) > 1) d",
+      "expect": 0
+    }
+  ],
+  "expected_changes": [
+    "work_items gains 10 columns (all nullable or defaulted; existing rows become workspace 'operations', blocks [] and links []).",
+    "work_items source_type check now also allows agent and platform.",
+    "New table work_item_events (audit trail) with service_role grants."
+  ],
+  "objects": {
+    "added": [
+      "column:work_items.workspace",
+      "column:work_items.requested_by",
+      "column:work_items.why",
+      "column:work_items.blocks",
+      "column:work_items.next_step",
+      "column:work_items.evidence_required",
+      "column:work_items.action_url",
+      "column:work_items.module_key",
+      "constraint:work_items.work_items_workspace_check",
+      "constraint:work_items.work_items_blocks_array_check",
+      "index:ux_work_items_open_source_ref",
+      "index:ix_work_items_workspace_open",
+      "column:work_item_events.id",
+      "column:work_item_events.work_item_id",
+      "column:work_item_events.event",
+      "column:work_item_events.actor",
+      "column:work_item_events.detail",
+      "column:work_item_events.created_at",
+      "constraint:work_item_events.work_item_events_pkey",
+      "constraint:work_item_events.work_item_events_item_fkey",
+      "constraint:work_item_events.work_item_events_event_check",
+      "index:work_item_events_pkey",
+      "index:ix_work_item_events_item",
+      "column:work_items.horizon",
+      "column:work_items.links",
+      "constraint:work_items.work_items_horizon_check",
+      "constraint:work_items.work_items_links_array_check",
+      "index:ix_work_items_module"
+    ],
+    "removed": [],
+    "changed": [
+      "constraint:work_items.work_items_source_type_check"
+    ]
+  },
+  "row_changes": {
+    "journal_entries": 0,
+    "journal_entry_lines": 0,
+    "work_items": 0
+  },
+  "protected": [
+    {
+      "table": "journal_entry_lines",
+      "order_by": "id"
+    }
+  ],
+  "verify": [
+    {
+      "name": "columns exist",
+      "sql": "SELECT count(*)::int FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'work_items' AND column_name IN ('workspace','requested_by','why','blocks','next_step','evidence_required','action_url','module_key','horizon','links')",
+      "expect": 10
+    },
+    {
+      "name": "events table exists",
+      "sql": "SELECT count(*)::int FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'work_item_events'",
+      "expect": 1
+    },
+    {
+      "name": "existing rows are operations",
+      "sql": "SELECT count(*)::int FROM work_items WHERE workspace <> 'operations'",
+      "expect": 0
+    }
+  ]
+}

@@ -17,6 +17,14 @@ const { createClient } = require('@supabase/supabase-js');
 const { safeErrorMessage } = require('./_safe_error');
 const { slaDueAt, defaultRoute, resolveUrgency } = require('../lib/ops/sla');
 const { excludeDemo } = require('../lib/demo/demo_guard');
+const { requireStaff } = require('./_require_admin');
+// Platform Buildout items (workspace 'platform', migration 513) are engineering
+// records: admin only, even through this legacy board (Issue #7 authorization).
+const visibleTo = (u) => (r) => u.role === 'admin' || (r.workspace || 'operations') !== 'platform';
+async function auditEvent(work_item_id, event, actor, detail) {
+  const { error } = await supabase.from('work_item_events').insert({ work_item_id, event, actor, detail });
+  if (error && !/work_item_events|does not exist|schema cache/i.test(error.message)) console.warn('[work_items] audit event not recorded', JSON.stringify({ work_item_id, error: error.message }));
+}
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 const router = express.Router();
@@ -75,6 +83,7 @@ function decorate(rows) {
 // GET / — the board
 router.get('/', async (req, res) => {
   try {
+    const u = await requireStaff(req, res); if (!u) return;
     const { status, assigned_to, community_id, source_type, overdue, limit } = req.query;
     const lim = Math.min(parseInt(limit, 10) || 300, 1000);
     let q = supabase.from('work_items').select('*, communities(name)').order('sla_due_at', { ascending: true, nullsFirst: false }).limit(lim);
@@ -86,7 +95,7 @@ router.get('/', async (req, res) => {
     else if (status) q = q.eq('status', status);
     const { data, error } = await q;
     if (error) throw error;
-    let items = decorate(data);
+    let items = decorate((data || []).filter(visibleTo(u)));
     if (overdue === '1' || overdue === 'true') items = items.filter((i) => i.is_overdue);
     res.json({ items, count: items.length });
   } catch (err) {
@@ -98,12 +107,13 @@ router.get('/', async (req, res) => {
 // GET /summary — board header counts
 router.get('/summary', async (req, res) => {
   try {
-    let sq = supabase.from('work_items').select('status, assigned_to, urgency, sla_due_at, community_id').limit(5000);
+    const u = await requireStaff(req, res); if (!u) return;
+    let sq = supabase.from('work_items').select('*').limit(5000);
     sq = await excludeDemo(sq, 'community_id');   // portfolio counts never include the demo tenant
     const { data, error } = await sq;
     if (error) throw error;
     const now = Date.now();
-    const open = (data || []).filter((r) => OPEN_STATUSES.includes(r.status));
+    const open = (data || []).filter(visibleTo(u)).filter((r) => OPEN_STATUSES.includes(r.status));
     const overdue = open.filter((r) => r.sla_due_at && new Date(r.sla_due_at).getTime() < now);
     const byOwner = {};
     for (const r of open) {
@@ -126,9 +136,10 @@ router.get('/summary', async (req, res) => {
 // POST / — manual create (a project or task)
 router.post('/', express.json({ limit: '32kb' }), async (req, res) => {
   try {
+    const u = await requireStaff(req, res); if (!u) return;
     const b = req.body || {};
     if (!b.title) return res.status(400).json({ error: 'title_required' });
-    const id = await createWorkItem({ ...b, source_type: b.source_type || 'project', created_by: b.created_by || 'staff' });
+    const id = await createWorkItem({ ...b, source_type: b.source_type || 'project', created_by: u.full_name || u.email || 'staff' });
     if (!id) return res.status(500).json({ error: 'create_failed' });
     const { data } = await supabase.from('work_items').select('*').eq('id', id).single();
     res.json({ item: data });
@@ -141,6 +152,11 @@ router.post('/', express.json({ limit: '32kb' }), async (req, res) => {
 // PATCH /:id — update status / owner / due
 router.patch('/:id', express.json({ limit: '32kb' }), async (req, res) => {
   try {
+    const u = await requireStaff(req, res); if (!u) return;
+    const { data: cur, error: ce } = await supabase.from('work_items').select('*').eq('id', req.params.id).maybeSingle();
+    if (ce) throw ce;
+    if (!cur) return res.status(404).json({ error: 'not_found' });
+    if (!visibleTo(u)(cur)) return res.status(403).json({ error: 'admin_only' });
     const allowed = ['status', 'assigned_to', 'urgency', 'item_type', 'title', 'summary', 'notes', 'sla_due_at', 'completed_at', 'community_id'];
     const patch = {};
     for (const k of allowed) if (k in (req.body || {})) patch[k] = req.body[k];
@@ -149,6 +165,7 @@ router.patch('/:id', express.json({ limit: '32kb' }), async (req, res) => {
     if (!Object.keys(patch).length) return res.status(400).json({ error: 'no_fields_to_update' });
     const { data, error } = await supabase.from('work_items').update(patch).eq('id', req.params.id).select('*').single();
     if (error) throw error;
+    if (patch.status && patch.status !== cur.status) await auditEvent(cur.id, OPEN_STATUSES.includes(patch.status) && !OPEN_STATUSES.includes(cur.status) ? 'reopened' : 'status_changed', u.full_name || u.email, { from: cur.status, to: patch.status, via: 'team status board' });
     res.json({ item: data });
   } catch (err) {
     console.error('[work_items] patch failed:', err.message);

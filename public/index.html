@@ -866,16 +866,16 @@
     var p=new URLSearchParams(); if(owner)p.set('assigned_to',owner);
     if(st==='overdue'){ p.set('status','open'); p.set('overdue','1'); } else if(st){ p.set('status',st); }
     document.getElementById('wiBoard').innerHTML='Loading…';
-    fetch('/api/work-items/summary').then(function(r){return r.json();}).then(renderSummary).catch(function(){});
-    fetch('/api/work-items?'+p.toString()).then(function(r){return r.json();}).then(function(j){ render(j.items||[]); }).catch(function(){ document.getElementById('wiBoard').innerHTML='<span style="color:#b00;">Could not load the board.</span>'; });
+    (window._authFetch||fetch)('/api/work-items/summary').then(function(r){return r.json();}).then(renderSummary).catch(function(){});
+    (window._authFetch||fetch)('/api/work-items?'+p.toString()).then(function(r){return r.json();}).then(function(j){ render(j.items||[]); }).catch(function(){ document.getElementById('wiBoard').innerHTML='<span style="color:#b00;">Could not load the board.</span>'; });
   };
   window.wiSet=function(id,status){
-    fetch('/api/work-items/'+id,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({status:status})}).then(function(r){return r.json();}).then(function(){ wiLoad(); }).catch(function(){ alert('Update failed'); });
+    (window._authFetch||fetch)('/api/work-items/'+id,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({status:status})}).then(function(r){return r.json();}).then(function(){ wiLoad(); }).catch(function(){ alert('Update failed'); });
   };
   window.wiNewTask=function(){
     var title=prompt('New task / project — title:'); if(!title) return;
     var owner=prompt('Owner (Ed / Martha / Celina / Alicia / Lori / Community Manager):','Community Manager')||'';
-    fetch('/api/work-items',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({title:title, assigned_to:owner, source_type:'project', item_type:'project', urgency:'normal'})}).then(function(r){return r.json();}).then(function(){ wiLoad(); }).catch(function(){ alert('Could not create'); });
+    (window._authFetch||fetch)('/api/work-items',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({title:title, assigned_to:owner, source_type:'project', item_type:'project', urgency:'normal'})}).then(function(r){return r.json();}).then(function(){ wiLoad(); }).catch(function(){ alert('Could not create'); });
   };
   var _wiHook=function(){ var o=window.switchTab; if(typeof o!=='function') return false; window.switchTab=function(t){ var r=o.apply(this,arguments); if(t==='status'){ try{ wiLoad(); }catch(e){} } return r; }; return true; };
   if(!_wiHook()){ if(document.readyState==='loading'){ document.addEventListener('DOMContentLoaded',_wiHook); } else { setTimeout(_wiHook,0); } }
@@ -34338,7 +34338,7 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
   // Per-person open-items summary on Home. Reads /api/work-items/summary
   // (the Status board's backend). Hidden when the board is empty or not live.
   function homeTeamStatus() {
-    fetch('/api/work-items/summary').then((r) => r.json()).then((s) => {
+    (window._authFetch||fetch)('/api/work-items/summary').then((r) => r.json()).then((s) => {
       const panel = document.getElementById('teamStatusPanel');
       const body = document.getElementById('teamStatusBody');
       if (!panel || !body) return;

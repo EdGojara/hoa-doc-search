@@ -122,6 +122,8 @@ async function boot(){
   loadPending();
   loadRuns();
   loadBankAccts();
+  // Deep link from Mission Control: /ed.html?run=<id> opens that run for review.
+  try{ const rid=new URLSearchParams(location.search).get('run'); if(rid && /^[0-9a-f-]{36}$/i.test(rid)) openRun(rid); }catch(_){}
 }
 // ---- Kat's monthly accounting runs (migration 510): Kat prepares, Ed approves or holds ----
 const PROC = { recognition: 'Monthly recognition', interest: 'Late interest', bank_reconciliation: 'Bank reconciliation' };

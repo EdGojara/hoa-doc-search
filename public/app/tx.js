@@ -27,7 +27,9 @@
     ['owners', 'Owners', '/#tab=ownerar'],
     ['financial', 'Financial', '/app/financial'],
     ['operations', 'Operations', '/app/operations'],
-    ['projects', 'Projects', '/#tab=status'],
+    // Mission Control (Ed 2026-10-12) replaces the legacy Projects link; the Team Status
+    // board (work_items) stays reachable from inside it.
+    ['projects', 'Mission Control', '/app/mission-control'],
     ['governance', 'Governance', '/#tab=meetings'],
     ['team', 'Team', '/#tab=roster'],
   ];
@@ -76,6 +78,7 @@
   }
   function get(url) { return request('GET', url); }
   function post(url, payload) { return request('POST', url, payload || {}); }
+  function patch(url, payload) { return request('PATCH', url, payload || {}); }
 
 
   function renderShell(active, user) {
@@ -145,5 +148,5 @@
     return user;
   }
 
-  window.TX = { boot: boot, get: get, post: post, icon: icon, esc: esc, fixture: FIXTURE, mark: mark, LEGACY_URL: LEGACY_URL };
+  window.TX = { boot: boot, get: get, post: post, patch: patch, icon: icon, esc: esc, fixture: FIXTURE, mark: mark, LEGACY_URL: LEGACY_URL };
 })();

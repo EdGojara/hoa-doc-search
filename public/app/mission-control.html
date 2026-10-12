@@ -1,0 +1,396 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mission Control · Trusted</title>
+<meta name="robots" content="noindex">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/brand.css">
+<link rel="stylesheet" href="/app/tx.css">
+<style>
+  .mc-wrap { padding: 30px 32px 56px; max-width: 1240px; }
+  .mc-head h1 { margin: 6px 0 6px; font-family: var(--font-serif); font-weight: 600; font-size: clamp(32px, 4vw, 44px); color: var(--navy); line-height: 1.05; }
+  .mc-head p { margin: 0; color: var(--tx-text-2); font-size: 14.5px; max-width: 820px; }
+  .mc-tabs { display: flex; gap: 4px; }
+  .mc-tab { font: 600 13.5px var(--font-sans); color: var(--tx-text-2); background: none; border: 0; padding: 7px 12px; border-radius: 8px; cursor: pointer; }
+  .mc-tab.is-on { background: var(--navy); color: var(--tx-ivory); }
+  .mc-counts { display: flex; flex-wrap: wrap; gap: 22px; margin-top: 18px; }
+  .mc-count b { display: block; font-size: 24px; color: var(--navy); font-variant-numeric: tabular-nums; }
+  .mc-count span { font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--tx-muted); font-weight: 600; }
+  .mc-count.is-hot b { color: var(--tx-bad); }
+  .mc-filters { display: flex; flex-wrap: wrap; gap: 8px; margin: 18px 0 10px; align-items: center; }
+  .mc-filters select, .mc-filters input { height: 32px; border: 1px solid var(--tx-rule); border-radius: 8px; padding: 0 10px; font: 13px var(--font-sans); background: var(--tx-surface); color: var(--tx-text); }
+  .mc-list { margin-top: 6px; }
+  .mc-row { border-top: 1px solid var(--tx-rule-soft); }
+  .mc-row:first-child { border-top: 0; }
+  .mc-line { display: grid; grid-template-columns: 1fr 110px 130px 96px 26px; gap: 12px; align-items: center; padding: 13px 18px; cursor: pointer; }
+  .mc-line:hover { background: var(--tx-subtle); }
+  .mc-title { font-weight: 600; color: var(--navy); font-size: 14px; }
+  .mc-sub { font-size: 12.5px; color: var(--tx-muted); margin-top: 2px; }
+  .mc-imp { font-size: 12px; color: var(--tx-gold-ink); font-weight: 600; text-align: right; white-space: nowrap; }
+  .mc-own { font-size: 13px; color: var(--tx-text-2); }
+  .mc-detail { display: none; padding: 4px 18px 18px 18px; background: var(--tx-subtle); }
+  .mc-row.is-open .mc-detail { display: block; }
+  .mc-kv { display: grid; grid-template-columns: 120px 1fr; gap: 6px 14px; font-size: 13px; padding-top: 12px; }
+  .mc-kv dt { color: var(--tx-muted); font-weight: 600; font-size: 11px; letter-spacing: .05em; text-transform: uppercase; padding-top: 2px; }
+  .mc-kv dd { margin: 0; color: var(--tx-text); }
+  .mc-kv ul { margin: 0; padding-left: 18px; }
+  .mc-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; align-items: center; }
+  .mc-actions select, .mc-actions input, .mc-form input, .mc-form select, .mc-form textarea { border: 1px solid var(--tx-rule); border-radius: 8px; padding: 6px 9px; font: 13px var(--font-sans); background: var(--tx-surface); }
+  .mc-me { padding: 18px 20px; margin-bottom: 12px; }
+  .mc-me h3 { margin: 0 0 10px; font-size: 15.5px; color: var(--navy); }
+  .mc-me .mc-kv { padding-top: 0; }
+  .mc-mod { border-top: 1px solid var(--tx-rule-soft); }
+  .mc-mod:first-child { border-top: 0; }
+  .mc-mod-line { display: grid; grid-template-columns: 1fr 150px 90px 120px 26px; gap: 12px; align-items: center; padding: 13px 18px; cursor: pointer; }
+  .mc-mod-line:hover { background: var(--tx-subtle); }
+  .mc-mod .mc-detail { padding-top: 10px; }
+  .mc-caps { width: 100%; border-collapse: collapse; font-size: 12.5px; margin-top: 4px; }
+  .mc-caps th { text-align: left; font-size: 10.5px; letter-spacing: .05em; text-transform: uppercase; color: var(--tx-muted); font-weight: 600; padding: 8px 8px; border-bottom: 1px solid var(--tx-rule-soft); }
+  .mc-caps td { padding: 8px; border-top: 1px solid var(--tx-rule-soft); vertical-align: top; }
+  .mc-caps td.c { text-align: center; color: var(--tx-ok); font-weight: 700; }
+  .mc-caps td.c.no { color: var(--tx-rule); font-weight: 400; }
+  .mc-hz { margin-top: 14px; }
+  .mc-hz h4 { margin: 10px 0 4px; font-size: 12px; letter-spacing: .06em; text-transform: uppercase; color: var(--tx-muted); }
+  .mc-form { display: none; padding: 16px 18px; margin: 10px 0 16px; }
+  .mc-form.is-open { display: block; }
+  .mc-form .g { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; }
+  .mc-form label { font-size: 11px; font-weight: 600; color: var(--tx-muted); letter-spacing: .04em; text-transform: uppercase; display: flex; flex-direction: column; gap: 4px; }
+  .mc-form textarea { min-height: 54px; resize: vertical; }
+  .mc-note { padding: 10px 14px; border-radius: 8px; background: var(--tx-info-bg); color: var(--tx-info); font-size: 13px; margin-top: 14px; }
+  .mc-warn { background: var(--tx-warn-bg); color: var(--tx-warn); }
+  .mc-unlock { display: grid; gap: 8px; margin-top: 14px; }
+  .mc-unlock a { color: var(--navy); font-weight: 600; }
+  @media (max-width: 820px) {
+    .mc-wrap { padding: 20px 16px 40px; }
+    .mc-line, .mc-mod-line { grid-template-columns: 1fr 26px; }
+    .mc-line > :nth-child(2), .mc-line > :nth-child(3), .mc-line > :nth-child(4), .mc-mod-line > :nth-child(2), .mc-mod-line > :nth-child(3), .mc-mod-line > :nth-child(4) { display: none; }
+    .mc-kv { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body class="tx-body">
+<div class="tx-shell" id="tx-shell">
+  <main class="tx-main" id="tx-main">
+    <div class="tx-top">
+      <button class="tx-menu-btn" id="tx-menu-btn" aria-label="Open navigation"></button>
+      <div class="mc-tabs" role="tablist" id="mc-tabs">
+        <button class="mc-tab" data-ws="operations" role="tab">Operations</button>
+        <button class="mc-tab" data-ws="platform" role="tab">Platform Buildout</button>
+        <button class="mc-tab" data-ws="mine" role="tab">Needs my action</button>
+      </div>
+      <div style="margin-left:auto;display:flex;gap:14px;align-items:center">
+        <span class="tx-muted" style="font-size:12px" id="mc-stamp"></span>
+        <button id="mc-refresh" type="button" class="tx-btn tx-btn--sec" style="height:32px"></button>
+      </div>
+    </div>
+    <div class="mc-wrap">
+      <div class="mc-head">
+        <span class="tx-lbl" id="mc-lbl">Mission Control</span>
+        <h1 id="mc-headline">Loading…</h1>
+        <p id="mc-intro"></p>
+        <div class="mc-counts" id="mc-counts"></div>
+      </div>
+      <div id="mc-banner"></div>
+      <div id="mc-unlock"></div>
+      <div class="mc-filters" id="mc-filters"></div>
+      <div class="tx-card mc-form" id="mc-form"></div>
+      <div id="mc-body"><div class="tx-card" style="padding:18px"><div class="tx-skel" style="height:14px;width:60%"></div></div></div>
+    </div>
+  </main>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="/app/tx-icons.js"></script>
+<script src="/app/tx.js"></script>
+<script>if (TX.fixture) document.write('<script src="/app/fixtures/mission-control.fixture.js"><\/script>');</script>
+<script>
+(async function () {
+  'use strict';
+  var esc = TX.esc, icon = TX.icon, $ = function (id) { return document.getElementById(id); };
+  var user = await TX.boot({ active: 'projects' });
+  if (!user) return;
+  var isAdmin = user.role === 'admin';
+  var params = new URLSearchParams(location.search);
+  var ws = params.get('ws') || 'operations';
+  if (!isAdmin) ws = 'operations';
+  var data = null, filters = {}, openKeys = {};
+
+  var STATE = { needs_action: ['Needs your action', 'bad'], blocked: ['Blocked', 'warn'], waiting: ['Waiting', 'info'], in_progress: ['In progress', 'info'], open: ['Open', 'mute'], done: ['Done', 'ok'] };
+  var MSTATE = { 'COMPLETE': 'ok', 'VERIFIED': 'ok', 'DEPLOYED': 'info', 'MERGED': 'info', 'IN PROGRESS': 'info', 'NEEDS VERIFICATION': 'warn', 'BLOCKED': 'bad', 'NOT STARTED': 'mute' };
+  function pill(text, tone) { return '<span class="tx-pill tx-pill--' + tone + '">' + esc(text) + '</span>'; }
+  function stateOf(n) { var s = n.effective_state || n.state || 'open'; return STATE[s] || [s, 'mute']; }
+  function fmtDate(iso) { if (!iso) return ''; var d = new Date(iso); return isNaN(d) ? '' : d.toLocaleDateString('en-US', { timeZone: 'America/Chicago', month: 'short', day: 'numeric' }); }
+  function byKey(k) { return (data.nodes || []).filter(function (n) { return n.key === k; })[0]; }
+  function titles(keys) { return (keys || []).map(byKey).filter(Boolean).map(function (n) { return n.title; }); }
+
+  document.querySelectorAll('.mc-tab').forEach(function (b) {
+    if (!isAdmin && b.dataset.ws !== 'operations') b.style.display = 'none';
+    b.addEventListener('click', function () { ws = b.dataset.ws; filters = {}; history.replaceState(null, '', '?ws=' + ws); load(false); });
+  });
+  $('mc-refresh').innerHTML = icon('refresh', { size: 14 }) + '<span>' + (isAdmin ? 'Re-check' : 'Refresh') + '</span>';
+  $('mc-refresh').title = isAdmin ? 'Re-runs the close checklist (as Kat) and re-reads every source' : 'Re-read every source';
+  $('mc-refresh').addEventListener('click', function () { load(isAdmin); });
+
+  async function load(refresh) {
+    document.querySelectorAll('.mc-tab').forEach(function (b) { b.classList.toggle('is-on', b.dataset.ws === ws); });
+    $('mc-headline').textContent = refresh ? 'Re-checking every source…' : 'Loading…';
+    var r = await TX.get('/api/mission-control?workspace=' + ws + (refresh ? '&refresh=1' : ''));
+    if (!r.ok) {
+      $('mc-headline').textContent = r.status === 403 ? 'This workspace is limited to the owner.' : 'Mission Control could not load.';
+      $('mc-body').innerHTML = '<div class="tx-err">' + icon('alert', { size: 16 }) + '<span>' + esc(r.error) + '. Nothing is assumed; refresh to try again.</span></div>';
+      return;
+    }
+    data = r.data;
+    $('mc-stamp').textContent = 'Read ' + new Date(data.generated_at).toLocaleTimeString('en-US', { timeZone: 'America/Chicago', hour: 'numeric', minute: '2-digit' });
+    render();
+  }
+
+  function visible() {
+    return (data.nodes || []).filter(function (n) {
+      if (ws === 'platform' && n.kind === 'module') return false;
+      if (filters.community && (!n.community || n.community.name !== filters.community)) return false;
+      if (filters.owner && n.owner !== filters.owner) return false;
+      if (filters.state && (n.effective_state || n.state) !== filters.state) return false;
+      if (filters.priority && n.priority !== filters.priority) return false;
+      if (filters.module && n.module_key !== filters.module) return false;
+      if (filters.horizon && (n.horizon || '') !== filters.horizon) return false;
+      if (filters.kind && n.kind !== filters.kind) return false;
+      if (!filters.showDone && (n.effective_state || n.state) === 'done') return false;
+      return true;
+    });
+  }
+
+  function counts(nodes) {
+    var c = { needs: 0, blocked: 0, overdue: 0, progress: 0, waiting: 0, done: 0 };
+    (data.nodes || []).forEach(function (n) {
+      if (n.kind !== 'task' && n.kind !== 'deliverable') return;
+      var s = n.effective_state || n.state;
+      if (s === 'needs_action') c.needs++; else if (s === 'blocked') c.blocked++; else if (s === 'in_progress' || s === 'open') c.progress++; else if (s === 'waiting') c.waiting++; else if (s === 'done') c.done++;
+      if (n.overdue) c.overdue++;
+    });
+    return c;
+  }
+
+  function render() {
+    var nodes = data.nodes || [];
+    var intro = { operations: 'What is holding up Bedrock’s deliverables, who owns the next step, and what each action unlocks. Items come from the authoritative workflows: they clear when the workflow does.',
+      platform: 'TrustEd’s modules, what each needs before it is operational, and the work to get there. Status comes from code, GitHub and production evidence; priority is yours.',
+      mine: 'Only what needs your own action, across Operations and Platform, ordered by what it unlocks.' }[ws];
+    $('mc-intro').textContent = intro;
+    $('mc-lbl').textContent = { operations: 'Mission Control · Operations', platform: 'Mission Control · Platform Buildout', mine: 'Mission Control · Needs my action' }[ws];
+    var c = counts(nodes);
+    var tasks = nodes.filter(function (n) { return n.kind === 'task' && n.effective_state !== 'done'; });
+    $('mc-headline').textContent = ws === 'mine' ? (tasks.length ? tasks.length + ' item' + (tasks.length === 1 ? '' : 's') + ' need' + (tasks.length === 1 ? 's' : '') + ' you.' : 'Nothing needs your action.')
+      : ws === 'platform' ? (data.modules || []).length + ' modules · ' + (data.modules || []).filter(function (m) { return m.state === 'VERIFIED' || m.state === 'COMPLETE'; }).length + ' verified in production'
+      : (c.needs + c.blocked ? c.needs + ' need action · ' + c.blocked + ' blocked' : 'Nothing is blocked.');
+    $('mc-counts').innerHTML = ws === 'platform' ? '' : [['Needs action', c.needs, c.needs], ['Blocked', c.blocked, c.blocked], ['Overdue', c.overdue, c.overdue], ['In progress', c.progress], ['Waiting on others', c.waiting], ['Done', c.done]].map(function (x) {
+      return '<div class="mc-count' + (x[2] ? ' is-hot' : '') + '"><b>' + x[1] + '</b><span>' + x[0] + '</span></div>'; }).join('');
+    var banners = '';
+    if (!data.migration_513) banners += '<div class="mc-note mc-warn">Adding and editing tasks, dependencies and Now / Next / Later need migration 513 (Documents → Migration status → Review → Approve &amp; Apply). Everything read from the workflows works now.</div>';
+    (data.problems || []).forEach(function (p) { banners += '<div class="mc-note mc-warn">' + esc(p.source) + ' could not be read: ' + esc(p.message) + '. Its items are not shown; nothing is assumed.</div>'; });
+    if (ws === 'platform' && data.github) banners += '<div class="tx-muted" style="font-size:12px;margin-top:12px">GitHub snapshot ' + esc(fmtDate(data.github.generated_at)) + ' · running build ' + esc(String(data.deployed_commit || 'unknown').slice(0, 7)) + '</div>';
+    $('mc-banner').innerHTML = banners;
+
+    // What unlocks the most (operations / mine).
+    var top = tasks.filter(function (n) { return n.impact && n.impact.score > 0; }).slice(0, 3);
+    $('mc-unlock').innerHTML = ws !== 'platform' && top.length ? '<div class="tx-section-h"><h2>Unlocks the most</h2><span class="tx-muted" style="font-size:13px">Ranked by the open work each one holds up</span></div><div class="tx-card" style="padding:14px 18px"><div class="mc-unlock">' +
+      top.map(function (n, i) { return '<div>' + (i + 1) + '. <a href="#" data-open="' + esc(n.key) + '">' + esc(n.title) + '</a> <span class="tx-muted">· ' + esc(n.owner || '') + ' · unlocks ' + esc(n.impact.deliverables.map(function (d) { return d.title; }).join('; ') || (n.impact.count + ' items')) + '</span></div>'; }).join('') + '</div></div>' : '';
+
+    renderFilters(nodes);
+    renderForm();
+    if (ws === 'platform') renderPlatform(); else if (ws === 'mine') renderMine(); else renderOps();
+    document.querySelectorAll('[data-open]').forEach(function (a) { a.addEventListener('click', function (e) { e.preventDefault(); openKeys[a.dataset.open] = true; render(); var el = document.querySelector('[data-key="' + a.dataset.open + '"]'); if (el) el.scrollIntoView({ block: 'center' }); }); });
+  }
+
+  function options(list, cur, label) { return '<option value="">' + label + '</option>' + list.map(function (v) { return '<option' + (v === cur ? ' selected' : '') + '>' + esc(v) + '</option>'; }).join(''); }
+  function uniq(a) { return a.filter(function (v, i) { return v && a.indexOf(v) === i; }).sort(); }
+  function renderFilters(nodes) {
+    var f = [];
+    if (ws !== 'platform') f.push('<select data-f="community">' + options(uniq(nodes.map(function (n) { return n.community && n.community.name; })), filters.community, 'All communities') + '</select>');
+    f.push('<select data-f="owner">' + options(uniq(nodes.map(function (n) { return n.owner; })), filters.owner, 'All owners') + '</select>');
+    f.push('<select data-f="state"><option value="">All statuses</option>' + Object.keys(STATE).map(function (k) { return '<option value="' + k + '"' + (filters.state === k ? ' selected' : '') + '>' + STATE[k][0] + '</option>'; }).join('') + '</select>');
+    f.push('<select data-f="priority">' + options(['critical', 'high', 'normal', 'low'], filters.priority, 'All priorities') + '</select>');
+    if (ws === 'platform') {
+      f.push('<select data-f="module">' + options((data.modules || []).map(function (m) { return m.key; }), filters.module, 'All modules') + '</select>');
+      f.push('<select data-f="horizon">' + options(['now', 'next', 'later'], filters.horizon, 'Now / Next / Later') + '</select>');
+    }
+    f.push('<label class="tx-muted" style="font-size:12.5px;display:flex;gap:5px;align-items:center"><input type="checkbox" data-f="showDone"' + (filters.showDone ? ' checked' : '') + '>Show done</label>');
+    if (data.migration_513 && (ws === 'operations' || isAdmin)) f.push('<button class="tx-btn tx-btn--sec" style="height:32px;margin-left:auto" id="mc-add">+ ' + (ws === 'platform' ? 'Add platform work' : 'Add task') + '</button>');
+    $('mc-filters').innerHTML = f.join('');
+    $('mc-filters').querySelectorAll('[data-f]').forEach(function (el) {
+      el.addEventListener('change', function () { filters[el.dataset.f] = el.type === 'checkbox' ? el.checked : el.value; render(); });
+    });
+    var add = $('mc-add'); if (add) add.addEventListener('click', function () { $('mc-form').classList.toggle('is-open'); });
+  }
+
+  function renderForm() {
+    if (!data.migration_513) { $('mc-form').innerHTML = ''; return; }
+    var blockable = (data.nodes || []).filter(function (n) { return n.kind === 'deliverable' || n.kind === 'module'; });
+    var plat = ws === 'platform';
+    $('mc-form').innerHTML = '<div class="g">' +
+      '<label>What needs to be done<input id="f-title" maxlength="300"></label>' +
+      '<label>Owner<input id="f-owner" value="' + esc(plat ? 'Engineering' : '') + '"></label>' +
+      (plat ? '<label>Kind<select id="f-kind">' + ['feature', 'bug', 'improvement', 'task', 'capability'].map(function (k) { return '<option>' + k + '</option>'; }).join('') + '</select></label>' +
+        '<label>Module<select id="f-module">' + (data.modules || []).map(function (m) { return '<option value="' + esc(m.key) + '">' + esc(m.name) + '</option>'; }).join('') + '</select></label>' +
+        '<label>Priority<select id="f-horizon"><option>now</option><option selected>next</option><option>later</option></select></label>' : '') +
+      '<label>Due<input id="f-due" type="date"></label>' +
+      '<label>Blocks<select id="f-blocks"><option value="">Nothing specific</option>' + blockable.map(function (n) { return '<option value="' + esc(n.key) + '">' + esc(n.title) + '</option>'; }).join('') + '</select></label>' +
+      (plat ? '<label>GitHub issue #<input id="f-issue" placeholder="e.g. 99"></label><label>GitHub PR #<input id="f-pr" placeholder="e.g. 140"></label>' : '') +
+      '</div><div class="g" style="margin-top:10px">' +
+      '<label>Why it is needed<textarea id="f-why"></textarea></label>' +
+      '<label>' + (plat ? 'Acceptance criteria / evidence of completion' : 'Evidence of completion') + '<textarea id="f-evidence"></textarea></label>' +
+      '<label>What happens after<textarea id="f-next"></textarea></label></div>' +
+      '<div class="mc-actions"><button class="tx-btn tx-btn--pri" id="f-save">Save</button><span class="tx-muted" id="f-msg" style="font-size:12.5px"></span></div>';
+    $('f-save').addEventListener('click', async function () {
+      var body = { workspace: plat ? 'platform' : 'operations', title: $('f-title').value, assigned_to: $('f-owner').value || null, why: $('f-why').value || null,
+        evidence_required: $('f-evidence').value || null, next_step: $('f-next').value || null, sla_due_at: $('f-due').value ? $('f-due').value + 'T22:00:00Z' : null,
+        blocks: $('f-blocks').value ? [$('f-blocks').value] : [] };
+      if (plat) {
+        body.item_type = $('f-kind').value; body.module_key = $('f-module').value; body.horizon = $('f-horizon').value;
+        body.links = []; if ($('f-issue').value) body.links.push({ kind: 'issue', ref: $('f-issue').value.replace('#', '') }); if ($('f-pr').value) body.links.push({ kind: 'pr', ref: $('f-pr').value.replace('#', '') });
+        if (!body.blocks.length) body.blocks = ['module:' + body.module_key];
+      }
+      if (!body.title.trim()) { $('f-msg').textContent = 'Say what needs to be done.'; return; }
+      var r = await TX.post('/api/mission-control/items', body);
+      $('f-msg').textContent = r.ok ? 'Saved.' : 'Not saved: ' + r.error;
+      if (r.ok) { $('mc-form').classList.remove('is-open'); load(false); }
+    });
+  }
+
+  function detail(n) {
+    var kv = [];
+    if (n.why) kv.push(['Why', esc(n.why)]);
+    var down = titles(n.downstream);
+    if (down.length) kv.push(['Blocking', '<ul>' + down.map(function (t) { return '<li>' + esc(t) + '</li>'; }).join('') + '</ul>']);
+    var up = titles(n.upstream);
+    if (up.length) kv.push(['Waiting on', '<ul>' + up.map(function (t) { return '<li>' + esc(t) + '</li>'; }).join('') + '</ul>']);
+    if (n.critical_path && n.critical_path.length) kv.push(['Critical path', esc(titles(n.critical_path).join(' → ')) + ' → ' + esc(n.title)]);
+    if (n.next) kv.push(['Next', esc(n.next)]);
+    if (n.evidence) kv.push(['Done when', esc(n.evidence)]);
+    if (n.requested_by) kv.push(['Requested by', esc(n.requested_by)]);
+    if (n.detail && n.detail.length) kv.push(['Details', '<ul>' + n.detail.map(function (d) { return '<li>' + esc(d) + '</li>'; }).join('') + '</ul>']);
+    if (n.links && n.links.length) kv.push(['GitHub', n.links.map(function (l) { return '<a class="tx-src" target="_blank" rel="noopener" href="' + esc(l.url || '#') + '">' + esc(l.kind + ' #' + (l.ref || '')) + '</a>' + (l.github_state ? ' ' + esc(l.github_state) : ''); }).join(' · ')]);
+    if (n.resolution) kv.push(['Decided', esc((n.resolution.note || '') + ' (' + fmtDate(n.resolution.at) + ')')]);
+    if (n.checked_at) kv.push(['Checked', esc(fmtDate(n.checked_at)) + ' (close checklist run)']);
+    if (n.source) kv.push(['Source', esc(n.source.system) + (n.source.control ? ' · ' + esc(n.source.control) : '')]);
+    var act = '<div class="mc-actions">' + (n.action && n.action.url ? '<a class="tx-btn tx-btn--pri" href="' + esc(n.action.url) + '"' + (/^\/api\//.test(n.action.url) ? ' target="_blank" rel="noopener"' : '') + '>' + esc(n.action.label || 'Take action') + '</a>' : '');
+    if (n.editable && data.migration_513 !== false) {
+      var wid = n.source.ref;
+      act += '<select data-edit="status" data-id="' + esc(wid) + '">' + [['new', 'Open'], ['in_progress', 'In progress'], ['waiting', 'Waiting'], ['done', 'Done'], ['dismissed', 'Dismissed']].map(function (o) { return '<option value="' + o[0] + '"' + ((n.effective_state === 'done' ? 'done' : n.state === 'in_progress' ? 'in_progress' : n.state === 'waiting' ? 'waiting' : 'new') === o[0] ? ' selected' : '') + '>' + o[1] + '</option>'; }).join('') + '</select>';
+      act += '<input data-edit="assigned_to" data-id="' + esc(wid) + '" value="' + esc(n.owner || '') + '" title="Owner" style="width:120px">';
+      if (n.workspace === 'platform') act += '<select data-edit="horizon" data-id="' + esc(wid) + '">' + ['now', 'next', 'later'].map(function (h) { return '<option' + (n.horizon === h ? ' selected' : '') + '>' + h + '</option>'; }).join('') + '</select>';
+      act += '<input type="date" data-edit="sla_due_at" data-id="' + esc(wid) + '" value="' + esc(n.due ? String(n.due).slice(0, 10) : '') + '" title="Due">';
+      act += '<a href="#" class="tx-src" data-events="' + esc(wid) + '">History</a>';
+    }
+    if (n.decidable && n.effective_state !== 'done' && isAdmin) act += '<button class="tx-btn tx-btn--sec" data-decide="' + esc(n.key) + '">Record decision</button>';
+    act += '</div><div data-hist="' + esc(n.source && n.source.ref || '') + '"></div>';
+    return '<dl class="mc-kv">' + kv.map(function (x) { return '<dt>' + x[0] + '</dt><dd>' + x[1] + '</dd>'; }).join('') + '</dl>' + act;
+  }
+
+  function row(n) {
+    var s = stateOf(n);
+    var sub = [n.community && n.community.name, n.requested_by ? 'requested by ' + n.requested_by : null, n.due ? 'due ' + fmtDate(n.due) + (n.overdue ? ' (overdue)' : '') : null, n.blocking === false ? 'not blocking' : null, n.horizon ? n.horizon.toUpperCase() : null, n.platform_kind, n.dev_status].filter(Boolean).join(' · ');
+    return '<div class="mc-row' + (openKeys[n.key] ? ' is-open' : '') + '" data-key="' + esc(n.key) + '"><div class="mc-line" data-toggle="' + esc(n.key) + '">' +
+      '<div><div class="mc-title">' + (n.kind === 'deliverable' ? icon('check', { size: 13, color: 'var(--tx-gold-ink)' }) + ' ' : '') + esc(n.title) + '</div><div class="mc-sub">' + esc(sub) + '</div></div>' +
+      '<div class="mc-own">' + esc(n.owner || '—') + '</div><div>' + pill(n.status_label && n.kind === 'deliverable' ? s[0] : s[0], s[1]) + '</div>' +
+      '<div class="mc-imp">' + (n.impact && n.impact.score ? 'unlocks ' + n.impact.count : '') + '</div><div>' + icon('chevronDown', { size: 16 }) + '</div></div>' +
+      '<div class="mc-detail">' + detail(n) + '</div></div>';
+  }
+
+  function wire() {
+    document.querySelectorAll('[data-toggle]').forEach(function (el) { el.addEventListener('click', function () { var k = el.dataset.toggle; openKeys[k] = !openKeys[k]; el.parentNode.classList.toggle('is-open'); }); });
+    document.querySelectorAll('[data-edit]').forEach(function (el) {
+      el.addEventListener('change', async function () {
+        var b = {}; b[el.dataset.edit] = el.dataset.edit === 'sla_due_at' ? (el.value ? el.value + 'T22:00:00Z' : null) : el.value;
+        var r = await TX.patch('/api/mission-control/items/' + el.dataset.id, b);
+        if (!r.ok) alert('Not saved: ' + r.error); else load(false);
+      });
+    });
+    document.querySelectorAll('[data-events]').forEach(function (a) {
+      a.addEventListener('click', async function (e) {
+        e.preventDefault();
+        var r = await TX.get('/api/mission-control/items/' + a.dataset.events + '/events');
+        var box = document.querySelector('[data-hist="' + a.dataset.events + '"]');
+        box.innerHTML = r.ok && r.data.events.length ? '<ul style="font-size:12.5px;margin:10px 0 0;padding-left:18px">' + r.data.events.map(function (ev) { return '<li>' + esc(fmtDate(ev.created_at)) + ' · ' + esc(ev.event.replace(/_/g, ' ')) + ' · ' + esc(ev.actor) + (ev.detail && ev.detail.changed ? ' · ' + esc(ev.detail.changed.join(', ')) : '') + '</li>'; }).join('') + '</ul>' : '<div class="tx-muted" style="font-size:12.5px;margin-top:8px">No recorded changes yet.</div>';
+      });
+    });
+    document.querySelectorAll('[data-decide]').forEach(function (b) {
+      b.addEventListener('click', async function () {
+        var n = byKey(b.dataset.decide); var note = prompt('Record the decision for:\n' + n.title + '\n\nWhat was decided?');
+        if (!note) return;
+        var r = await TX.post('/api/mission-control/decide', { key: n.key, title: n.title, note: note });
+        if (!r.ok) alert('Not recorded: ' + r.error); else load(false);
+      });
+    });
+  }
+  function group(title, list, note) {
+    if (!list.length) return '';
+    return '<div class="tx-section-h"><h2>' + esc(title) + '</h2><span class="tx-muted" style="font-size:13px">' + esc(note || (list.length + ' item' + (list.length === 1 ? '' : 's'))) + '</span></div><div class="tx-card mc-list">' + list.map(row).join('') + '</div>';
+  }
+
+  function renderOps() {
+    var v = visible();
+    var deliverables = v.filter(function (n) { return n.kind === 'deliverable'; });
+    var tasks = v.filter(function (n) { return n.kind === 'task'; });
+    var blockers = tasks.filter(function (n) { return n.blocking !== false && (n.effective_state !== 'done'); });
+    var other = tasks.filter(function (n) { return n.blocking === false || n.effective_state === 'done'; });
+    $('mc-body').innerHTML = group('Deliverables', deliverables, 'Expand to see the critical path and every blocker') +
+      group('What is holding them up', blockers, 'Highest impact first') + group('Other open work', other, 'Pending, not holding up a deliverable') +
+      (v.length ? '' : '<div class="tx-card" style="padding:18px">Nothing matches these filters.</div>');
+    wire();
+  }
+
+  function renderMine() {
+    var v = visible().filter(function (n) { return n.kind === 'task'; });
+    $('mc-body').innerHTML = v.length ? v.map(function (n) {
+      var down = (n.impact && n.impact.deliverables || []).map(function (d) { return d.title; });
+      return '<div class="tx-card mc-me" data-key="' + esc(n.key) + '"><h3>' + esc(n.title) + '</h3><dl class="mc-kv">' +
+        '<dt>Action required</dt><dd>' + esc((n.action && n.action.label) || 'Decide') + (n.community ? ' · ' + esc(n.community.name) : '') + '</dd>' +
+        '<dt>Why</dt><dd>' + esc(n.why || '') + '</dd>' +
+        '<dt>Blocking</dt><dd>' + (down.length ? esc(down.join('; ')) : (n.blocking === false ? 'Nothing (not a blocker)' : esc(titles(n.downstream).join('; ') || 'Nothing recorded'))) + '</dd>' +
+        '<dt>Impact</dt><dd>' + (n.impact && n.impact.score ? 'Delaying holds up ' + n.impact.count + ' open item' + (n.impact.count === 1 ? '' : 's') + (down.length ? ', including ' + esc(down[down.length - 1]) : '') + '.' : 'No downstream work waits on it.') + '</dd>' +
+        '<dt>Next</dt><dd>' + esc(n.next || '') + '</dd></dl>' +
+        '<div class="mc-actions">' + (n.action && n.action.url ? '<a class="tx-btn tx-btn--pri" href="' + esc(n.action.url) + '"' + (/^\/api\//.test(n.action.url) ? ' target="_blank" rel="noopener"' : '') + '>Take action</a>' : '') +
+        (n.decidable ? '<button class="tx-btn tx-btn--sec" data-decide="' + esc(n.key) + '">Record decision</button>' : '') + '<span class="tx-muted" style="font-size:12px">' + esc(n.workspace === 'platform' ? 'Platform' : 'Operations') + '</span></div></div>';
+    }).join('') : '<div class="tx-card" style="padding:18px">Nothing needs your action.</div>';
+    wire();
+  }
+
+  function renderPlatform() {
+    var items = visible().filter(function (n) { return n.kind === 'task'; });
+    var mods = (data.modules || []).filter(function (m) { return !filters.module || m.key === filters.module; });
+    function tick(b) { return '<td class="c' + (b ? '' : ' no') + '">' + (b ? '✓' : '–') + '</td>'; }
+    $('mc-body').innerHTML = '<div class="tx-section-h"><h2>Modules</h2><span class="tx-muted" style="font-size:13px">Coded · merged · deployed · tested · verified in production</span></div><div class="tx-card">' + mods.map(function (m) {
+      var mi = items.filter(function (n) { return n.module_key === m.key; });
+      var hz = ['now', 'next', 'later', ''].map(function (h) { var l = mi.filter(function (n) { return (n.horizon || '') === h; }); return l.length ? '<h4>' + (h ? h : 'Unprioritized') + '</h4><div class="tx-card mc-list">' + l.map(row).join('') + '</div>' : ''; }).join('');
+      return '<div class="mc-mod' + (openKeys['m:' + m.key] ? ' is-open' : '') + '"><div class="mc-mod-line" data-mod="' + esc(m.key) + '"><div><div class="mc-title">' + esc(m.name) + '</div><div class="mc-sub">' + esc(m.owner || '') + (m.blocks.length ? ' · unblocks ' + esc(m.blocks.join('; ')) : '') + '</div></div>' +
+        '<div>' + pill(m.state, MSTATE[m.state] || 'mute') + '</div><div class="mc-own">' + m.readiness.verified + ' / ' + m.readiness.required + ' verified</div><div class="mc-imp">' + (mi.filter(function (n) { return n.effective_state !== 'done'; }).length ? mi.filter(function (n) { return n.effective_state !== 'done'; }).length + ' open items' : '') + '</div><div>' + icon('chevronDown', { size: 16 }) + '</div></div>' +
+        '<div class="mc-detail"><table class="mc-caps"><thead><tr><th>Capability</th><th>State</th><th>Coded</th><th>Merged</th><th>Deployed</th><th>Tested</th><th>Verified</th><th>Evidence</th></tr></thead><tbody>' +
+        m.capabilities.map(function (c) {
+          var ev = c.checks.map(function (k) { return esc(k.label) + ': ' + esc(k.result.detail); }).join('<br>') || '<span class="tx-muted">No production check yet</span>';
+          var gh = c.issues.concat(c.prs).map(function (x) { return '<a class="tx-src" target="_blank" rel="noopener" href="' + esc(x.url || '#') + '">#' + x.number + '</a> ' + esc(x.state); }).join(' · ');
+          return '<tr><td>' + esc(c.name) + (c.required ? '' : ' <span class="tx-muted">(optional)</span>') + (gh ? '<div class="mc-sub">' + gh + '</div>' : '') + '</td><td>' + pill(c.state, MSTATE[c.state] || 'mute') + '</td>' + tick(c.coded) + tick(c.merged) + tick(c.deployed) + tick(c.tested) + tick(c.verified) + '<td>' + ev + '</td></tr>';
+        }).join('') + '</tbody></table>' +
+        (m.depends_on.length ? '<div class="mc-sub" style="margin-top:8px">Depends on: ' + esc(m.depends_on.join(', ')) + '</div>' : '') +
+        '<div class="mc-hz">' + (hz || '<div class="tx-muted" style="font-size:12.5px;margin-top:10px">No platform work items yet.</div>') + '</div>' +
+        (m.state === 'VERIFIED' && !m.accepted && isAdmin ? '<div class="mc-actions"><button class="tx-btn tx-btn--sec" data-accept="' + esc(m.key) + '">Accept module as complete</button></div>' : '') + '</div></div>';
+    }).join('') + '</div>';
+    document.querySelectorAll('[data-mod]').forEach(function (el) { el.addEventListener('click', function () { var k = 'm:' + el.dataset.mod; openKeys[k] = !openKeys[k]; el.parentNode.classList.toggle('is-open'); }); });
+    document.querySelectorAll('[data-accept]').forEach(function (b) {
+      b.addEventListener('click', async function () {
+        var note = prompt('Accept this module as operationally complete? Say what you checked.'); if (!note) return;
+        var r = await TX.post('/api/mission-control/decide', { key: 'module:' + b.dataset.accept + ':complete', title: 'Module accepted: ' + b.dataset.accept, note: note });
+        if (!r.ok) alert('Not recorded: ' + r.error); else load(false);
+      });
+    });
+    wire();
+  }
+
+  load(false);
+})();
+</script>
+</body>
+</html>

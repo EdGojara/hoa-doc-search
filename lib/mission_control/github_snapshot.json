@@ -1,0 +1,1136 @@
+{
+ "repo": "EdGojara/hoa-doc-search",
+ "generated_at": "2026-10-12T12:46:53.001Z",
+ "issues": {
+  "1": {
+   "title": "AI handoff channel test",
+   "state": "open",
+   "labels": [],
+   "url": "https://github.com/EdGojara/hoa-doc-search/issues/1",
+   "closed_at": null
+  },
+  "3": {
+   "title": "Emma Payables: reimbursement email should create a reviewable check workflow",
+   "state": "open",
+   "labels": [],
+   "url": "https://github.com/EdGojara/hoa-doc-search/issues/3",
+   "closed_at": null
+  },
+  "4": {
+   "title": "Email ingest is manual-only since 2026-07-07: all mailboxes lag between Pull inbox presses (Emma 9/22 → 9/24)",
+   "state": "open",
+   "labels": [],
+   "url": "https://github.com/EdGojara/hoa-doc-search/issues/4",
+   "closed_at": null
+  },
+  "5": {
+   "title": "LOPF print batch drops second violation/photos while Homeowner 360 PDF is correct",
+   "state": "open",
+   "labels": [],
+   "url": "https://github.com/EdGojara/hoa-doc-search/issues/5",
+   "closed_at": null
+  },
+  "6": {
+   "title": "Trusted visual system + app shell + Systems Console + public website redesign",
+   "state": "open",
+   "labels": [],
+   "url": "https://github.com/EdGojara/hoa-doc-search/issues/6",
+   "closed_at": null
+  },
+  "7": {
+   "title": "Authorization gaps found in #6 inventory: cron/today/work-items endpoints + client-side-only Systems Admin gate",
+   "state": "open",
+   "labels": [],
+   "url": "https://github.com/EdGojara/hoa-doc-search/issues/7",
+   "closed_at": null
+  },
+  "8": {
+   "title": "AI cost governance + background-job efficiency + Systems Console spend visibility",
+   "state": "open",
+   "labels": [],
+   "url": "https://github.com/EdGojara/hoa-doc-search/issues/8",
+   "closed_at": null
+  },
+  "9": {
+   "title": "Legal invoice review + homeowner bill-back matching",
+   "state": "open",
+   "labels": [],
+   "url": "https://github.com/EdGojara/hoa-doc-search/issues/9",
+   "closed_at": null
+  },
+  "10": {
+   "title": "Trusted Character Studio: master sheets, start frames + provider-neutral cinematic video",
+   "state": "open",
+   "labels": [],
+   "url": "https://github.com/EdGojara/hoa-doc-search/issues/10",
+   "closed_at": null
+  },
+  "11": {
+   "title": "Eaglewood July 2026 certified DRV letters missing from system — forensic investigation",
+   "state": "open",
+   "labels": [],
+   "url": "https://github.com/EdGojara/hoa-doc-search/issues/11",
+   "closed_at": null
+  },
+  "12": {
+   "title": "Sonnet 4.5 retirement — Trusted model dependency + migration impact audit",
+   "state": "open",
+   "labels": [],
+   "url": "https://github.com/EdGojara/hoa-doc-search/issues/12",
+   "closed_at": null
+  },
+  "13": {
+   "title": "Quail Ridge — Vantaca accounting & owner migration through 7/31/2026",
+   "state": "open",
+   "labels": [],
+   "url": "https://github.com/EdGojara/hoa-doc-search/issues/13",
+   "closed_at": null
+  },
+  "14": {
+   "title": "Investigate Emma invoice intake failures",
+   "state": "open",
+   "labels": [],
+   "url": "https://github.com/EdGojara/hoa-doc-search/issues/14",
+   "closed_at": null
+  },
+  "15": {
+   "title": "Trusted Onboarding Engine — system-agnostic community conversion pipeline",
+   "state": "open",
+   "labels": [],
+   "url": "https://github.com/EdGojara/hoa-doc-search/issues/15",
+   "closed_at": null
+  },
+  "16": {
+   "title": "Claire: investigate Trusted sources before escalating homeowner questions",
+   "state": "open",
+   "labels": [],
+   "url": "https://github.com/EdGojara/hoa-doc-search/issues/16",
+   "closed_at": null
+  },
+  "27": {
+   "title": "Amanda Operating Manager — event-driven wake/work/sleep orchestration",
+   "state": "open",
+   "labels": [],
+   "url": "https://github.com/EdGojara/hoa-doc-search/issues/27",
+   "closed_at": null
+  },
+  "29": {
+   "title": "TrustEd Operations Feed — human + AI collaboration surface",
+   "state": "open",
+   "labels": [],
+   "url": "https://github.com/EdGojara/hoa-doc-search/issues/29",
+   "closed_at": null
+  },
+  "32": {
+   "title": "Homeowner portal messages land in a table no staff screen reads",
+   "state": "open",
+   "labels": [],
+   "url": "https://github.com/EdGojara/hoa-doc-search/issues/32",
+   "closed_at": null
+  },
+  "33": {
+   "title": "Authorization / audit hardening for operational action routes (+ two control decisions)",
+   "state": "open",
+   "labels": [],
+   "url": "https://github.com/EdGojara/hoa-doc-search/issues/33",
+   "closed_at": null
+  },
+  "55": {
+   "title": "Bedrock owner-only accounting + tax catch-up",
+   "state": "open",
+   "labels": [],
+   "url": "https://github.com/EdGojara/hoa-doc-search/issues/55",
+   "closed_at": null
+  },
+  "94": {
+   "title": "Still Creek Ranch builder-to-homeowner transfer assessment proration",
+   "state": "closed",
+   "labels": [],
+   "url": "https://github.com/EdGojara/hoa-doc-search/issues/94",
+   "closed_at": "2026-10-09T03:12:20Z"
+  },
+  "96": {
+   "title": "Still Creek conversion: normalize Lennar builder assessments and carry deferred revenue correctly",
+   "state": "closed",
+   "labels": [],
+   "url": "https://github.com/EdGojara/hoa-doc-search/issues/96",
+   "closed_at": "2026-10-09T03:12:45Z"
+  },
+  "99": {
+   "title": "Canyon Gate (and every trustEd-GL community): permanent homeowner billing + receipt feed so the post-cutover gap cannot recur in October",
+   "state": "open",
+   "labels": [],
+   "url": "https://github.com/EdGojara/hoa-doc-search/issues/99",
+   "closed_at": null
+  },
+  "100": {
+   "title": "Tie-out (1300/2400) reads native tables only: reconcile to the migrated homeowner ledger, as of a date",
+   "state": "open",
+   "labels": [],
+   "url": "https://github.com/EdGojara/hoa-doc-search/issues/100",
+   "closed_at": null
+  },
+  "104": {
+   "title": "Emma / vendor-facing AP status must never describe held conversion opening AP as scheduled for payment",
+   "state": "open",
+   "labels": [],
+   "url": "https://github.com/EdGojara/hoa-doc-search/issues/104",
+   "closed_at": null
+  },
+  "119": {
+   "title": "Bank statement reader: false 'totals don't tie' warning, interest counted twice",
+   "state": "open",
+   "labels": [
+    "bug"
+   ],
+   "url": "https://github.com/EdGojara/hoa-doc-search/issues/119",
+   "closed_at": null
+  }
+ },
+ "pulls": {
+  "2": {
+   "title": "Add trial balance account drill-down",
+   "state": "merged",
+   "head": "feat/trial-balance-drilldown",
+   "url": "https://github.com/EdGojara/hoa-doc-search/pull/2",
+   "merged_at": "2026-09-28T17:34:25Z",
+   "merge_commit": "2b33eed7870183cb94ce8b27b536b27b33f33639"
+  },
+  "17": {
+   "title": "Canonical community-data model: proposed migration 487 (Issue #15)",
+   "state": "merged",
+   "head": "feat/community-data-canonical",
+   "url": "https://github.com/EdGojara/hoa-doc-search/pull/17",
+   "merged_at": "2026-10-03T20:05:00Z",
+   "merge_commit": "958872b35b8191f3b70fba0f649ccf158a798b70"
+  },
+  "18": {
+   "title": "Resolver: mail-to-property only for the lot; owner name never a mailing override (Issue #15)",
+   "state": "merged",
+   "head": "fix/qr-resolver-two-defects",
+   "url": "https://github.com/EdGojara/hoa-doc-search/pull/18",
+   "merged_at": "2026-10-03T20:41:07Z",
+   "merge_commit": "82e4d18f52f26cf01505b8979b51c39e684e32b6"
+  },
+  "19": {
+   "title": "Resolver: 7/31 cutover-archive resolutions (Issue #15)",
+   "state": "merged",
+   "head": "feat/qr-cutover-resolutions",
+   "url": "https://github.com/EdGojara/hoa-doc-search/pull/19",
+   "merged_at": "2026-10-03T20:53:35Z",
+   "merge_commit": "38976758fc4fa1a3554206f6a180c3754cb2d7a1"
+  },
+  "20": {
+   "title": "M5 conversion preflight + operator preflight stage (Issue #15)",
+   "state": "merged",
+   "head": "feat/onboarding-m5-preflight",
+   "url": "https://github.com/EdGojara/hoa-doc-search/pull/20",
+   "merged_at": "2026-10-03T23:53:19Z",
+   "merge_commit": "071949c71144fdc033f6a1a20e354b309956f0fc"
+  },
+  "21": {
+   "title": "M6 EXECUTE path: migration 488 (proposal) + owner-only execute (Issue #15)",
+   "state": "merged",
+   "head": "feat/onboarding-m6-execute",
+   "url": "https://github.com/EdGojara/hoa-doc-search/pull/21",
+   "merged_at": "2026-10-04T10:06:30Z",
+   "merge_commit": "2bf37837ab3f495eb8c8d986a5524258af57e73c"
+  },
+  "22": {
+   "title": "Onboarding UI: owner preflight approval panel (Issue #15)",
+   "state": "merged",
+   "head": "feat/onboarding-preflight-approve-ui",
+   "url": "https://github.com/EdGojara/hoa-doc-search/pull/22",
+   "merged_at": "2026-10-04T10:27:05Z",
+   "merge_commit": "01f21308299151c736324135c123d3b6de63c35c"
+  },
+  "23": {
+   "title": "Onboarding: approve preflight by hash (fix 413) (Issue #15)",
+   "state": "merged",
+   "head": "fix/onboarding-approve-by-hash",
+   "url": "https://github.com/EdGojara/hoa-doc-search/pull/23",
+   "merged_at": "2026-10-04T10:43:42Z",
+   "merge_commit": "4daa0ae4c71cc33da09aa893bcc32334d1f87140"
+  },
+  "24": {
+   "title": "Onboarding UI: owner Execute button (Issue #15)",
+   "state": "merged",
+   "head": "feat/onboarding-execute-button",
+   "url": "https://github.com/EdGojara/hoa-doc-search/pull/24",
+   "merged_at": "2026-10-04T11:24:28Z",
+   "merge_commit": "694ca4d0aaf6ca5b041bbd0d071e552948ed24b7"
+  },
+  "25": {
+   "title": "Onboarding post-proof stage + owner completion (Issue #15)",
+   "state": "merged",
+   "head": "feat/onboarding-post-proof",
+   "url": "https://github.com/EdGojara/hoa-doc-search/pull/25",
+   "merged_at": "2026-10-04T11:50:40Z",
+   "merge_commit": "7b66f1e419e7f7a646f0c707822d3c48b45ba484"
+  },
+  "26": {
+   "title": "Onboarding UI: hide stale banners on completed batches (Issue #15)",
+   "state": "merged",
+   "head": "fix/onboarding-complete-banners",
+   "url": "https://github.com/EdGojara/hoa-doc-search/pull/26",
+   "merged_at": "2026-10-04T11:58:20Z",
+   "merge_commit": "adf79bc2d56800d5cd2ced641e921c81ecf50f26"
+  },
+  "28": {
+   "title": "Amanda Operating Manager Phase 1: wake / preflight / objective state / sleep (Issue #27)",
+   "state": "merged",
+   "head": "feat/amanda-manager-phase1",
+   "url": "https://github.com/EdGojara/hoa-doc-search/pull/28",
+   "merged_at": "2026-10-04T16:00:03Z",
+   "merge_commit": "bec0e60de30db14032e67a923fbdf3411ca9eeb8"
+  },
+  "30": {
+   "title": "Manager wake: capture failures through the caller's client (Issue #27 follow-up)",
+   "state": "merged",
+   "head": "fix/manager-wake-capture-client",
+   "url": "https://github.com/EdGojara/hoa-doc-search/pull/30",
+   "merged_at": "2026-10-04T16:06:30Z",
+   "merge_commit": "976f551eb3d1c8d8f1644ac6d30e47228dc2b1bc"
+  },
+  "31": {
+   "title": "Tests never reach production: guard on every check + lint (Issue #27 follow-up)",
+   "state": "open",
+   "head": "fix/tests-no-prod-network",
+   "url": "https://github.com/EdGojara/hoa-doc-search/pull/31",
+   "merged_at": null,
+   "merge_commit": "a017c7bfebe79416d7030c0507e248a786f17748"
+  },
+  "34": {
+   "title": "Voice sockets + Twilio webhooks must authenticate (Issue #29)",
+   "state": "open",
+   "head": "fix/ws-twilio-auth",
+   "url": "https://github.com/EdGojara/hoa-doc-search/pull/34",
+   "merged_at": null,
+   "merge_commit": "99ef74cd181c93c32d880163eba98a7ba2d3a03b"
+  },
+  "35": {
+   "title": "Operations Feed Phase 1: read-only feed on Today (Issue #29)",
+   "state": "merged",
+   "head": "feat/ops-feed-phase1",
+   "url": "https://github.com/EdGojara/hoa-doc-search/pull/35",
+   "merged_at": "2026-10-04T16:54:08Z",
+   "merge_commit": "dda77107cb8ff8356d6bf4d12d862d566aaace29"
+  },
+  "36": {
+   "title": "Operations Feed refinement: three lanes + exact Take action links (Issue #29)",
+   "state": "merged",
+   "head": "feat/ops-feed-lanes",
+   "url": "https://github.com/EdGojara/hoa-doc-search/pull/36",
+   "merged_at": "2026-10-04T17:40:14Z",
+   "merge_commit": "91d189af3d7bd57fd90caaebc26d8d13691d9aaa"
+  },
+  "37": {
+   "title": "Payables exception deep link: keep the highlighted row in view (Issue #29 follow-up)",
+   "state": "merged",
+   "head": "fix/ap-exception-deeplink-scroll",
+   "url": "https://github.com/EdGojara/hoa-doc-search/pull/37",
+   "merged_at": "2026-10-04T17:55:53Z",
+   "merge_commit": "a6430199b91e33994961c66bdd8fae285c59a6ea"
+  },
+  "38": {
+   "title": "Amanda request contract, Phase 2A: one contract + one in-app door, proposals only (Issue #29)",
+   "state": "merged",
+   "head": "feat/amanda-request-2a",
+   "url": "https://github.com/EdGojara/hoa-doc-search/pull/38",
+   "merged_at": "2026-10-04T18:30:56Z",
+   "merge_commit": "8dc374dcd3da52ccd2a45fc769e51fc4f7f69ba2"
+  },
+  "39": {
+   "title": "Amanda request hardening: honest proposal language + exact status without a model (Issue #29)",
+   "state": "merged",
+   "head": "feat/amanda-2a-hardening",
+   "url": "https://github.com/EdGojara/hoa-doc-search/pull/39",
+   "merged_at": "2026-10-04T18:47:20Z",
+   "merge_commit": "a49a406a852a244c1998d50f246acd3447639aa9"
+  },
+  "40": {
+   "title": "Amanda Phase 2B: amanda@ staff email door uses the shared request contract (Issue #29) — DO NOT MERGE",
+   "state": "merged",
+   "head": "feat/amanda-2b-email",
+   "url": "https://github.com/EdGojara/hoa-doc-search/pull/40",
+   "merged_at": "2026-10-04T19:07:59Z",
+   "merge_commit": "0dea68ce0675c027652e368a7beaa51114b53bcc"
+  },
+  "41": {
+   "title": "Amanda email door: route on request text, not the signature footer (Issue #29) — DO NOT MERGE",
+   "state": "merged",
+   "head": "fix/amanda-2b-footer",
+   "url": "https://github.com/EdGojara/hoa-doc-search/pull/41",
+   "merged_at": "2026-10-04T19:23:51Z",
+   "merge_commit": "a7c07ad7b8b56c542ef883771754896e72a543dc"
+  },
+  "42": {
+   "title": "Amanda wake W1: Amanda-only 60s mailbox poll, off by default (Issue #29) — DO NOT MERGE",
+   "state": "closed",
+   "head": "feat/amanda-wake-w1",
+   "url": "https://github.com/EdGojara/hoa-doc-search/pull/42",
+   "merged_at": null,
+   "merge_commit": "07360ee7c8f15e05c112c663c4b4655d57726585"
+  },
+  "43": {
+   "title": "TrustEd Push Email: Graph change notifications wake AI mailboxes, Amanda first (Issue #29) — DO NOT MERGE",
+   "state": "merged",
+   "head": "feat/amanda-push",
+   "url": "https://github.com/EdGojara/hoa-doc-search/pull/43",
+   "merged_at": "2026-10-04T20:20:08Z",
+   "merge_commit": "279f10ebf6a92d6d24b515f5f9fa70f6e4ca8ec5"
+  },
+  "44": {
+   "title": "Graph push: fix router dispatch overwrite that hung /api/graph (Issue #29)",
+   "state": "merged",
+   "head": "fix/graph-push-router",
+   "url": "https://github.com/EdGojara/hoa-doc-search/pull/44",
+   "merged_at": "2026-10-04T20:30:59Z",
+   "merge_commit": "bb4941b977d45c07fccbfd327a8220c70976c681"
+  },
+  "45": {
+   "title": "Amanda repo portrait = canonical face v2; old face kept for old-face video posters (Issue #29)",
+   "state": "merged",
+   "head": "fix/amanda-portrait-v2",
+   "url": "https://github.com/EdGojara/hoa-doc-search/pull/45",
+   "merged_at": "2026-10-04T21:20:17Z",
+   "merge_commit": "3c9e2f04de10c23b03194dcbba4e89bb6bce28d0"
+  },
+  "46": {
+   "title": "Email send: never createReply across mailboxes; fix 'mailbox move' misread (Issue #29) — DO NOT MERGE",
+   "state": "merged",
+   "head": "fix/cross-mailbox-reply",
+   "url": "https://github.com/EdGojara/hoa-doc-search/pull/46",
+   "merged_at": "2026-10-04T21:53:28Z",
+   "merge_commit": "3dd098dd7472028f4770d79c3d5b1643d6f933b9"
+  },
+  "47": {
+   "title": "Amanda controlled send: authority gate, crash-safe receipt, verified same-thread reply (Issue #29) — DO NOT MERGE",
+   "state": "merged",
+   "head": "feat/amanda-auto-reply",
+   "url": "https://github.com/EdGojara/hoa-doc-search/pull/47",
+   "merged_at": "2026-10-04T22:56:46Z",
+   "merge_commit": "1daafcffd837fc9d47529e4533011cae4b06996f"
+  },
+  "48": {
+   "title": "Add migrations/checks/490 so the owner can review and apply 490 (Issue #29)",
+   "state": "merged",
+   "head": "fix/490-checks",
+   "url": "https://github.com/EdGojara/hoa-doc-search/pull/48",
+   "merged_at": "2026-10-04T23:02:40Z",
+   "merge_commit": "76c647fadb216b1701cab228a23f7d5e6aff6271"
+  },
+  "49": {
+   "title": "Amanda auto-reply: resolve the source message by internetMessageId at reply time (Issue #29) — DO NOT MERGE",
+   "state": "merged",
+   "head": "fix/amanda-reply-stable-source",
+   "url": "https://github.com/EdGojara/hoa-doc-search/pull/49",
+   "merged_at": "2026-10-05T00:20:03Z",
+   "merge_commit": "e958ed41a7fbfc0a1bcabcc4d3d54944670e4bf8"
+  },
+  "50": {
+   "title": "Amanda auto-reply: list draft attachments with $select=name (Issue #29) — DO NOT MERGE",
+   "state": "merged",
+   "head": "fix/amanda-reply-attachments",
+   "url": "https://github.com/EdGojara/hoa-doc-search/pull/50",
+   "merged_at": "2026-10-05T00:30:58Z",
+   "merge_commit": "bd8fa1415f5de422a04c1ba2c512cae3e342b5bb"
+  },
+  "51": {
+   "title": "Amanda: community-scoped status questions + never silent on direct requests (Issue #29) — DO NOT MERGE",
+   "state": "merged",
+   "head": "feat/amanda-status-intent-never-silent",
+   "url": "https://github.com/EdGojara/hoa-doc-search/pull/51",
+   "merged_at": "2026-10-05T12:00:06Z",
+   "merge_commit": "9ddb6dddb66828729bbeea7cc39e3473bd0ca183"
+  },
+  "52": {
+   "title": "Amanda status replies: natural acknowledgement, readable lists, community-only (Issue #29) — DO NOT MERGE",
+   "state": "merged",
+   "head": "feat/amanda-status-writing",
+   "url": "https://github.com/EdGojara/hoa-doc-search/pull/52",
+   "merged_at": "2026-10-05T12:20:37Z",
+   "merge_commit": "8eb1f824be261f7c5da3dd1c44b0a5c1f70cb84b"
+  },
+  "53": {
+   "title": "Onboarding Batches: completed batch shows its post-proof result, not \"not run\" (Issue #15) — DO NOT MERGE",
+   "state": "merged",
+   "head": "fix/onboarding-batches-complete-result",
+   "url": "https://github.com/EdGojara/hoa-doc-search/pull/53",
+   "merged_at": "2026-10-05T17:37:26Z",
+   "merge_commit": "dd3977dcd5aa46a4d31f329104519a6500ffbf00"
+  },
+  "54": {
+   "title": "Vantaca adapter: read the fund-column Balance Sheet (Canyon Gate upload) (Issue #15) — DO NOT MERGE",
+   "state": "merged",
+   "head": "fix/vantaca-bs-multifund",
+   "url": "https://github.com/EdGojara/hoa-doc-search/pull/54",
+   "merged_at": "2026-10-05T18:48:26Z",
+   "merge_commit": "4f531484ff1f1d439c0cec949ddb0c2768ae769a"
+  },
+  "56": {
+   "title": "Vantaca adapter: AP aging without \"Inv #\" + GL 10-digit accounts (Canyon Gate normalize) (Issue #15) — DO NOT MERGE",
+   "state": "merged",
+   "head": "fix/vantaca-ap-gl-parsers",
+   "url": "https://github.com/EdGojara/hoa-doc-search/pull/56",
+   "merged_at": "2026-10-05T19:35:48Z",
+   "merge_commit": "53f95d1ada1fe9f424c2dda348fa2dc93f3eeae1"
+  },
+  "57": {
+   "title": "AR aging: account detail governs; printed bucket summary kept as source evidence (Canyon Gate) (Issue #15) — DO NOT MERGE",
+   "state": "merged",
+   "head": "fix/ar-aging-detail-governs",
+   "url": "https://github.com/EdGojara/hoa-doc-search/pull/57",
+   "merged_at": "2026-10-05T20:56:29Z",
+   "merge_commit": "f31e5aed52be3d780d9c152d96a045cadc2fa457"
+  },
+  "58": {
+   "title": "Source controls: model accounts on both AR aging and prepaid, and previous-owner AR rows (Canyon Gate) (Issue #15) — DO NOT MERGE",
+   "state": "merged",
+   "head": "fix/source-controls-owner-model",
+   "url": "https://github.com/EdGojara/hoa-doc-search/pull/58",
+   "merged_at": "2026-10-05T22:31:58Z",
+   "merge_commit": "754abce85d8f45a0fc38557b83610b687aa0fcc9"
+  },
+  "59": {
+   "title": "Email signatures: embed a 120px headshot, not the 640px portrait — DO NOT MERGE",
+   "state": "merged",
+   "head": "fix/signature-headshot-size",
+   "url": "https://github.com/EdGojara/hoa-doc-search/pull/59",
+   "merged_at": "2026-10-06T19:20:30Z",
+   "merge_commit": "163edbd024cc7fa76a5aee9f4d440aa29b8085bb"
+  },
+  "60": {
+   "title": "Claire forwards: restore the branded signature (dead claireSignatureParts call) — DO NOT MERGE",
+   "state": "merged",
+   "head": "fix/claire-forward-signature",
+   "url": "https://github.com/EdGojara/hoa-doc-search/pull/60",
+   "merged_at": "2026-10-06T19:37:31Z",
+   "merge_commit": "aa7a319987432ded1e12f34f4561f7e058c5dcc7"
+  },
+  "61": {
+   "title": "Manual violations: refuse a 10-day self-help case when the community has no self-help authority — DO NOT MERGE",
+   "state": "merged",
+   "head": "fix/self-help-manual-precheck",
+   "url": "https://github.com/EdGojara/hoa-doc-search/pull/61",
+   "merged_at": "2026-10-06T20:10:12Z",
+   "merge_commit": "53de10dd6c0c827f9ca39d9ef691c734d4fc361a"
+  },
+  "62": {
+   "title": "Amanda email desk: outbox, ask, draft, recent activity (blocked / failed / unrecorded visible) — DO NOT MERGE",
+   "state": "merged",
+   "head": "feat/amanda-email-console",
+   "url": "https://github.com/EdGojara/hoa-doc-search/pull/62",
+   "merged_at": "2026-10-06T20:56:28Z",
+   "merge_commit": "e6621dfd45a60c2bb905c18a92a81330d3f49178"
+  },
+  "63": {
+   "title": "Amanda email desk: Inbox and Reply as Amanda (staged, threaded at send) — DO NOT MERGE",
+   "state": "merged",
+   "head": "feat/amanda-inbox",
+   "url": "https://github.com/EdGojara/hoa-doc-search/pull/63",
+   "merged_at": "2026-10-06T21:49:29Z",
+   "merge_commit": "cc0dcc9b528e7d727c33a2ac6c6a387b9e377f61"
+  },
+  "64": {
+   "title": "Amanda replies: read attachments first, keep routine items routine — DO NOT MERGE",
+   "state": "merged",
+   "head": "feat/amanda-attachment-judgment",
+   "url": "https://github.com/EdGojara/hoa-doc-search/pull/64",
+   "merged_at": "2026-10-06T22:38:06Z",
+   "merge_commit": "b8e3907b21516e5d812bab63c616d60d62050529"
+  },
+  "65": {
+   "title": "Amanda → Emma: payment-evidence package (split tender, per-component funding, partial reimbursement) — DO NOT MERGE",
+   "state": "merged",
+   "head": "feat/amanda-emma-handoff",
+   "url": "https://github.com/EdGojara/hoa-doc-search/pull/65",
+   "merged_at": "2026-10-06T23:52:40Z",
+   "merge_commit": "3deebf35f4a8f0a575486ea46f1390117f4de594"
+  },
+  "66": {
+   "title": "Fix Ask Tessa / Ask Amanda: \"Identifier 'draft' has already been declared\" — DO NOT MERGE",
+   "state": "merged",
+   "head": "fix/tessa-request-draft-collision",
+   "url": "https://github.com/EdGojara/hoa-doc-search/pull/66",
+   "merged_at": "2026-10-07T00:12:22Z",
+   "merge_commit": "c27c11f354c916c8ed3d5d6ecb139541a27fb742"
+  },
+  "67": {
+   "title": "Tessa: find a named person in recent mail when the address book has nobody — DO NOT MERGE",
+   "state": "merged",
+   "head": "feat/tessa-mailbox-name-fallback",
+   "url": "https://github.com/EdGojara/hoa-doc-search/pull/67",
+   "merged_at": "2026-10-07T00:24:31Z",
+   "merge_commit": "22523b591c91d41c815ddea7e0aac04cec3475c7"
+  },
+  "68": {
+   "title": "Tessa schedules interviews from her own calendar (organizer), idempotent, authority-gated",
+   "state": "merged",
+   "head": "feat/tessa-interview-scheduling",
+   "url": "https://github.com/EdGojara/hoa-doc-search/pull/68",
+   "merged_at": "2026-10-07T00:29:53Z",
+   "merge_commit": "61bf594260ca561115daf57390eb9a7fbd3e9594"
+  },
+  "69": {
+   "title": "Tessa interviews: duplicate check searches the right hours",
+   "state": "merged",
+   "head": "fix/tessa-interview-dedupe-tz",
+   "url": "https://github.com/EdGojara/hoa-doc-search/pull/69",
+   "merged_at": "2026-10-07T00:42:13Z",
+   "merge_commit": "6b446f6459e6a5098b953e25e2a5edc54cf9382b"
+  },
+  "70": {
+   "title": "Tessa: 'add my call' is a calendar entry, not a Teams invite; calendar writes re-check for conflicts",
+   "state": "merged",
+   "head": "feat/tessa-calendar-only",
+   "url": "https://github.com/EdGojara/hoa-doc-search/pull/70",
+   "merged_at": "2026-10-07T01:14:20Z",
+   "merge_commit": "02e2877fbe198344746d76902999a792cc171b9a"
+  },
+  "71": {
+   "title": "Migration 492: tessa_outbox.meeting_mode (ahead of #70)",
+   "state": "merged",
+   "head": "chore/migration-492",
+   "url": "https://github.com/EdGojara/hoa-doc-search/pull/71",
+   "merged_at": "2026-10-07T01:07:53Z",
+   "merge_commit": "e14392613ab74a6d1732a740347cfcdafdf29f57"
+  },
+  "72": {
+   "title": "Migration 492: runner checks file (needed to apply)",
+   "state": "merged",
+   "head": "chore/migration-492-checks",
+   "url": "https://github.com/EdGojara/hoa-doc-search/pull/72",
+   "merged_at": "2026-10-07T01:10:59Z",
+   "merge_commit": "af5babcc6411423d20c765fdaf252d2f37bc9ade"
+  },
+  "73": {
+   "title": "Hotfix: Tessa page would not load (script syntax error from #70)",
+   "state": "merged",
+   "head": "fix/tessa-page-syntax",
+   "url": "https://github.com/EdGojara/hoa-doc-search/pull/73",
+   "merged_at": "2026-10-07T01:22:31Z",
+   "merge_commit": "17c23c644ee073bae669bed25faa1dafcbb5c979"
+  },
+  "74": {
+   "title": "Migration ledger: 492 one-time edited-before-apply exception",
+   "state": "merged",
+   "head": "chore/migration-492-exception",
+   "url": "https://github.com/EdGojara/hoa-doc-search/pull/74",
+   "merged_at": "2026-10-07T01:43:27Z",
+   "merge_commit": "3907538c6862c87cf771b9687999601a66e346ce"
+  },
+  "75": {
+   "title": "Tessa: calendar-only never drafts an email; negation-aware routing; date from Ed's words",
+   "state": "merged",
+   "head": "fix/tessa-calendar-only-no-email",
+   "url": "https://github.com/EdGojara/hoa-doc-search/pull/75",
+   "merged_at": "2026-10-07T01:53:01Z",
+   "merge_commit": "48d3b37d1ff778012883c5d94b3e5e2c86b592fc"
+  },
+  "76": {
+   "title": "Onboarding: owner-approved opening reclassification + corrections (Canyon Gate 1300 -> 1310, $24.75, $381.46)",
+   "state": "merged",
+   "head": "feat/onboarding-opening-reclass",
+   "url": "https://github.com/EdGojara/hoa-doc-search/pull/76",
+   "merged_at": "2026-10-07T15:44:00Z",
+   "merge_commit": "43fd6c3ff857d65aff9a3cea7ff3d0a2fa87f07d"
+  },
+  "77": {
+   "title": "Office Billing: Save progress on the invoice worksheet + Still Creek NSF fee ($35/occurrence)",
+   "state": "merged",
+   "head": "feat/billing-bank-fees-and-drafts",
+   "url": "https://github.com/EdGojara/hoa-doc-search/pull/77",
+   "merged_at": "2026-10-07T15:24:27Z",
+   "merge_commit": "5b1d1c8b4def4c60b2b1268f3c9fee433b06676f"
+  },
+  "78": {
+   "title": "Onboarding: homeowner AR from the AR aging, prepaid from the prepaid report; ledger cross-check; former-owner routing",
+   "state": "merged",
+   "head": "feat/onboarding-ar-from-aging",
+   "url": "https://github.com/EdGojara/hoa-doc-search/pull/78",
+   "merged_at": "2026-10-07T15:44:29Z",
+   "merge_commit": "7e7fef0f186aefea8746f02eacd70e01e9332ec9"
+  },
+  "79": {
+   "title": "Onboarding: evidence-only documents attachable before execution (migration 495)",
+   "state": "merged",
+   "head": "feat/onboarding-evidence-attach",
+   "url": "https://github.com/EdGojara/hoa-doc-search/pull/79",
+   "merged_at": "2026-10-07T15:31:35Z",
+   "merge_commit": "1427dda45df6ca0bf4fa68f33a7adcb4e752b0f3"
+  },
+  "80": {
+   "title": "DO NOT MERGE (review): Onboarding restored open AP, carried once (Canyon Gate / Star)",
+   "state": "merged",
+   "head": "feat/onboarding-restored-ap",
+   "url": "https://github.com/EdGojara/hoa-doc-search/pull/80",
+   "merged_at": "2026-10-07T16:41:57Z",
+   "merge_commit": "d39e3f93fd7a1d08902f48669ab2da51f62fa4b0"
+  },
+  "81": {
+   "title": "Onboarding: Canyon Gate blockers, generically (fund allocations, held open AP, vendor normalizer, legacy close)",
+   "state": "merged",
+   "head": "feat/onboarding-cg-blockers",
+   "url": "https://github.com/EdGojara/hoa-doc-search/pull/81",
+   "merged_at": "2026-10-07T17:04:52Z",
+   "merge_commit": "42b25e64420adca551d4050b3ce286849cbe45d1"
+  },
+  "82": {
+   "title": "Migration 496: onboarding snapshot line kinds",
+   "state": "merged",
+   "head": "feat/onboarding-snapshot-kinds",
+   "url": "https://github.com/EdGojara/hoa-doc-search/pull/82",
+   "merged_at": "2026-10-07T17:07:44Z",
+   "merge_commit": "2b0f2c2cc311fff19e4354f90bbc6b403d3aba3d"
+  },
+  "83": {
+   "title": "Onboarding plan: void pairs straddling the cutoff",
+   "state": "merged",
+   "head": "feat/onboarding-void-pairs-across-cutoff",
+   "url": "https://github.com/EdGojara/hoa-doc-search/pull/83",
+   "merged_at": "2026-10-07T17:47:07Z",
+   "merge_commit": "93c203c9960c240719be8acf03a45a26fd21d1c2"
+  },
+  "84": {
+   "title": "Onboarding: invoices accrued (not billed) in the source",
+   "state": "merged",
+   "head": "feat/onboarding-accrued-in-source",
+   "url": "https://github.com/EdGojara/hoa-doc-search/pull/84",
+   "merged_at": "2026-10-07T18:06:26Z",
+   "merge_commit": "ebebf0bec79b59fb2ebfe1316b60b45b8793b4ac"
+  },
+  "85": {
+   "title": "Migration 497: refresh the activity bridge while in preflight",
+   "state": "merged",
+   "head": "feat/onboarding-bridge-refresh-at-preflight",
+   "url": "https://github.com/EdGojara/hoa-doc-search/pull/85",
+   "merged_at": "2026-10-07T18:33:47Z",
+   "merge_commit": "e3a0c9dff90b11d7472a68e6cbd8a95697968b72"
+  },
+  "86": {
+   "title": "AP exceptions: finish a no-date / no-total bill from its card",
+   "state": "merged",
+   "head": "fix/ap-exception-no-date",
+   "url": "https://github.com/EdGojara/hoa-doc-search/pull/86",
+   "merged_at": "2026-10-07T20:55:51Z",
+   "merge_commit": "c4fa1f202a311d059870c96489450022c7b3d07c"
+  },
+  "87": {
+   "title": "AP intake: hold implausible bill dates and near-duplicate statements for review",
+   "state": "merged",
+   "head": "fix/ap-date-check-near-dup",
+   "url": "https://github.com/EdGojara/hoa-doc-search/pull/87",
+   "merged_at": "2026-10-07T20:56:36Z",
+   "merge_commit": "db33c2cd5cf28c74f366e9fba3922193655d1ea5"
+  },
+  "88": {
+   "title": "Migration 498: EXECUTE neutralizes any counted entry (straddling void pairs)",
+   "state": "merged",
+   "head": "feat/onboarding-execute-neutralize-counted",
+   "url": "https://github.com/EdGojara/hoa-doc-search/pull/88",
+   "merged_at": "2026-10-07T21:06:23Z",
+   "merge_commit": "88ab74652acadd6979a40a64c577cf4285d9fc5f"
+  },
+  "89": {
+   "title": "Onboarding post-proof: routed former-owner rows and moved entries",
+   "state": "merged",
+   "head": "fix/post-proof-routed-and-moved",
+   "url": "https://github.com/EdGojara/hoa-doc-search/pull/89",
+   "merged_at": "2026-10-07T21:43:26Z",
+   "merge_commit": "27aef077c6be525688f65a7c0c1a08abf1d86ac6"
+  },
+  "90": {
+   "title": "Tessa confirmations and interviews route by rule",
+   "state": "merged",
+   "head": "fix/tessa-interview-confirm-intent",
+   "url": "https://github.com/EdGojara/hoa-doc-search/pull/90",
+   "merged_at": "2026-10-07T23:38:41Z",
+   "merge_commit": "b3a778729a01c89384985902e155fb7d7ce55990"
+  },
+  "91": {
+   "title": "DO NOT MERGE (review): Tessa availability-aware scheduling",
+   "state": "open",
+   "head": "feat/tessa-availability",
+   "url": "https://github.com/EdGojara/hoa-doc-search/pull/91",
+   "merged_at": null,
+   "merge_commit": "628f4f53992f64dcf96530eabd48ecf2d9520eba"
+  },
+  "92": {
+   "title": "Tessa: a verified reply address supersedes a bounced one (Nicole Hill) - DO NOT MERGE until reviewed",
+   "state": "merged",
+   "head": "fix/tessa-bounced-address-supersede",
+   "url": "https://github.com/EdGojara/hoa-doc-search/pull/92",
+   "merged_at": "2026-10-08T00:41:40Z",
+   "merge_commit": "227456e31de9f5c81897ffc28365a908bab08af8"
+  },
+  "93": {
+   "title": "Tessa bounce detection: retire an address only on an explicit permanent reason - DO NOT MERGE until reviewed",
+   "state": "merged",
+   "head": "fix/tessa-bounce-classifier-strict",
+   "url": "https://github.com/EdGojara/hoa-doc-search/pull/93",
+   "merged_at": "2026-10-08T00:51:42Z",
+   "merge_commit": "306c9f71d6245a7ef64e629b25431d69c4b917cf"
+  },
+  "95": {
+   "title": "Still Creek builder-to-homeowner assessment proration inside the transfer (#94)",
+   "state": "merged",
+   "head": "feat/scr-builder-transfer-proration",
+   "url": "https://github.com/EdGojara/hoa-doc-search/pull/95",
+   "merged_at": "2026-10-09T03:12:19Z",
+   "merge_commit": "da1600b7acf2456f38f9abdf87497997e1467703"
+  },
+  "97": {
+   "title": "#96: Still Creek conversion normalizes Lennar builder assessments + monthly accrual",
+   "state": "merged",
+   "head": "feat/scr-conversion-builder-coverage",
+   "url": "https://github.com/EdGojara/hoa-doc-search/pull/97",
+   "merged_at": "2026-10-09T03:12:44Z",
+   "merge_commit": "6ffb657e089151986f816208c2e1a0a30e4b8d61"
+  },
+  "98": {
+   "title": "AR aging reconciles explicitly to GL 1300 (no reclass) - DO NOT MERGE until reviewed",
+   "state": "merged",
+   "head": "fix/ar-aging-reconciles-gl",
+   "url": "https://github.com/EdGojara/hoa-doc-search/pull/98",
+   "merged_at": "2026-10-09T00:19:04Z",
+   "merge_commit": "5c9671587f1137bd2d55455c028c93b58118069f"
+  },
+  "101": {
+   "title": "Month-end close, PR A: close state, database lock, deterministic checklist (mig 502)",
+   "state": "merged",
+   "head": "feat/month-end-close-a",
+   "url": "https://github.com/EdGojara/hoa-doc-search/pull/101",
+   "merged_at": "2026-10-09T15:57:49Z",
+   "merge_commit": "9312956a1c503fabe2710b404c3c868f4b3563b5"
+  },
+  "102": {
+   "title": "Posted journal entries are permanent; AP re-code uses a linked correcting entry (mig 503)",
+   "state": "merged",
+   "head": "fix/ap-posted-je-delete",
+   "url": "https://github.com/EdGojara/hoa-doc-search/pull/102",
+   "merged_at": "2026-10-09T15:30:52Z",
+   "merge_commit": "ed8a5245de43aa8486170671ce8f4442a7fc3f5e"
+  },
+  "103": {
+   "title": "Hold conversion opening AP from payment until explicitly cleared (mig 504)",
+   "state": "merged",
+   "head": "fix/conversion-opening-ap-guard",
+   "url": "https://github.com/EdGojara/hoa-doc-search/pull/103",
+   "merged_at": "2026-10-09T15:00:06Z",
+   "merge_commit": "9dfc02df0007bb301aafeabb69faa452912180ad"
+  },
+  "105": {
+   "title": "Tests only: pin test_posted_je_immutable's scar check to the pre-#102 commit",
+   "state": "merged",
+   "head": "fix/posted-je-test-pin",
+   "url": "https://github.com/EdGojara/hoa-doc-search/pull/105",
+   "merged_at": "2026-10-09T15:49:11Z",
+   "merge_commit": "13695ae6f4f70e700d7d81108bb457c1673f381b"
+  },
+  "106": {
+   "title": "Cutover-safe statement numbers (month-end close PR B)",
+   "state": "merged",
+   "head": "feat/cutover-safe-statements",
+   "url": "https://github.com/EdGojara/hoa-doc-search/pull/106",
+   "merged_at": "2026-10-09T18:01:54Z",
+   "merge_commit": "6d8f3e9feff338935d52c01e4b098a636760e686"
+  },
+  "107": {
+   "title": "Converted-community pre-history is Not available, never zero",
+   "state": "merged",
+   "head": "fix/pre-history-not-available",
+   "url": "https://github.com/EdGojara/hoa-doc-search/pull/107",
+   "merged_at": "2026-10-09T19:14:10Z",
+   "merge_commit": "3bbb6bc91a99d5a9ea242ebac76419b167108f8f"
+  },
+  "108": {
+   "title": "Living budget: budget-only rows follow the prior-year availability rule (n/a, never $0)",
+   "state": "merged",
+   "head": "fix/living-budget-prior-year-na",
+   "url": "https://github.com/EdGojara/hoa-doc-search/pull/108",
+   "merged_at": "2026-10-09T19:35:40Z",
+   "merge_commit": "d4f25637af27dbf8dac69101ffdb44b125134516"
+  },
+  "109": {
+   "title": "Financial statement package (PR C): one model, one renderer, drill-down, snapshot gate",
+   "state": "merged",
+   "head": "feat/statement-package",
+   "url": "https://github.com/EdGojara/hoa-doc-search/pull/109",
+   "merged_at": "2026-10-10T14:50:23Z",
+   "merge_commit": "fc6ef7ad26bd2c6ca4d53f6402c92462720db70d"
+  },
+  "110": {
+   "title": "Board packets: old-format native statement sections block final and distribute",
+   "state": "merged",
+   "head": "fix/stale-native-statement-gate",
+   "url": "https://github.com/EdGojara/hoa-doc-search/pull/110",
+   "merged_at": "2026-10-10T15:15:21Z",
+   "merge_commit": "3377a4acb029c16ccbd3f3147548e6ea1e42e53d"
+  },
+  "111": {
+   "title": "Statements: no-conversion communities start trustEd history at their first posted entry",
+   "state": "merged",
+   "head": "fix/greenfield-history-start",
+   "url": "https://github.com/EdGojara/hoa-doc-search/pull/111",
+   "merged_at": "2026-10-10T15:35:15Z",
+   "merge_commit": "894a7020e3849dc351cf4110d4292fd2d49c3f1a"
+  },
+  "112": {
+   "title": "Statements: an unavailable column is n/a even where a section has no lines",
+   "state": "merged",
+   "head": "fix/unavailable-column-empty-sum",
+   "url": "https://github.com/EdGojara/hoa-doc-search/pull/112",
+   "merged_at": "2026-10-10T15:40:26Z",
+   "merge_commit": "c158f8f5577207e3956e80c42b1221148c1b7890"
+  },
+  "113": {
+   "title": "Balance sheet: visible subcategories and consolidated interfund elimination",
+   "state": "merged",
+   "head": "feat/bs-subcategories-interfund",
+   "url": "https://github.com/EdGojara/hoa-doc-search/pull/113",
+   "merged_at": "2026-10-10T16:05:52Z",
+   "merge_commit": "00708edb6e2b0e55d68d08bb5b709fe765badce0"
+  },
+  "114": {
+   "title": "Board packets: final / distribute require a CLOSED financial period",
+   "state": "merged",
+   "head": "fix/final-requires-closed-period",
+   "url": "https://github.com/EdGojara/hoa-doc-search/pull/114",
+   "merged_at": "2026-10-10T16:24:20Z",
+   "merge_commit": "4f4556370924d3b9e217a6885325384d2e97e6cf"
+  },
+  "115": {
+   "title": "Financial Intelligence slice 1: 2027 working forecast with driver bridges and contract evidence",
+   "state": "merged",
+   "head": "feat/fi-2027-working-forecast",
+   "url": "https://github.com/EdGojara/hoa-doc-search/pull/115",
+   "merged_at": "2026-10-10T18:37:10Z",
+   "merge_commit": "f589c8f7bbeb2ffc320bbb2a356b9ceb9bd67e60"
+  },
+  "116": {
+   "title": "Fix production: migration 507 drops the 506 interfund FKs that broke fund embeds",
+   "state": "merged",
+   "head": "fix/507-coa-fund-embed",
+   "url": "https://github.com/EdGojara/hoa-doc-search/pull/116",
+   "merged_at": "2026-10-10T18:46:13Z",
+   "merge_commit": "23d87ac11e3664a299e544aecdc9ce3ea0b560f3"
+  },
+  "117": {
+   "title": "Board portal: tile, detailed budget view and Amanda report Operating, Reserve and other funds separately",
+   "state": "merged",
+   "head": "fix/board-tile-funds",
+   "url": "https://github.com/EdGojara/hoa-doc-search/pull/117",
+   "merged_at": "2026-10-10T19:38:39Z",
+   "merge_commit": "d3b708b4f19268afcf16803227f688c091f04d37"
+  },
+  "118": {
+   "title": "Board portal: reporting period, provisional status, clear labels, transfer status from the books",
+   "state": "merged",
+   "head": "fix/board-portal-presentation",
+   "url": "https://github.com/EdGojara/hoa-doc-search/pull/118",
+   "merged_at": "2026-10-10T20:07:14Z",
+   "merge_commit": "eda80b3d447be2b0034a14a65b758d0652e3e3f0"
+  },
+  "120": {
+   "title": "Interfund defects: reversals keep fund, balances count only GL entries and every row, transfers refuse interfund accounts",
+   "state": "open",
+   "head": "fix/interfund-defects",
+   "url": "https://github.com/EdGojara/hoa-doc-search/pull/120",
+   "merged_at": null,
+   "merge_commit": "f1f01440068a3b5031fd4908ca497de7d4531100"
+  },
+  "121": {
+   "title": "Statements: interfund transfers below net income + management notes (Canyon Gate close) - DO NOT MERGE until reviewed",
+   "state": "open",
+   "head": "feat/statement-interfund-transfers",
+   "url": "https://github.com/EdGojara/hoa-doc-search/pull/121",
+   "merged_at": null,
+   "merge_commit": null
+  },
+  "122": {
+   "title": "Legal invoice review: exception approval + Approve Treatment (migration 508)",
+   "state": "merged",
+   "head": "feat/legal-approve-treatment",
+   "url": "https://github.com/EdGojara/hoa-doc-search/pull/122",
+   "merged_at": "2026-10-11T16:33:08Z",
+   "merge_commit": "3685b0b723ceb2db854a1213abcf0f901b696e57"
+  },
+  "123": {
+   "title": "Legal AI team: Emma, Amanda and Kat on every attorney invoice",
+   "state": "merged",
+   "head": "feat/legal-ai-team",
+   "url": "https://github.com/EdGojara/hoa-doc-search/pull/123",
+   "merged_at": "2026-10-11T18:01:39Z",
+   "merge_commit": "316e965e22fb4f1be751ffe5a0ec4156e9c0fdc8"
+  },
+  "124": {
+   "title": "Legal evidence retention: keep relied-on originals in trustEd",
+   "state": "merged",
+   "head": "feat/legal-evidence-retention",
+   "url": "https://github.com/EdGojara/hoa-doc-search/pull/124",
+   "merged_at": "2026-10-11T18:09:39Z",
+   "merge_commit": "285eddf99726a95522a1849ef33d4e13cc12473a"
+  },
+  "125": {
+   "title": "Fix: legal team activities used a disallowed objective_type (production regression from #123)",
+   "state": "merged",
+   "head": "fix/legal-objective-type",
+   "url": "https://github.com/EdGojara/hoa-doc-search/pull/125",
+   "merged_at": "2026-10-11T18:22:42Z",
+   "merge_commit": "5d679beb86ee72c67cb9c9e5a039168932b3aa86"
+  },
+  "126": {
+   "title": "Owner ledger wording for legal bill-backs: DRV Enforcement / Collections",
+   "state": "merged",
+   "head": "fix/legal-charge-description",
+   "url": "https://github.com/EdGojara/hoa-doc-search/pull/126",
+   "merged_at": "2026-10-11T18:52:04Z",
+   "merge_commit": "8fe09d77c7d07bfe7b963f24ab0c71657f379397"
+  },
+  "127": {
+   "title": "Legal review: Amanda prepares, Kat verifies, the owner decides",
+   "state": "merged",
+   "head": "feat/legal-ai-operator",
+   "url": "https://github.com/EdGojara/hoa-doc-search/pull/127",
+   "merged_at": "2026-10-11T19:52:13Z",
+   "merge_commit": "8f94036d545fe22051a28cdb694e1f1ea4589e58"
+  },
+  "128": {
+   "title": "Legal review: #278001 association status report; Negron address shown",
+   "state": "merged",
+   "head": "fix/legal-two-defects",
+   "url": "https://github.com/EdGojara/hoa-doc-search/pull/128",
+   "merged_at": "2026-10-11T20:02:13Z",
+   "merge_commit": "989a74d224ddf0cdda5833435d6a03bd3788333c"
+  },
+  "129": {
+   "title": "Legal team: a changed outcome reason updates Amanda's draft (Negron address)",
+   "state": "merged",
+   "head": "fix/legal-negron-reason",
+   "url": "https://github.com/EdGojara/hoa-doc-search/pull/129",
+   "merged_at": "2026-10-11T20:07:38Z",
+   "merge_commit": "6d562ad4db27b6d2fd1f4c965d6149a01e18b478"
+  },
+  "130": {
+   "title": "Financial statements: board layout (7 columns, landscape) and reserve fund activity",
+   "state": "merged",
+   "head": "feat/statements-board-format",
+   "url": "https://github.com/EdGojara/hoa-doc-search/pull/130",
+   "merged_at": "2026-10-11T20:39:03Z",
+   "merge_commit": "791d2c40f122bd36ded9780e0bb37b47ba3741af"
+  },
+  "131": {
+   "title": "Statements: interfund transfers, prior-period line, print polish; migration 509",
+   "state": "merged",
+   "head": "fix/statements-print-polish",
+   "url": "https://github.com/EdGojara/hoa-doc-search/pull/131",
+   "merged_at": "2026-10-11T21:09:48Z",
+   "merge_commit": "e3d35a667746a949ae24c94744fd606f8021d11f"
+  },
+  "132": {
+   "title": "Statements: interfund transfers follow from/to fund configuration",
+   "state": "merged",
+   "head": "fix/statements-transfer-config",
+   "url": "https://github.com/EdGojara/hoa-doc-search/pull/132",
+   "merged_at": "2026-10-11T21:15:01Z",
+   "merge_commit": "423b3eec5cdf5f78b82e35d839a1af2cd7df4c67"
+  },
+  "133": {
+   "title": "Statements: voids of pre-cutover entries are prior-period; 509 flags ten corrections",
+   "state": "merged",
+   "head": "fix/statements-prior-reversals",
+   "url": "https://github.com/EdGojara/hoa-doc-search/pull/133",
+   "merged_at": "2026-10-11T21:22:17Z",
+   "merge_commit": "1ac7af0b66e660818222c999065481dfe44b3611"
+  },
+  "134": {
+   "title": "Proposed budget statement + budget package; forecast actuals stay in their fund",
+   "state": "merged",
+   "head": "feat/proposed-budget-statement",
+   "url": "https://github.com/EdGojara/hoa-doc-search/pull/134",
+   "merged_at": "2026-10-11T21:33:42Z",
+   "merge_commit": "db38881e1bb5ea1d1146f5db2fff8e310552135e"
+  },
+  "135": {
+   "title": "Statements to the cent; reserve detail shows corrections once; AAS label; 509 refs",
+   "state": "merged",
+   "head": "fix/cg-corrections",
+   "url": "https://github.com/EdGojara/hoa-doc-search/pull/135",
+   "merged_at": "2026-10-11T22:12:15Z",
+   "merge_commit": "e8a0ca6326536996fad2adad69e3c122c385095d"
+  },
+  "136": {
+   "title": "Statements: keep carryforward of rows netted to zero",
+   "state": "merged",
+   "head": "fix/cg-corrections",
+   "url": "https://github.com/EdGojara/hoa-doc-search/pull/136",
+   "merged_at": "2026-10-11T22:19:47Z",
+   "merge_commit": "885fef931e3224e8ee8e4e94e03e0df8b14cc45c"
+  },
+  "137": {
+   "title": "Books budget vs actual: negatives in parentheses; AAS fund title",
+   "state": "merged",
+   "head": "fix/bva-web-format",
+   "url": "https://github.com/EdGojara/hoa-doc-search/pull/137",
+   "merged_at": "2026-10-11T22:33:56Z",
+   "merge_commit": "99464ad420c65e51616ab070c28ee4c11970b251"
+  },
+  "138": {
+   "title": "Kat's controlled monthly accounting runs: recognition + late interest",
+   "state": "merged",
+   "head": "feat/kat-monthly-runs",
+   "url": "https://github.com/EdGojara/hoa-doc-search/pull/138",
+   "merged_at": "2026-10-11T23:00:58Z",
+   "merge_commit": "dedaa32dcdfcdefd0e83d193e6ac923adb879736"
+  },
+  "139": {
+   "title": "Books Budget vs Actual: Statement view renders the board statement model",
+   "state": "merged",
+   "head": "fix/books-bva-statement",
+   "url": "https://github.com/EdGojara/hoa-doc-search/pull/139",
+   "merged_at": "2026-10-11T23:03:31Z",
+   "merge_commit": "ffc6a2b127583f019579b466a499876e9d3b119e"
+  },
+  "140": {
+   "title": "Budget forecast: recognition schedules, not annualized YTD; AAS out of Operating",
+   "state": "merged",
+   "head": "fix/budget-forecast-recognition",
+   "url": "https://github.com/EdGojara/hoa-doc-search/pull/140",
+   "merged_at": "2026-10-12T02:29:15Z",
+   "merge_commit": "9012d6f34d4f1407430c8b424b7872be8843380d"
+  },
+  "141": {
+   "title": "Kat's monthly bank reconciliation (migration 511)",
+   "state": "merged",
+   "head": "feat/kat-bank-rec",
+   "url": "https://github.com/EdGojara/hoa-doc-search/pull/141",
+   "merged_at": "2026-10-12T02:34:58Z",
+   "merge_commit": "2970ca82586841af08c95836bc6d5d79e230b61c"
+  },
+  "142": {
+   "title": "Reserve Budget: planned capital projects only; editor and PDF share one calculation",
+   "state": "merged",
+   "head": "fix/reserve-budget-projects",
+   "url": "https://github.com/EdGojara/hoa-doc-search/pull/142",
+   "merged_at": "2026-10-12T02:49:48Z",
+   "merge_commit": "c33ac0b6a891ba0ee6e797a6f89291ead1e5b963"
+  },
+  "143": {
+   "title": "Kat bank rec: same-entry fund split on the cash account is internal",
+   "state": "merged",
+   "head": "fix/kat-rec-fund-split",
+   "url": "https://github.com/EdGojara/hoa-doc-search/pull/143",
+   "merged_at": "2026-10-12T12:11:30Z",
+   "merge_commit": "29a399c7050a16c65ff0191a74b19b475bb563b2"
+  },
+  "144": {
+   "title": "Proposed budget: transfers not assumed; fund balance roll for every fund",
+   "state": "merged",
+   "head": "fix/budget-transfer-fund-balance",
+   "url": "https://github.com/EdGojara/hoa-doc-search/pull/144",
+   "merged_at": "2026-10-12T12:24:06Z",
+   "merge_commit": "b53ed23f3b11041a34147655903ab50c74c68946"
+  }
+ }
+}
