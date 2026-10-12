@@ -5,7 +5,9 @@
 //   GET  /api/accounting-runs/community/:cid       recent runs for a community
 //   GET  /api/accounting-runs/run/:id              one run: preview, exceptions, events
 //   GET  /api/accounting-runs/run/:id/csv          owner-by-owner / entry-by-entry CSV
-//   POST /api/accounting-runs/community/:cid/prepare { process, period_month, run_date }   staff
+//   GET  /api/accounting-runs/bank-accounts         bank accounts enabled for Kat's reconciliation
+//   POST /api/accounting-runs/community/:cid/prepare { process, period_month, run_date, subject_id }   staff
+//        (bank_reconciliation: subject_id = the bank account; period_month = the month reconciled)
 //   POST /api/accounting-runs/run/:id/approve      { include: [tenure_id] }   OWNER ONLY
 //   POST /api/accounting-runs/run/:id/hold         { reason }                 OWNER ONLY
 //   POST /api/accounting-runs/run/:id/supersede    { reason }                 OWNER ONLY
@@ -40,6 +42,20 @@ router.get('/pending', async (req, res) => {
   } catch (err) { fail(res, 'pending', err); }
 });
 
+router.get('/bank-accounts', async (req, res) => {
+  try {
+    if (!(await requireStaff(req, res))) return;
+    const { data: autos, error } = await supabase.from('community_accounting_automation').select('community_id, settings').eq('process', 'bank_reconciliation').eq('enabled', true);
+    if (error) { if (/process_check|invalid input/i.test(error.message)) return res.json({ accounts: [] }); throw error; }
+    const ids = [...new Set(autos.flatMap((a) => (a.settings && a.settings.bank_account_ids) || []))];
+    if (!ids.length) return res.json({ accounts: [] });
+    const { data: bas, error: e2 } = await supabase.from('bank_accounts').select('id, community_id, account_nickname, account_last4, gl_account_number, communities(name)').in('id', ids);
+    if (e2) throw e2;
+    res.json({ accounts: bas.map((b) => ({ id: b.id, community_id: b.community_id, community_name: b.communities && b.communities.name, label: `${b.account_nickname || 'Bank account'}${b.account_last4 ? ' ' + b.account_last4 : ''}`, gl_account_number: b.gl_account_number }))
+      .sort((a, b) => `${a.community_name} ${a.label}`.localeCompare(`${b.community_name} ${b.label}`)) });
+  } catch (err) { fail(res, 'bank-accounts', err); }
+});
+
 router.get('/community/:cid', async (req, res) => {
   try {
     if (!(await requireStaff(req, res))) return;
@@ -68,7 +84,9 @@ router.get('/run/:id/csv', async (req, res) => {
     const items = (run.preview && run.preview.items) || [];
     const cols = run.process === 'interest'
       ? ['address', 'vantaca_account_id', 'trusted_account_number', 'eligible_charges_cents', 'receipts_cents', 'returns_cents', 'applied_cents', 'eligible_principal_cents', 'interest_cents', 'exception', 'skip', 'flags']
-      : ['schedule', 'type', 'month', 'posting_date', 'amount_cents', 'balance_account', 'catch_up'];
+      : run.process === 'bank_reconciliation'
+        ? ['category', 'date_ref', 'amount_cents', 'check_number', 'description', 'gl_ref', 'match_method', 'operator_notes']
+        : ['schedule', 'type', 'month', 'posting_date', 'amount_cents', 'balance_account', 'catch_up'];
     const cell = (v) => { const s = Array.isArray(v) ? v.map((f) => f.code || f).join('|') : (v === null || v === undefined ? '' : String(v)); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
     const money = (k, v) => (/_cents$/.test(k) ? (Number(v || 0) / 100).toFixed(2) : v);
     const csv = [cols.map((c) => c.replace(/_cents$/, '')).join(',')].concat(items.map((i) => cols.map((c) => cell(money(c, i[c]))).join(','))).join('\n');
@@ -82,10 +100,11 @@ router.post('/community/:cid/prepare', express.json(), async (req, res) => {
   try {
     const u = await requireStaff(req, res); if (!u) return;
     const b = req.body || {};
-    if (!['recognition', 'interest'].includes(b.process)) return res.status(400).json({ error: 'process must be recognition or interest' });
+    if (!['recognition', 'interest', 'bank_reconciliation'].includes(b.process)) return res.status(400).json({ error: 'process must be recognition, interest or bank_reconciliation' });
+    if (b.process === 'bank_reconciliation' && !/^[0-9a-f-]{36}$/i.test(String(b.subject_id || ''))) return res.status(400).json({ error: 'subject_id (the bank account) is required' });
     if (!isDate(b.period_month)) return res.status(400).json({ error: 'period_month must be YYYY-MM-DD' });
     if (b.run_date && !isDate(b.run_date)) return res.status(400).json({ error: 'run_date must be YYYY-MM-DD' });
-    const r = await R.prepare(supabase, { community_id: req.params.cid, process: b.process, period_month: b.period_month, run_date: b.run_date || null, actor: `${R.KAT} (requested by ${u.email || 'staff'})` });
+    const r = await R.prepare(supabase, { community_id: req.params.cid, process: b.process, period_month: b.period_month, run_date: b.run_date || null, subject_id: b.process === 'bank_reconciliation' ? b.subject_id : null, actor: `${R.KAT} (requested by ${u.email || 'staff'})` });
     if (r.skipped) return res.status(409).json({ error: r.skipped, code: 'not_enabled' });
     if (r.failed) return res.status(500).json({ error: r.error, run_id: r.run_id });
     res.json(r);
