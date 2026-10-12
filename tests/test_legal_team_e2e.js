@@ -214,6 +214,45 @@ t('A: supported recovery runs end to end; attorney payment and recovery close on
   assert.ok(!open(db, 'legal_invoice') && !open(db, 'legal_documentation'), 'all closed');
 });
 
+t('C: direct to receivable (Ed 2026-10-12): an attorney invoice not yet accrued posts ONE accrual, owner fees to 1300, no expense-and-recovery', async () => {
+  const sd = seed();
+  sd.ap_invoices[0].posting_journal_entry_id = null;   // intake held the accrual: a line names an owner
+  sd.journal_entries = [];
+  const db = db0(sd); const load = loaderFor(db); const P = posters(db);
+  const deps = { loadInvoice: load, sources: sources(DRV_REPORT), periods: OPEN };
+  await TEAM.runLegalTeam(db, INV, { trigger: 'intake', deps });
+  assert.strictEqual(P.calls.je.length, 0, 'the team never posts, not even the accrual');
+  const d = await load(db, INV);
+  const plan = await T.planTreatment(db, d, { periods: OPEN });
+  assert.strictEqual(plan.mode, 'direct'); assert.ok(plan.ready, JSON.stringify(plan.blocking));
+  assert.ok(plan.postings.every((p) => p.credit_account_id === 'a2000'), 'owner amounts are part of the AP accrual');
+  const kat = db.tables.objective_decisions.filter((x) => x.decided_by === 'kat').pop();
+  assert.strictEqual(kat.verdict, 'PROPOSE_ACTION', JSON.stringify(kat.evidence.checks.filter((c) => !c.ok)));
+  const ap = await T.approveTreatment(db, d, { actor: 'owner@example.test', baseRevision: d.saved.review.revision, deps: { periods: OPEN, postJE: P.postJE, postCharge: P.postCharge } });
+  assert.ok(ap.ok, JSON.stringify(ap));
+  assert.strictEqual(P.calls.je.length, 1, 'exactly one entry: the accrual');
+  const je = P.calls.je[0];
+  assert.strictEqual(je.source_module, 'ap_invoice'); assert.strictEqual(je.source_reference, INV);
+  const dr = (acct) => je.lines.filter((l) => l.account_id === acct).reduce((t, l) => t + l.debit_cents, 0);
+  assert.strictEqual(dr('a1300'), 55735, 'owner fees debit 1300 directly');
+  assert.ok(je.lines.find((l) => l.account_id === 'a1300').property_id === '11111111-1111-4111-8111-111111111111', 'with the owner\'s property');
+  assert.strictEqual(dr('a5860'), 7000, 'the association share stays legal expense');
+  assert.strictEqual(dr('a5870'), 0, 'no expense booked for the recoverable amount');
+  assert.strictEqual(je.lines.find((l) => l.account_id === 'a2000').credit_cents, 62735, 'AP credited once, for the invoice total');
+  assert.strictEqual(db.tables.ap_invoices[0].posting_journal_entry_id, 'je-1', 'the accrual is the invoice\'s posting entry');
+  assert.strictEqual(P.calls.charge.length, 1); assert.strictEqual(P.calls.charge[0].amountCents, 55735);
+  const post = db.tables.legal_invoice_postings[0];
+  assert.strictEqual(post.status, 'posted'); assert.strictEqual(post.journal_entry_id, 'je-1'); assert.strictEqual(P.calls.charge[0].raw.legal_posting_id, post.id);
+  const again = await T.approveTreatment(db, await load(db, INV), { actor: 'owner@example.test', baseRevision: d.saved.review.revision, deps: { periods: OPEN, postJE: P.postJE, postCharge: P.postCharge } });
+  assert.ok(again.ok && P.calls.je.length === 1 && P.calls.charge.length === 1, 'idempotent: no second accrual, no second owner charge');
+  // a correction moves the owner's amount back to expense; the shared accrual is never voided
+  let voided = 0;
+  const rv = await T.reversePosting(db, post.id, { actor: 'owner@example.test', reason: 'owner disputed the fee', deps: { voidJE: async () => { voided++; return {}; }, postJE: P.postJE, postCredit: async (_s, o) => ({ chargeId: 'credit-1', o }) } });
+  assert.ok(rv.ok, JSON.stringify(rv)); assert.strictEqual(voided, 0, 'the accrual is not voided');
+  const cor = P.calls.je[1];
+  assert.strictEqual(cor.source_module, 'ap_billback'); assert.strictEqual(cor.source_reference, `${post.id}:correction`);
+  assert.deepStrictEqual(cor.lines.map((l) => [l.account_id, l.debit_cents, l.credit_cents]), [['a5870', 55735, 0], ['a1300', 0, 55735]]);
+});
 t('B: bankruptcy holds the owner charge; paying the attorney closes only the payment activity', async () => {
   const db = db0(seed()); const load = loaderFor(db);
   const deps = { loadInvoice: load, sources: Object.assign(sources(BK_REPORT), { searchDrive: async () => { throw Object.assign(new Error('Item not found'), { status: 404 }); } }), periods: OPEN };

@@ -233,11 +233,28 @@ async function billbackSummary(d, plan, postings) {
     return { classification: a.classification, amount_cents: Number(a.amount_cents), property: a.property_id ? addr.get(a.property_id) || null : null,
       owner: a.tenure_id ? (owners.get(a.tenure_id) || []).join('; ') || null : null, confidence: a.confidence || null, charge_category: a.charge_category || null,
       source_text: (it.source_line_ids || []).map((id) => lineText.get(id)).filter(Boolean).join(' / ') || it.source_text || null,
-      status: p ? 'charged' : t.status === 'exception' ? 'needs_review' : 'pending_approval', reasons: t.status === 'exception' ? t.reasons : [],
+      status: p ? 'charged' : (a.classification === 'association_legal_expense' && plan.review && plan.review.status === 'approved') ? 'association_final' : t.status === 'exception' ? 'needs_review' : 'pending_approval', reasons: t.status === 'exception' ? t.reasons : [],
       posting: p ? { journal_entry_id: p.journal_entry_id, homeowner_transaction_id: p.homeowner_transaction_id, posted_at: p.posted_at } : null };
   });
   const sum = (f) => rows.filter(f).reduce((t, r) => t + r.amount_cents, 0);
-  return { review_status: plan.review ? plan.review.status : 'none', ready: plan.ready, blocking: plan.blocking,
+  // The FINAL accounting the invoice ends with (Ed 2026-10-12): homeowner AR vs association
+  // expense by account, against AP for the invoice total, and how it got there.
+  const lineAcct = new Map((d.lines || []).map((l) => [l.id, l.account]));
+  const expense = new Map();
+  for (const { it, a } of allocs) {
+    if (a.classification !== 'association_legal_expense') continue;
+    const accts = [...new Set((it.source_line_ids || []).map((id) => lineAcct.get(id)).filter(Boolean))];
+    const k = accts.length === 1 ? accts[0] : 'association legal expense';
+    expense.set(k, (expense.get(k) || 0) + Number(a.amount_cents));
+  }
+  const homeowner = sum((r) => r.classification === 'homeowner_recoverable');
+  const charged = sum((r) => r.status === 'charged');
+  const final = { ar_cents: homeowner, owners: rows.filter((r) => r.classification === 'homeowner_recoverable').length,
+    expense: [...expense.entries()].map(([account, cents]) => ({ account, cents })), bedrock_cents: sum((r) => r.classification === 'bedrock_corporate'), ap_cents: Number(d.invoice.total_cents),
+    method: plan.mode === 'direct' ? (charged ? 'posted directly to homeowner AR with the accrual' : 'posts directly to homeowner AR with the accrual when approved')
+      : charged ? 'accrued to legal expense, owner share then billed back to homeowner AR (net result shown)' : 'accrued to legal expense; the owner share is billed back to homeowner AR when approved',
+    posted: homeowner === 0 ? !!plan.accrual : charged === homeowner };
+  return { review_status: plan.review ? plan.review.status : 'none', ready: plan.ready, blocking: plan.blocking, final,
     homeowner_cents: sum((r) => r.classification === 'homeowner_recoverable'), charged_cents: sum((r) => r.status === 'charged'),
     association_cents: sum((r) => r.classification === 'association_legal_expense'), rows, review_url: `/app/financial/legal?id=${d.invoice.id}` };
 }
