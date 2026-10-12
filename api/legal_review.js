@@ -200,7 +200,46 @@ router.post('/invoices/:id/read-pdf', express.json({ limit: '4kb' }), async (req
 async function treatmentPayload(d, postingDate) {
   const plan = await T.planTreatment(supabase, d, { postingDate: postingDate || undefined });
   const ready = await T.postingsReady(supabase);
-  return { plan, postings: ready ? await T.loadPostings(supabase, d.invoice.id) : [], migration_508: ready };
+  const postings = ready ? await T.loadPostings(supabase, d.invoice.id) : [];
+  return { plan, postings, migration_508: ready, billback: await billbackSummary(d, plan, postings) };
+}
+
+// The homeowner bill-back as AP staff see it on the invoice screen (Ed 2026-10-12):
+// per homeowner-recoverable allocation, the property, the owner on file, the amount,
+// the source invoice line and whether it has posted; plus the association lines and
+// what still needs a person. Read only: posting stays Approve Treatment (owner).
+async function billbackSummary(d, plan, postings) {
+  const items = (d.saved && d.saved.items) || [];
+  const lineText = new Map((d.lines || []).map((l) => [l.id, l.description]));
+  const allocs = items.flatMap((it) => (it.allocations || []).map((a) => ({ it, a })));
+  const props = [...new Set(allocs.map((x) => x.a.property_id).filter(Boolean))];
+  const addr = new Map(); const owners = new Map();
+  if (props.length) {
+    const { data: pr, error: pe } = await supabase.from('properties').select('id, street_address, unit').in('id', props);
+    if (pe) throw pe;
+    (pr || []).forEach((p) => addr.set(p.id, [p.street_address, p.unit].filter(Boolean).join(' #')));
+    const tenures = [...new Set(allocs.map((x) => x.a.tenure_id).filter(Boolean))];
+    if (tenures.length) {
+      const { data: po, error: oe } = await supabase.from('property_ownerships').select('tenure_id, contacts(full_name)').in('tenure_id', tenures);
+      if (oe) throw oe;
+      (po || []).forEach((o) => { const n = o.contacts && o.contacts.full_name; if (n) owners.set(o.tenure_id, [...(owners.get(o.tenure_id) || []), n]); });
+    }
+  }
+  const posted = new Map((postings || []).filter((p) => p.status === 'posted' && !p.reversed_at).map((p) => [p.allocation_id, p]));
+  const S2 = require('../lib/legal/review_suggest');
+  const rows = allocs.map(({ it, a }) => {
+    const t = S2.triageItem(it);
+    const p = posted.get(a.id);
+    return { classification: a.classification, amount_cents: Number(a.amount_cents), property: a.property_id ? addr.get(a.property_id) || null : null,
+      owner: a.tenure_id ? (owners.get(a.tenure_id) || []).join('; ') || null : null, confidence: a.confidence || null, charge_category: a.charge_category || null,
+      source_text: (it.source_line_ids || []).map((id) => lineText.get(id)).filter(Boolean).join(' / ') || it.source_text || null,
+      status: p ? 'charged' : t.status === 'exception' ? 'needs_review' : 'pending_approval', reasons: t.status === 'exception' ? t.reasons : [],
+      posting: p ? { journal_entry_id: p.journal_entry_id, homeowner_transaction_id: p.homeowner_transaction_id, posted_at: p.posted_at } : null };
+  });
+  const sum = (f) => rows.filter(f).reduce((t, r) => t + r.amount_cents, 0);
+  return { review_status: plan.review ? plan.review.status : 'none', ready: plan.ready, blocking: plan.blocking,
+    homeowner_cents: sum((r) => r.classification === 'homeowner_recoverable'), charged_cents: sum((r) => r.status === 'charged'),
+    association_cents: sum((r) => r.classification === 'association_legal_expense'), rows, review_url: `/app/financial/legal?id=${d.invoice.id}` };
 }
 
 router.get('/invoices/:id/treatment', async (req, res) => {

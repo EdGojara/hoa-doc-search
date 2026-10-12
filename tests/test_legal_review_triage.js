@@ -42,9 +42,17 @@ t('accepted: high-confidence, current owner, supported work type, category, no b
   assert.strictEqual(r.status, 'accepted'); assert.deepStrictEqual(r.reasons, []);
 });
 const assoc = (ev, over) => good(Object.assign({ classification: 'association_legal_expense', property_id: null, charge_category: null, confidence: 'medium', tenure_match: 'not_applicable', evidence: ev }, over || {}));
-t('association: supported by a general-matter heading → accepted', () => {
-  assert.strictEqual(S.triageItem(item([assoc([{ kind: 'work_type', value: 'general / association matter per the invoice PDF: supported by the heading / title' }])])).status, 'accepted');
-  assert.strictEqual(S.triageItem(item([assoc([{ kind: 'work_type', value: 'association / corporate work, no property named: supported by the line text' }])])).status, 'accepted');
+t('a confirmation recorded by an AI reviewer or agent persona does not clear a review exception (Ed 2026-10-12)', () => {
+  const sup = { kind: 'work_type', value: 'general / association matter per the invoice PDF: supported by the heading / title' };
+  for (const who of ['claude-ai-review@bedrocktx.com', 'kat@bedrocktx.com', 'emma@bedrocktx.com']) assert.strictEqual(S.triageItem(item([assoc([sup, { kind: 'staff_confirmed', value: `confirmed by ${who} on 2026-10-11` }])])).status, 'exception', who);
+  assert.strictEqual(S.triageItem(item([assoc([sup, { kind: 'staff_confirmed', value: 'confirmed by egojara@bedrocktx.com on 2026-10-12' }])])).status, 'accepted');
+  assert.strictEqual(S.triageItem(item([good({ confidence: 'medium', evidence: [{ kind: 'staff_confirmed', value: 'confirmed by claude-ai-review@bedrocktx.com on 2026-10-11' }] })])).status, 'exception');
+});
+t('association (General Matters): supported by the heading is still a review exception until a person confirms (Ed 2026-10-12)', () => {
+  const r = S.triageItem(item([assoc([{ kind: 'work_type', value: 'general / association matter per the invoice PDF: supported by the heading / title' }])]));
+  assert.strictEqual(r.status, 'exception'); assert.ok(r.soft.some((x) => /general matters/.test(x)) && !r.hard.length);
+  assert.strictEqual(S.triageItem(item([assoc([{ kind: 'work_type', value: 'general / association matter per the invoice PDF: supported by the heading / title' }, CONFIRMED])])).status, 'accepted');
+  assert.strictEqual(S.triageItem(item([assoc([{ kind: 'work_type', value: 'association / corporate work, no property named: supported by the line text' }, CONFIRMED])])).status, 'accepted');
 });
 t('association: NOT accepted merely because no property is named (no evidence → soft exception)', () => {
   const r = S.triageItem(item([assoc([])]));
@@ -115,7 +123,7 @@ t('hard + soft together: confirming clears only the soft part', () => {
 });
 
 t('summarize: buckets in money; can_accept only when balanced and no exceptions', () => {
-  const items = [item([good({ amount_cents: 5000 })]), item([good({ classification: 'association_legal_expense', property_id: null, charge_category: null, amount_cents: 2000, evidence: [{ kind: 'work_type', value: 'general / association matter per the invoice PDF: supported by the heading / title' }] })])];
+  const items = [item([good({ amount_cents: 5000 })]), item([good({ classification: 'association_legal_expense', property_id: null, charge_category: null, amount_cents: 2000, evidence: [{ kind: 'work_type', value: 'general / association matter per the invoice PDF: supported by the heading / title' }, CONFIRMED] })])];
   const s = S.summarize(7000, items);
   assert.deepStrictEqual([s.recoverable.cents, s.association.cents, s.exceptions.count, s.accepted.count, s.can_accept], [5000, 2000, 0, 2, true]);
   assert.strictEqual(S.summarize(7001, items).can_accept, false);   // off by a cent
@@ -137,13 +145,22 @@ const ctxFor = (bk) => {
     bankruptcyPropertyIds: bk ? [P2] : [], legalStates: {}, extraction: { id: 'x1', matters: a.matters, line_map: a.line_map } };
 };
 const inv = { total_cents: fx.invoice.total_cents, invoice_date: fx.invoice.invoice_date };
-t('engine: a clean PDF-backed invoice is fully accepted (one click)', () => {
-  const s = S.summarize(inv.total_cents, S.suggestReview(inv, fx.ap_lines, ctxFor(false)).items);
-  assert.deepStrictEqual([s.accepted.count, s.exceptions.count, s.recoverable.cents, s.association.cents, s.can_accept], [3, 0, 66006, 6000, true]);
+t('engine: a clean PDF-backed invoice: owner matters accepted; General Matters waits for one confirmation (Ed 2026-10-12)', () => {
+  const items = S.suggestReview(inv, fx.ap_lines, ctxFor(false)).items;
+  const s = S.summarize(inv.total_cents, items);
+  assert.deepStrictEqual([s.accepted.count, s.exceptions.count, s.recoverable.cents, s.association.cents, s.can_accept], [2, 1, 66006, 0, false]);
+  const gm = items.find((it) => it.allocations.some((a) => a.classification === 'association_legal_expense'));
+  assert.deepStrictEqual(S.triageItem(gm).hard, []);   // soft only: a confirmation clears it
+  gm.allocations.forEach((a) => { a.evidence = (a.evidence || []).concat([CONFIRMED]); });
+  const s2 = S.summarize(inv.total_cents, items);
+  assert.deepStrictEqual([s2.association.cents, s2.can_accept], [6000, true]);
 });
 t('engine: a bankruptcy on file turns exactly that matter into an exception', () => {
   const items = S.suggestReview(inv, fx.ap_lines, ctxFor(true)).items;
-  assert.deepStrictEqual(items.map((it) => S.triageItem(it).status), ['accepted', 'exception', 'accepted']);
+  const st = items.map((it) => S.triageItem(it));
+  // the owner matter with the bankruptcy is a HARD exception; the General Matters line is a soft one
+  assert.deepStrictEqual(st.map((x) => x.status), ['accepted', 'exception', 'exception']);
+  assert.ok(st[1].hard.some((x) => /bankruptcy/.test(x)) && !st[2].hard.length);
   assert.strictEqual(S.summarize(inv.total_cents, items).can_accept, false);
 });
 
@@ -200,6 +217,8 @@ const usableRead = (id) => ({ extraction: { id, status: 'valid', matters: [], li
 const noRead = { extraction: null, extractionUse: { ok: false, reason: 'not read' } };
 t('fresh: a draft that still matches the payable and the read it used is current (and acceptable)', () => {
   const { d, saved } = savedFrom(ctxFor(false), 'read-A');
+  // General Matters is confirmed by a person (Ed 2026-10-12); then the draft is acceptable.
+  saved.items.forEach((it) => it.allocations.forEach((al) => { if (al.classification === 'association_legal_expense') al.evidence = (al.evidence || []).concat([CONFIRMED]); }));
   const full = Object.assign({}, d, { saved }, usableRead('read-A'));
   assert.strictEqual(R.draftFreshness(full).stale, false);
   const p = R.detailPayload(full);
