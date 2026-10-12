@@ -156,10 +156,10 @@ t('suggest: the firm file number is never used as an owner account', () => {
   const coll = S.suggestReview(invOf(fx), fx.ap_lines, ctx).items[1];
   assert.ok(!coll.allocations[0].evidence.some((e) => e.kind === 'account'));
 });
-t('suggest: Winstead title with no street type + surname only → property found, medium confidence', () => {
+t('suggest: Winstead title with no street type + surname only → property found; identity established by address + current owner + case reference (Ed 2026-10-12)', () => {
   const fx = load('winstead-cltn-outstanding.json');
   const a = S.suggestReview(invOf(fx), fx.ap_lines, withExtraction(fx)).items[0].allocations[0];
-  assert.strictEqual(a.property_id, P3); assert.strictEqual(a.confidence, 'medium');
+  assert.strictEqual(a.property_id, P3); assert.strictEqual(a.confidence, 'high');
   assert.ok(a.evidence.some((e) => e.kind === 'address' && /street type missing/.test(e.value)));
   assert.ok(a.evidence.some((e) => e.kind === 'name_check' && /surname matches/.test(e.value)));
   assert.strictEqual(a.classification, 'homeowner_recoverable');

@@ -183,9 +183,10 @@ t('applyRecommendations: changes the draft, attests only verified recoveries; ho
   assert.strictEqual(a1.charge_category, 'attorney_fee_other'); assert.strictEqual(a1.confirmed, true); assert.ok(/^Amanda \(AI\): READY FOR APPROVAL - notice verified\./.test(a1.note));
   assert.strictEqual(a2.classification, 'needs_review'); assert.strictEqual(a2.confirmed, false);
 });
-t('only Emma/Amanda drafts are AI-owned (a supervised review draft is not)', () => {
+t('AI-owned drafts: Emma, Amanda and the AI-prepared review account, never a person (Ed 2026-10-12)', () => {
   assert.ok(TEAM.AI_ACTORS.has(TEAM.EMMA) && TEAM.AI_ACTORS.has(TEAM.AMANDA));
-  assert.ok(!TEAM.AI_ACTORS.has('claude-ai-review@bedrocktx.com'));
+  assert.ok(TEAM.AI_ACTORS.has('claude-ai-review@bedrocktx.com'));
+  assert.ok(!TEAM.AI_ACTORS.has('egojara@bedrocktx.com'));
 });
 t('amandaResearch: a draft a person saved is never rewritten; the recommendation is recorded only', async () => {
   let saved = false;

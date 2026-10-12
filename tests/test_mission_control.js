@@ -84,6 +84,21 @@ console.log('operations: work items');
   check('an item owned by Ed needs his action; dependencies are kept', w[0].state === 'needs_action' && w[0].blocks[0] === 'x' && w[0].editable);
 }
 
+console.log('operations: agent objectives');
+{
+  const C = new Map([['cid', { id: 'cid', name: 'Test Community' }]]);
+  const inv = '11111111-2222-4333-8444-555555555555';
+  const n = OPS.objectiveNodes([
+    { id: 'o1', community_id: 'cid', title: 'Approval required: $1,140.00 homeowner chargebacks on D&F 283101', accountable_persona: 'amanda', autonomy_class: 'REVIEW', subject_key: `legal_recovery:${inv}`, next_action: 'The owner approves the treatment.' },
+    { id: 'o2', community_id: 'cid', title: 'Documentation needed for D&F 278002', accountable_persona: 'amanda', autonomy_class: 'REVIEW', subject_key: `legal_documentation:${inv}`, next_action: 'check 6211 Piedra Negras Court: OneDrive' },
+    { id: 'o3', community_id: 'cid', title: 'Homeowner recovery on D&F 278002: bankruptcy', accountable_persona: 'amanda', autonomy_class: 'BLOCK', blocked_reason: 'bankruptcy: an owner charge needs the owner\'s decision', subject_key: `legal_recovery:${inv}` },
+    { id: 'o4', community_id: 'cid', title: 'Payment awaiting release: D&F 283101', accountable_persona: 'amanda', autonomy_class: 'REVIEW', subject_key: `legal_invoice:${inv}` }], C);
+  check('a ready invoice is ONE approval for Ed, deep-linked to Legal Invoice Review', n[0].owner === 'Ed' && n[0].state === 'needs_action' && n[0].action.url === `/app/financial/legal?id=${inv}`);
+  check('open evidence work stays with the agent, with its specific next action', n[1].owner === 'Amanda' && n[1].state === 'in_progress' && /OneDrive/.test(n[1].next));
+  check('a genuine decision (bankruptcy) is Ed\'s, with the reason', n[2].owner === 'Ed' && /bankruptcy/.test(n[2].why));
+  check('a payment release goes to the approval queue', n[3].owner === 'Ed' && n[3].action.url === '/ed.html');
+}
+
 console.log('modules: evidence-based states');
 {
   const snap = { issues: { 7: { state: 'open' }, 99: { state: 'closed' } }, pulls: { 34: { state: 'open' }, 140: { state: 'merged' } } };
