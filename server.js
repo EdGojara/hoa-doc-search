@@ -902,6 +902,7 @@ app.get('/app/operations', (req, res) => res.sendFile(require('path').join(__dir
 app.get('/app/mission-control', (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'app', 'mission-control.html')));
 // Legal Invoice Review (Issue #9 step 2). Draft only: no GL or owner postings.
 app.get('/app/financial/legal', (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'app', 'legal.html')));
+app.get('/app/financial/cutoff', (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'app', 'cutoff.html')));
 // The review page reconciles with the SAME module the server uses (one rule set).
 app.get('/app/legal-suggest.js', (req, res) => res.type('application/javascript').sendFile(require('path').join(__dirname, 'lib', 'legal', 'review_suggest.js')));
 
