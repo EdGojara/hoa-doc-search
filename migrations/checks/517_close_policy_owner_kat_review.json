@@ -1,0 +1,63 @@
+{
+  "migration": "517_close_policy_owner_kat_review.sql",
+  "summary": "Accrual close policy (Ed 2026-10-12): close_period now closes a month only for the OWNER and only on a checklist run that is Kat's month-end cutoff review (recorded by Kat, carrying CUT-01, CUT-02, CUT-03 and IF-01). Everything else in close_period is unchanged. One function replaced; no row changes; nothing closes and nothing posts.",
+  "requires": [
+    "502_month_end_close.sql"
+  ],
+  "preflight": [
+    {
+      "name": "close_period exists exactly once (the migration 502 signature)",
+      "sql": "SELECT count(*)::int FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'public' AND p.proname = 'close_period'",
+      "expect": 1
+    },
+    {
+      "name": "it is still the migration 502 version (admin or owner may close)",
+      "sql": "SELECT count(*)::int FROM pg_proc WHERE proname = 'close_period' AND prosrc LIKE '%a month is closed by an admin or the owner%'",
+      "expect": 1
+    }
+  ],
+  "expected_changes": [
+    "close_period: only the owner may close; the run must be Kat's cutoff review (run_by first word Kat; results include CUT-01, CUT-02, CUT-03, IF-01). Grants unchanged (service_role only).",
+    "No accounting period, close record, checklist run, journal entry or ledger row changes. Open months stay open (Canyon Gate August and September included)."
+  ],
+  "objects": {
+    "added": [],
+    "changed": [
+      "function:close_period"
+    ],
+    "removed": []
+  },
+  "row_changes": {
+    "accounting_periods": 0,
+    "period_closes": 0,
+    "period_close_runs": 0,
+    "period_close_events": 0,
+    "journal_entries": 0,
+    "journal_entry_lines": 0
+  },
+  "protected": [
+    { "table": "accounting_periods", "order_by": "id" },
+    { "table": "period_closes", "order_by": "id" },
+    { "table": "period_close_runs", "order_by": "id" },
+    { "table": "period_close_events", "order_by": "id" },
+    { "table": "journal_entries", "order_by": "id" },
+    { "table": "journal_entry_lines", "order_by": "id" }
+  ],
+  "verify": [
+    {
+      "name": "close_period is owner-only",
+      "sql": "SELECT count(*)::int FROM pg_proc WHERE proname = 'close_period' AND prosrc LIKE '%only the owner approves and closes a month%'",
+      "expect": 1
+    },
+    {
+      "name": "close_period requires Kat's cutoff review",
+      "sql": "SELECT count(*)::int FROM pg_proc WHERE proname = 'close_period' AND prosrc LIKE '%Kat''''s month-end cutoff review first%' AND prosrc LIKE '%IF-01%'",
+      "expect": 1
+    },
+    {
+      "name": "still executable only by service_role",
+      "sql": "SELECT (has_function_privilege('service_role', 'close_period(uuid, uuid, uuid, text, uuid, text)', 'EXECUTE') AND NOT has_function_privilege('anon', 'close_period(uuid, uuid, uuid, text, uuid, text)', 'EXECUTE') AND NOT has_function_privilege('authenticated', 'close_period(uuid, uuid, uuid, text, uuid, text)', 'EXECUTE'))::text",
+      "expect": "true"
+    }
+  ]
+}
