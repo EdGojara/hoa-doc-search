@@ -1,0 +1,27 @@
+{
+  "migration": "519_lopf_bank_reconciliation.sql",
+  "summary": "Lakes of Pine Forest on Kat's monthly bank reconciliation: automation row (enabled, auto-post off) for Savings ••2457 and Reserve MM ••2465, interest to 4110 / 4120, an IntraFi ICS transfer rule for Operating (used once Operating's opening position is set), and the 7/31/2026 opening positions for Savings and Reserve (bank = book, no reconciling items). Nothing is posted.",
+  "requires": ["511_kat_bank_reconciliation.sql"],
+  "preflight": [
+    { "name": "LOPF has no bank reconciliation automation yet", "sql": "SELECT count(*)::int FROM community_accounting_automation WHERE community_id = 'a0000000-0000-4000-8000-000000000002' AND process = 'bank_reconciliation'", "expect": 0 },
+    { "name": "both LOPF accounts exist with no opening position", "sql": "SELECT count(*)::int FROM bank_accounts WHERE id IN ('8467a5a4-1291-4d94-8c28-b5f85fd862e0', 'f7124b35-d108-44f9-a304-9834964dcae7') AND community_id = 'a0000000-0000-4000-8000-000000000002' AND opening_position IS NULL", "expect": 2 },
+    { "name": "the 7/31 statements equal the GL (Savings 197,766.56; Reserve 240,584.57)", "sql": "SELECT count(*)::int FROM bank_statement_imports WHERE (bank_account_id = '8467a5a4-1291-4d94-8c28-b5f85fd862e0' AND statement_period_end = '2026-07-31' AND ending_balance_cents = 19776656) OR (bank_account_id = 'f7124b35-d108-44f9-a304-9834964dcae7' AND statement_period_end = '2026-07-31' AND ending_balance_cents = 24058457)", "expect": 2 },
+    { "name": "interest and ICS accounts exist", "sql": "SELECT count(*)::int FROM chart_of_accounts WHERE community_id = 'a0000000-0000-4000-8000-000000000002' AND account_number IN ('4110', '4120', '4100', '1005')", "expect": 4 }
+  ],
+  "expected_changes": [
+    "community_accounting_automation: one new LOPF bank_reconciliation row (enabled, auto_post false).",
+    "bank_accounts: opening_position set on LOPF Savings and Reserve MM (were null).",
+    "No journal entry, run or statement changes."
+  ],
+  "objects": { "added": [], "changed": [], "removed": [] },
+  "row_changes": { "community_accounting_automation": 1, "bank_accounts": 0, "journal_entries": 0, "accounting_runs": 0 },
+  "protected": [
+    { "table": "journal_entries", "order_by": "id" },
+    { "table": "accounting_runs", "order_by": "id" },
+    { "table": "bank_statement_imports", "order_by": "id" }
+  ],
+  "verify": [
+    { "name": "LOPF automation enabled, auto-post off", "sql": "SELECT count(*)::int FROM community_accounting_automation WHERE community_id = 'a0000000-0000-4000-8000-000000000002' AND process = 'bank_reconciliation' AND enabled AND NOT auto_post", "expect": 1 },
+    { "name": "opening positions set at 7/31 bank = book", "sql": "SELECT count(*)::int FROM bank_accounts WHERE id IN ('8467a5a4-1291-4d94-8c28-b5f85fd862e0', 'f7124b35-d108-44f9-a304-9834964dcae7') AND opening_position->>'as_of_date' = '2026-07-31' AND (opening_position->>'bank_balance_cents') = (opening_position->>'book_balance_cents')", "expect": 2 }
+  ]
+}
