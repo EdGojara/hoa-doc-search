@@ -100,7 +100,7 @@ router.post('/community/:cid/prepare', express.json(), async (req, res) => {
   try {
     const u = await requireStaff(req, res); if (!u) return;
     const b = req.body || {};
-    if (!['recognition', 'interest', 'bank_reconciliation'].includes(b.process)) return res.status(400).json({ error: 'process must be recognition, interest or bank_reconciliation' });
+    if (!['recognition', 'interest', 'bank_reconciliation', 'cutoff_adjustment'].includes(b.process)) return res.status(400).json({ error: 'process must be recognition, interest, bank_reconciliation or cutoff_adjustment' });
     if (b.process === 'bank_reconciliation' && !/^[0-9a-f-]{36}$/i.test(String(b.subject_id || ''))) return res.status(400).json({ error: 'subject_id (the bank account) is required' });
     if (!isDate(b.period_month)) return res.status(400).json({ error: 'period_month must be YYYY-MM-DD' });
     if (b.run_date && !isDate(b.run_date)) return res.status(400).json({ error: 'run_date must be YYYY-MM-DD' });
