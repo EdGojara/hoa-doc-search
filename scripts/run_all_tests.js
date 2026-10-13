@@ -103,6 +103,7 @@ const CHECKS = [
   'tests/test_statement_presentation.js',
   'tests/test_monthly_interest.js',
   'tests/test_bank_monthly_rec.js',
+  'tests/test_bank_rec_receipts.js',
   'tests/test_working_forecast.js',
   'tests/test_reserve_plan.js',
   'tests/test_mission_control_graph.js',
