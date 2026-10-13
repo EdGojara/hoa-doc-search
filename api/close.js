@@ -3,10 +3,11 @@
 // ----------------------------------------------------------------------------
 //   GET  /:cid/periods                         months with close status + closed-through
 //   GET  /:cid/periods/:pid                    close record, latest run, results, history
-//   POST /:cid/periods/:pid/run                run the checklist (staff)
+//   POST /:cid/periods/:pid/run                Kat's cutoff review = the checklist (staff may request it)
 //   POST /:cid/periods/:pid/override           {run_id, control_code, reason}  OWNER only
 //   POST /:cid/periods/:pid/accept-warnings    {run_id, control_codes[], note} admin/owner
-//   POST /:cid/periods/:pid/close              {run_id}                         admin/owner
+//   POST /:cid/periods/:pid/close              {run_id}                         OWNER only, on Kat's review
+//   GET  /:cid/periods/:pid/readiness          Kat's close-readiness report (?format=html)
 //   POST /:cid/periods/:pid/reopen             {reason}                         admin/owner
 //   GET  /:cid/requirements                    required period sources (configuration)
 //   POST /:cid/requirements                    {source_key, label, required, config, reason} admin/owner
@@ -76,7 +77,8 @@ router.post('/:cid/periods/:pid/accept-warnings', express.json(), async (req, re
 });
 
 router.post('/:cid/periods/:pid/close', express.json(), async (req, res) => {
-  try { if (!ids(req, res)) return; const u = await requireAdmin(req, res); if (!u) return;
+  // Owner approval closes a month (accrual close policy, Ed 2026-10-12).
+  try { if (!ids(req, res)) return; const u = await requireOwner(req, res); if (!u) return;
     const b = req.body || {};
     if (!UUID.test(b.run_id || '')) return res.status(400).json({ error: 'run_id_required' });
     res.json(await C.closePeriod(supabase, req.params.cid, req.params.pid, b, actorOf(u)));
@@ -89,6 +91,15 @@ router.post('/:cid/periods/:pid/reopen', express.json(), async (req, res) => {
     if (String(b.reason || '').trim().length < 10) return res.status(400).json({ error: 'A reopen needs a written reason (10+ characters).' });
     res.json(await C.reopenPeriod(supabase, req.params.cid, req.params.pid, b, actorOf(u)));
   } catch (err) { fail(res, 'reopen', err); }
+});
+
+// Kat's close-readiness report: outstanding exceptions, proposed adjustments, evidence. ?format=html prints it.
+router.get('/:cid/periods/:pid/readiness', async (req, res) => {
+  try { if (!ids(req, res)) return; const u = await requireStaff(req, res); if (!u) return;
+    const r = await C.readiness(supabase, req.params.cid, req.params.pid);
+    if (req.query.format === 'html') return res.type('html').send(require('../lib/close/readiness').renderReadinessHtml(r));
+    res.json(r);
+  } catch (err) { fail(res, 'readiness', err); }
 });
 
 router.get('/:cid/requirements', async (req, res) => {

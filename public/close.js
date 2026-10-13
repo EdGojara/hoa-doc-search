@@ -2,7 +2,8 @@
 // Renders into accounting.html's #body. Server: /api/close (lib/close/*).
 // The checklist is computed by the server from the books; this screen shows it,
 // and lets the owner override a BLOCK (with a reason), an admin accept warnings,
-// close the month, and reopen it (with a reason). Nothing here decides a result.
+// the OWNER approve and close the month on Kat's cutoff review (accrual close policy,
+// Ed 2026-10-12), and reopen it (with a reason). Nothing here decides a result.
 (function () {
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   const money = (c) => { if (c == null) return ''; const n = Number(c) / 100; const s = Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); return n < 0 ? `($${s})` : `$${s}`; };
@@ -120,7 +121,7 @@
     if (isClosed) sub = `${rec.close_label === 'closed_with_override' ? '<span class="chip override">Closed with override</span> ' : '<span class="chip closed">Closed</span> '}Closed through ${esc(dayName(p.period_end))} · closed ${esc(when(rec.closed_at))} by ${esc(rec.closed_by || '')}`;
     else if (meta.locked_by_later_close) sub = 'Locked by a later month\'s close (entries dated in it cannot change).';
     else if (!d.run) sub = 'The checklist has not run for this month yet.';
-    else sub = `Checklist run ${esc(when(d.run.run_at))} by ${esc(d.run.run_by)}${rec.reopen_count ? ` · reopened ${rec.reopen_count}× (last: “${esc(rec.reopen_reason || '')}”)` : ''}`;
+    else sub = `${d.kat_cutoff_review ? 'Kat\'s cutoff review' : 'Checklist run (not a cutoff review; run Kat\'s review)'} ${esc(when(d.run.run_at))} by ${esc(d.run.run_by)}${rec.reopen_count ? ` · reopened ${rec.reopen_count}× (last: “${esc(rec.reopen_reason || '')}”)` : ''}`;
     const tally = d.run ? `<div class="mec-tally"><div class="tally p"><div class="v">${d.results.filter((r) => r.status === 'PASS').length}</div><div class="l">Pass</div></div>
       <div class="tally w"><div class="v">${warns.length}</div><div class="l">Warning${unaccepted.length && !isClosed ? ` · ${unaccepted.length} open` : ''}</div></div>
       <div class="tally b"><div class="v">${blocks.length}</div><div class="l">Block${blocks.length ? ` · ${blocks.length - openBlocks.length} overridden` : ''}</div></div></div>` : '';
@@ -139,28 +140,42 @@
         ${r.override ? `<div class="o"><b>Overridden by ${esc(r.override.actor)}</b> · ${esc(when(r.override.at))}<br>“${esc(r.override.reason)}”<br><span class="muted">The original BLOCK is kept in the close record.</span></div>` : ''}
         ${acts.length ? `<div class="acts">${acts.join('')}</div>` : ''}</div><div class="amt">${esc(amt)}${drill}</div></div>`;
     };
-    const canClose = !isClosed && isAdmin && d.can_close;
-    const closeTitle = isClosed ? '' : !isAdmin ? 'An admin or the owner closes a month.' : !d.run ? 'Run the checklist first.' : openBlocks.length ? `${openBlocks.length} BLOCK${openBlocks.length > 1 ? 's' : ''} need fixing or an owner override.` : unaccepted.length ? 'Accept the open warnings first.' : '';
+    // Accrual close policy (Ed 2026-10-12): Kat's cutoff review, then the owner approves the close.
+    const isOwner = viewer === 'owner';
+    const canClose = !isClosed && isOwner && d.can_close;
+    const closeTitle = isClosed ? '' : !d.run ? 'Kat\'s cutoff review has not run yet.' : !d.kat_cutoff_review ? 'The latest run is not Kat\'s cutoff review on the current checklist; run the review again.' : !isOwner ? 'Only the owner approves and closes a month.' : openBlocks.length ? `${openBlocks.length} BLOCK${openBlocks.length > 1 ? 's' : ''} need fixing or an owner override.` : unaccepted.length ? 'Accept the open warnings first.' : '';
     const ev = (d.events || []).slice().reverse().map((e) => {
       const what = { run: 'ran the checklist', block_overridden: `overrode BLOCK ${e.control_code}`, warnings_accepted: `accepted warnings ${((e.detail && e.detail.control_codes) || []).join(', ')}`, closed: `closed the month${e.detail && e.detail.label === 'closed_with_override' ? ' (with override)' : ''}`, reopened: 'reopened the month' }[e.event] || e.event;
       return `<div class="e"><b>${esc(e.actor)}</b> ${esc(what)} · ${esc(when(e.created_at))}${e.reason ? ` — “${esc(e.reason)}”` : ''}</div>`;
     }).join('');
     box.innerHTML = `<div class="mec-head"><div><h2>${esc(monthName(p.period_end))}</h2><div class="mec-sub">${sub}</div></div>
       <div class="mec-btns">
-        ${!isClosed && !meta.locked_by_later_close ? '<button class="mbtn" id="mec-run">Run checklist</button>' : ''}
+        ${!isClosed && !meta.locked_by_later_close ? '<button class="mbtn" id="mec-run">Run Kat\'s cutoff review</button>' : ''}
+        ${d.run ? '<button class="mbtn" id="mec-ready">Readiness report</button>' : ''}
         ${!isClosed && isAdmin && unaccepted.length ? '<button class="mbtn gold" id="mec-accept" disabled>Accept selected warnings</button>' : ''}
         ${!isClosed && !meta.locked_by_later_close ? `<button class="mbtn primary" id="mec-close" ${canClose ? '' : 'disabled'} title="${esc(closeTitle)}">Close ${esc(monthName(p.period_end))}</button>` : ''}
         ${isClosed && isAdmin ? '<button class="mbtn" id="mec-reopen">Reopen…</button>' : ''}
       </div></div>
       ${tally}
-      ${d.run ? groups.map((g) => `<div class="mec-group">${esc(g.name)}</div>${g.rows.map(row).join('')}`).join('') : '<div class="muted" style="padding:10px 0;">Run the checklist to see what this month needs before it can close. It reads the books; it posts nothing.</div>'}
+      ${d.run ? groups.map((g) => `<div class="mec-group">${esc(g.name)}</div>${g.rows.map(row).join('')}`).join('') : '<div class="muted" style="padding:10px 0;">Run Kat\'s cutoff review to see what this month needs before it can close. It reads the books; it posts nothing.</div>'}
       ${!isClosed && closeTitle && d.run ? `<div class="mec-note">${esc(closeTitle)}</div>` : ''}
       ${ev ? `<div class="mec-hist"><div class="mec-group">History</div>${ev}</div>` : ''}`;
     const runBtn = $('mec-run');
     if (runBtn) runBtn.addEventListener('click', async () => {
       runBtn.disabled = true; runBtn.textContent = 'Running…';
       try { await api(`/periods/${p.id}/run`, { method: 'POST', body: '{}' }); await render(state.cid); }
-      catch (e) { runBtn.disabled = false; runBtn.textContent = 'Run checklist'; alertBox(e.message); }
+      catch (e) { runBtn.disabled = false; runBtn.textContent = 'Run Kat\'s cutoff review'; alertBox(e.message); }
+    });
+    const rdBtn = $('mec-ready');
+    if (rdBtn) rdBtn.addEventListener('click', async () => {
+      const w = window.open('', '_blank');
+      try {
+        const headers = await (window.chkAuthHeader ? window.chkAuthHeader() : {});
+        const r = await fetch(`/api/close/${state.cid}/periods/${p.id}/readiness?format=html`, { headers });
+        const html = await r.text();
+        if (!r.ok) throw new Error((() => { try { return JSON.parse(html).error; } catch (_) { return `Request failed (${r.status})`; } })());
+        if (w) { w.document.open(); w.document.write(html); w.document.close(); }
+      } catch (e) { if (w) w.close(); alertBox(e.message); }
     });
     const acc = $('mec-accept');
     if (acc) {
@@ -181,7 +196,7 @@
     const cl = $('mec-close');
     if (cl && canClose) cl.addEventListener('click', () => {
       const ovr = blocks.length;
-      dialog({ title: `Close ${monthName(p.period_end)}`, body: `Closing locks every entry dated on or before ${dayName(p.period_end)}. Corrections then need an adjusting entry in an open month, or a reopen with a reason.${ovr ? `\n\nThis close carries ${ovr} owner override${ovr > 1 ? 's' : ''} and will be labelled “Closed with override.”` : ''}`,
+      dialog({ title: `Approve and close ${monthName(p.period_end)}`, body: `You are approving the close on Kat's cutoff review of ${when(d.run.run_at)}. Closing locks every entry dated on or before ${dayName(p.period_end)}. Corrections then need an adjusting entry in an open month, or a reopen with a reason.${ovr ? `\n\nThis close carries ${ovr} owner override${ovr > 1 ? 's' : ''} and will be labelled “Closed with override.”` : ''}`,
         noInput: true, cta: 'Close the month', onOk: () => api(`/periods/${p.id}/close`, { method: 'POST', body: JSON.stringify({ run_id: d.run.id }) }) });
     });
     const ro = $('mec-reopen');
