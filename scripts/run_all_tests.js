@@ -100,6 +100,7 @@ const CHECKS = [
   'tests/test_statement_periods.js',
   'tests/test_living_budget_prior_year.js',
   'tests/test_statement_package.js',
+  'tests/test_bva_print.js',
   'tests/test_statement_presentation.js',
   'tests/test_monthly_interest.js',
   'tests/test_bank_monthly_rec.js',

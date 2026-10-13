@@ -299,7 +299,7 @@ const find = (model, num) => { for (const s of model.sections) for (const g of s
     // bs / ib were built on the fresh fixture at the top of this file. Pinned content hashes: the
     // income statement is unchanged since #109; the balance sheet changed exactly once, when its
     // mapping state key was renamed final_ready -> mapping_complete (Ed 2026-10-10).
-    check('Drama Creek (converted): statement content hashes are the pinned values (income re-pinned 2026-10-12: net income before transfers / after transfers labels and suppressed-section flag; balance sheet unchanged)', bs.snapshot_sha256.startsWith('87999b8f716a') && ib.snapshot_sha256.startsWith('c60e8ecfe69a') && bs.period.books_start === '2026-01-01', `${bs.snapshot_sha256} ${ib.snapshot_sha256}`);
+    check('Drama Creek (converted): statement content hashes are the pinned values (income re-pinned 2026-10-13: title "vs. Budget" and the prior-year note reads "September 2025"; no amount changed; balance sheet unchanged)', bs.snapshot_sha256.startsWith('87999b8f716a') && ib.snapshot_sha256.startsWith('7735b864c024') && bs.period.books_start === '2026-01-01', `${bs.snapshot_sha256} ${ib.snapshot_sha256}`);
   }
 
   console.log('balance-sheet subcategories and interfund elimination');
@@ -477,7 +477,7 @@ const find = (model, num) => { for (const s of model.sections) for (const g of s
     const doc = R.renderDocument([fvr, ibr, ra]);
     check('the package document is landscape letter', /@page\{size:Letter landscape/.test(doc));
     const ibPrint = R.renderHtml(ibr, { mode: 'print', noStyle: true });
-    check('printed income statement: a column band row and each GL account under its category with a category subtotal', /class="band"/.test(ibPrint) && /Current month/.test(ibPrint) && /Annual/.test(ibPrint) && (!ibr.sections[0].groups.some((g) => g.kind === 'category') || /class="cattot"/.test(ibPrint)));
+    check('printed Budget vs. Actual: a column band row, six columns (no annual budget), each GL account under its category with a category subtotal or as a one-account category line', /class="band"/.test(ibPrint) && /Current month/.test(ibPrint) && !/Annual/.test(ibPrint) && (ibPrint.match(/<col>/g) || []).length === 6 && (!ibr.sections[0].groups.some((g) => g.kind === 'category') || /class="cattot"|class="cat one"/.test(ibPrint)));
   }
 
   console.log('interfund transfers (reserve contribution)');
