@@ -177,14 +177,15 @@ async function openRun(id){
     const excHtml = excOwners.length ? '<h4 style="margin:14px 0 6px;">Exceptions (tick to include)</h4><div style="max-height:260px;overflow:auto;font-size:12.5px;">'
       + excOwners.map(e=>'<label style="display:block;padding:4px 0;border-bottom:1px solid #f1f3f6;"><input type="checkbox" class="incl" value="'+esc(e.tenure_id)+'"> '+esc(e.address||'')+' · '+money(e.interest_cents)+' · '+esc(e.text)+'</label>').join('')+'</div>' : '';
     const otherHtml = other.length && run.process!=='bank_reconciliation' ? '<div style="background:#FFF5DD;color:#7A5408;padding:8px 10px;border-radius:6px;font-size:12.5px;margin-top:10px;">'+other.map(e=>esc(e.text)).join('<br>')+'</div>' : '';
-    const ev = (d.events||[]).map(e=>new Date(e.created_at).toLocaleString()+' · '+esc(e.event)+' · '+esc(e.actor)).join('<br>');
+    const ev = (d.events||[]).map(e=>new Date(e.created_at).toLocaleString()+' · '+esc(e.event)+' · '+esc(e.actor)
+      +(e.event==='note'&&e.detail&&e.detail.text?'<div style="margin:3px 0 6px;padding:6px 8px;background:#FFF5DD;color:#7A5408;border-radius:5px;">'+esc(e.detail.text)+'</div>':'')).join('<br>');
     const can = run.status==='prepared';
     const btns = can ? '<button onclick="holdRun(\''+run.id+'\')" style="padding:8px 14px;border:1px solid #e3c98a;background:#fff;border-radius:6px;cursor:pointer;">Hold</button>'
       + '<button onclick="approveRun(\''+run.id+'\',\''+run.process+'\')" style="padding:8px 16px;border:none;background:#0B1D34;color:#fff;border-radius:6px;cursor:pointer;font-weight:700;">'+(run.process==='bank_reconciliation'?'Approve &amp; store':'Approve &amp; post')+'</button>' : '';
     const res = run.result && run.result.report ? '<h4 style="margin:14px 0 6px;">Stored result</h4><pre style="white-space:pre-wrap;font:12.5px/1.5 inherit;background:#f7f9fb;padding:10px 12px;border-radius:6px;">'+esc(run.result.report)+'</pre>' : '';
     $('modal').innerHTML = '<div class="mb" style="padding:20px 22px;max-width:760px;">'
       + '<h3 style="margin:0 0 6px;">'+(PROC[run.process]||run.process)+' · '+monthLabel(run.period_month)+'</h3>'
-      + '<div style="color:var(--muted);font-size:12.5px;">Prepared by '+esc(run.prepared_by)+' · status '+esc(run.status)+'</div>'
+      + '<div style="color:var(--muted);font-size:12.5px;">Prepared by '+esc(run.prepared_by)+' · status '+esc(run.status)+(run.approved_by?' · approved by '+esc(run.approved_by):'')+'</div>'
       + head+otherHtml+excHtml+res
       + '<p style="margin-top:12px;"><a href="#" onclick="event.preventDefault();dlCsv(\''+run.id+'\')">Download the full '+(run.process==='interest'?'owner-by-owner':run.process==='bank_reconciliation'?'item-by-item':'entry')+' detail (CSV)</a></p>'
       + '<div style="font-size:11.5px;color:var(--muted);margin-top:8px;">'+ev+'</div>'
