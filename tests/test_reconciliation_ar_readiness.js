@@ -34,7 +34,7 @@ function fakeDb(tables) {
       const q = {
         select() { return q; }, eq() { return q; }, order() { return q; },
         in(col, vals) { q._in = { col, vals: vals.map(String) }; return q; },
-        not() { return q; }, is() { return q; }, gte() { return q; }, limit() { return q; },
+        not() { return q; }, is() { return q; }, gte() { return q; }, limit() { return q; }, ilike() { return q; },
         range(from) { q._from = from; return q; },
         maybeSingle() { return Promise.resolve({ data: rows[0] || null, error: null }); },
         single() { return Promise.resolve({ data: rows[0] || null, error: null }); },
