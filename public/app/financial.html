@@ -46,6 +46,7 @@
       <button class="tx-menu-btn" id="tx-menu-btn" aria-label="Open navigation"></button>
       <span class="tx-switch" style="cursor:default">Financial</span>
       <div style="margin-left:auto;display:flex;gap:14px;align-items:center">
+        <a class="tx-btn tx-btn--pri" href="/app/financial/cutoff" id="fn-cutoff" style="height:32px">Cutoff Corrections</a>
         <span class="tx-muted" style="font-size:12px" id="fn-stamp"></span>
         <button id="fn-refresh" type="button" class="tx-btn tx-btn--sec" style="height:32px"></button>
       </div>
@@ -101,7 +102,7 @@
   var WORK = [
     ['receipt', 'Payables', [['Enter and approve bills', '/#tab=ap'], ['Owner release queue', '/ed.html'], ['Bill intake (Emma)', '/admin/ap'], ['Print checks', A + 'checks'], ['Legal invoice review', '/app/financial/legal', true]]],
     ['owners', 'Receivables', [['Owner accounts', A + 'owners'], ['AR aging', A + 'ar'], ['Former owners', A + 'formerowners'], ['Payment plans', '/admin/payment-plans'], ['Collections', '/admin/collections']]],
-    ['financial', 'Accounting', [['Trial balance', A + 'trial'], ['Journal entries', A + 'je'], ['Chart of accounts', A + 'coa'], ['Periods', A + 'periods']]],
+    ['financial', 'Accounting', [['Cutoff corrections', '/app/financial/cutoff', true], ['Trial balance', A + 'trial'], ['Journal entries', A + 'je'], ['Chart of accounts', A + 'coa'], ['Periods', A + 'periods']]],
     ['projects', 'Budgets', [['Budget and monthly plan', A + 'budget'], ['Budget vs actual', A + 'bva']]],
     ['communities', 'Banking', [['Bank reconciliation', A + 'bankrec'], ['Bank setup', '/admin/bank-setup'], ['Statement tracker', '/admin/statement-tracker']]],
     ['operations', 'Reports and close', [['Balance sheet', A + 'bs'], ['Income statement', A + 'is'], ['Financial review', '/#tab=finrev']]],

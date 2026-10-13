@@ -6,6 +6,8 @@
 //   GET  /api/accounting-runs/run/:id              one run: preview, exceptions, events
 //   GET  /api/accounting-runs/run/:id/csv          owner-by-owner / entry-by-entry CSV
 //   GET  /api/accounting-runs/bank-accounts         bank accounts enabled for Kat's reconciliation
+//   GET  /api/accounting-runs/cutoff/overview       Cutoff Corrections page: managed communities, their
+//                                                   open months since cutover, cutoff runs, viewer_is_owner
 //   POST /api/accounting-runs/community/:cid/prepare { process, period_month, run_date, subject_id }   staff
 //        (bank_reconciliation: subject_id = the bank account; period_month = the month reconciled)
 //   POST /api/accounting-runs/run/:id/approve      { include: [tenure_id] }   OWNER ONLY
@@ -16,12 +18,13 @@
 const express = require('express');
 const { createClient } = require('@supabase/supabase-js');
 const { safeErrorMessage } = require('./_safe_error');
-const { requireStaff, requireOwner } = require('./_require_admin');
+const { requireStaff, requireOwner, OWNER_EMAIL } = require('./_require_admin');
 const R = require('../lib/accounting/monthly_runs');
 
 const router = express.Router();
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 const fail = (res, what, err) => {
+  if (err.code === 'approval_required') return res.status(403).json({ error: err.message, code: err.code });
   const known = ['invalid_state', 'invalid_input', 'blocked', 'duplicate'];
   if (known.includes(err.code)) return res.status(409).json({ error: err.message, code: err.code });
   console.error(`[accounting_runs] ${what} failed:`, err.message);
@@ -64,6 +67,29 @@ router.get('/community/:cid', async (req, res) => {
     const { data: auto } = await supabase.from('community_accounting_automation').select('process, enabled, auto_post, settings, updated_by, updated_at').eq('community_id', req.params.cid);
     res.json({ runs: data, automation: auto || [] });
   } catch (err) { fail(res, 'community', err); }
+});
+
+// The Cutoff Corrections page (/app/financial/cutoff): one read for everything it lists.
+router.get('/cutoff/overview', async (req, res) => {
+  try {
+    const u = await requireStaff(req, res); if (!u) return;
+    const { operationalCommunities } = require('../lib/community/lifecycle');
+    const comms = (await operationalCommunities(supabase)).filter((c) => !c.is_demo);
+    const ids = comms.map((c) => c.id);
+    const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Chicago' });
+    const { data: cut, error: ce } = await supabase.from('communities').select('id, name, gl_cutover_date').in('id', ids.length ? ids : ['00000000-0000-0000-0000-000000000000']);
+    if (ce) throw ce;
+    const { data: periods, error: pe } = await supabase.from('accounting_periods').select('community_id, period_start, period_end, status').in('community_id', ids.length ? ids : ['00000000-0000-0000-0000-000000000000']).lt('period_end', today).order('period_start').limit(5000);
+    if (pe) throw pe;
+    const { data: runs, error: re } = await supabase.from('accounting_runs').select(SUMMARY).eq('process', 'cutoff_adjustment').in('community_id', ids.length ? ids : ['00000000-0000-0000-0000-000000000000']).order('created_at', { ascending: false }).limit(500);
+    if (re) throw re;
+    const communities = (cut || []).map((c) => ({ id: c.id, name: c.name, gl_cutover_date: c.gl_cutover_date,
+      months: (periods || []).filter((p) => p.community_id === c.id && (!c.gl_cutover_date || String(p.period_end) >= String(c.gl_cutover_date)))
+        .map((p) => ({ period_month: String(p.period_start).slice(0, 10), period_end: String(p.period_end).slice(0, 10), status: p.status,
+          runs: (runs || []).filter((r) => r.community_id === c.id && String(r.period_month).slice(0, 10) === String(p.period_start).slice(0, 10)) })) }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+    res.json({ communities, viewer_is_owner: u.role === 'admin' && String(u.email || '').toLowerCase() === String(OWNER_EMAIL || '').toLowerCase() });
+  } catch (err) { fail(res, 'cutoff overview', err); }
 });
 
 router.get('/run/:id', async (req, res) => {

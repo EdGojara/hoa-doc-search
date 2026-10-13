@@ -1,0 +1,222 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cutoff Corrections · Trusted</title>
+<meta name="robots" content="noindex">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/brand.css">
+<link rel="stylesheet" href="/app/tx.css">
+<style>
+  /* Cutoff Corrections (Ed 2026-10-13): Kat prepares the correcting entries her month-end
+     cutoff review found; the owner reviews each with its invoice and approves it by name.
+     Workflow: lib/accounting/cutoff_adjustments + Kat's runs (api/accounting_runs). */
+  .co-wrap { padding: 34px 32px 48px; max-width: 1180px; }
+  .co-hd h1 { margin: 6px 0 6px; font-family: var(--font-serif); font-weight: 600; font-size: clamp(32px, 4vw, 44px); color: var(--navy); line-height: 1.05; }
+  .co-hd p { margin: 0; color: var(--tx-text-2); font-size: 15px; max-width: 820px; }
+  .co-crumb { font-size: 12px; color: var(--tx-muted); }
+  .co-crumb a { text-decoration: underline; text-decoration-color: var(--gold); }
+  .co-pick { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-top: 18px; }
+  .co-pick select { height: 36px; border: 1px solid var(--tx-rule); border-radius: 8px; padding: 0 10px; font: inherit; font-size: 14px; min-width: 280px; background: #fff; }
+  .co-months { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 14px; margin-top: 18px; }
+  .co-month { padding: 16px 18px; display: flex; flex-direction: column; gap: 8px; cursor: pointer; border: 1px solid transparent; }
+  .co-month.is-on { border-color: var(--gold); box-shadow: inset 3px 0 0 var(--gold); }
+  .co-month h3 { margin: 0; font-size: 16px; color: var(--navy); }
+  .co-month .co-st { font-size: 12.5px; color: var(--tx-text-2); }
+  .co-panel { margin-top: 22px; padding: 20px 22px; }
+  .co-panel h2 { margin: 0 0 4px; font-size: 20px; color: var(--navy); font-family: var(--font-serif); }
+  .co-prop { border-top: 1px solid var(--tx-rule-soft); padding: 14px 0; display: grid; grid-template-columns: 26px minmax(0, 1fr); gap: 10px; }
+  .co-prop:first-of-type { border-top: 0; }
+  .co-prop input { width: 18px; height: 18px; margin-top: 2px; }
+  .co-ttl { font-size: 15px; font-weight: 600; color: var(--navy); }
+  .co-sub { font-size: 12.5px; color: var(--tx-text-2); margin-top: 3px; }
+  .co-je { margin-top: 10px; background: var(--tx-subtle); border-radius: 8px; padding: 10px 12px; }
+  .co-je-h { font-size: 12.5px; font-weight: 600; color: var(--navy); }
+  .co-je table { width: 100%; border-collapse: collapse; font-size: 12.5px; margin-top: 6px; }
+  .co-je td { padding: 3px 6px 3px 0; vertical-align: top; }
+  .co-je td.n { text-align: right; white-space: nowrap; font-family: 'JetBrains Mono', monospace; font-size: 12px; }
+  .co-je td.a { white-space: nowrap; font-weight: 600; }
+  .co-je td.m { color: var(--tx-muted); }
+  .co-ok { font-size: 12.5px; color: var(--tx-ok); margin-top: 8px; }
+  .co-eff { font-size: 12.5px; color: var(--tx-text-2); margin-top: 4px; }
+  .co-hold { background: var(--tx-warn-bg); color: var(--tx-warn); border-radius: 8px; padding: 10px 12px; font-size: 13px; margin-top: 12px; }
+  .co-draft { display: inline-block; font-size: 11px; letter-spacing: .06em; text-transform: uppercase; font-weight: 700; color: var(--tx-warn); background: var(--tx-warn-bg); border-radius: 999px; padding: 2px 9px; margin-left: 8px; vertical-align: middle; }
+  .co-posted { color: var(--tx-ok); background: var(--tx-ok-bg); }
+  .co-actions { display: flex; gap: 10px; justify-content: flex-end; align-items: center; margin-top: 16px; flex-wrap: wrap; }
+  .co-note { font-size: 12.5px; color: var(--tx-muted); }
+  .co-sum { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 10px; margin: 12px 0 6px; }
+  .co-sum div { background: var(--tx-subtle); border-radius: 8px; padding: 9px 12px; font-size: 12.5px; color: var(--tx-text-2); }
+  .co-sum b { display: block; font-family: var(--font-serif); font-size: 20px; color: var(--navy); }
+  @media (max-width: 760px) { .co-wrap { padding: 22px 16px 40px; } .co-pick select { min-width: 0; width: 100%; } }
+</style>
+</head>
+<body class="tx-body">
+<div class="tx-shell" id="tx-shell">
+  <main class="tx-main" id="tx-main">
+    <div class="tx-top">
+      <button class="tx-menu-btn" id="tx-menu-btn" aria-label="Open navigation"></button>
+      <span class="tx-switch" style="cursor:default">Financial</span>
+    </div>
+    <div class="co-wrap">
+      <div class="co-hd">
+        <div class="co-crumb"><a href="/app/financial">Financial</a> / Cutoff Corrections</div>
+        <span class="tx-lbl">Month-end cutoff</span>
+        <h1>Cutoff Corrections</h1>
+        <p>Kat's month-end cutoff review finds bills booked in the wrong month. She prepares the correcting entries; you review each one with its invoice and approve it by name. Nothing posts until you approve, and nothing here closes a month.</p>
+      </div>
+      <div class="co-pick">
+        <label for="co-comm" class="tx-lbl" style="margin:0">Community</label>
+        <select id="co-comm"><option>Loading…</option></select>
+      </div>
+      <div class="co-months" id="co-months"></div>
+      <div id="co-panel"></div>
+    </div>
+  </main>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="/app/tx-icons.js"></script>
+<script src="/app/tx.js"></script>
+<script>
+(async function () {
+  'use strict';
+  var esc = TX.esc, $ = function (id) { return document.getElementById(id); };
+  var user = await TX.boot({ active: 'financial' });
+  if (!user) return;
+  var money = function (c) { var n = Number(c || 0) / 100; var s = Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); return n < 0 ? '($' + s + ')' : '$' + s; };
+  var monthLabel = function (d) { return new Date(String(d).slice(0, 10) + 'T12:00:00Z').toLocaleDateString('en-US', { month: 'long', year: 'numeric', timeZone: 'UTC' }); };
+  var signed = function (v) { return (v > 0 ? '+' : '') + money(v); };
+  var state = { data: null, cid: null, month: null };
+  var qs = new URLSearchParams(location.search);
+
+  function liveRun(m) { return (m.runs || []).find(function (r) { return ['prepared', 'approved', 'posted', 'held', 'failed'].indexOf(r.status) >= 0; }) || null; }
+
+  async function load() {
+    var r = await TX.get('/api/accounting-runs/cutoff/overview');
+    if (!r.ok) { $('co-months').innerHTML = '<div class="tx-err">' + esc(r.error || 'Could not load') + '</div>'; return; }
+    state.data = r.data;
+    var list = r.data.communities;
+    var want = qs.get('community');
+    var saved = null; try { saved = localStorage.getItem('tx.cutoff.community'); } catch (_) {}
+    var pick = list.find(function (c) { return c.id === want; }) || list.find(function (c) { return c.id === saved; })
+      || list.find(function (c) { return c.months.some(liveRun); }) || list[0];
+    state.cid = pick ? pick.id : null;
+    $('co-comm').innerHTML = list.map(function (c) { return '<option value="' + esc(c.id) + '"' + (c.id === state.cid ? ' selected' : '') + '>' + esc(c.name) + '</option>'; }).join('');
+    renderMonths();
+  }
+  $('co-comm').addEventListener('change', function () { state.cid = this.value; state.month = null; try { localStorage.setItem('tx.cutoff.community', state.cid); } catch (_) {} renderMonths(); });
+
+  function community() { return (state.data.communities || []).find(function (c) { return c.id === state.cid; }); }
+
+  function renderMonths() {
+    var c = community();
+    if (!c) { $('co-months').innerHTML = ''; $('co-panel').innerHTML = ''; return; }
+    var months = c.months.slice().reverse();
+    if (!months.length) { $('co-months').innerHTML = '<div class="tx-muted">No completed months since this community\'s books moved to trustEd.</div>'; $('co-panel').innerHTML = ''; return; }
+    var wantM = qs.get('month');
+    if (!state.month) {
+      var m0 = months.find(function (m) { return wantM && m.period_month.slice(0, 7) === wantM.slice(0, 7); }) || months.slice().reverse().find(function (m) { var r = liveRun(m); return r && r.status === 'prepared'; }) || months.slice().reverse().find(function (m) { return m.status !== 'closed' && m.status !== 'locked'; }) || months[0];
+      state.month = m0.period_month;
+    }
+    $('co-months').innerHTML = months.map(function (m) {
+      var r = liveRun(m), t = (r && r.totals) || {};
+      var st = m.status === 'closed' || m.status === 'locked' ? 'Month closed'
+        : !r ? 'Not prepared yet'
+        : r.status === 'prepared' ? (t.proposals || 0) + ' correction(s) waiting for your approval'
+        : r.status === 'posted' ? 'Approved and posted'
+        : r.status === 'held' ? 'Held: ' + (r.held_reason || '') : r.status === 'failed' ? 'Failed: ' + (r.error || '') : r.status;
+      return '<div class="tx-card co-month' + (m.period_month === state.month ? ' is-on' : '') + '" data-m="' + esc(m.period_month) + '" role="button" tabindex="0"><h3>' + esc(monthLabel(m.period_month)) + '</h3><div class="co-st">' + esc(st) + '</div></div>';
+    }).join('');
+    $('co-months').querySelectorAll('[data-m]').forEach(function (el) { el.addEventListener('click', function () { state.month = el.dataset.m; renderMonths(); }); });
+    renderPanel();
+  }
+
+  async function renderPanel() {
+    var c = community(); var m = c.months.find(function (x) { return x.period_month === state.month; });
+    var r = liveRun(m);
+    var closed = m.status === 'closed' || m.status === 'locked';
+    if (!r) {
+      $('co-panel').innerHTML = '<div class="tx-card co-panel"><h2>' + esc(monthLabel(m.period_month)) + '</h2>' +
+        (closed ? '<p class="co-note">This month is closed. Cutoff corrections need an open month.</p>'
+          : '<p class="co-note">Kat has not prepared this month\'s cutoff corrections. Preparing reads the books and lists the corrections for your review; it posts nothing.</p><div class="co-actions"><button class="tx-btn tx-btn--pri" id="co-prep">Have Kat prepare ' + esc(monthLabel(m.period_month)) + '</button></div>') + '</div>';
+      var b = $('co-prep'); if (b) b.addEventListener('click', prepare);
+      return;
+    }
+    $('co-panel').innerHTML = '<div class="tx-card co-panel"><div class="tx-skel" style="height:16px;width:50%"></div></div>';
+    var d = await TX.get('/api/accounting-runs/run/' + encodeURIComponent(r.id));
+    if (!d.ok) { $('co-panel').innerHTML = '<div class="tx-card co-panel"><div class="tx-err">' + esc(d.error) + '</div></div>'; return; }
+    var run = d.data.run, pv = run.preview || {};
+    var adds = pv.additions || [], its = pv.items || [], holds = (pv.holds || []).filter(function (h) { return !h.already; });
+    var can = run.status === 'prepared';
+    var owner = state.data.viewer_is_owner;
+    var eff = function (o) { return Object.keys(o || {}).sort().map(function (k) { return esc(monthLabel(k + '-01')) + ' ' + esc(signed(o[k])); }).join(' · '); };
+    var lines = function (e) {
+      return '<div class="co-je"><div class="co-je-h">' + esc(e.posting_date) + ' · ' + esc(e.description) + '</div><table>' + e.lines.map(function (l) {
+        return '<tr><td class="a">' + (l.debit_cents ? 'Dr ' : '&nbsp;&nbsp;Cr ') + esc(l.account_number) + '</td><td class="n">' + (l.debit_cents ? esc(money(l.debit_cents)) : '') + '</td><td class="n">' + (l.credit_cents ? esc(money(l.credit_cents)) : '') + '</td><td class="m">' + esc(l.memo || '') + '</td></tr>';
+      }).join('') + '</table></div>';
+    };
+    var badge = run.status === 'posted' ? '<span class="co-draft co-posted">Posted</span>' : run.status === 'prepared' ? '<span class="co-draft">Draft · not posted</span>' : '<span class="co-draft">' + esc(run.status) + '</span>';
+    var html = '<div class="tx-card co-panel"><h2>' + esc(c.name) + ' · ' + esc(monthLabel(run.period_month)) + badge + '</h2>' +
+      '<div class="co-note">Prepared by ' + esc(run.prepared_by) + (run.approved_by ? ' · approved by ' + esc(run.approved_by) : '') + '</div>' +
+      '<div class="co-sum"><div><b>' + its.filter(function (i) { return i.kind === 'accrual'; }).length + '</b>accrual(s) with reversal</div><div><b>' + its.filter(function (i) { return i.kind === 'deferral'; }).length + '</b>deferral(s) with prepaid schedule</div><div><b>' + adds.length + '</b>account addition(s)</div><div><b style="font-size:15px">' + eff(pv.effects) + '</b>expense change by month</div></div>';
+    adds.forEach(function (a) {
+      html += '<label class="co-prop"><input type="checkbox" class="co-inc" value="' + esc(a.id) + '"' + (can ? '' : ' disabled') + '><div><div class="co-ttl">Add GL ' + esc(a.account_number) + ' ' + esc(a.account_name) + '</div><div class="co-sub">' + esc(a.text) + '</div></div></label>';
+    });
+    its.forEach(function (it) {
+      var ev = it.evidence || {};
+      html += '<label class="co-prop"><input type="checkbox" class="co-inc" value="' + esc(it.id) + '"' + (can ? '' : ' disabled') + '><div>' +
+        '<div class="co-ttl">' + (it.kind === 'accrual' ? 'Accrue' : 'Defer') + ': ' + esc(it.label) + ' · ' + esc(money(it.amount_cents)) + '</div>' +
+        '<div class="co-sub">Service ' + esc(ev.service_period_start || '') + ' to ' + esc(ev.service_period_end || '') + ' · invoice dated ' + esc(ev.invoice_date || '') + ' · booked ' + esc(ev.original_posting_date || '') + ' as ' + esc(ev.original_reference || '') +
+        ' · <a href="#" data-pdf="' + esc(ev.invoice_id) + '">Open invoice PDF</a></div>' +
+        it.entries.map(lines).join('') +
+        (it.schedule ? '<div class="co-sub" style="margin-top:8px"><b>Prepaid schedule</b> (created as draft, approved with this): ' + esc(it.schedule.balance_account_number) + ' to ' + esc(it.schedule.recognition_account_number) + ', ' + it.schedule.months.map(function (x) { return esc(monthLabel(x.month)) + ' ' + esc(money(x.cents)); }).join(', ') + '</div>' : '') +
+        '<div class="co-ok">' + esc((it.verification || {}).text || '') + '</div>' +
+        '<div class="co-eff">Expense change: ' + eff(it.effects) + '</div></div></label>';
+    });
+    if (holds.length) html += '<div class="co-hold"><b>Held, not proposed:</b><br>' + holds.map(function (h) { return esc(h.text); }).join('<br>') + '</div>';
+    if (!adds.length && !its.length) html += '<p class="co-note">Kat found nothing to correct for this month.</p>';
+    if (can) {
+      html += '<div class="co-actions">' +
+        (owner ? '<span class="co-note" id="co-count">Tick the corrections to approve.</span><button class="tx-btn tx-btn--sec" id="co-hold">Hold</button><button class="tx-btn tx-btn--pri" id="co-approve" disabled>Approve and post ticked</button>'
+          : '<span class="co-note">Only the owner approves cutoff corrections.</span>') + '</div>';
+    } else if (run.status === 'posted' && run.result && run.result.posted) {
+      html += '<div class="co-ok" style="margin-top:14px">Posted: ' + run.result.posted.map(function (p) { return esc(p.id) + (p.entries ? ' (' + Object.values(p.entries).join(', ') + ')' : '') + (p.balance_sheet_category ? ' (mapped to ' + esc(p.balance_sheet_category) + ')' : ''); }).join('; ') + '</div>';
+    }
+    html += '</div>';
+    $('co-panel').innerHTML = html;
+    $('co-panel').querySelectorAll('[data-pdf]').forEach(function (a) { a.addEventListener('click', async function (e) { e.preventDefault(); e.stopPropagation(); var x = await TX.get('/api/ap/invoices/' + encodeURIComponent(a.dataset.pdf) + '/source-pdf?json=1'); if (x.ok && x.data.url) window.open(x.data.url, '_blank', 'noopener'); else alert(x.error || 'No invoice PDF on file'); }); });
+    var ap = $('co-approve');
+    if (ap) {
+      var sync = function () { var n = $('co-panel').querySelectorAll('.co-inc:checked').length; ap.disabled = !n; $('co-count').textContent = n ? n + ' ticked' : 'Tick the corrections to approve.'; };
+      $('co-panel').querySelectorAll('.co-inc').forEach(function (x) { x.addEventListener('change', sync); });
+      ap.addEventListener('click', async function () {
+        var include = Array.prototype.map.call($('co-panel').querySelectorAll('.co-inc:checked'), function (x) { return x.value; });
+        if (!confirm('Approve and post the ' + include.length + ' ticked correction(s) for ' + monthLabel(run.period_month) + '? Each posts exactly as shown; prepaid schedules are approved in your name.')) return;
+        ap.disabled = true; ap.textContent = 'Posting…';
+        var res = await TX.post('/api/accounting-runs/run/' + encodeURIComponent(run.id) + '/approve', { include: include });
+        if (!res.ok) { alert(res.error || 'Posting failed'); ap.disabled = false; ap.textContent = 'Approve and post ticked'; return; }
+        await load();
+      });
+      $('co-hold').addEventListener('click', async function () {
+        var reason = prompt('Why hold these corrections?'); if (!reason) return;
+        var res = await TX.post('/api/accounting-runs/run/' + encodeURIComponent(run.id) + '/hold', { reason: reason });
+        if (!res.ok) { alert(res.error || 'Hold failed'); return; }
+        await load();
+      });
+    }
+  }
+
+  async function prepare() {
+    var b = $('co-prep'); b.disabled = true; b.textContent = 'Kat is preparing…';
+    var r = await TX.post('/api/accounting-runs/community/' + encodeURIComponent(state.cid) + '/prepare', { process: 'cutoff_adjustment', period_month: state.month });
+    if (!r.ok) { alert(r.error || 'Prepare failed'); b.disabled = false; b.textContent = 'Have Kat prepare'; return; }
+    await load();
+  }
+
+  load();
+})();
+</script>
+</body>
+</html>

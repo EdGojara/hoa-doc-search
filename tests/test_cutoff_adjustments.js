@@ -19,8 +19,9 @@ const ACCOUNTS = [['1410', 'Prepaid Expenses', 'asset'], ['2000', 'Accounts Paya
   .map(([account_number, account_name, account_type]) => ({ account_number, account_name, account_type, fund_code: 'OPR', is_active: true }));
 const L = (n, type, d, c = 0) => ({ account_number: n, account_type: type, debit_cents: d, credit_cents: c });
 const bill = (o) => ({ status: 'paid', ...o });
+const BS = [{ id: 'cat-acc', name: 'Accrued liabilities', section: 'liability' }, { id: 'cat-ap', name: 'Accounts payable', section: 'liability' }];
 const AUG = {
-  period: { period_start: '2026-08-01', period_end: '2026-08-31' }, accounts: ACCOUNTS, already: new Set(), schedules_for: new Set(),
+  bs_categories: BS, period: { period_start: '2026-08-01', period_end: '2026-08-31' }, accounts: ACCOUNTS, already: new Set(), schedules_for: new Set(),
   late_bills: [bill({ id: 'b2608', vendor: 'Bedrock Association Management, LLC', invoice_number: '2608CG2', invoice_date: '2026-09-04', service_period_start: '2026-08-01', service_period_end: '2026-08-31', total_cents: 30788 }),
     bill({ id: 'b6061', vendor: 'CYPRESS CREEK MOSQUITO CONTROL, LLC', invoice_number: '6061', invoice_date: '2026-09-09', service_period_start: '2026-08-06', service_period_end: '2026-08-27', total_cents: 36048 })],
   prepaid_bills: [bill({ id: 'b10295', vendor: 'Aegis Aquatics, LLC', invoice_number: '10295', invoice_date: '2026-08-01', service_period_start: '2026-09-01', service_period_end: '2026-09-30', total_cents: 217925 })],
@@ -51,7 +52,8 @@ const balanced = (e) => e.lines.reduce((s, l) => s + l.debit_cents - l.credit_ce
 
   await t('GL 2100 Accrued Expenses is proposed once (the chart has none; 2300 is the pass-through clearing account), nothing else in the chart changes', () => {
     assert.deepStrictEqual(aug.additions.map((a) => [a.id, a.account_number, a.account_name, a.account_type, a.fund_code]), [['account:2100', '2100', 'Accrued Expenses', 'liability', 'OPR']]);
-    assert.match(aug.additions[0].text, /No existing account or mapping changes/);
+    assert.match(aug.additions[0].text, /No existing account, balance or mapping changes/);
+    assert.deepStrictEqual(aug.additions[0].bs_category, { id: 'cat-acc', name: 'Accrued liabilities' }, 'mapped where 2300 presents');
     assert.strictEqual(C.buildProposals({ ...AUG, accounts: [...ACCOUNTS, { account_number: '2100', account_name: 'Accrued Expenses', account_type: 'liability', fund_code: 'OPR', is_active: true }] }).additions.length, 0, 'not proposed once it exists');
   });
 
@@ -131,7 +133,7 @@ const balanced = (e) => e.lines.reduce((s, l) => s + l.debit_cents - l.credit_ce
           return Promise.resolve({ data: out, error: null }).then(res, rej);
         } catch (e) { return Promise.reject(e).then(res, rej); } } };
       return api; };
-    const sb = { from: q, rpc: async (n, a) => { calls.push(['rpc', n, a]); db.recognition_postings.push({ schedule_id: a.p_schedule_id, period_month: a.p_period_month, kind: 'recognition', reversed_by_posting_id: null }); return { data: 'posting-1', error: null }; } };
+    const sb = { from: q, rpc: async (n, a) => { calls.push(['rpc', n, a]); if (n === 'set_account_report_category') return { data: {}, error: null }; db.recognition_postings.push({ schedule_id: a.p_schedule_id, period_month: a.p_period_month, kind: 'recognition', reversed_by_posting_id: null }); return { data: 'posting-1', error: null }; } };
     const orig = POSTING.postJournalEntry;
     POSTING.postJournalEntry = async (o) => { const e = { id: `je-${db.journal_entries.length + 1}`, reference: `JE-T-${db.journal_entries.length + 1}`, ...o }; db.journal_entries.push(e); calls.push(['je', o]); return { entry: e }; };
     try {
@@ -147,6 +149,8 @@ const balanced = (e) => e.lines.reduce((s, l) => s + l.debit_cents - l.credit_ce
       const upd = calls.find((c) => c[0] === 'update' && c[1] === 'recognition_schedules')[2];
       assert.deepStrictEqual([upd.status, upd.approved_by], ['active', 'egojara@bedrocktx.com (authenticated in-app approval)'], 'then approved by the signed-in owner (the database requires the approver)');
       assert.ok(calls.some((c) => c[0] === 'rpc' && c[2].p_period_month === '2026-09-01'), 'September recognized through post_recognition_period');
+      const map = calls.find((c) => c[0] === 'rpc' && c[1] === 'set_account_report_category');
+      assert.ok(map && map[2].p_category_id === 'cat-acc' && map[2].p_statement === 'balance_sheet' && /authenticated in-app approval/.test(map[2].p_actor), '2100 mapped to Accrued liabilities by the approver');
       assert.deepStrictEqual(res.not_approved, ['accrue:b6061']);
       // idempotent: approving again posts nothing new
       const before = db.journal_entries.length;
@@ -154,6 +158,17 @@ const balanced = (e) => e.lines.reduce((s, l) => s + l.debit_cents - l.credit_ce
       await C.postApproved(sb, run, { include: ['accrue:b2608'], approver: 'x', approval: { channel: 'in_app', user_id: 'u-ed', email: 'e' }, actor: 'k' });
       assert.strictEqual(db.journal_entries.length, before, 'already-posted entries are not posted twice');
     } finally { POSTING.postJournalEntry = orig; }
+  });
+
+  await t('reachable: Financial dashboard button and Accounting link open /app/financial/cutoff; the page approves only through the owner-gated route', () => {
+    const fs = require('fs'); const path = require('path'); const read = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
+    assert.ok(/app\.get\('\/app\/financial\/cutoff'.*cutoff\.html/.test(read('server.js')));
+    const fin = read('public/app/financial.html');
+    assert.ok(/href="\/app\/financial\/cutoff" id="fn-cutoff"[^>]*>Cutoff Corrections</.test(fin) && /\['Cutoff corrections', '\/app\/financial\/cutoff', true\]/.test(fin));
+    const page = read('public/app/cutoff.html');
+    assert.ok(/\/api\/accounting-runs\/cutoff\/overview/.test(page) && /process: 'cutoff_adjustment'/.test(page) && /\/approve', \{ include: include \}/.test(page) && /viewer_is_owner/.test(page));
+    const api = read('api/accounting_runs.js');
+    assert.ok(/router\.get\('\/cutoff\/overview'/.test(api) && /run\/:id\/approve'[\s\S]{0,300}requireOwner/.test(api));
   });
 
   console.log(`\n${passed} passed, ${failed} failed`);
