@@ -117,7 +117,7 @@
     if (!months.length) { $('co-months').innerHTML = '<div class="tx-muted">No completed months since this community\'s books moved to trustEd.</div>'; $('co-panel').innerHTML = ''; return; }
     var wantM = qs.get('month');
     if (!state.month) {
-      var m0 = months.find(function (m) { return wantM && m.period_month.slice(0, 7) === wantM.slice(0, 7); }) || months.slice().reverse().find(function (m) { var r = liveRun(m); return r && r.status === 'prepared'; }) || months.slice().reverse().find(function (m) { return m.status !== 'closed' && m.status !== 'locked'; }) || months[0];
+      var m0 = months.find(function (m) { return wantM && m.period_month.slice(0, 7) === wantM.slice(0, 7); }) || months.slice().reverse().find(function (m) { var r = liveRun(m); return m.status !== 'closed' && m.status !== 'locked' && (!r || r.status !== 'posted'); }) || months[0];
       state.month = m0.period_month;
     }
     $('co-months').innerHTML = months.map(function (m) {
