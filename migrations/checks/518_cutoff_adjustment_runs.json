@@ -1,0 +1,44 @@
+{
+  "migration": "518_cutoff_adjustment_runs.sql",
+  "summary": "Kat's cutoff corrections become a run type on the existing accounting_runs framework: the process check also allows 'cutoff_adjustment'. Kat prepares the correcting entries her cutoff review found; the owner approves each by name in-app. No row changes; nothing posts.",
+  "requires": [
+    "511_kat_bank_reconciliation.sql"
+  ],
+  "preflight": [
+    {
+      "name": "the process check is the migration 511 one (no cutoff_adjustment yet)",
+      "sql": "SELECT count(*)::int FROM pg_constraint WHERE conname = 'accounting_runs_process_check' AND pg_get_constraintdef(oid) LIKE '%bank_reconciliation%' AND pg_get_constraintdef(oid) NOT LIKE '%cutoff_adjustment%'",
+      "expect": 1
+    }
+  ],
+  "expected_changes": [
+    "accounting_runs_process_check also allows cutoff_adjustment.",
+    "No accounting run, journal entry, schedule or account changes."
+  ],
+  "objects": {
+    "added": [],
+    "changed": [
+      "constraint:accounting_runs.accounting_runs_process_check"
+    ],
+    "removed": []
+  },
+  "row_changes": {
+    "accounting_runs": 0,
+    "journal_entries": 0,
+    "chart_of_accounts": 0,
+    "recognition_schedules": 0
+  },
+  "protected": [
+    { "table": "accounting_runs", "order_by": "id" },
+    { "table": "journal_entries", "order_by": "id" },
+    { "table": "chart_of_accounts", "order_by": "id" },
+    { "table": "recognition_schedules", "order_by": "id" }
+  ],
+  "verify": [
+    {
+      "name": "cutoff_adjustment is an allowed process; the others still are",
+      "sql": "SELECT count(*)::int FROM pg_constraint WHERE conname = 'accounting_runs_process_check' AND pg_get_constraintdef(oid) LIKE '%cutoff_adjustment%' AND pg_get_constraintdef(oid) LIKE '%bank_reconciliation%' AND pg_get_constraintdef(oid) LIKE '%interest%' AND pg_get_constraintdef(oid) LIKE '%recognition%'",
+      "expect": 1
+    }
+  ]
+}

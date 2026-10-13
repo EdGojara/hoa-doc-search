@@ -85,6 +85,11 @@
         <input id="bankPrepMonth" type="month" style="padding:3px 6px;border:1px solid #dde3ea;border-radius:6px;">
         <button onclick="prepBank()" style="border:1px solid #dde3ea;background:#fff;border-radius:6px;padding:4px 12px;cursor:pointer;font-weight:600;">Have Kat prepare it</button>
       </div>
+      <div id="cutPrep" style="display:none;padding:10px 18px;border-top:1px solid #f1f3f6;font-size:12.5px;color:var(--muted);">
+        Cutoff corrections: <select id="cutPrepComm" style="padding:4px 6px;border:1px solid #dde3ea;border-radius:6px;max-width:320px;"></select>
+        <input id="cutPrepMonth" type="month" style="padding:3px 6px;border:1px solid #dde3ea;border-radius:6px;">
+        <button onclick="prepCutoff()" style="border:1px solid #dde3ea;background:#fff;border-radius:6px;padding:4px 12px;cursor:pointer;font-weight:600;">Have Kat prepare them</button>
+      </div>
     </div>
 
     <div class="grid2">
@@ -126,7 +131,7 @@ async function boot(){
   try{ const rid=new URLSearchParams(location.search).get('run'); if(rid && /^[0-9a-f-]{36}$/i.test(rid)) openRun(rid); }catch(_){}
 }
 // ---- Kat's monthly accounting runs (migration 510): Kat prepares, Ed approves or holds ----
-const PROC = { recognition: 'Monthly recognition', interest: 'Late interest', bank_reconciliation: 'Bank reconciliation' };
+const PROC = { recognition: 'Monthly recognition', interest: 'Late interest', bank_reconciliation: 'Bank reconciliation', cutoff_adjustment: 'Cutoff corrections' };
 const REC_STATUS = { reconciled: 'balanced, nothing open', in_progress: 'balances, exceptions open', unbalanced: 'does not balance', blocked: 'blocked' };
 const monthLabel = (d) => new Date(String(d).slice(0,10)+'T00:00:00').toLocaleDateString('en-US',{month:'long',year:'numeric'});
 async function loadRuns(){
@@ -137,9 +142,9 @@ async function loadRuns(){
     if(!runs.length){ $('runsBody').innerHTML='<div class="empty">Nothing from Kat is waiting on you.</div>'; $('runsMeta').textContent=''; return; }
     $('runsMeta').textContent = runs.length+' run'+(runs.length===1?'':'s');
     $('runsBody').innerHTML = runs.map(x=>{
-      const t=x.totals||{}; const amt = x.process==='interest' ? t.interest_cents : x.process==='bank_reconciliation' ? t.difference_cents : t.amount_cents;
+      const t=x.totals||{}; const amt = x.process==='interest' ? t.interest_cents : x.process==='bank_reconciliation' ? t.difference_cents : x.process==='cutoff_adjustment' ? ((t.expense_change_by_month||{})[String(x.period_month).slice(0,7)]||0) : t.amount_cents;
       const badge = x.status==='failed' ? '<span style="color:#9B2C2C;font-weight:700;">FAILED</span>' : x.status==='held' ? '<span style="color:#8a6d1a;font-weight:700;">Held</span>' : 'Ready for approval';
-      const what = x.process==='interest' ? (t.owners||0)+' owners' : x.process==='bank_reconciliation' ? esc(t.account||'')+' · '+(REC_STATUS[t.status]||esc(t.status||''))+(t.proposals?' · '+t.proposals+' proposed entr'+(t.proposals===1?'y':'ies'):'')+' · difference' : (t.entries||0)+' entries';
+      const what = x.process==='cutoff_adjustment' ? (t.accruals||0)+' accrual(s), '+(t.deferrals||0)+' deferral(s)'+(t.holds?', '+t.holds+' held':'')+' · expense change this month' : x.process==='interest' ? (t.owners||0)+' owners' : x.process==='bank_reconciliation' ? esc(t.account||'')+' · '+(REC_STATUS[t.status]||esc(t.status||''))+(t.proposals?' · '+t.proposals+' proposed entr'+(t.proposals===1?'y':'ies'):'')+' · difference' : (t.entries||0)+' entries';
       const exc = (x.exceptions||[]).length ? ' · '+x.exceptions.length+' exception(s)' : '';
       const err = x.error ? ' · '+esc(x.error) : '';
       const rd = x.process==='interest' ? ' (run '+esc(String(x.run_date).slice(0,10))+')' : '';
@@ -159,7 +164,20 @@ async function openRun(id){
     const excOwners = exc.filter(e=>e.code==='owner_exception');
     const other = exc.filter(e=>e.code!=='owner_exception');
     let head;
-    if(run.process==='bank_reconciliation'){
+    if(run.process==='cutoff_adjustment'){
+      const pv=run.preview||{}, adds=pv.additions||[], its=pv.items||[], holds=(pv.holds||[]).filter(h=>!h.already);
+      const fmtLines=(e)=>'<table style="width:100%;font-size:12px;border-collapse:collapse;margin:4px 0 2px;">'+e.lines.map(l=>'<tr><td style="padding:2px 0;white-space:nowrap;">'+(l.debit_cents?'Dr ':'&nbsp;&nbsp;&nbsp;Cr ')+esc(l.account_number)+'</td><td style="text-align:right;">'+money(l.debit_cents||l.credit_cents)+'</td><td style="padding-left:10px;color:var(--muted);">'+esc(l.memo||'')+'</td></tr>').join('')+'</table>';
+      const eff=(o)=>Object.entries(o||{}).sort().map(([m,v])=>esc(monthLabel(m+'-01'))+' '+(v>0?'+':'')+money(v)).join(' · ');
+      head = '<p style="font-size:13px;">Kat\'s cutoff review found these for '+monthLabel(run.period_month)+'. Tick each correction to approve it by name; nothing posts until you approve. Expense change: '+eff(pv.effects)+'.</p>'
+        + adds.map(a=>'<label style="display:block;padding:8px 0;border-bottom:1px solid #f1f3f6;font-size:12.5px;"><input type="checkbox" class="incl" value="'+esc(a.id)+'"> <b>Add GL '+esc(a.account_number)+' '+esc(a.account_name)+'</b><br><span style="color:var(--muted);">'+esc(a.text)+'</span></label>').join('')
+        + its.map(it=>{ const ev=it.evidence||{}; return '<label style="display:block;padding:8px 0;border-bottom:1px solid #f1f3f6;font-size:12.5px;"><input type="checkbox" class="incl" value="'+esc(it.id)+'"> <b>'+(it.kind==='accrual'?'Accrue':'Defer')+': '+esc(it.label)+'</b> · '+money(it.amount_cents)
+          + '<br><span style="color:var(--muted);">Service '+esc(ev.service_period_start||'')+' to '+esc(ev.service_period_end||'')+' · invoice '+esc(ev.invoice_date||'')+' · booked '+esc(ev.original_posting_date||'')+' as '+esc(ev.original_reference||'')+' · '
+          + '<a href="#" data-pdf="'+esc(ev.invoice_id)+'">invoice PDF</a></span>'
+          + it.entries.map(e=>'<div style="margin-top:6px;"><b>'+esc(e.posting_date)+'</b> '+esc(e.description)+fmtLines(e)+'</div>').join('')
+          + (it.schedule?'<div style="margin-top:4px;">Prepaid schedule (approved with this): '+esc(it.schedule.balance_account_number)+' to '+esc(it.schedule.recognition_account_number)+', '+it.schedule.months.map(m=>esc(monthLabel(m.month))+' '+money(m.cents)).join(', ')+'</div>':'')
+          + '<div style="margin-top:4px;color:#166534;">'+esc((it.verification||{}).text||'')+'</div><div style="color:var(--muted);">Expense change: '+eff(it.effects)+'</div></label>'; }).join('')
+        + (holds.length?'<div style="background:#FFF5DD;color:#7A5408;padding:8px 10px;border-radius:6px;font-size:12.5px;margin-top:10px;"><b>Held:</b><br>'+holds.map(h=>esc(h.text)).join('<br>')+'</div>':'');
+    } else if(run.process==='bank_reconciliation'){
       const pv=run.preview||{}, props=pv.proposals||[], open=exc.filter(e=>!e.proposal_id);
       head = '<pre style="white-space:pre-wrap;font:12.5px/1.5 inherit;background:#f7f9fb;padding:10px 12px;border-radius:6px;margin:10px 0;">'+esc(pv.report||'')+'</pre>'
         + (props.length ? '<h4 style="margin:14px 0 6px;">Proposed entries (tick to post)</h4><div style="font-size:12.5px;">'
@@ -190,12 +208,15 @@ async function openRun(id){
       + '<p style="margin-top:12px;"><a href="#" onclick="event.preventDefault();dlCsv(\''+run.id+'\')">Download the full '+(run.process==='interest'?'owner-by-owner':run.process==='bank_reconciliation'?'item-by-item':'entry')+' detail (CSV)</a></p>'
       + '<div style="font-size:11.5px;color:var(--muted);margin-top:8px;">'+ev+'</div>'
       + '<div style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px;"><button onclick="closeModal()" style="padding:8px 14px;border:1px solid #dde3ea;background:#fff;border-radius:6px;cursor:pointer;">Close</button>'+btns+'</div></div>';
+    document.querySelectorAll('[data-pdf]').forEach(a=>a.addEventListener('click',(ev)=>{ ev.preventDefault(); ev.stopPropagation(); viewInvoicePdf(a.dataset.pdf); }));
   }catch(e){ $('modal').innerHTML='<div class="mb"><div class="empty" style="color:#9B2C2C;">'+esc(e.message)+'</div></div>'; }
 }
 async function dlCsv(id){ const r=await af('/api/accounting-runs/run/'+id+'/csv'); const b=await r.blob(); const a=document.createElement('a'); a.href=URL.createObjectURL(b); a.download='kat-run-'+id.slice(0,8)+'.csv'; a.click(); }
 async function approveRun(id, proc){
   const include=[...document.querySelectorAll('.incl:checked')].map(x=>x.value);
-  const q = proc==='bank_reconciliation'
+  const q = proc==='cutoff_adjustment'
+    ? (include.length ? 'Approve and post the '+include.length+' ticked correction(s)? Each posts exactly as shown; prepaid schedules are approved in your name.' : 'Nothing is ticked, so nothing will post. Continue?')
+    : proc==='bank_reconciliation'
     ? 'Store this reconciliation'+(include.length?' and post the '+include.length+' ticked entr'+(include.length===1?'y':'ies'):' (no entries ticked, nothing posts)')+'? It is marked complete only if it balances and nothing is open.'
     : 'Post this run now'+(include.length?' (including '+include.length+' exception owner(s))':'')+'? This writes the journal entries.';
   if(!confirm(q)) return;
@@ -211,7 +232,23 @@ async function loadBankAccts(){
     $('bankPrepAcct').innerHTML=a.map(x=>'<option value="'+esc(x.id)+'" data-c="'+esc(x.community_id)+'">'+esc((x.community_name||'')+' · '+x.label)+'</option>').join('');
     const d=new Date(); d.setDate(1); d.setMonth(d.getMonth()-1); $('bankPrepMonth').value=d.toISOString().slice(0,7);
     $('bankPrep').style.display='';
+    const comms=[...new Map(a.map(x=>[x.community_id,x.community_name||''])).entries()].sort((p,q)=>p[1].localeCompare(q[1]));
+    $('cutPrepComm').innerHTML=comms.map(([id,n])=>'<option value="'+esc(id)+'">'+esc(n)+'</option>').join('');
+    $('cutPrepMonth').value=d.toISOString().slice(0,7); $('cutPrep').style.display='';
   }catch(_){ }
+}
+async function prepCutoff(){
+  const c=$('cutPrepComm').value, m=$('cutPrepMonth').value; if(!c||!m) return;
+  const r=await af('/api/accounting-runs/community/'+c+'/prepare',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({process:'cutoff_adjustment',period_month:m+'-01'})});
+  const d=await r.json().catch(()=>({}));
+  if(!r.ok){ toast(d.error||'Prepare failed',true); return; }
+  if(d.existing){ toast('Kat already has cutoff corrections for that month.'); openRun(d.run.id); return; }
+  toast('Prepared.'); loadRuns(); if(d.run) openRun(d.run.id);
+}
+async function viewInvoicePdf(id){
+  const r=await af('/api/ap/invoices/'+id+'/source-pdf?json=1'); const d=await r.json().catch(()=>({}));
+  if(!r.ok||!d.url){ toast(d.error||'No invoice PDF on file',true); return; }
+  window.open(d.url,'_blank','noopener');
 }
 async function prepBank(){
   const sel=$('bankPrepAcct'), o=sel.options[sel.selectedIndex], m=$('bankPrepMonth').value; if(!o||!m) return;
