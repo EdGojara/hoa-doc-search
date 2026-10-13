@@ -13,6 +13,7 @@
 //   POST /api/accounting-runs/run/:id/approve      { include: [tenure_id] }   OWNER ONLY
 //   POST /api/accounting-runs/run/:id/hold         { reason }                 OWNER ONLY
 //   POST /api/accounting-runs/run/:id/supersede    { reason }                 OWNER ONLY
+//   POST /api/accounting-runs/run/:id/refresh      { codings? }  staff: re-prepare an UNAPPROVED run on the current books
 // Preparing never posts. Approval posts exactly the stored preview.
 // ============================================================================
 const express = require('express');
@@ -131,11 +132,37 @@ router.post('/community/:cid/prepare', express.json(), async (req, res) => {
     if (b.process === 'bank_reconciliation' && !/^[0-9a-f-]{36}$/i.test(String(b.subject_id || ''))) return res.status(400).json({ error: 'subject_id (the bank account) is required' });
     if (!isDate(b.period_month)) return res.status(400).json({ error: 'period_month must be YYYY-MM-DD' });
     if (b.run_date && !isDate(b.run_date)) return res.status(400).json({ error: 'run_date must be YYYY-MM-DD' });
-    const r = await R.prepare(supabase, { community_id: req.params.cid, process: b.process, period_month: b.period_month, run_date: b.run_date || null, subject_id: b.process === 'bank_reconciliation' ? b.subject_id : null, actor: `${R.KAT} (requested by ${u.email || 'staff'})` });
+    const codings = parseCodings(b.codings); if (codings.error) return res.status(400).json({ error: codings.error });
+    const r = await R.prepare(supabase, { community_id: req.params.cid, process: b.process, period_month: b.period_month, run_date: b.run_date || null, subject_id: b.process === 'bank_reconciliation' ? b.subject_id : null, actor: `${R.KAT} (requested by ${u.email || 'staff'})`, codings: codings.list });
     if (r.skipped) return res.status(409).json({ error: r.skipped, code: 'not_enabled' });
     if (r.failed) return res.status(500).json({ error: r.error, run_id: r.run_id });
     res.json(r);
   } catch (err) { fail(res, 'prepare', err); }
+});
+
+// Bank-line codings supplied with their evidence at prepare / refresh time (bank_reconciliation).
+const UUIDRE = /^[0-9a-f-]{36}$/i; const ACCTRE = /^[0-9]{3,6}$/;
+function parseCodings(v) {
+  if (v == null) return { list: [] };
+  if (!Array.isArray(v) || v.length > 50) return { error: 'codings must be an array of at most 50' };
+  const list = [];
+  for (const c of v) {
+    if (!c || !UUIDRE.test(String(c.bank_transaction_id || '')) || !ACCTRE.test(String(c.account_number || '')) || !String(c.basis || '').trim()) return { error: 'each coding needs bank_transaction_id, account_number and basis (the evidence)' };
+    list.push({ bank_transaction_id: String(c.bank_transaction_id), account_number: String(c.account_number), basis: String(c.basis).trim().slice(0, 600) });
+  }
+  return { list };
+}
+
+// Refresh an unapproved run on the current books (preparation, staff). Optional codings replace the run's.
+router.post('/run/:id/refresh', express.json(), async (req, res) => {
+  try {
+    const u = await requireStaff(req, res); if (!u) return;
+    const b = req.body || {};
+    const codings = b.codings === undefined ? { list: null } : parseCodings(b.codings); if (codings.error) return res.status(400).json({ error: codings.error });
+    const r = await R.refresh(supabase, { run_id: req.params.id, requested_by: u.email || 'staff', codings: codings.list });
+    if (r.failed) return res.status(500).json({ error: r.error, run_id: r.run_id });
+    res.json(r);
+  } catch (err) { fail(res, 'refresh', err); }
 });
 
 router.post('/run/:id/approve', express.json(), async (req, res) => {
