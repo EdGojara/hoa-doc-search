@@ -83,8 +83,9 @@ router.get('/cutoff/overview', async (req, res) => {
     if (pe) throw pe;
     const { data: runs, error: re } = await supabase.from('accounting_runs').select(SUMMARY).eq('process', 'cutoff_adjustment').in('community_id', ids.length ? ids : ['00000000-0000-0000-0000-000000000000']).order('created_at', { ascending: false }).limit(500);
     if (re) throw re;
-    const communities = (cut || []).map((c) => ({ id: c.id, name: c.name, gl_cutover_date: c.gl_cutover_date,
-      months: (periods || []).filter((p) => p.community_id === c.id && (!c.gl_cutover_date || String(p.period_end) >= String(c.gl_cutover_date)))
+    // Only communities whose books are kept in trustEd (a GL cutover), and only their months since it.
+    const communities = (cut || []).filter((c) => c.gl_cutover_date).map((c) => ({ id: c.id, name: c.name, gl_cutover_date: c.gl_cutover_date,
+      months: (periods || []).filter((p) => p.community_id === c.id && String(p.period_end) >= String(c.gl_cutover_date))
         .map((p) => ({ period_month: String(p.period_start).slice(0, 10), period_end: String(p.period_end).slice(0, 10), status: p.status,
           runs: (runs || []).filter((r) => r.community_id === c.id && String(r.period_month).slice(0, 10) === String(p.period_start).slice(0, 10)) })) }))
       .sort((a, b) => a.name.localeCompare(b.name));
