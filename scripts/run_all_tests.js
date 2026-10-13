@@ -309,6 +309,7 @@ const CHECKS = [
   'tests/test_board_financials_gate.js',
   'tests/test_close_controls.js',
   'tests/test_close_policy.js',
+  'tests/test_run_approval_channel.js',
   'tests/test_source_controls_owner_model.js',
   'tests/test_onboarding_api.js',
   'tests/test_onboarding_snapshot.js',

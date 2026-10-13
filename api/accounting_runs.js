@@ -115,7 +115,8 @@ router.post('/run/:id/approve', express.json(), async (req, res) => {
   try {
     const u = await requireOwner(req, res); if (!u) return;
     const include = Array.isArray((req.body || {}).include) ? req.body.include.map(String) : [];
-    res.json(await R.approveAndPost(supabase, { run_id: req.params.id, approver: u.email, include }));
+    // The signed-in owner's session is the approval (never a chat instruction or a script).
+    res.json(await R.approveAndPost(supabase, { run_id: req.params.id, approval: { channel: 'in_app', user_id: u.user && u.user.id, email: u.email }, include }));
   } catch (err) { fail(res, 'approve', err); }
 });
 
