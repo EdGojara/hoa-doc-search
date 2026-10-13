@@ -86,6 +86,16 @@ const input = (cut = {}, inter = undefined) => ({
     assert.strictEqual(by(evaluateClose(input({}, { applies: true, pairs: [], unresolved: ['AAS'] })), 'IF-01').status, 'WARNING');
   });
 
+  await t('DATA-03: a schedule on an account never vouches for an unrelated balance in it (Canyon Gate 1410 shape)', () => {
+    const run = (b) => by(evaluateClose({ ...input(), recognition: { schedules: [], balance_accounts: [b] } }), 'DATA-03');
+    const mixed = run({ account_number: '1410', account_name: 'Prepaid Expenses', gl_balance_cents: 62112 + 217925, has_schedule: true, scheduled_remaining_cents: 217925 });
+    assert.strictEqual(mixed.status, 'BLOCK');
+    assert.strictEqual(mixed.amount_cents, 62112);
+    assert.match(mixed.explanation, /schedules cover \$2,179\.25; unexplained \$621\.12/);
+    assert.strictEqual(run({ account_number: '1410', account_name: 'Prepaid Expenses', gl_balance_cents: 217925, has_schedule: true, scheduled_remaining_cents: 217925 }).status, 'PASS', 'fully covered');
+    assert.strictEqual(run({ account_number: '1430', account_name: 'Prepaid Vendor Deposits', gl_balance_cents: 427588, has_schedule: false, scheduled_remaining_cents: 0 }).status, 'BLOCK', 'no schedule');
+  });
+
   await t('Kat\'s cutoff review = recorded by Kat AND every cutoff control evaluated', () => {
     const all = P.CUTOFF_CONTROLS.map((code) => ({ code }));
     assert.strictEqual(P.isKatCutoffReview({ run_by: 'Kat (AI accountant) cutoff review, requested by staff@x' }, all), true);
