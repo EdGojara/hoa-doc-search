@@ -1,0 +1,26 @@
+{
+  "migration": "520_lopf_operating_opening.sql",
+  "summary": "LOPF Operating checking ••2449 joins Kat's bank reconciliation with its 7/31/2026 opening position from the prior system's balanced 7/31 reconciliation (bank $59,088.10, book $57,801.88, outstanding checks #40 $1.00, #1002 $1,185.22, #1003 $100.00). Nothing is posted.",
+  "requires": ["519_lopf_bank_reconciliation.sql"],
+  "preflight": [
+    { "name": "Operating has no opening position yet", "sql": "SELECT count(*)::int FROM bank_accounts WHERE id = '13d7c91d-955c-43a1-bee6-a77c8b5a84de' AND community_id = 'a0000000-0000-4000-8000-000000000002' AND opening_position IS NULL", "expect": 1 },
+    { "name": "the July statement ends at the reconciliation's bank balance ($59,088.10)", "sql": "SELECT count(*)::int FROM bank_statement_imports WHERE bank_account_id = '13d7c91d-955c-43a1-bee6-a77c8b5a84de' AND statement_period_end = '2026-07-31' AND ending_balance_cents = 5908810", "expect": 1 },
+    { "name": "the LOPF automation row from 519 exists without Operating", "sql": "SELECT count(*)::int FROM community_accounting_automation WHERE community_id = 'a0000000-0000-4000-8000-000000000002' AND process = 'bank_reconciliation' AND NOT (settings->'bank_account_ids') ? '13d7c91d-955c-43a1-bee6-a77c8b5a84de'", "expect": 1 }
+  ],
+  "expected_changes": [
+    "bank_accounts: opening_position set on LOPF Operating (was null).",
+    "community_accounting_automation: Operating added to LOPF's bank_account_ids.",
+    "No journal entry, run or statement changes."
+  ],
+  "objects": { "added": [], "changed": [], "removed": [] },
+  "row_changes": { "community_accounting_automation": 0, "bank_accounts": 0, "journal_entries": 0, "accounting_runs": 0 },
+  "protected": [
+    { "table": "journal_entries", "order_by": "id" },
+    { "table": "accounting_runs", "order_by": "id" },
+    { "table": "bank_statement_imports", "order_by": "id" }
+  ],
+  "verify": [
+    { "name": "Operating opening position: bank - outstanding checks = book", "sql": "SELECT count(*)::int FROM bank_accounts WHERE id = '13d7c91d-955c-43a1-bee6-a77c8b5a84de' AND (opening_position->>'bank_balance_cents')::bigint - (SELECT sum((c->>'amount_cents')::bigint) FROM jsonb_array_elements(opening_position->'outstanding_checks') c) = (opening_position->>'book_balance_cents')::bigint", "expect": 1 },
+    { "name": "Operating is in LOPF's reconciliation accounts", "sql": "SELECT count(*)::int FROM community_accounting_automation WHERE community_id = 'a0000000-0000-4000-8000-000000000002' AND process = 'bank_reconciliation' AND (settings->'bank_account_ids') ? '13d7c91d-955c-43a1-bee6-a77c8b5a84de'", "expect": 1 }
+  ]
+}
