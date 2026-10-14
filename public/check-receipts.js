@@ -195,7 +195,7 @@
   // Record from the batch list: the same confirmed, once-only action as the review window.
   async function recordFromBatch(i) {
     const r = Q.results[i]; if (!r || r.status !== 'matched') return;
-    if (!confirm(`Record check #${r.check_number} for ${fmt(r.amount_cents)} to ${(r.proposed && r.proposed.street_address) || 'the proposed account'}?\n\nPosts Dr Undeposited Funds / Cr Accounts Receivable.`)) return;
+    if (!(await txConfirm(`Record check #${r.check_number} for ${fmt(r.amount_cents)} to ${(r.proposed && r.proposed.street_address) || 'the proposed account'}?\n\nPosts Dr Undeposited Funds / Cr Accounts Receivable.`))) return;
     const send = (note) => api(`/api/check-receipts/${r.receipt_id}/record`, json({ override_note: note || null }));
     try {
       let j;
@@ -295,7 +295,7 @@
     });
     const rec = m.querySelector('#cr-record');
     if (rec) rec.addEventListener('click', async () => {
-      if (!confirm(`Record check #${r.check_number} for ${fmt(r.amount_cents)} to this owner account?\n\nPosts Dr Undeposited Funds / Cr Accounts Receivable, dated ${r.received_date}.`)) return;
+      if (!(await txConfirm(`Record check #${r.check_number} for ${fmt(r.amount_cents)} to this owner account?\n\nPosts Dr Undeposited Funds / Cr Accounts Receivable, dated ${r.received_date}.`))) return;
       try { const j2 = await api(`/api/check-receipts/${id}/record`, json({ override_note: note() || null })); msg(`Recorded (${j2.journal_reference || 'already recorded'}).`); setTimeout(() => { close(); render(CID, ROOT); }, 900); }
       catch (e) { msg(e.message, true); }
     });
@@ -317,7 +317,7 @@
     fd.append('deposit_date', ROOT.querySelector('#cr-dep-date').value); fd.append('bank_reference', ROOT.querySelector('#cr-dep-ref').value.trim());
     const bt = ROOT.querySelector('#cr-dep-total-bank').value.trim(); if (bt) fd.append('bank_total_cents', String(Math.round(Number(bt.replace(/[$,]/g, '')) * 100)));
     const f = ROOT.querySelector('#cr-dep-file').files[0]; if (f) fd.append('evidence', f);
-    if (!confirm(`Record a deposit of ${ids.length} check(s)?\n\nPosts Dr Operating Cash / Cr Undeposited Funds.`)) return;
+    if (!(await txConfirm(`Record a deposit of ${ids.length} check(s)?\n\nPosts Dr Operating Cash / Cr Undeposited Funds.`))) return;
     try { const j = await api('/api/check-receipts/deposits', { method: 'POST', body: fd }); alert(`Deposit recorded (${j.journal_reference}).`); render(CID, ROOT); }
     catch (e) { alert(e.message); }
   }
@@ -328,7 +328,7 @@
       const c = j.candidates || [];
       if (!c.length) return alert('No imported bank line matches this deposit yet (same amount, within a week of the deposit date). Import the bank statement in Bank Rec, then try again.');
       const pick = c.length === 1 ? c[0] : null;
-      const choice = pick ? (confirm(`Match to the bank line ${pick.posting_date} ${fmt(pick.amount_cents)} "${pick.description || ''}"?`) ? pick : null)
+      const choice = pick ? ((await txConfirm(`Match to the bank line ${pick.posting_date} ${fmt(pick.amount_cents)} "${pick.description || ''}"?`)) ? pick : null)
         : c[Number(prompt(c.map((x, i) => `${i + 1}: ${x.posting_date} ${fmt(x.amount_cents)} ${x.description || ''}`).join('\n') + '\n\nWhich line? (number)')) - 1];
       if (!choice) return;
       await api(`/api/check-receipts/deposits/${depId}/reconcile`, json({ bank_transaction_id: choice.id }));

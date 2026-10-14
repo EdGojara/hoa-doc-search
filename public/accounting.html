@@ -46,6 +46,7 @@
   .stat .v { font-size:22px; font-weight:700; color:var(--navy); } .stat .l { font-size:11px; color:var(--ink-faint); text-transform:uppercase; letter-spacing:0.05em; }
   h2.sec { font-family:var(--font-serif); font-size:20px; color:var(--navy); margin:0 0 4px; }
 </style>
+<script src="/app/confirm.js"></script>
 </head>
 <body>
 <header class="page">
@@ -528,7 +529,7 @@
     const date = (dateEl && dateEl.value) || dToday();
     if (!cashId) { alert('Pick a cash account to deposit into.'); return; }
     const acctLabel = cashSel.selectedOptions[0] ? cashSel.selectedOptions[0].textContent : 'cash';
-    if (!confirm(`Deposit ${fmt(amount)} into ${acctLabel} on ${date}?\n\nPosts Dr Cash / Cr Undeposited Funds.`)) return;
+    if (!(await txConfirm(`Deposit ${fmt(amount)} into ${acctLabel} on ${date}?\n\nPosts Dr Cash / Cr Undeposited Funds.`))) return;
     try {
       const j = await (await fetch('/api/books/undeposited/deposit', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ community_id:CID, receipt_je_id:jeId, cash_account_id:cashId, deposit_date:date }) })).json();
       if (j.error) { alert('Deposit failed: '+j.error); return; }
@@ -2258,7 +2259,7 @@
       <strong>Preview — ${esc(p.run_month)}:</strong> ${p.accounts_charged} account(s) · late fees ${fmt(p.late_fee_total_cents)} · interest ${fmt(p.interest_total_cents)} (${p.interest_apr_pct}% APR on assessment) · <strong>total ${fmt(p.grand_total_cents)}</strong>. Nothing posted yet — click Run to post.</div>`;
   };
   window.lfrRun = async function() {
-    const m = lfrMonth(); if (!confirm(`Post late fees + interest for ${m} to all delinquent accounts?`)) return;
+    const m = lfrMonth(); if (!(await txConfirm(`Post late fees + interest for ${m} to all delinquent accounts?`))) return;
     $('lfr_result').innerHTML = 'Posting…';
     const j = await (await fetch(`/api/gl/${CID}/late-fee-run`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ runMonth: m, dryRun: false }) })).json();
     if (j.error) { $('lfr_result').innerHTML = `<span style="color:#b91c1c;">${esc(j.error)}</span>`; return; }
@@ -2266,7 +2267,7 @@
     $('lfr_result').innerHTML = `<div style="padding:10px 12px; background:#dcfce7; border:1px solid #86efac; border-radius:8px; color:#166534;">✓ Posted ${j.posted} account(s) — late fees ${fmt(j.late_fee_total_cents)} + interest ${fmt(j.interest_total_cents)} = ${fmt(j.grand_total_cents)} (${esc(j.journal_entry)}).</div>`;
   };
   window.lfrReverse = async function() {
-    const m = lfrMonth(); if (!confirm(`Undo the ${m} late-fee/interest run — remove it from every account?`)) return;
+    const m = lfrMonth(); if (!(await txConfirm(`Undo the ${m} late-fee/interest run — remove it from every account?`))) return;
     $('lfr_result').innerHTML = 'Reversing…';
     const j = await (await fetch(`/api/gl/${CID}/late-fee-reverse`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ runMonth: m }) })).json();
     if (j.error) { $('lfr_result').innerHTML = `<span style="color:#b91c1c;">${esc(j.error)}</span>`; return; }
@@ -2580,7 +2581,7 @@
     if(!ctx||!items.length){ alert('Nothing is checked.'); return; }
     const bankSum=items.filter(x=>x.side==='bank').reduce((a,x)=>a+x.amt,0);
     const glSum=items.filter(x=>x.side==='gl').reduce((a,x)=>a+x.amt,0);
-    if(Math.abs(bankSum-glSum)>2 && !confirm(`Checked bank ${fmt(bankSum)} and book ${fmt(glSum)} don't match (off by ${fmt(bankSum-glSum)}). Clear anyway?`)) return;
+    if(Math.abs(bankSum-glSum)>2 && !(await txConfirm(`Checked bank ${fmt(bankSum)} and book ${fmt(glSum)} don't match (off by ${fmt(bankSum-glSum)}). Clear anyway?`))) return;
     const mg='m-'+Date.now();
     try{
       const r=await Promise.all(items.map(x=>fetch('/api/bank-rec/worksheet/clear',{method:'POST',headers:{'Content-Type':'application/json'},
@@ -2890,10 +2891,10 @@
     const total=[...document.querySelectorAll('.chk-inv:checked')].reduce((s,c)=>s+Number(c.dataset.amt||0),0);
     const cp=window._chkCash;
     if (cp && cp.cash_balance_cents!=null && total > cp.cash_balance_cents) {
-      if (!confirm(`These checks total ${fmt(total)} but cash on hand in ${cp.account_nickname||'this account'} is only ${fmt(cp.cash_balance_cents)} — printing them overdraws the account by ${fmt(total-cp.cash_balance_cents)}.\n\nPrint anyway?`)) return;
+      if (!(await txConfirm(`These checks total ${fmt(total)} but cash on hand in ${cp.account_nickname||'this account'} is only ${fmt(cp.cash_balance_cents)} — printing them overdraws the account by ${fmt(total-cp.cash_balance_cents)}.\n\nPrint anyway?`))) return;
     }
     if (!window._chkConfig || !window._chkConfig.ready_for_print) {
-      if (!confirm('This account isn’t marked ready (no account number on file), so checks will print as NON-NEGOTIABLE drafts. Continue for a test print?')) return;
+      if (!(await txConfirm('This account isn’t marked ready (no account number on file), so checks will print as NON-NEGOTIABLE drafts. Continue for a test print?'))) return;
     }
     const btn=$('chk-print'); btn.disabled=true; btn.textContent='Creating run…';
     // Reserve the print tab NOW, synchronously on the click — a window opened
@@ -3045,7 +3046,7 @@
     const ids=[...document.querySelectorAll('.chk-reprint:checked')].map((c)=>c.value);
     if(!ids.length) return;
     const useOverride = !!(window._isAdmin && window._chkOverride);
-    if(useOverride && !confirm('You are overriding the reprint lock as admin.\n\nOnly do this if the original checks were DESTROYED and NOT mailed — reprinting a check that already went out double-pays the vendor.\n\nContinue?')) return;
+    if(useOverride && !(await txConfirm('You are overriding the reprint lock as admin.\n\nOnly do this if the original checks were DESTROYED and NOT mailed — reprinting a check that already went out double-pays the vendor.\n\nContinue?'))) return;
     const btn=$('chkReprintBtn'); const orig=btn.textContent; btn.disabled=true; btn.textContent='Building…';
     // Reserve the tab on the click (before the async build) so it isn't pop-up-blocked.
     const rwin = window.open('', '_blank');

@@ -51,6 +51,7 @@
   .co-sum b { display: block; font-family: var(--font-serif); font-size: 20px; color: var(--navy); }
   @media (max-width: 760px) { .co-wrap { padding: 22px 16px 40px; } .co-pick select { min-width: 0; width: 100%; } }
 </style>
+<script src="/app/confirm.js"></script>
 </head>
 <body class="tx-body">
 <div class="tx-shell" id="tx-shell">
@@ -193,14 +194,21 @@
       $('co-panel').querySelectorAll('.co-inc').forEach(function (x) { x.addEventListener('change', sync); });
       ap.addEventListener('click', async function () {
         var include = Array.prototype.map.call($('co-panel').querySelectorAll('.co-inc:checked'), function (x) { return x.value; });
-        if (!confirm('Approve and post the ' + include.length + ' ticked correction(s) for ' + monthLabel(run.period_month) + '? Each posts exactly as shown; prepaid schedules are approved in your name.')) return;
-        ap.disabled = true; ap.textContent = 'Posting…';
+        if (ap.dataset.busy) return;
+        var pv = run.preview || {}; var inc = {}; include.forEach(function (k) { inc[k] = true; });
+        var picked = (pv.items || []).filter(function (it) { return inc[it.id]; }).map(function (it) { return { label: (it.kind === 'accrual' ? 'Accrue: ' : 'Defer: ') + it.label, cents: it.amount_cents }; })
+          .concat((pv.additions || []).filter(function (a) { return inc[a.id]; }).map(function (a) { return { label: 'Add GL ' + a.account_number + ' ' + a.account_name, cents: null }; }));
+        var ok = await txConfirm({ title: 'Approve and post corrections', message: 'Post the ' + include.length + ' ticked correction(s) for ' + monthLabel(run.period_month) + ', each exactly as shown; prepaid schedules are approved in your name.',
+          items: picked, total_cents: picked.reduce(function (t, i) { return t + (Number(i.cents) || 0); }, 0), confirmLabel: 'Confirm and post' });
+        if (!ok) { $('co-count').textContent = 'Cancelled. Nothing was posted.'; return; }
+        ap.dataset.busy = '1'; ap.disabled = true; ap.textContent = 'Posting…'; $('co-count').textContent = 'Posting… keep this page open.';
         var res = await TX.post('/api/accounting-runs/run/' + encodeURIComponent(run.id) + '/approve', { include: include });
-        if (!res.ok) { alert(res.error || 'Posting failed'); ap.disabled = false; ap.textContent = 'Approve and post ticked'; return; }
+        delete ap.dataset.busy;
+        if (!res.ok) { $('co-count').textContent = 'Not posted: ' + (res.error || 'posting failed') + '. Reload to confirm the run status before trying again.'; ap.disabled = false; ap.textContent = 'Approve and post ticked'; return; }
         await load();
       });
       $('co-hold').addEventListener('click', async function () {
-        var reason = prompt('Why hold these corrections?'); if (!reason) return;
+        var reason = await txPrompt('Why hold these corrections?', { confirmLabel: 'Hold' }); if (!reason) return;
         var res = await TX.post('/api/accounting-runs/run/' + encodeURIComponent(run.id) + '/hold', { reason: reason });
         if (!res.ok) { alert(res.error || 'Hold failed'); return; }
         await load();

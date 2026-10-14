@@ -104,6 +104,7 @@
   <div class="modal-bg" id="modalBg" onclick="if(event.target===this)closeModal()"><div class="modal" id="modal"></div></div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="/app/confirm.js"></script>
 <script>
 const $ = (id) => document.getElementById(id);
 const money = (c) => '$' + (Number(c||0)/100).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
@@ -160,6 +161,7 @@ async function openRun(id){
   try{
     const r = await af('/api/accounting-runs/run/'+id); const d = await r.json(); if(!r.ok) throw new Error(d.error||'load failed');
     const run=d.run, t=run.totals||{}, items=(run.preview&&run.preview.items)||[];
+    window._openRun = run;
     const exc = run.exceptions||[];
     const excOwners = exc.filter(e=>e.code==='owner_exception');
     const other = exc.filter(e=>e.code!=='owner_exception');
@@ -200,7 +202,7 @@ async function openRun(id){
       +(e.event==='note'&&e.detail&&e.detail.text?'<div style="margin:3px 0 6px;padding:6px 8px;background:#FFF5DD;color:#7A5408;border-radius:5px;">'+esc(e.detail.text)+'</div>':'')).join('<br>');
     const can = run.status==='prepared';
     const btns = can ? '<button onclick="holdRun(\''+run.id+'\')" style="padding:8px 14px;border:1px solid #e3c98a;background:#fff;border-radius:6px;cursor:pointer;">Hold</button>'
-      + '<button onclick="approveRun(\''+run.id+'\',\''+run.process+'\')" style="padding:8px 16px;border:none;background:#0B1D34;color:#fff;border-radius:6px;cursor:pointer;font-weight:700;">'+(run.process==='bank_reconciliation'?'Approve &amp; store':'Approve &amp; post')+'</button>' : '';
+      + '<button id="approveBtn" onclick="approveRun(\''+run.id+'\',\''+run.process+'\')" style="padding:8px 16px;border:none;background:#0B1D34;color:#fff;border-radius:6px;cursor:pointer;font-weight:700;">'+(run.process==='bank_reconciliation'?'Approve &amp; store':'Approve &amp; post')+'</button>' : '';
     const res = run.result && run.result.report ? '<h4 style="margin:14px 0 6px;">Stored result</h4><pre style="white-space:pre-wrap;font:12.5px/1.5 inherit;background:#f7f9fb;padding:10px 12px;border-radius:6px;">'+esc(run.result.report)+'</pre>' : '';
     $('modal').innerHTML = '<div class="mb" style="padding:20px 22px;max-width:760px;">'
       + '<h3 style="margin:0 0 6px;">'+(PROC[run.process]||run.process)+' · '+monthLabel(run.period_month)+'</h3>'
@@ -208,23 +210,71 @@ async function openRun(id){
       + head+otherHtml+excHtml+res
       + '<p style="margin-top:12px;"><a href="#" onclick="event.preventDefault();dlCsv(\''+run.id+'\')">Download the full '+(run.process==='interest'?'owner-by-owner':run.process==='bank_reconciliation'?'item-by-item':'entry')+' detail (CSV)</a></p>'
       + '<div style="font-size:11.5px;color:var(--muted);margin-top:8px;">'+ev+'</div>'
+      + '<div id="runStatus" role="status" aria-live="polite" style="margin-top:12px;font-size:13px;"></div>'
       + '<div style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px;"><button onclick="closeModal()" style="padding:8px 14px;border:1px solid #dde3ea;background:#fff;border-radius:6px;cursor:pointer;">Close</button>'+btns+'</div></div>';
     document.querySelectorAll('[data-pdf]').forEach(a=>a.addEventListener('click',(ev)=>{ ev.preventDefault(); ev.stopPropagation(); viewInvoicePdf(a.dataset.pdf); }));
   }catch(e){ $('modal').innerHTML='<div class="mb"><div class="empty" style="color:#9B2C2C;">'+esc(e.message)+'</div></div>'; }
 }
 async function dlCsv(id){ const r=await af('/api/accounting-runs/run/'+id+'/csv'); const b=await r.blob(); const a=document.createElement('a'); a.href=URL.createObjectURL(b); a.download='kat-run-'+id.slice(0,8)+'.csv'; a.click(); }
+// Approve & store (Ed 2026-10-14): an in-page confirmation listing exactly what will post
+// (native confirm() is suppressed in embedded browsers and was silently cancelled), then a
+// locked "Posting..." state and the outcome shown in the window. The server still requires
+// the owner's in-app approval and posts only the ticked proposals.
+let _approving = false;
+function runSelection(run, proc, include){
+  const pv = (run && run.preview) || {}; const inc = new Set(include); const out = [];
+  if(proc==='bank_reconciliation'){
+    for(const p of (pv.proposals||[]).filter(p=>inc.has(p.id))){
+      if(p.receipts) for(const x of p.receipts) out.push({ label: 'Homeowner payment '+x.vantaca_account_id+' '+(x.address||'')+', paid '+x.payment_date+' (deposited '+p.posting_date+')', cents: x.amount_cents });
+      else out.push({ label: p.description, cents: Math.abs(p.amount_cents) });
+    }
+  } else if(proc==='cutoff_adjustment'){
+    for(const a of (pv.additions||[]).filter(a=>inc.has(a.id))) out.push({ label: 'Add GL '+a.account_number+' '+a.account_name, cents: null });
+    for(const it of (pv.items||[]).filter(it=>inc.has(it.id))) out.push({ label: (it.kind==='accrual'?'Accrue: ':'Defer: ')+it.label, cents: it.amount_cents });
+  } else if(proc==='interest'){
+    const t = (run && run.totals) || {};
+    out.push({ label: (t.clean_owners||0)+' owners (no exceptions)', cents: t.clean_interest_cents||0 });
+    for(const e of ((run && run.exceptions)||[]).filter(e=>e.code==='owner_exception'&&inc.has(e.tenure_id))) out.push({ label: 'Exception owner: '+(e.address||''), cents: e.interest_cents });
+  }
+  return out;
+}
 async function approveRun(id, proc){
-  const include=[...document.querySelectorAll('.incl:checked')].map(x=>x.value);
-  const q = proc==='cutoff_adjustment'
-    ? (include.length ? 'Approve and post the '+include.length+' ticked correction(s)? Each posts exactly as shown; prepaid schedules are approved in your name.' : 'Nothing is ticked, so nothing will post. Continue?')
-    : proc==='bank_reconciliation'
-    ? 'Store this reconciliation'+(include.length?' and post the '+include.length+' ticked entr'+(include.length===1?'y':'ies'):' (no entries ticked, nothing posts)')+'? It is marked complete only if it balances and nothing is open.'
-    : 'Post this run now'+(include.length?' (including '+include.length+' exception owner(s))':'')+'? This writes the journal entries.';
-  if(!confirm(q)) return;
-  const r=await af('/api/accounting-runs/run/'+id+'/approve',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({include})});
-  const d=await r.json().catch(()=>({}));
-  if(!r.ok){ toast(d.error||'Posting failed',true); return; }
-  toast(proc==='bank_reconciliation' ? 'Stored: '+((d.result||{}).status||'done')+'.' : 'Posted.'); closeModal(); loadRuns();
+  if(_approving) return;
+  const include=[...document.querySelectorAll('#modal .incl:checked')].map(x=>x.value);
+  const run = window._openRun && window._openRun.id===id ? window._openRun : null;
+  const items = runSelection(run, proc, include);
+  const total = items.reduce((a,i)=>a+(Number(i.cents)||0),0);
+  const label = proc==='bank_reconciliation' ? 'Approve & store' : 'Approve & post';
+  const message = proc==='bank_reconciliation'
+    ? (include.length ? 'Post the '+include.length+' ticked entr'+(include.length===1?'y':'ies')+' below and store the reconciliation. Unticked proposals stay unposted. It is marked complete only if it balances and nothing is open.' : 'Nothing is ticked, so nothing posts. The reconciliation is stored as it stands.')
+    : proc==='cutoff_adjustment'
+    ? (include.length ? 'Post the '+include.length+' ticked correction(s) below, each exactly as shown; prepaid schedules are approved in your name.' : 'Nothing is ticked, so nothing will post.')
+    : 'Post this run now; this writes the journal entries.';
+  const ok = await txConfirm({ title: label, message, items, total_cents: items.some(i=>i.cents!=null) ? total : null, confirmLabel: (include.length || proc==='interest') ? 'Confirm and post' : 'Confirm' });
+  const st = $('runStatus'), btn = $('approveBtn');
+  if(!ok){ if(st){ st.style.color='var(--muted)'; st.textContent='Cancelled. Nothing was posted.'; } return; }
+  _approving = true;
+  if(btn){ btn.disabled = true; btn.textContent = 'Posting…'; btn.style.opacity = '.6'; }
+  if(st){ st.style.color='var(--muted)'; st.textContent = 'Posting… keep this window open.'; }
+  try{
+    const r=await af('/api/accounting-runs/run/'+id+'/approve',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({include})});
+    const d=await r.json().catch(()=>({}));
+    if(!r.ok){
+      if(st){ st.style.color='#9B2C2C'; st.textContent = 'Not posted: '+(d.error||('the server returned '+r.status))+'. Reopen the run to confirm its status before trying again.'; }
+      if(btn){ btn.disabled = false; btn.textContent = label; btn.style.opacity = ''; }
+      toast(d.error||'Posting failed',true); return;
+    }
+    const res = d.result||{}; const refs = (res.posted_entries||res.entries||[]).map(p=>p.reference||p.journal_reference||p.already_posted).filter(Boolean);
+    const msg = proc==='bank_reconciliation'
+      ? 'Stored ('+(res.status||'done')+').'+(refs.length ? ' Posted: '+refs.join(', ')+'.' : ' No entries posted.')
+      : 'Posted.'+(refs.length ? ' '+refs.join(', ')+'.' : '');
+    if(st){ st.style.color='#1F5F43'; st.textContent = msg; }
+    if(btn){ btn.textContent = 'Done'; }
+    toast(msg); loadRuns();
+  }catch(e){
+    if(st){ st.style.color='#9B2C2C'; st.textContent = 'The request did not complete ('+(e.message||'network error')+'). The outcome is unknown: reopen the run to see whether it posted before trying again.'; }
+    if(btn){ btn.disabled = false; btn.textContent = label; btn.style.opacity = ''; }
+  }finally{ _approving = false; }
 }
 async function loadBankAccts(){
   try{
@@ -260,7 +310,7 @@ async function prepBank(){
   toast('Prepared.'); loadRuns(); if(d.run) openRun(d.run.id);
 }
 async function holdRun(id){
-  const reason=prompt('Why hold this run?'); if(!reason) return;
+  const reason=await txPrompt('Why hold this run?',{confirmLabel:'Hold run'}); if(!reason) return;
   const r=await af('/api/accounting-runs/run/'+id+'/hold',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({reason})});
   const d=await r.json().catch(()=>({})); if(!r.ok){ toast(d.error||'Hold failed',true); return; }
   toast('Held.'); closeModal(); loadRuns();
@@ -345,7 +395,7 @@ async function release(id, btn){
 }
 async function releaseAll(){
   if(!rows.length) return;
-  if(!confirm(`Release all ${rows.length} bills for payment (${money(rows.reduce((a,i)=>a+i.total_cents,0))})? Checks and ACH go out on the next run.`)) return;
+  if(!(await txConfirm({ title: 'Release bills for payment', message: 'Release all '+rows.length+' bills for payment? Checks and ACH go out on the next run.', items: rows.map(i=>({ label: ((i.vendors&&i.vendors.name)||i.vendor_name||'Bill')+' '+(i.vendor_invoice_number||''), cents: i.total_cents })), total_cents: rows.reduce((a,i)=>a+i.total_cents,0), confirmLabel: 'Release all' }))) return;
   const ids = rows.map(i=>i.id);
   let ok=0, fail=0;
   for(const id of ids){ try{ const r=await af('/api/ap/invoices/'+id+'/approve',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'}); if(r.ok){ ok++; rows=rows.filter(x=>x.id!==id); const el=$('row-'+id); if(el) el.remove(); } else { fail++; } }catch(_){ fail++; } }

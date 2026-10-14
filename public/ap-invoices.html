@@ -39,6 +39,7 @@
 </style>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="/app/deeplink.js"></script>
+<script src="/app/confirm.js"></script>
 </head>
 <body>
 <div class="wrap">
@@ -355,7 +356,7 @@ window.resolveExc=async function(id,needVendor){
   }catch(e){ say('Could not send: '+(e.message||'network error')+'. Nothing was loaded; try again.'); }
 };
 window.dismissExc=async function(id){
-  if(!confirm('Dismiss this — it isn’t a bill to pay? It leaves the list and the email is marked handled.')) return;
+  if(!(await txConfirm('Dismiss this — it isn’t a bill to pay? It leaves the list and the email is marked handled.'))) return;
   try{
     const r=await af('/api/ap-intake/exceptions/'+id+'/dismiss',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
     if(r.ok){ const card=document.querySelector('.exc[data-id="'+id+'"]'); if(card){card.style.opacity='0';setTimeout(()=>{card.remove();loadExceptions();},220);} }
@@ -599,7 +600,7 @@ async function saveAssoc(invId){
 
 window.resolveDup = async function(id,which){
   const url = which==='unique' ? '/api/ap-intake/'+id+'/confirm-unique' : '/api/ap-intake/'+id+'/confirm-duplicate';
-  if(which==='duplicate' && !confirm('Void this invoice as a confirmed duplicate?')) return;
+  if(which==='duplicate' && !(await txConfirm('Void this invoice as a confirmed duplicate?'))) return;
   await af(url,{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
   loadQueue();
 };
