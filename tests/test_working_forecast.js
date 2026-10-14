@@ -216,6 +216,11 @@ const item = (l, d) => l.bridge.find((b) => b.driver === d);
   const k5 = contractCostForYear({ effective_date: '2026-01-01', periodic_amount: 1200, periodic_frequency: 'monthly', escalator_kind: 'cpi_only', one_time_fees: [{ date: '2027-03-15', amount: 500, description: 'mobilization' }], unit_pricing: { per_call: 85 } }, 2027);
   check('CPI escalators are not guessed; unit pricing is reported not forecast; one-time fees land in their month', k5.issues.some((x) => x.code === 'cpi_escalator') && k5.issues.some((x) => x.code === 'unit_pricing') && k5.one_time_cents === 50000 && k5.months[2] === 120000 + 50000);
 
+  // Ed 2026-10-14: priced from the contract's own terms wherever they exist.
+  const k6 = contractCostForYear({ effective_date: '2026-10-01', end_date: null, auto_renews: true, periodic_amount: null, periodic_frequency: 'monthly', escalator_kind: 'max_cpi_or_pct', escalator_pct: 3,
+    rate_schedule: [{ effective_date: '2026-01-01', periodic_amount: 18526.64, periodic_frequency: 'monthly' }, { effective_date: '2026-10-01', periodic_amount: 18263.10, periodic_frequency: 'monthly' }] }, 2027);
+  check('a contract priced only by dated rates (no base amount) is costed from them; "greater of CPI or 3%" applies the 3% minimum on the anniversary and flags CPI', k6.covered_months === 12
+    && k6.months[0] === 1826310 && k6.months[9] === Math.round(1826310 * 1.03) && !k6.issues.some((x) => x.code === 'no_periodic_amount') && k6.issues.some((x) => x.code === 'cpi_escalator' && /3% minimum is applied/.test(x.text)), `${k6.annual_cents} ${k6.steps.join(' | ')}`);
   console.log('contract driver in the forecast');
   const doc = { file_hash: 'abc123', document_version: 1, file_path: 'vendor-contracts/c/abc123.pdf', source_message_id: 'MSG-1' };
   const verified = { id: 'vc1', vendor_name: 'Star Protection', execution_status: 'verified_executed', status: 'active', effective_date: '2025-01-01', end_date: '2027-12-31', periodic_amount: 19583.33, periodic_frequency: 'monthly',
@@ -229,11 +234,24 @@ const item = (l, d) => l.bridge.find((b) => b.driver === d);
   check('general inflation is not stacked on a contract that sets the full-year price', item(cv, 'rate').status === 'not_applicable');
   const likely = { ...verified, id: 'vc2', execution_status: 'likely_executed', verified_by: null, verified_at: null, verification_source: null, execution_reason: 'both parties signed (machine-read)' };
   const cl = WF.buildLine(L({ budget: flat(23500000), ytd: 17370200, months: { 8: 1958300, 9: 1958300 }, contracts: [likely] }), ctx);
-  check('a likely-executed contract is shown with its would-be effect but NOT applied; confidence lowered', item(cl, 'contract').status === 'needs_verification' && item(cl, 'contract').amount_cents === null
-    && item(cl, 'contract').evidence.would_be_cost_cents === 24600000 && cl.recommendation_cents !== 24600000 && cl.confidence.model === 'low');
+  // Ed 2026-10-14: a bound contract that is not yet verified is priced from its terms (never replaced
+  // by a percentage increase) and flagged: confidence low, the line needs review.
+  const cli = item(cl, 'contract');
+  check('a likely-executed contract is priced from its terms but flagged unverified; confidence low; the line needs review', cli.status === 'applied' && cli.unverified === true && cl.recommendation_cents === 24600000
+    && cli.confidence === 'low' && /not verified as executed: needs review/.test(cli.note) && cl.confidence.model === 'low' && cl.evidence_status === 'needs_review', `${cli.status} ${cl.recommendation_cents} ${cl.evidence_status}`);
+  const gate = { id: 'vc-gate', vendor_name: 'Gate Sentry', execution_status: 'detected', status: 'active', effective_date: '2026-10-01', end_date: '2027-09-30', auto_renews: true, periodic_amount: 7089.13, periodic_frequency: 'annual', file_hash: 'g' };
+  const ups = { ...verified, id: 'vc-ups', vendor_name: 'United Protective', execution_status: 'detected', rate_schedule: [], periodic_amount: 18000, effective_date: '2026-10-01', end_date: null };
+  const twoV = WF.buildLine(L({ budget: flat(21000000), ytd: 15750000, months: { 8: 1750000, 9: 1750000 }, contracts: [ups, gate] }), ctx);
+  const bi = item(twoV, 'contract');
+  check('two contracts from different vendors on one line add up (officers + gate system), each priced from its terms, both flagged unverified', bi.status === 'applied' && bi.evidence.contract_cost_cents === 21600000 + 708913
+    && twoV.recommendation_cents === 21600000 + 708913 && bi.evidence.contracts.length === 2 && bi.evidence.calculation.some((x) => /^Gate Sentry: /.test(x)) && twoV.evidence_status === 'needs_review', `${bi.status} ${bi.evidence && bi.evidence.contract_cost_cents} ${twoV.recommendation_cents}`);
   check('no verified contract: no contractual adjustment is invented', item(a, 'contract').status === 'no_evidence' && !a.bridge.some((b) => b.driver === 'contract' && b.status === 'applied'));
   const two = WF.buildLine(L({ contracts: [verified, { ...verified, id: 'vc3' }] }), ctx);
   check('two verified contracts on one line: needs review, nothing applied', item(two, 'contract').status === 'needs_review' && item(two, 'contract').amount_cents === null);
+  const noTerms = { id: 'vc-nt', vendor_name: 'Officer Co', execution_status: 'detected', status: 'active', effective_date: '2026-10-01', periodic_amount: null, periodic_frequency: 'monthly', rate_schedule: [] };
+  const half = WF.buildLine(L({ budget: flat(21000000), ytd: 15750000, months: { 8: 1750000, 9: 1750000 }, contracts: [noTerms, gate] }), ctx);
+  check('all or nothing: when one bound contract cannot be priced, the others are not applied alone (the line is not replaced by part of it)', item(half, 'contract').status === 'needs_review' && item(half, 'contract').amount_cents === null
+    && /Officer Co does not price 2027/.test(item(half, 'contract').note) && /not applied alone/.test(item(half, 'contract').note) && half.recommendation_cents > 20000000, `${item(half, 'contract').status} ${half.recommendation_cents}`);
   const part = WF.buildLine(L({ budget: flat(12000000), ytd: 9000000, months: { 8: 1000000, 9: 1000000 }, contracts: [{ ...verified, end_date: '2027-06-30', periodic_amount: 1100, rate_schedule: [] }] }), ctx);
   check('partial-year contract: contract prices covered months; inflation only on the uncovered share; flagged', item(part, 'contract').status === 'applied' && item(part, 'contract').evidence.contract_cost_cents === 660000
     && item(part, 'rate').amount_cents === Math.round(Math.round(part.base_year.normalized_cents * 6 / 12) * 0.03) && /not covered/.test(item(part, 'contract').note));

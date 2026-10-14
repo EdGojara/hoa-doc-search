@@ -1,0 +1,28 @@
+{
+  "migration": "526_contract_term_semantics.sql",
+  "summary": "Contract terms can record an escalation ceiling (cap_pct: 'not to exceed X%') and the contract year escalation begins in; Canyon Gate's United Protective Services and Gate Sentry contracts corrected from their quoted clauses. No budget, GL, invoice or payment changes.",
+  "requires": ["521_budget_line_basis.sql"],
+  "preflight": [
+    { "name": "UPS contract still reads 'greater of CPI or 3%'", "sql": "SELECT count(*)::int FROM vendor_contracts WHERE id = '96321a51-d765-4fe2-ae37-adcfbd87f39a' AND escalator_kind = 'max_cpi_or_pct' AND escalator_pct = 3", "expect": 1 },
+    { "name": "Gate Sentry contract is fixed 5%", "sql": "SELECT count(*)::int FROM vendor_contracts WHERE id = '506222f2-dd38-4708-ba45-856f64b3b29d' AND escalator_kind = 'fixed_pct' AND escalator_pct = 5", "expect": 1 },
+    { "name": "escalator_start_year does not exist yet", "sql": "SELECT count(*)::int FROM information_schema.columns WHERE table_name = 'vendor_contracts' AND column_name = 'escalator_start_year'", "expect": 0 }
+  ],
+  "expected_changes": [
+    "vendor_contracts: escalator_kind may be 'cap_pct'; new column escalator_start_year (>= 2).",
+    "United Protective Services: escalator 'max_cpi_or_pct' 3 -> 'cap_pct' 3, with a note.",
+    "Gate Sentry: escalator_start_year 4, with a note.",
+    "No other row changes."
+  ],
+  "objects": { "added": ["column:vendor_contracts.escalator_start_year", "constraint:vendor_contracts.vendor_contracts_escalator_start_year_check"], "changed": ["constraint:vendor_contracts.vendor_contracts_escalator_kind_check"], "removed": [] },
+  "row_changes": { "vendor_contracts": 0, "budget_line_items": 0, "community_budgets": 0, "journal_entries": 0 },
+  "protected": [
+    { "table": "budget_line_items", "order_by": "id" },
+    { "table": "community_budgets", "order_by": "id" },
+    { "table": "journal_entries", "order_by": "id" }
+  ],
+  "verify": [
+    { "name": "UPS escalator is a 3% ceiling", "sql": "SELECT count(*)::int FROM vendor_contracts WHERE id = '96321a51-d765-4fe2-ae37-adcfbd87f39a' AND escalator_kind = 'cap_pct' AND escalator_pct = 3", "expect": 1 },
+    { "name": "Gate Sentry escalation starts in year 4", "sql": "SELECT count(*)::int FROM vendor_contracts WHERE id = '506222f2-dd38-4708-ba45-856f64b3b29d' AND escalator_start_year = 4", "expect": 1 },
+    { "name": "no other contract changed escalator kind to cap_pct", "sql": "SELECT count(*)::int FROM vendor_contracts WHERE escalator_kind = 'cap_pct'", "expect": 1 }
+  ]
+}

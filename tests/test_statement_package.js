@@ -537,12 +537,15 @@ const find = (model, num) => { for (const s of model.sections) for (const g of s
     dbb.journal_entries.push({ id: 'je-xf', community_id: F.CID, reference: 'JE-XF', posting_date: '2026-09-15', source_module: 'manual', status: 'posted', void_reversal_je_id: null, reverses_je_id: null, description: 'cross-fund' });
     dbb.journal_entry_lines.push({ id: 'jl-xf1', journal_entry_id: 'je-xf', line_number: 1, account_id: 'a-1200', fund_id: 'f-res', debit_cents: 4321, credit_cents: 0, memo: null, vendor_id: null, property_id: null },
       { id: 'jl-xf2', journal_entry_id: 'je-xf', line_number: 2, account_id: 'a-4200', fund_id: 'f-res', debit_cents: 0, credit_cents: 4321, memo: null, vendor_id: null, property_id: null });
+    // Migration 521: a recorded basis prints in the Basis column.
+    { const l = dbb.budget_line_items.find((x) => x.budget_id === 'bud-2027' && x.account_id === 'a-4200'); Object.assign(l, { amount_basis: 'contract', amount_calc: 'Acme: $5,200/mo x 12', needs_review: true, review_note: 'Renewal not yet received.' }); }
     const po = await M.buildProposedBudgetModel(sbb, { community_id: F.CID, target_year: 2027, as_of: '2026-09-30', fund: 'OPR', now: NOW });
     const pr = await M.buildProposedBudgetModel(sbb, { community_id: F.CID, target_year: 2027, as_of: '2026-09-30', fund: 'RES', now: NOW });
     const lineP = (m, num) => { for (const s of m.sections) for (const g of s.groups) for (const l of g.lines) if (l.account_number === num) return l; return null; };
     const l52 = lineP(po, '5200');
     check('proposed column is the draft budget line for line; the base-year column is the approved budget; change = proposed - approved', l52 && l52.values.prop === draftOf(5200) && l52.values.appr === apprOf(5200) && l52.values.chg === l52.values.prop - l52.values.appr, JSON.stringify(l52 && l52.values));
-    check('columns are banded by year (2026 budget, actual, projected | 2027 proposed, change) with no variance or percentage column', po.columns.map((c) => `${c.band}:${c.key}`).join() === '2026:appr,2026:ytd,2026:proj,2027:prop,2027:chg' && !po.columns.some((c) => c.is_var || c.is_pct));
+    check('columns are banded by year (2026 budget, actual, projected | 2027 proposed, change, basis) with no variance or percentage column', po.columns.map((c) => `${c.band}:${c.key}`).join() === '2026:appr,2026:ytd,2026:proj,2027:prop,2027:chg,2027:basis' && !po.columns.some((c) => c.is_var || c.is_pct));
+    check('the proposed budget prints a Basis words column on every account line (migration 521)', po.columns.find((c) => c.key === 'basis').is_text && po.sections.every((s) => s.groups.every((g) => g.lines.every((l) => typeof l.values.basis === 'string' && l.values.basis.length))) && R.renderHtml(po, { mode: 'print' }).includes('<th class="bs">Basis</th>'));
     const ot = po.transfers && po.transfers.groups[0].lines[0], rt = pr.transfers && pr.transfers.groups[0].lines[0];
     check('a single-account reserve contribution is a transfer out of Operating and into Reserve, never revenue', ot && rt && ot.values.prop === -rt.values.prop && ot.values.prop < 0 && !lineP(pr, '4900') && /transfer to RES/.test(ot.account_name));
     check('net change in fund balance = excess + transfers, every column', po.change && ['appr', 'ytd', 'proj', 'prop'].every((k) => po.change.values[k] === po.net.values[k] + po.transfers.total.values[k]));
@@ -551,6 +554,8 @@ const find = (model, num) => { for (const s of model.sections) for (const g of s
     check('actuals stay in the fund they were posted to (never merged into the budget line of another fund): Operating actual matches the statement, Reserve shows its own line', lineP(po, '4200').values.ytd === ibl.values.ytd_actual && lineP(pr, '4200') && lineP(pr, '4200').values.ytd === 4321);
     const ps = await M.buildProposedBudgetModel(sbb, { community_id: F.CID, target_year: 2027, as_of: '2026-09-30', fund: 'OPR', summary: true, now: NOW });
     check('summary: category totals only, same totals as the detail', ps.sections.every((s) => s.groups.every((g) => g.kind !== 'category' || !g.lines.length)) && ps.change.values.prop === po.change.values.prop);
+    check('a recorded basis prints with its calculation and the review note', lineP(po, '4200').values.basis === 'Contract: Acme: $5,200/mo x 12. Needs review: Renewal not yet received.', lineP(po, '4200').values.basis);
+    check('summary: no Basis column (category totals only)', !ps.columns.some((c) => c.key === 'basis'));
     const htm = R.renderHtml(po, { mode: 'print', noStyle: true });
     check('printed: draft lifecycle label, year bands, no variance legend', /DRAFT – PROPOSED, NOT APPROVED/.test(htm) && /<th colspan="3">2026<\/th>/.test(htm) && !/Variance: favorable/.test(R.renderDocument([po])));
   }

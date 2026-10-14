@@ -1,0 +1,47 @@
+{
+  "migration": "521_budget_line_basis.sql",
+  "summary": "Each budget line can record WHY its amount is what it is: amount_basis (contract, historical_forecast, board_project, discretionary, assessment, transfer), the arithmetic in words, the vendor contract and library document behind it, and needs_review with a note. A line whose amount changes after its basis was recorded is marked needs_review. No amount, month, budget, GL account or balance changes; approved budgets stay locked.",
+  "requires": ["462_budget_approved_lock.sql"],
+  "preflight": [
+    { "name": "budget_line_items has none of the basis columns yet", "sql": "SELECT count(*)::int FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'budget_line_items' AND column_name IN ('amount_basis', 'amount_calc', 'vendor_contract_id', 'source_document_id', 'needs_review', 'review_note')", "expect": 0 },
+    { "name": "the migration 462 lock trigger is on budget_line_items", "sql": "SELECT count(*)::int FROM pg_trigger WHERE tgname = 'trg_budget_line_items_lock_guard' AND NOT tgisinternal", "expect": 1 },
+    { "name": "vendor_contracts and library_documents exist for the references", "sql": "SELECT count(*)::int FROM information_schema.tables WHERE table_schema = 'public' AND table_name IN ('vendor_contracts', 'library_documents')", "expect": 2 }
+  ],
+  "expected_changes": [
+    "budget_line_items: six new columns (amount_basis, amount_calc, vendor_contract_id, source_document_id, needs_review default false, review_note), a CHECK on amount_basis, two references with ON DELETE SET NULL and their indexes.",
+    "budget_line_items: a trigger marks a line needs_review when its annual amount changes and its basis is not rewritten in the same update.",
+    "No budget line amount, month, note or status changes; no budget header, GL, journal entry or contract changes. The migration 462 lock still blocks approved budgets."
+  ],
+  "objects": {
+    "added": [
+      "column:budget_line_items.amount_basis",
+      "column:budget_line_items.amount_calc",
+      "column:budget_line_items.vendor_contract_id",
+      "column:budget_line_items.source_document_id",
+      "column:budget_line_items.needs_review",
+      "column:budget_line_items.review_note",
+      "constraint:budget_line_items.budget_line_items_amount_basis_check",
+      "constraint:budget_line_items.budget_line_items_vendor_contract_id_fkey",
+      "constraint:budget_line_items.budget_line_items_source_document_id_fkey",
+      "index:idx_budget_line_items_vendor_contract",
+      "index:idx_budget_line_items_source_document",
+      "function:budget_line_items_basis_stale",
+      "trigger:budget_line_items.trg_budget_line_items_basis_stale"
+    ],
+    "changed": [],
+    "removed": []
+  },
+  "row_changes": { "budget_line_items": 0, "community_budgets": 0, "journal_entries": 0, "vendor_contracts": 0 },
+  "protected": [
+    { "table": "budget_line_items", "order_by": "id" },
+    { "table": "community_budgets", "order_by": "id" },
+    { "table": "journal_entries", "order_by": "id" },
+    { "table": "vendor_contracts", "order_by": "id" }
+  ],
+  "verify": [
+    { "name": "all six basis columns exist", "sql": "SELECT count(*)::int FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'budget_line_items' AND column_name IN ('amount_basis', 'amount_calc', 'vendor_contract_id', 'source_document_id', 'needs_review', 'review_note')", "expect": 6 },
+    { "name": "no existing line was flagged or given a basis", "sql": "SELECT count(*)::int FROM budget_line_items WHERE amount_basis IS NOT NULL OR needs_review", "expect": 0 },
+    { "name": "amount_basis allows exactly the six bases", "sql": "SELECT count(*)::int FROM pg_constraint WHERE conname = 'budget_line_items_amount_basis_check' AND pg_get_constraintdef(oid) LIKE '%contract%' AND pg_get_constraintdef(oid) LIKE '%historical_forecast%' AND pg_get_constraintdef(oid) LIKE '%board_project%' AND pg_get_constraintdef(oid) LIKE '%discretionary%' AND pg_get_constraintdef(oid) LIKE '%assessment%' AND pg_get_constraintdef(oid) LIKE '%transfer%'", "expect": 1 },
+    { "name": "the migration 462 lock trigger is still on budget_line_items", "sql": "SELECT count(*)::int FROM pg_trigger WHERE tgname = 'trg_budget_line_items_lock_guard' AND NOT tgisinternal", "expect": 1 }
+  ]
+}
