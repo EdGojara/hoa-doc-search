@@ -82,6 +82,12 @@ function world() {
     oo.opened_at = '2026-10-13T12:00:00Z';
     const f1 = await F.followCase(w.sb, oo, { now: new Date('2026-10-14T15:30:00Z'), notify: async () => ({ ok: true }) });
     check('follow-through records the bank\'s reply and puts it in front of a person', f1 === 'reply' && oo.status === 'waiting_human' && w.db.objective_events.some((e) => e.kind === 'message_in'));
+    check('after the reply, the next step is confirming removal on the next genuine notice (the reply alone never closes it)', /closes when the next genuine/.test(oo.next_action) && oo.status !== 'resolved');
+    { const t9 = []; const saveDue = oo.next_action_due; oo.next_action_due = '2026-10-14T15:10:00Z';
+      const f9 = await F.followCase(w.sb, oo, { now: new Date('2026-10-14T15:40:00Z'), notify: async (x) => { t9.push(x); return { ok: true }; } });
+      const srcMsg = w.db.email_messages.find((m) => m.id === n.id);
+      check('overdue AFTER the bank answered: one "past due" note, never "no answer", never a follow-up email', f9 === 'overdue' && t9.length === 1 && /past due/.test(t9[0]) && !/no answer/.test(t9[0]) && !(srcMsg.extracted && srcMsg.extracted.draft), JSON.stringify([f9, t9]));
+      oo.next_action_due = saveDue; w.db.objective_events = w.db.objective_events.filter((e) => !/^Overdue/.test(e.summary || '')); }
     w.db.email_messages.push(notice('2026-10-15T11:56:00Z'));
     const f2 = await F.followCase(w.sb, oo, { now: new Date('2026-10-15T12:30:00Z'), notify: async () => ({ ok: true }) });
     check('resolved by evidence: the 10/15 notice no longer carries the address; the case closes citing it', f2 === 'resolved' && oo.status === 'resolved' && /not on the 2026-10-15 message/.test(w.db.objective_events.find((e) => e.kind === 'closed').summary));
