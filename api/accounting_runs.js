@@ -147,8 +147,18 @@ function parseCodings(v) {
   if (!Array.isArray(v) || v.length > 50) return { error: 'codings must be an array of at most 50' };
   const list = [];
   for (const c of v) {
-    if (!c || !UUIDRE.test(String(c.bank_transaction_id || '')) || !ACCTRE.test(String(c.account_number || '')) || !String(c.basis || '').trim()) return { error: 'each coding needs bank_transaction_id, account_number and basis (the evidence)' };
-    list.push({ bank_transaction_id: String(c.bank_transaction_id), account_number: String(c.account_number), basis: String(c.basis).trim().slice(0, 600) });
+    const hasReceipts = c && Array.isArray(c.receipts);
+    if (!c || !UUIDRE.test(String(c.bank_transaction_id || '')) || (!hasReceipts && !ACCTRE.test(String(c.account_number || ''))) || !String(c.basis || '').trim()) return { error: 'each coding needs bank_transaction_id, account_number (or receipts) and basis (the evidence)' };
+    if (!hasReceipts) { list.push({ bank_transaction_id: String(c.bank_transaction_id), account_number: String(c.account_number), basis: String(c.basis).trim().slice(0, 600) }); continue; }
+    // A deposit coded with its payout contents: one row per homeowner payment.
+    if (!c.receipts.length || c.receipts.length > 50) return { error: 'receipts must list 1 to 50 payments' };
+    const receipts = [];
+    for (const x of c.receipts) {
+      const amt = Number(x && x.amount_cents);
+      if (!x || !/^[0-9A-Za-z-]{3,20}$/.test(String(x.vantaca_account_id || '')) || !/^\d{4}-\d{2}-\d{2}$/.test(String(x.payment_date || '')) || !Number.isInteger(amt) || amt <= 0) return { error: 'each receipt needs vantaca_account_id, payment_date (YYYY-MM-DD) and a positive whole amount_cents' };
+      receipts.push({ vantaca_account_id: String(x.vantaca_account_id), payment_date: String(x.payment_date), amount_cents: amt, method: x.method ? String(x.method).slice(0, 40) : null, reference: x.reference ? String(x.reference).slice(0, 80) : null });
+    }
+    list.push({ bank_transaction_id: String(c.bank_transaction_id), basis: String(c.basis).trim().slice(0, 600), receipts });
   }
   return { list };
 }

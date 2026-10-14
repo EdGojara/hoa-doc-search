@@ -182,7 +182,8 @@ async function openRun(id){
       head = '<pre style="white-space:pre-wrap;font:12.5px/1.5 inherit;background:#f7f9fb;padding:10px 12px;border-radius:6px;margin:10px 0;">'+esc(pv.report||'')+'</pre>'
         + (props.length ? '<h4 style="margin:14px 0 6px;">Proposed entries (tick to post)</h4><div style="font-size:12.5px;">'
           + props.map(p=>'<label style="display:block;padding:6px 0;border-bottom:1px solid #f1f3f6;"><input type="checkbox" class="incl" value="'+esc(p.id)+'"> <b>'+esc(p.description)+'</b> · '+money(p.amount_cents)+'<br><span style="color:var(--muted);">'
-            + p.lines.map(l=>(l.debit_cents?'Dr ':'Cr ')+esc(l.account_number)+' '+money(l.debit_cents||l.credit_cents)).join(' / ')+' · '+esc((p.evidence||{}).basis||'')+'</span></label>').join('')+'</div>' : '')
+            + p.lines.map(l=>(l.debit_cents?'Dr ':'Cr ')+esc(l.account_number)+' '+money(l.debit_cents||l.credit_cents)).join(' / ')+' · '+esc((p.evidence||{}).basis||'')
+            + (p.receipts?p.receipts.map(x=>'<br>&nbsp;&nbsp;'+esc(x.payment_date)+' · '+esc(x.vantaca_account_id)+' '+esc(x.address||'')+' · '+money(x.amount_cents)+(x.method?' · '+esc(x.method):'')+' · '+x.lines.map(l=>(l.debit_cents?'Dr ':'Cr ')+esc(l.account_number)).join(' / ')).join(''):'')+'</span></label>').join('')+'</div>' : '')
         + (open.length ? '<h4 style="margin:14px 0 6px;">Exceptions for a person</h4><div style="max-height:220px;overflow:auto;font-size:12.5px;">'+open.map(e=>'<div style="padding:4px 0;border-bottom:1px solid #f1f3f6;">'+(e.severity==='blocking'?'<b style="color:#9B2C2C;">Blocking:</b> ':'')+esc(e.text)+'</div>').join('')+'</div>' : '');
     } else if(run.process==='interest'){
       head = '<p>'+(t.owners||0)+' owners, eligible assessment principal '+money(t.principal_cents||0)+', interest '+money(t.interest_cents||0)+'.<br>'
