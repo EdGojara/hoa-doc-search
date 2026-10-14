@@ -59,6 +59,14 @@ t('unverified contract (Ed 2026-10-14): priced from its terms, basis Contract wi
   assert.deepStrictEqual([c.status, c.unverified, c.proposed_cents], ['applied', true, 6240000]);
 });
 
+t('a set amount on a contract line stays basis Contract, shows the contract pricing, and needs review when they differ', () => {
+  const l = buildLine(line({ contracts: [UPS] }), ctx, {}, { override_cents: 6500000, model_recommendation_cents: 6240000, reason: 'Board approved a sixth guard shift.', actor: 'ed@example.test', created_at: 'x' });
+  const b = LB.basisFromForecastLine(l, ctx);
+  assert.deepStrictEqual([b.amount_basis, b.vendor_contract_id, b.needs_review], ['contract', 'vc-ups', true]);
+  assert.ok(b.amount_calc.startsWith('Set at $65,000.00 by ed@example.test: Board approved a sixth guard shift') && b.amount_calc.includes('Contract pricing $62,400.00'), b.amount_calc);
+  assert.ok(b.review_note.includes('price this line at $62,400.00; the amount was set at $65,000.00'), b.review_note);
+});
+
 t('an inflation percentage nobody confirmed is flagged as an unverified assumption', () => {
   const b = LB.basisFromForecastLine(buildLine(line({}), ctx), ctx);
   assert.strictEqual(b.needs_review, true);
