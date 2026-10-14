@@ -293,6 +293,7 @@ async function prepCutoff(){
   const r=await af('/api/accounting-runs/community/'+c+'/prepare',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({process:'cutoff_adjustment',period_month:m+'-01'})});
   const d=await r.json().catch(()=>({}));
   if(!r.ok){ toast(d.error||'Prepare failed',true); return; }
+  if(d.existing && d.run.status==='posted'){ if(await askFollowUp('cutoff corrections')) return prepFollowUp(c, { process:'cutoff_adjustment', period_month:m+'-01' }); return; }
   if(d.existing){ toast('Kat already has cutoff corrections for that month.'); openRun(d.run.id); return; }
   toast('Prepared.'); loadRuns(); if(d.run) openRun(d.run.id);
 }
@@ -301,11 +302,21 @@ async function viewInvoicePdf(id){
   if(!r.ok||!d.url){ toast(d.error||'No invoice PDF on file',true); return; }
   window.open(d.url,'_blank','noopener');
 }
+// A month whose run is already posted: Kat prepares a follow-up for the items still unposted
+// (proposals are idempotent on their source, so nothing already posted can post again).
+async function askFollowUp(what){ return txConfirm({ title: 'Already approved for that month', message: 'Kat\'s '+what+' for that month is already approved and posted. Prepare a follow-up run with the items that are still unposted? Nothing posts until you approve it.', confirmLabel: 'Prepare follow-up' }); }
+async function prepFollowUp(cid, body){
+  const r=await af('/api/accounting-runs/community/'+cid+'/prepare',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ ...body, follow_up:true })});
+  const d=await r.json().catch(()=>({}));
+  if(!r.ok){ toast(d.error||'Prepare failed',true); return; }
+  toast(d.existing ? 'A follow-up is already waiting.' : 'Follow-up prepared.'); loadRuns(); if(d.run) openRun(d.run.id);
+}
 async function prepBank(){
   const sel=$('bankPrepAcct'), o=sel.options[sel.selectedIndex], m=$('bankPrepMonth').value; if(!o||!m) return;
   const r=await af('/api/accounting-runs/community/'+o.dataset.c+'/prepare',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({process:'bank_reconciliation',subject_id:o.value,period_month:m+'-01'})});
   const d=await r.json().catch(()=>({}));
   if(!r.ok){ toast(d.error||'Prepare failed',true); return; }
+  if(d.existing && d.run.status==='posted'){ if(await askFollowUp('reconciliation')) return prepFollowUp(o.dataset.c, { process:'bank_reconciliation', subject_id:o.value, period_month:m+'-01' }); return; }
   if(d.existing){ toast('Kat already has a run for that month.'); openRun(d.run.id); return; }
   toast('Prepared.'); loadRuns(); if(d.run) openRun(d.run.id);
 }

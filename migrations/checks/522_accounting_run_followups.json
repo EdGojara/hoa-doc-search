@@ -1,0 +1,28 @@
+{
+  "migration": "522_accounting_run_followups.sql",
+  "summary": "A posted bank reconciliation or cutoff run no longer blocks a follow-up run for the same account and month (its proposals are idempotent on their source reference). One open run per key stays enforced for every process; interest and recognition still allow only one posted run per month. No data changes.",
+  "requires": ["518_cutoff_adjustment_runs.sql"],
+  "preflight": [
+    { "name": "the live-run index from migration 511 exists", "sql": "SELECT count(*)::int FROM pg_indexes WHERE indexname = 'uq_accounting_runs_live'", "expect": 1 },
+    { "name": "no key has two open runs (the new open index can be built)", "sql": "SELECT count(*)::int FROM (SELECT 1 FROM accounting_runs WHERE status IN ('prepared','approved','held','failed') GROUP BY community_id, process, period_month, coalesce(subject_id, '00000000-0000-0000-0000-000000000000'::uuid) HAVING count(*) > 1) d", "expect": 0 }
+  ],
+  "expected_changes": [
+    "index uq_accounting_runs_live replaced by uq_accounting_runs_open (open runs, every process) and uq_accounting_runs_posted_once (posted interest and recognition runs).",
+    "No run, journal entry, reconciliation or statement changes."
+  ],
+  "objects": {
+    "added": ["index:uq_accounting_runs_open", "index:uq_accounting_runs_posted_once"],
+    "changed": [],
+    "removed": ["index:uq_accounting_runs_live"]
+  },
+  "row_changes": { "accounting_runs": 0, "journal_entries": 0, "bank_reconciliations": 0 },
+  "protected": [
+    { "table": "accounting_runs", "order_by": "id" },
+    { "table": "journal_entries", "order_by": "id" }
+  ],
+  "verify": [
+    { "name": "open-run index present", "sql": "SELECT count(*)::int FROM pg_indexes WHERE indexname = 'uq_accounting_runs_open'", "expect": 1 },
+    { "name": "posted-once index present", "sql": "SELECT count(*)::int FROM pg_indexes WHERE indexname = 'uq_accounting_runs_posted_once'", "expect": 1 },
+    { "name": "old live-run index removed", "sql": "SELECT count(*)::int FROM pg_indexes WHERE indexname = 'uq_accounting_runs_live'", "expect": 0 }
+  ]
+}

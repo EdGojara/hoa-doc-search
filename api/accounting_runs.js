@@ -133,7 +133,7 @@ router.post('/community/:cid/prepare', express.json(), async (req, res) => {
     if (!isDate(b.period_month)) return res.status(400).json({ error: 'period_month must be YYYY-MM-DD' });
     if (b.run_date && !isDate(b.run_date)) return res.status(400).json({ error: 'run_date must be YYYY-MM-DD' });
     const codings = parseCodings(b.codings); if (codings.error) return res.status(400).json({ error: codings.error });
-    const r = await R.prepare(supabase, { community_id: req.params.cid, process: b.process, period_month: b.period_month, run_date: b.run_date || null, subject_id: b.process === 'bank_reconciliation' ? b.subject_id : null, actor: `${R.KAT} (requested by ${u.email || 'staff'})`, codings: codings.list });
+    const r = await R.prepare(supabase, { community_id: req.params.cid, process: b.process, period_month: b.period_month, run_date: b.run_date || null, subject_id: b.process === 'bank_reconciliation' ? b.subject_id : null, actor: `${R.KAT} (requested by ${u.email || 'staff'})`, codings: codings.list, follow_up: b.follow_up === true });
     if (r.skipped) return res.status(409).json({ error: r.skipped, code: 'not_enabled' });
     if (r.failed) return res.status(500).json({ error: r.error, run_id: r.run_id });
     res.json(r);
