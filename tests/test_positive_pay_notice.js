@@ -93,10 +93,17 @@ console.log('review on books (in-memory)');
   check('an unmatched item texts Ed at once', firstU.length === 1 && firstU[0].kind === 'exception' && /not in the issued-check register/.test(firstU[0].text) && !/graywood/.test(firstU[0].text));
   const sent = { ...unmatched, alerts: [{ kind: 'exception' }] };
   check('then nothing until the last hour', !W.dueAlerts(sent, now).length);
-  check('still open 45 minutes before the cutoff: a second text', W.dueAlerts(sent, new Date('2026-10-14T14:15:00Z')).map((a) => a.kind).join() === 'exception_deadline');
+  check('still open 45 minutes before the cutoff: the exception again, and the undecided items (a match is not the bank\'s decision)', W.dueAlerts(sent, new Date('2026-10-14T14:15:00Z')).map((a) => a.kind).join() === 'exception_deadline,undecided_near_cutoff');
   check('decided in the bank portal: no more texts', !W.dueAlerts({ ...unmatched, decided_at: '2026-10-14T13:00:00Z' }, new Date('2026-10-14T14:15:00Z')).length);
-  check('a routine notice never texts Ed', !W.dueAlerts(clean, new Date('2026-10-14T14:15:00Z')).length);
-  check('a bank reminder near the cutoff is an exception (the cutoff may be missed)', W.dueAlerts({ ...clean, notice: { reminder: true } }, new Date('2026-10-14T14:00:00Z')).map((a) => a.kind).join() === 'reminder_near_cutoff');
+  check('a routine notice: no text until the last hour; then once if its items are still undecided; then once if the cutoff passes unconfirmed', !W.dueAlerts(clean, now).length && W.dueAlerts(clean, new Date('2026-10-14T14:15:00Z')).map((a) => a.kind).join() === 'undecided_near_cutoff' && W.dueAlerts({ ...clean, alerts: [{ kind: 'undecided_near_cutoff' }] }, new Date('2026-10-14T16:00:00Z')).map((a) => a.kind).join() === 'cutoff_passed_unconfirmed');
+  check('a bank reminder near the cutoff is an exception (the cutoff may be missed)', W.dueAlerts({ ...clean, notice: { reminder: true }, alerts: [{ kind: 'undecided_near_cutoff' }] }, new Date('2026-10-14T14:00:00Z')).map((a) => a.kind).join() === 'reminder_near_cutoff');
+  check('every item starts "bank decision unconfirmed", separate from matching our register', rv.items.every((i) => i.bank_decision === 'unconfirmed') && /bank decision unconfirmed/.test(rv.summary) && /A match is not the bank's decision/.test(clean.next));
+  { const conf = { items: [{ account_last4: '5313', check_number: '1044', amount_cents: 427587, bank_account_id: 'ba-cg', bank_decision: 'unconfirmed' }] };
+    db.bank_statement_imports = [{ id: 'imp-cg', bank_account_id: 'ba-cg' }]; db.bank_statement_transactions = [{ bank_statement_import_id: 'imp-cg', check_number: '1044', amount_cents: -427587, posting_date: '2026-10-16' }];
+    const ch = await W.confirmFromStatements(sb, conf);
+    check('the bank\'s own evidence confirms it: a check that cleared on the statement is recorded paid', ch && conf.items[0].bank_decision === 'paid' && /cleared on the bank statement 2026-10-16/.test(conf.items[0].bank_decision_evidence)); }
+  { const tri2 = fs.readFileSync(require.resolve('../api/email_triage'), 'utf8');
+    check('a person records the portal decision per item (pay / return); a note alone confirms nothing', /decisions = Array\.isArray\(req\.body && req\.body\.decisions\)/.test(tri2) && /allDecided \? \{ decided_at: at/.test(tri2)); }
   db.email_messages.push({ id: 'today', direction: 'inbound', ...OCT14, extracted: {} });
   const texts = [];
   const t1 = await W.tick({ supabase: sb, now, notify: async (b) => { texts.push(b); return { ok: true, sid: 'SM1' }; }, logger: { warn() {} } });

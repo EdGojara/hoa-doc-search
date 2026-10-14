@@ -1192,8 +1192,17 @@ router.post('/:id/positive-pay-decided', express.json(), async (req, res) => {
     const { data: m, error } = await supabase.from('email_messages').select('extracted').eq('id', req.params.id).maybeSingle();
     if (error) throw error;
     if (!m || !m.extracted || !m.extracted.positive_pay) return res.status(404).json({ error: 'not_a_positive_pay_notice' });
-    const pp = { ...m.extracted.positive_pay, decided_at: new Date().toISOString(), decided_by: u.email || u.full_name || 'staff', decision_note: note };
-    const { error: ue } = await supabase.from('email_messages').update({ triage_status: 'handled', extracted: { ...m.extracted, positive_pay: pp } }).eq('id', req.params.id);
+    // Per-item decisions as made in the bank portal: [{ account_last4, check_number, decision: 'pay'|'return' }].
+    // Without them the note alone confirms no item (a match is not a bank decision).
+    const decisions = Array.isArray(req.body && req.body.decisions) ? req.body.decisions : [];
+    const who = u.email || u.full_name || 'staff'; const at = new Date().toISOString();
+    const items = (m.extracted.positive_pay.items || []).map((i) => {
+      const d = decisions.find((x) => String(x.check_number) === String(i.check_number) && String(x.account_last4) === String(i.account_last4));
+      return d && ['pay', 'return'].includes(d.decision) ? { ...i, bank_decision: d.decision === 'pay' ? 'paid' : 'returned', bank_decision_evidence: `decided ${d.decision} in the bank portal, recorded by ${who} ${at.slice(0, 16)}` } : i;
+    });
+    const allDecided = items.every((i) => i.bank_decision && i.bank_decision !== 'unconfirmed');
+    const pp = { ...m.extracted.positive_pay, items, decision_note: note, ...(allDecided ? { decided_at: at, decided_by: who } : {}) };
+    const { error: ue } = await supabase.from('email_messages').update({ ...(allDecided ? { triage_status: 'handled' } : {}), extracted: { ...m.extracted, positive_pay: pp } }).eq('id', req.params.id);
     if (ue) throw ue;
     res.json({ ok: true, positive_pay: pp });
   } catch (err) { console.error('[email_triage] positive-pay-decided failed:', err.message); res.status(500).json({ error: safeErrorMessage(err) }); }
