@@ -110,8 +110,11 @@ const balanced = (e) => e.lines.reduce((s, l) => s + l.debit_cents - l.credit_ce
 
   await t('holds: an unbooked bill, a bill already corrected, a split-account prepaid, a missing service period', () => {
     const h = C.buildProposals({ ...AUG, already: new Set(['cutoff:b6061:accrue']), invoices: { ...AUG.invoices, b2608: { original: null }, b10295: { ...AUG.invoices.b10295, original: { ...AUG.invoices.b10295.original, lines: [L('5300', 'expense', 100000), L('5310', 'expense', 117925), L('2000', 'liability', 0, 217925)] } } } });
-    assert.ok(h.holds.some((x) => /not booked yet/.test(x.text)) && h.holds.some((x) => x.already && /already accrued/.test(x.text)) && h.holds.some((x) => /split across accounts/.test(x.text)));
-    assert.strictEqual(h.items.length, 0);
+    assert.ok(h.holds.some((x) => /not booked yet/.test(x.text)) && h.holds.some((x) => x.already && /already accrued/.test(x.text)));
+    // a ONE-month split is no longer a hold (reversing pair, next test); a multi-month split still is
+    assert.deepStrictEqual(h.items.map((i) => i.id), ['defer:b10295']);
+    const mm = C.buildProposals({ ...AUG, late_bills: [], prepaid_bills: [{ ...AUG.prepaid_bills[0], service_period_end: '2026-11-30' }], invoices: { ...AUG.invoices, b10295: { ...AUG.invoices.b10295, original: { ...AUG.invoices.b10295.original, lines: [L('5300', 'expense', 100000), L('5310', 'expense', 117925), L('2000', 'liability', 0, 217925)] } } } });
+    assert.ok(mm.holds.some((x) => /split across accounts over 3 months/.test(x.text)) && mm.items.length === 0);
     const m = C.buildProposals({ ...AUG, late_bills: [], prepaid_bills: [{ ...AUG.prepaid_bills[0], service_period_end: null }] });
     assert.ok(m.holds.some((x) => /service period is incomplete/.test(x.text)));
   });
@@ -157,6 +160,55 @@ const balanced = (e) => e.lines.reduce((s, l) => s + l.debit_cents - l.credit_ce
       db.journal_entries.forEach((e) => { e.community_id = 'cg'; });
       await C.postApproved(sb, run, { include: ['accrue:b2608'], approver: 'x', approval: { channel: 'in_app', user_id: 'u-ed', email: 'e' }, actor: 'k' });
       assert.strictEqual(db.journal_entries.length, before, 'already-posted entries are not posted twice');
+    } finally { POSTING.postJournalEntry = orig; }
+  });
+
+  // A second community's chart (LOPF shape): no Prepaid Expenses account (only 1400 Prepaid
+  // Insurance) and a landscape bill split across two expense accounts, billed in September
+  // for October. Same engine, no community branch: the account is proposed and the split
+  // one-month bill defers with a reversing pair.
+  const LOPF_ACCTS = [['1400', 'Prepaid Insurance', 'asset'], ['2000', 'Accounts Payable', 'liability'], ['2100', 'Accrued Expenses', 'liability'], ['5200', 'Landscape Operating & Management', 'expense'], ['5205', 'Landscaping Maintenance (Lakes - MUD)', 'expense'], ['5300', 'Pool Management', 'expense']]
+    .map(([account_number, account_name, account_type]) => ({ account_number, account_name, account_type, fund_code: 'OPR', is_active: true }));
+  const LSEP = { bs_categories: [{ id: 'cat-pre', name: 'Prepaid expenses', section: 'asset' }], period: { period_start: '2026-09-01', period_end: '2026-09-30' }, accounts: LOPF_ACCTS, already: new Set(), schedules_for: new Set(), late_bills: [],
+    prepaid_bills: [bill({ id: 'b34037', vendor: 'High Tech Lawn Services LLC', invoice_number: '34037', invoice_date: '2026-09-24', service_period_start: '2026-10-01', service_period_end: '2026-10-31', total_cents: 620879 }),
+      bill({ id: 'b51405', vendor: 'LONE STAR POOL MANAGEMENT', invoice_number: '51405', invoice_date: '2026-09-15', service_period_start: '2026-10-01', service_period_end: '2026-10-31', total_cents: 124488 })],
+    invoices: { b34037: { original: { id: 'je233', reference: 'JE-2026-00233', posting_date: '2026-09-24', status: 'posted', lines: [L('5200', 'expense', 510854), L('5205', 'expense', 110025), L('2000', 'liability', 0, 620879)] } },
+      b51405: { original: { id: 'je218', reference: 'JE-2026-00218', posting_date: '2026-09-15', status: 'posted', lines: [L('5300', 'expense', 124488), L('2000', 'liability', 0, 124488)] } } } };
+  const lsep = C.buildProposals(LSEP);
+  await t('no Prepaid Expenses account: GL 1410 is proposed (never 1400 Prepaid Insurance), mapped to the prepaid category on approval', () => {
+    assert.deepStrictEqual(lsep.additions.map((a) => [a.account_number, a.account_name, a.account_type, a.normal_balance, a.bs_category && a.bs_category.id]), [['1410', 'Prepaid Expenses', 'asset', 'debit', 'cat-pre']]);
+    assert.ok(lsep.holds.length === 0, JSON.stringify(lsep.holds));
+  });
+  await t('split one-month bill (High Tech #34037, 5200 + 5205): deferral at 9/30 and an account-by-account reversal on 10/1; balanced; effects Sep -6,208.79 / Oct +6,208.79', () => {
+    const d = lsep.items.find((i) => i.id === 'defer:b34037');
+    assert.ok(d && d.entries.length === 2 && d.entries.every(balanced) && !d.schedule);
+    assert.deepStrictEqual(d.entries.map((e) => [e.posting_date, e.source_reference]), [['2026-09-30', 'cutoff:b34037:defer'], ['2026-10-01', 'cutoff:b34037:reverse-defer']]);
+    assert.deepStrictEqual(d.entries[0].lines.map((l) => [l.account_number, l.debit_cents, l.credit_cents]), [['1410', 620879, 0], ['5200', 0, 510854], ['5205', 0, 110025]]);
+    assert.ok(d.verification.reversal_mirrors_deferral && d.entries[1].reverses === 'deferral');
+    assert.deepStrictEqual(d.effects, { '2026-09': -620879, '2026-10': 620879 });
+  });
+  await t('single-account one-month bill (Lone Star #51405) keeps the existing prepaid schedule path, now on the proposed 1410', () => {
+    const d = lsep.items.find((i) => i.id === 'defer:b51405');
+    assert.ok(d && d.schedule && d.schedule.balance_account_number === '1410' && d.schedule.recognition_account_number === '5300' && d.entries.length === 1);
+    assert.deepStrictEqual(lsep.effects, { '2026-09': -745367, '2026-10': 745367 }, 'total October services booked in September: $7,453.67');
+  });
+  await t('posting the split deferral: account first, reversal linked to the deferral, idempotent on re-approval', async () => {
+    const db = { account_funds: [{ id: 'f-opr', fund_code: 'OPR', community_id: 'lopf' }], chart_of_accounts: LOPF_ACCTS.map((a, i) => ({ id: `l${i}`, community_id: 'lopf', account_number: a.account_number, fund_id: 'f-opr' })), journal_entries: [] };
+    const q = (table) => { const st = { filters: [], op: 'select' }; const api = { select() { return api; }, eq(k, v) { st.filters.push((r) => r[k] === v); return api; }, in(k, v) { st.filters.push((r) => v.includes(r[k])); return api; }, limit() { return api; },
+      insert(row) { st.op = 'insert'; st.row = row; return api; }, single() { st.one = true; return api; },
+      then(res, rej) { let out; if (st.op === 'insert') { const r = { id: `${table}-${db[table].length + 1}`, ...st.row }; db[table].push(r); out = st.one ? r : [r]; } else { const rs = (db[table] || []).filter((r) => st.filters.every((f) => f(r))); out = st.one ? rs[0] : rs; } return Promise.resolve({ data: out, error: null }).then(res, rej); } }; return api; };
+    const sb = { from: q, rpc: async () => ({ data: {}, error: null }) };
+    const orig = POSTING.postJournalEntry; const jes = [];
+    POSTING.postJournalEntry = async (o) => { const e = { id: `je-${db.journal_entries.length + 1}`, reference: `JE-L-${db.journal_entries.length + 1}`, community_id: 'lopf', ...o }; db.journal_entries.push(e); jes.push(o); return { entry: e }; };
+    try {
+      const run = { id: 'run-lsep', community_id: 'lopf', preview: lsep };
+      await C.postApproved(sb, run, { include: ['account:1410', 'defer:b34037'], approver: 'owner (in-app)', approval: { channel: 'in_app', user_id: 'u', email: 'e' }, actor: 'Kat' });
+      assert.ok(db.chart_of_accounts.some((a) => a.account_number === '1410'), '1410 added before the entries');
+      assert.deepStrictEqual(jes.map((j) => j.source_reference), ['cutoff:b34037:defer', 'cutoff:b34037:reverse-defer']);
+      assert.strictEqual(jes[1].reverses_je_id, db.journal_entries[0].id, 'the reversal is linked to its deferral');
+      const n = db.journal_entries.length;
+      await C.postApproved(sb, run, { include: ['defer:b34037'], approver: 'x', approval: { channel: 'in_app', user_id: 'u', email: 'e' }, actor: 'k' });
+      assert.strictEqual(db.journal_entries.length, n, 'approving again posts nothing new');
     } finally { POSTING.postJournalEntry = orig; }
   });
 
