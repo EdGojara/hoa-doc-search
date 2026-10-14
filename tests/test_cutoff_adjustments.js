@@ -212,6 +212,45 @@ const balanced = (e) => e.lines.reduce((s, l) => s + l.debit_cents - l.credit_ce
     } finally { POSTING.postJournalEntry = orig; }
   });
 
+  // Line-level service months (Lake Pro #263225 shape): September treatments and an October fee
+  // on one bill booked 10/1. Only the September lines accrue; the October fee stays in October.
+  await t('line service months: dates and service-period month names are read; a stray word is not', () => {
+    assert.strictEqual(C.lineServiceMonth('Monthly Lake Management Fee - October', '2026-10-01'), '2026-10');
+    assert.strictEqual(C.lineServiceMonth('Komeen Liquid(gal) - Treatment - 9-22-26 - Lake 1', '2026-10-01'), '2026-09');
+    assert.strictEqual(C.lineServiceMonth('LIFEGUARD SERVICES FOR THE MONTH OF - SEPTEMBER 2026', '2026-08-15'), '2026-09');
+    assert.strictEqual(C.lineServiceMonth('Fee - January', '2026-12-15'), '2027-01');
+    assert.strictEqual(C.lineServiceMonth('Charges may vary', '2026-10-01'), null);
+    assert.strictEqual(C.lineServiceMonth('Invoice 302 008 234 842', '2026-10-01'), null);
+  });
+  await t('a late bill accrues only its lines for the period: Lake Pro $1,406.11 to 5140 accrued 9/30, reversed 10/1; the $873.75 October fee is left in October and named', () => {
+    const LP = { period: { period_start: '2026-09-01', period_end: '2026-09-30' }, accounts: [...ACCOUNTS, { account_number: '5130', account_name: 'Lake Management', account_type: 'expense', fund_code: 'OPR', is_active: true }, { account_number: '5140', account_name: 'Lake Service', account_type: 'expense', fund_code: 'OPR', is_active: true }],
+      already: new Set(), schedules_for: new Set(), prepaid_bills: [],
+      late_bills: [bill({ id: 'b263225', vendor: 'Lake Pro, Inc.', invoice_number: '263225', invoice_date: '2026-10-01', service_period_start: '2026-09-22', service_period_end: '2026-09-29', total_cents: 227986 })],
+      invoices: { b263225: { original: { id: 'je283', reference: 'JE-2026-00283', posting_date: '2026-10-01', status: 'posted', lines: [
+        { ...L('5130', 'expense', 87375), memo: 'Monthly Lake Management Fee - October' }, { ...L('5140', 'expense', 14298), memo: 'Komeen Liquid(gal) - Treatment - 9-22-26 - Lake 1 (1)' },
+        { ...L('5140', 'expense', 101313), memo: 'Treatments - 9-29-26 - Lake 1' }, { ...L('5140', 'expense', 25000), memo: 'Extra Visit - 9-29-26' }, L('2000', 'liability', 0, 227986)] } } } };
+    const r = C.buildProposals(LP); const a = r.items.find((i) => i.id === 'accrue:b263225');
+    assert.ok(a && a.amount_cents === 140611 && a.entries.every(balanced), JSON.stringify(a && a.amount_cents));
+    assert.deepStrictEqual(a.entries[0].lines.filter((l) => l.debit_cents).map((l) => [l.account_number, l.debit_cents]), [['5140', 140611]]);
+    assert.deepStrictEqual(a.evidence.other_month_lines.map((x) => [x.account_number, x.cents, x.month]), [['5130', 87375, '2026-10']]);
+    assert.ok(/Left in 2026-10 because the line names another month/.test(a.verification.text));
+  });
+  await t('a bill whose lines name no month keeps the whole-bill accrual (Canyon Gate cases unchanged)', () => {
+    assert.strictEqual(aug.items.find((i) => i.id === 'accrue:b6061').amount_cents, 36048);
+  });
+  // Double reversal (LOPF NRG #113 016 455 245 shape): removed at the cutover and voided again.
+  await t('an entry reversed twice with no re-post is restored once, dated the second reversal, only in that month; idempotent', () => {
+    const second = { id: 'rev252', reference: 'JE-2026-00252', posting_date: '2026-09-29', lines: [L('5110', 'expense', 0, 28283), L('5110', 'expense', 104, 0), L('5110', 'expense', 0, 15893), L('2000', 'liability', 44072, 0)] };
+    const facts = { ...SEP, late_bills: [], prepaid_bills: [], double_reversals: [{ original: { id: 'je229', reference: 'JE-2026-00229', posting_date: '2026-07-13' }, first: { id: 'n229', reference: 'CONV-LPF-CUTOVER-NEUT-JE-2026-00229', posting_date: '2026-07-13' }, second, invoice_number: '113 016 455 245', vendor: 'NRG Business' }] };
+    const r = C.buildProposals(facts); const c = r.items.find((i) => i.kind === 'correction');
+    assert.ok(c && c.entries.length === 1 && balanced(c.entries[0]) && c.entries[0].posting_date === '2026-09-29' && c.entries[0].source_reference === 'correction:double-reversal:rev252');
+    assert.strictEqual(c.amount_cents, 44072, 'the net expense restored, $440.72');
+    assert.deepStrictEqual(c.effects, { '2026-09': 44072 });
+    assert.ok(c.entries[0].lines.find((l) => l.account_number === '2000').credit_cents === 44072, 'payable restored too');
+    assert.strictEqual(C.buildProposals({ ...facts, period: { period_start: '2026-08-01', period_end: '2026-08-31' } }).items.filter((i) => i.kind === 'correction').length, 0, 'not proposed in another month');
+    assert.ok(C.buildProposals({ ...facts, already: new Set(['correction:double-reversal:rev252']) }).holds.some((h) => h.already), 'already corrected: not proposed again');
+  });
+
   await t('reachable: Financial dashboard button and Accounting link open /app/financial/cutoff; the page approves only through the owner-gated route', () => {
     const fs = require('fs'); const path = require('path'); const read = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
     assert.ok(/app\.get\('\/app\/financial\/cutoff'.*cutoff\.html/.test(read('server.js')));

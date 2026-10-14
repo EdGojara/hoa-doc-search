@@ -168,7 +168,7 @@
     its.forEach(function (it) {
       var ev = it.evidence || {};
       html += '<label class="co-prop"><input type="checkbox" class="co-inc" value="' + esc(it.id) + '"' + (can ? '' : ' disabled') + '><div>' +
-        '<div class="co-ttl">' + (it.kind === 'accrual' ? 'Accrue' : 'Defer') + ': ' + esc(it.label) + ' · ' + esc(money(it.amount_cents)) + '</div>' +
+        '<div class="co-ttl">' + ({ accrual: 'Accrue', deferral: 'Defer', correction: 'Correct' }[it.kind] || it.kind) + ': ' + esc(it.label) + ' · ' + esc(money(it.amount_cents)) + '</div>' +
         '<div class="co-sub">Service ' + esc(ev.service_period_start || '') + ' to ' + esc(ev.service_period_end || '') + ' · invoice dated ' + esc(ev.invoice_date || '') + ' · booked ' + esc(ev.original_posting_date || '') + ' as ' + esc(ev.original_reference || '') +
         ' · <a href="#" data-pdf="' + esc(ev.invoice_id) + '">Open invoice PDF</a></div>' +
         it.entries.map(lines).join('') +
@@ -196,7 +196,7 @@
         var include = Array.prototype.map.call($('co-panel').querySelectorAll('.co-inc:checked'), function (x) { return x.value; });
         if (ap.dataset.busy) return;
         var pv = run.preview || {}; var inc = {}; include.forEach(function (k) { inc[k] = true; });
-        var picked = (pv.items || []).filter(function (it) { return inc[it.id]; }).map(function (it) { return { label: (it.kind === 'accrual' ? 'Accrue: ' : 'Defer: ') + it.label, cents: it.amount_cents }; })
+        var picked = (pv.items || []).filter(function (it) { return inc[it.id]; }).map(function (it) { return { label: (({ accrual: 'Accrue', deferral: 'Defer', correction: 'Correct' }[it.kind] || it.kind) + ': ') + it.label, cents: it.amount_cents }; })
           .concat((pv.additions || []).filter(function (a) { return inc[a.id]; }).map(function (a) { return { label: 'Add GL ' + a.account_number + ' ' + a.account_name, cents: null }; }));
         var ok = await txConfirm({ title: 'Approve and post corrections', message: 'Post the ' + include.length + ' ticked correction(s) for ' + monthLabel(run.period_month) + ', each exactly as shown; prepaid schedules are approved in your name.',
           items: picked, total_cents: picked.reduce(function (t, i) { return t + (Number(i.cents) || 0); }, 0), confirmLabel: 'Confirm and post' });

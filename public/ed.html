@@ -172,7 +172,7 @@ async function openRun(id){
       const eff=(o)=>Object.entries(o||{}).sort().map(([m,v])=>esc(monthLabel(m+'-01'))+' '+(v>0?'+':'')+money(v)).join(' · ');
       head = '<p style="font-size:13px;">Kat\'s cutoff review found these for '+monthLabel(run.period_month)+'. Tick each correction to approve it by name; nothing posts until you approve. Expense change: '+eff(pv.effects)+'.</p>'
         + adds.map(a=>'<label style="display:block;padding:8px 0;border-bottom:1px solid #f1f3f6;font-size:12.5px;"><input type="checkbox" class="incl" value="'+esc(a.id)+'"> <b>Add GL '+esc(a.account_number)+' '+esc(a.account_name)+'</b><br><span style="color:var(--muted);">'+esc(a.text)+'</span></label>').join('')
-        + its.map(it=>{ const ev=it.evidence||{}; return '<label style="display:block;padding:8px 0;border-bottom:1px solid #f1f3f6;font-size:12.5px;"><input type="checkbox" class="incl" value="'+esc(it.id)+'"> <b>'+(it.kind==='accrual'?'Accrue':'Defer')+': '+esc(it.label)+'</b> · '+money(it.amount_cents)
+        + its.map(it=>{ const ev=it.evidence||{}; return '<label style="display:block;padding:8px 0;border-bottom:1px solid #f1f3f6;font-size:12.5px;"><input type="checkbox" class="incl" value="'+esc(it.id)+'"> <b>'+({accrual:'Accrue',deferral:'Defer',correction:'Correct'}[it.kind]||it.kind)+': '+esc(it.label)+'</b> · '+money(it.amount_cents)
           + '<br><span style="color:var(--muted);">Service '+esc(ev.service_period_start||'')+' to '+esc(ev.service_period_end||'')+' · invoice '+esc(ev.invoice_date||'')+' · booked '+esc(ev.original_posting_date||'')+' as '+esc(ev.original_reference||'')+' · '
           + '<a href="#" data-pdf="'+esc(ev.invoice_id)+'">invoice PDF</a></span>'
           + it.entries.map(e=>'<div style="margin-top:6px;"><b>'+esc(e.posting_date)+'</b> '+esc(e.description)+fmtLines(e)+'</div>').join('')
@@ -230,7 +230,7 @@ function runSelection(run, proc, include){
     }
   } else if(proc==='cutoff_adjustment'){
     for(const a of (pv.additions||[]).filter(a=>inc.has(a.id))) out.push({ label: 'Add GL '+a.account_number+' '+a.account_name, cents: null });
-    for(const it of (pv.items||[]).filter(it=>inc.has(it.id))) out.push({ label: (it.kind==='accrual'?'Accrue: ':'Defer: ')+it.label, cents: it.amount_cents });
+    for(const it of (pv.items||[]).filter(it=>inc.has(it.id))) out.push({ label: (({accrual:'Accrue',deferral:'Defer',correction:'Correct'}[it.kind]||it.kind)+': ')+it.label, cents: it.amount_cents });
   } else if(proc==='interest'){
     const t = (run && run.totals) || {};
     out.push({ label: (t.clean_owners||0)+' owners (no exceptions)', cents: t.clean_interest_cents||0 });
