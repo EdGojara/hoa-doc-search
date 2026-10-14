@@ -1644,6 +1644,11 @@ async function applyWorkingForecast(community_id, fy, acc, cutoff) {
     const D = require('../lib/forecast/working_forecast_data'); const W = require('../lib/forecast/working_forecast');
     const m = W.buildWorkingForecast(await D.loadWorkingForecastInput(supabase, { community_id, target_year: fy, as_of: cutoff.as_of }));
     const by = W.baseYearByAccount(m);
+    // The ONE contract engine (Ed 2026-10-14): a line's contract amount is the working
+    // forecast's (verified contract bound to the line, contractCostForYear), never a
+    // vendor-name match. Kept per account for the proposed column.
+    const LB = require('../lib/accounting/budget_line_basis');
+    for (const [aid, ls] of LB.forecastByAccount(m)) { const a = acc.get(aid); if (!a) continue; const c = ls.map(LB.contractFromForecastLine).filter(Boolean); if (c.length) a.wf_contract = c.length === 1 ? c[0] : { ...c[0], status: 'needs_review', note: `${c.length} contract lines in different funds; the contract amount is not applied.` }; }
     for (const a of acc.values()) {
       const f = by.get(a.account_id);
       if (!f) { a.forecast = a.ytd_actual || 0; a.forecast_detail = { method: 'actual_only', ytd_cents: a.ytd_actual || 0, remaining_cents: 0, explanation: `No ${cutoff.base_year} budget line: the forecast is the actual through ${cutoff.as_of}.`, data_flags: [] }; continue; }
@@ -1706,7 +1711,23 @@ router.get('/budgets/living-lines', async (req, res) => {
     if (svErr) throw svErr;
     const sv = (svs || [])[0] || null;
     let savedDraft = null;
-    if (sv) { const { data: sl, error: slErr } = await supabase.from('budget_line_items').select('account_id, annual_amount_cents').eq('budget_id', sv.id).limit(5000); if (slErr) throw slErr; savedDraft = { id: sv.id, status: sv.status, updated_at: sv.updated_at, lines: sl || [] }; }
+    if (sv) {
+      // With migration 521, each saved line also says WHY its amount is what it is.
+      const LB = require('../lib/accounting/budget_line_basis');
+      const sl = await LB.selectWithBasis((cols) => supabase.from('budget_line_items').select(cols).eq('budget_id', sv.id).limit(5000), 'account_id, annual_amount_cents');
+      if (sl.error) throw sl.error;
+      const lines = sl.data || [];
+      // The source document behind a recorded basis (a contract, notice or quote): a short-lived link.
+      const docIds = [...new Set(lines.map((l) => l.source_document_id).filter(Boolean))];
+      const docUrl = {};
+      if (docIds.length) {
+        const { data: docs, error: dErr } = await supabase.from('library_documents').select('id, title, file_path').in('id', docIds);
+        if (dErr) console.warn('[books] living-lines basis documents unavailable:', dErr.message);
+        for (const d of docs || []) { let url = null; if (d.file_path) { try { const { data: s } = await supabase.storage.from('documents').createSignedUrl(d.file_path, 3600); url = (s && s.signedUrl) || null; } catch (_) { /* link optional */ } } docUrl[d.id] = { title: d.title || null, url }; }
+      }
+      for (const l of lines) if (l.source_document_id && docUrl[l.source_document_id]) l.source_document = docUrl[l.source_document_id];
+      savedDraft = { id: sv.id, status: sv.status, updated_at: sv.updated_at, lines, basis_available: sl.basis_available };
+    }
 
     const acc = new Map();
     const merge = (is, key, mult = 1) => {
@@ -1763,67 +1784,19 @@ router.get('/budgets/living-lines', async (req, res) => {
       }
     } catch (_) { /* optional */ }
 
-    // Contract-VERIFIED source: amenity management contracts are already extracted
-    // (vendor, annual cost, end date, linked PDF). Match them to the account by
-    // vendor name, budget at the contract amount, and attach the contract PDF as
-    // evidence — the number literally IS the contract. (Ed 2026-08-10.)
     const usd0 = (c) => { const t = `$${Math.round(Math.abs(Number(c) || 0) / 100).toLocaleString('en-US')}`; return Number(c) < 0 ? `(${t})` : t; };   // whole dollars, negatives in parentheses
-    const ESC = 0.04; // default renewal escalation for vendor-committed lines
+    const ESC = 0.04; // default renewal escalation for vendor-committed lines (vendor postings, not contracts)
     const INFL = 0.03; // default inflation on trend lines
-    // Contract-VERIFIED source. Two feeds, one shape: amenity operating
-    // contracts (pool, splash) already extracted on the amenities table, and
-    // vendor SERVICE contracts (security, landscaping, mgmt) uploaded + parsed
-    // into vendor_contracts. The number IS the contract; the PDF is evidence.
-    const normV = (s) => String(s || '').toLowerCase().replace(/\b(llc|inc|co|corp|ltd|company|the|services?|management|pool|pools|,|\.)\b/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
-    const tokfn = (s) => String(s || '').toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length >= 4);
-    const contracts = [];
-    try {
-      const { data: am } = await supabase.from('amenities')
-        .select('management_vendor_name, management_annual_cost_cents, management_contract_end_date, management_contract_doc_id, name')
-        .eq('community_id', community_id).gt('management_annual_cost_cents', 0);
-      for (const a of (am || [])) {
-        let url = null;
-        if (a.management_contract_doc_id) {
-          const { data: doc } = await supabase.from('library_documents').select('file_path').eq('id', a.management_contract_doc_id).maybeSingle();
-          if (doc && doc.file_path) { try { const { data: s } = await supabase.storage.from('documents').createSignedUrl(doc.file_path, 3600); if (s) url = s.signedUrl; } catch (_) { /* signed url optional */ } }
-        }
-        contracts.push({ norm: normV(a.management_vendor_name), first: normV(a.management_vendor_name).split(' ')[0], vendor_name: a.management_vendor_name, cents: Number(a.management_annual_cost_cents) || 0, escPct: ESC, words: tokfn(a.name), end_date: a.management_contract_end_date, url });
-      }
-    } catch (_) { /* amenity contracts optional */ }
-    try {
-      const { data: vcs } = await supabase.from('vendor_contracts')
-        .select('vendor_name_raw, annualized_amount, escalator_kind, escalator_pct, end_date, service_category, file_path')
-        .eq('community_id', community_id).eq('status', 'active');
-      for (const c of (vcs || [])) {
-        const cents = Math.round((Number(c.annualized_amount) || 0) * 100);
-        if (cents <= 0) continue;
-        let url = null;
-        if (c.file_path) { try { const { data: s } = await supabase.storage.from('documents').createSignedUrl(c.file_path, 3600); if (s) url = s.signedUrl; } catch (_) { /* optional */ } }
-        const escPct = (c.escalator_kind !== 'none' && c.escalator_pct != null) ? Number(c.escalator_pct) / 100 : ESC;
-        contracts.push({ norm: normV(c.vendor_name_raw), first: normV(c.vendor_name_raw).split(' ')[0], vendor_name: c.vendor_name_raw, cents, escPct, words: tokfn(String(c.service_category || '').replace(/_/g, ' ')), end_date: c.end_date, url });
-      }
-    } catch (_) { /* vendor contracts optional */ }
-    const vendorMatches = (vendors, c) => (vendors || []).some((v) => { const nv = normV(v.name); return nv && c.norm && (nv === c.norm || (c.first.length >= 4 && nv.includes(c.first))); });
-    // Bind each contract to exactly ONE account. A vendor can appear on several
-    // accounts; without this the full contract amount would be proposed on each
-    // and multiply a single obligation. Prefer the account whose name matches
-    // the contract's own words (service category / amenity); tie-break by spend.
+    // CONTRACT source (Ed 2026-10-14): ONE engine. A contract prices a line only through the
+    // working forecast: the single VERIFIED executed contract bound to the account
+    // (vendor_contracts.forecast_account_id), costed from its structured terms by
+    // lib/contracts/contract_terms.js contractCostForYear (applyWorkingForecast sets
+    // a.wf_contract). No vendor-name matching, no assumed renewal escalation, no amenity
+    // side-feed, so a line never carries two different contract amounts. A contract on file
+    // that is not verified is shown with its would-be cost and never applied.
+    const signedUrl = async (fp) => { if (!fp) return null; try { const { data: s } = await supabase.storage.from('documents').createSignedUrl(fp, 3600); return (s && s.signedUrl) || null; } catch (_) { return null; } };
     const contractByAccount = {};
-    const expenseAccts = [...acc.values()].filter((a) => a.account_type === 'expense');
-    const claimed = new Set();
-    for (const c of [...contracts].sort((a, b) => b.cents - a.cents)) {
-      const words = c.words || [];
-      const cands = expenseAccts.filter((a) => !claimed.has(a.account_id) && vendorMatches(vendorByAcct[a.account_id], c));
-      if (!cands.length) continue;
-      const score = (a) => {
-        const nm = String(a.account_name || '').toLowerCase();
-        const nameHit = words.some((w) => nm.includes(w)) ? 1e12 : 0;
-        return nameHit + (vendorByAcct[a.account_id] || []).reduce((s, v) => s + v.cents, 0);
-      };
-      const best = cands.sort((x, y) => score(y) - score(x))[0];
-      contractByAccount[best.account_id] = c;
-      claimed.add(best.account_id);
-    }
+    for (const a of acc.values()) if (a.wf_contract) contractByAccount[a.account_id] = { ...a.wf_contract, url: await signedUrl(a.wf_contract.file_path) };
     // fy-1 is the CURRENT year and is still in progress, so budget off the
     // annualized FORECAST (run-rate), never the partial current-year total (which
     // would understate every line). Vendor commitments are annualized the same way.
@@ -1848,16 +1821,13 @@ router.get('/budgets/living-lines', async (req, res) => {
         // they can't be assessed for or spent, and annualizing them is nonsense.
         source_type = 'excluded'; confidence = 'high'; proposed_cents = 0;
         built_from = 'Non-cash market valuation — not budgeted (can\'t be assessed for or spent).';
-      } else if (contract) {
-        // The number literally IS the contract. Budget at the contracted annual
-        // amount; the contract expires mid-year, so the post-renewal months carry
-        // the default renewal escalation.
-        source_type = 'contract'; confidence = 'high';
-        const escP = (typeof contract.escPct === 'number') ? contract.escPct : ESC;
-        proposed_cents = Math.round(contract.cents * (1 + escP));
-        const endTxt = contract.end_date ? ` through ${contract.end_date}, +${Math.round(escP * 100)}% on renewal` : ` +${Math.round(escP * 100)}% escalation`;
-        built_from = `Contract — ${contract.vendor_name}: $${Math.round(contract.cents / 100).toLocaleString()}/yr${endTxt}`;
-        if (contract.url) evidence = [{ label: `${contract.vendor_name} contract`, url: contract.url }];
+      } else if (contract && contract.status === 'applied') {
+        // The working forecast's amount for this line: the verified contract's months at
+        // the contract price (any months it does not cover from the base year).
+        source_type = 'contract'; confidence = contract.issues.length ? 'medium' : 'high';
+        proposed_cents = contract.proposed_cents;
+        built_from = `Contract (verified) — ${contract.vendor || 'vendor'}: ${contract.steps.join('; ')}${contract.covered_months != null && contract.covered_months < 12 ? `; the other ${12 - contract.covered_months} month(s) from the ${fy - 1} base` : ''}.${contract.issues.length ? ` ${contract.issues.join(' ')}` : ''}`;
+        if (contract.url) evidence = [{ label: `${contract.vendor || 'Vendor'} contract`, url: contract.url }];
       } else if (priorB !== 0) {
         // ANCHOR to the board-adopted prior budget — the complete, reliable
         // baseline. The current-year GL is a partial (often mid-cutover) window,
@@ -1928,6 +1898,11 @@ router.get('/budgets/living-lines', async (req, res) => {
           flags.push({ type: 'vendor_above_runrate', severity: 'medium', msg: `Vendor commitments here ($${Math.round(committedAnnual / 100).toLocaleString()}) run well above this account's own spend rate ($${Math.round(a.forecast / 100).toLocaleString()}) — verify the vendor postings landed on the right account.` });
         }
       }
+      // A contract on file that does not price the line (not verified, or not usable) is shown, never applied.
+      if (contract && contract.status !== 'applied' && !isReserveExpense) {
+        flags.push({ type: 'contract_unverified', severity: 'medium', msg: `${contract.note || `${contract.vendor || 'A contract'} is on file but does not price this line.`}${contract.contract_cost_cents != null ? ` It would be ${usd0(contract.contract_cost_cents)}.` : ''}` });
+        if (contract.url) evidence = [...evidence, { label: `${contract.vendor || 'Vendor'} contract (not verified)`, url: contract.url }];
+      }
 
       return {
         account_id: a.account_id, account_number: a.account_number, account_name: a.account_name, account_type: a.account_type,
@@ -1935,6 +1910,7 @@ router.get('/budgets/living-lines', async (req, res) => {
         prior_budget_cents: priorBudget[a.account_id] || 0,
         forecast_cents: a.forecast, forecast_detail: a.forecast_detail || null, fund_type: a.fund_type || null, actual_ytd_cents: a.ytd_actual, forecast_ytd_cents: a.forecast_ytd ?? null, fy1_actual_cents: a.fy1, fy2_actual_cents: a.fy2,
         proposed_cents, source_type, confidence, built_from, vendors, evidence, flags,
+        contract: contract ? { status: contract.status, vendor: contract.vendor, vendor_contract_id: contract.vendor_contract_id, source_document_id: contract.source_document_id, proposed_cents: contract.proposed_cents, contract_cost_cents: contract.contract_cost_cents } : null,
       };
     });
 
@@ -1964,7 +1940,7 @@ router.get('/budgets/living-lines', async (req, res) => {
     res.json({
       community_id, fiscal_year: fy, base_year: fy - 1, forecast_year: fy - 1, months_elapsed: monthsElapsed, cutoff, forecast_basis: forecastBasis, home_count: homeCount || 0, rows: shown,
       adopted_budget: pb ? { id: pb.id, fiscal_year: fy - 1, status: pb.status, approved_at: pb.approved_at || null } : null,
-      saved_budget: savedDraft ? { id: savedDraft.id, fiscal_year: fy, status: savedDraft.status, updated_at: savedDraft.updated_at, lines: savedDraft.lines.length } : null,
+      saved_budget: savedDraft ? { id: savedDraft.id, fiscal_year: fy, status: savedDraft.status, updated_at: savedDraft.updated_at, lines: savedDraft.lines.length, basis_available: savedDraft.basis_available, basis_recorded: savedDraft.lines.filter((l) => l.amount_basis).length, needs_review: savedDraft.lines.filter((l) => l.needs_review).length } : null,
       reconciliation,
       totals: {
         revenue_proposed_cents: sum(rev, 'proposed_cents'), expense_proposed_cents: sum(exp, 'proposed_cents'),

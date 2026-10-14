@@ -11,6 +11,8 @@
 //   POST /:cid/adjustments   { year, as_of, account_id, fund_id, driver, amount_cents, assumption, evidence?, confidence, source? }
 //   POST /:cid/overrides     { year, as_of, account_id, fund_id, override_cents|null, reason }
 //   POST /:cid/policy        { year, expense_inflation_pct, reason }
+//   POST /:cid/draft-budget  { year, as_of }   create the draft from the forecast, or record each existing
+//                                              draft line's basis (never its amount); migration 521
 //   POST /:cid/contracts                 multipart: file, account_id, fund_id?   attach an executed-contract document
 //                                        (extract -> machine execution triage -> vendor_contracts; never verified)
 //   POST /:cid/contracts/:id/verify      { file_hash, basis }   a named person verifies execution of that exact document
@@ -146,6 +148,73 @@ router.post('/:cid/policy', async (req, res) => {
     if (error) throw error;
     res.json({ ok: true, policy });
   } catch (err) { fail(res, 'policy', err); }
+});
+
+// ---------------------------------------------------------------- the draft budget from the forecast
+// POST /:cid/draft-budget { year, as_of }   (Ed 2026-10-14, migration 521)
+// Each draft line records WHY its amount is what it is, read off the forecast bridge
+// (lib/accounting/budget_line_basis.js).
+//   No budget for the year yet: a DRAFT is created at the forecast's final amounts, every
+//   line carrying its basis.
+//   A draft exists: only the basis is written. Amounts are never changed here (the planner
+//   owns them); a saved amount the forecast does not explain is marked needs_review.
+//   An approved budget is locked: refused (and the migration 462 trigger refuses it too).
+const LB = require('../lib/accounting/budget_line_basis');
+const needs521 = (res) => res.status(409).json({ error: 'migration_521_required', message: 'Recording why each budget line is what it is needs migration 521 (Documents → Migration status).' });
+const BASIS_KEYS = ['amount_basis', 'amount_calc', 'vendor_contract_id', 'source_document_id', 'needs_review', 'review_note'];
+const basisOnly = (b) => Object.fromEntries(BASIS_KEYS.map((k) => [k, b[k] ?? (k === 'needs_review' ? false : null)]));
+
+router.post('/:cid/draft-budget', async (req, res) => {
+  try {
+    const u = await admin(req, res); if (!u) return;
+    const b = req.body || {};
+    const { model, input } = await build(req.params.cid, b);
+    const { data: bs, error: bErr } = await supabase.from('community_budgets').select('id, status').eq('community_id', req.params.cid).eq('fiscal_year', input.target_year).order('created_at', { ascending: false }).limit(5);
+    if (bErr) throw bErr;
+    if ((bs || []).some((x) => ['approved', 'active'].includes(x.status))) return res.status(409).json({ error: 'budget_locked', message: `The ${input.target_year} budget is approved and locked; its lines are not changed.` });
+    const byAcct = LB.forecastByAccount(model);
+    const ctx = { base_year: input.base_year };
+    const tally = (rows) => ({ lines: rows.length, by_basis: rows.reduce((o, r) => { const k = r.amount_basis || 'not_recorded'; o[k] = (o[k] || 0) + 1; return o; }, {}), needs_review: rows.filter((r) => r.needs_review).length });
+    const draft = (bs || []).find((x) => x.status === 'draft');
+
+    if (draft) {
+      const sel = await LB.selectWithBasis((cols) => supabase.from('budget_line_items').select(cols).eq('budget_id', draft.id).order('id').limit(2000), 'id, account_id, annual_amount_cents');
+      if (sel.error) throw sel.error;
+      if (!sel.basis_available) return needs521(res);
+      const writes = (sel.data || []).map((l) => ({ id: l.id, ...basisOnly(LB.basisForSavedLine(l, byAcct.get(l.account_id), ctx)) }));
+      for (let i = 0; i < writes.length; i += 10) {
+        const rs = await Promise.all(writes.slice(i, i + 10).map(({ id, ...w }) => supabase.from('budget_line_items').update(w).eq('id', id).eq('budget_id', draft.id)));
+        const e = rs.find((r) => r.error); if (e) throw e.error;
+      }
+      return res.json({ ok: true, mode: 'basis_refreshed', budget_id: draft.id, amounts_changed: 0, ...tally(writes) });
+    }
+
+    if (!input.base_budget) return res.status(400).json({ error: 'no_approved_base_year_budget' });
+    const rows = [];
+    for (const [account_id, ls] of byAcct) {
+      const reserveExp = ls.every((l) => l.account_type === 'expense' && l.fund_type === 'reserve' && !l.transfer);
+      // Reserve expenditures come only from planned capital projects (Reserve Budget), never the forecast.
+      const months = Array(12).fill(0);
+      if (!reserveExp) for (const l of ls) (l.months_2027 || []).forEach((v, i) => { months[i] += Math.round(Number(v) || 0); });
+      const annual = months.reduce((t, v) => t + v, 0);
+      if (!annual && !ls.some((l) => l.transfer)) continue;
+      const main = [...ls].sort((a, c) => Math.abs(c.final_cents) - Math.abs(a.final_cents))[0];
+      rows.push({ account_id, fund_id: main.fund_id || null, annual_amount_cents: annual, monthly_amounts_cents: months,
+        notes: `FY${input.target_year} draft from the ${input.target_year} working forecast as of ${input.as_of} (${u.email}).`, ...basisOnly(LB.basisForSavedLine({ annual_amount_cents: annual }, ls, ctx)) });
+    }
+    if (!rows.length) return res.status(400).json({ error: 'forecast_has_no_lines' });
+    const { data: nb, error: nErr } = await supabase.from('community_budgets').insert({ community_id: req.params.cid, fiscal_year: input.target_year, status: 'draft',
+      notes: `DRAFT FY${input.target_year} budget from the ${input.target_year} working forecast as of ${input.as_of}, created by ${u.email}. Not approved.` }).select('id').single();
+    if (nErr) throw nErr;
+    const { error: lErr } = await supabase.from('budget_line_items').insert(rows.map((r) => ({ ...r, budget_id: nb.id })));
+    if (lErr) {
+      const { error: undo } = await supabase.from('community_budgets').delete().eq('id', nb.id);
+      if (undo) console.error('[working_forecast] draft-budget: could not remove the empty draft', nb.id, undo.message);
+      if (LB.MISSING_COLUMN.test(lErr.message || '')) return needs521(res);
+      throw lErr;
+    }
+    res.json({ ok: true, mode: 'draft_created', budget_id: nb.id, ...tally(rows) });
+  } catch (err) { fail(res, 'draft-budget', err); }
 });
 
 // ---------------------------------------------------------------- executed-contract evidence
