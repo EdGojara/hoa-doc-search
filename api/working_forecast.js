@@ -68,6 +68,23 @@ router.get('/:cid', async (req, res) => {
   } catch (err) { fail(res, 'get', err); }
 });
 
+// GET /:cid/contract-review?year=2027&as_of=2026-10-14 — contracts against vendors, invoices and the
+// draft budget: each contract's priced year, every line's basis, and the exceptions with an owner (Kat,
+// Emma, Amanda) and an action; only revisions and expired agreements are decisions. Read-only.
+router.get('/:cid/contract-review', async (req, res) => {
+  try {
+    const { canRenderFinancials } = require('../lib/community/lifecycle');
+    const ok = await canRenderFinancials(req.params.cid);
+    if (!ok.allowed) return res.status(409).json({ error: 'books_not_here', detail: ok.reason });
+    const year = Number(req.query.year) || new Date().getFullYear() + 1;
+    const as_of = ISO.test(String(req.query.as_of || '')) ? String(req.query.as_of) : new Date().toISOString().slice(0, 10);
+    if (!Number.isInteger(year) || year < 2020 || year > 2100) return res.status(400).json({ error: 'year_invalid' });
+    const R = require('../lib/budget/contract_review');
+    const input = await R.loadReviewInput(supabase, { community_id: req.params.cid, year, as_of });
+    res.json(R.reviewContracts(input));
+  } catch (err) { fail(res, 'contract-review', err); }
+});
+
 async function admin(req, res) { const { requireAdmin } = require('./_require_admin'); return requireAdmin(req, res); }
 const notPersisted = (res) => res.status(409).json({ error: 'persistence_not_available', message: 'Saving forecast decisions needs migration 506 (pending review). The model is shown read-only until then.' });
 
