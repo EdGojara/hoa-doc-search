@@ -149,7 +149,7 @@ function parseCodings(v) {
   for (const c of v) {
     const hasReceipts = c && Array.isArray(c.receipts);
     if (!c || !UUIDRE.test(String(c.bank_transaction_id || '')) || (!hasReceipts && !ACCTRE.test(String(c.account_number || ''))) || !String(c.basis || '').trim()) return { error: 'each coding needs bank_transaction_id, account_number (or receipts) and basis (the evidence)' };
-    if (!hasReceipts) { list.push({ bank_transaction_id: String(c.bank_transaction_id), account_number: String(c.account_number), basis: String(c.basis).trim().slice(0, 600) }); continue; }
+    if (!hasReceipts) { list.push({ bank_transaction_id: String(c.bank_transaction_id), account_number: String(c.account_number), basis: String(c.basis).trim().slice(0, 600), ...(c.unidentified === true ? { unidentified: true } : {}) }); continue; }
     // A deposit coded with its payout contents: one row per homeowner payment.
     if (!c.receipts.length || c.receipts.length > 50) return { error: 'receipts must list 1 to 50 payments' };
     const receipts = [];
