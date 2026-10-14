@@ -943,9 +943,15 @@ router.post('/:id/draft-reply', express.json(), async (req, res) => {
         const { data: full } = await supabase.from('email_messages').select('recipients, received_at, extracted').eq('id', req.params.id).maybeSingle();
         const review = await PP.reviewNotice(supabase, { ...m, recipients: (full && full.recipients) || [], received_at: (full && full.received_at) || m.received_at });
         await supabase.from('email_messages').update({ persona: 'kat', extracted: { ...((full && full.extracted) || {}), positive_pay: review } }).eq('id', req.params.id);
-        return res.json({ draftable: false, positive_pay: review, reason: `Positive Pay notice: this is Kat's accounting work, not an email to answer. ${review.summary}` });
+        // Processing (match / deadline / exceptions) is separate from correspondence: a person
+        // asked for a reply, so Kat drafts one to a VERIFIED bank contact, built on the facts in
+        // our records, for that person to approve. (Ed 2026-10-14: never refuse because the
+        // email is a Positive Pay notice.)
+        const BC = require('../lib/banking/bank_correspondence');
+        const d = await BC.draftForNotice(supabase, { email: { ...m, recipients: (full && full.recipients) || [] }, review, notes, currentDraft, draftReply });
+        return res.json({ ...d, positive_pay: review, suggested_recipient: d.to, on_file_emails: [], covers: [], auto_attachments: [], community_id: m.community_id || null });
       }
-    } catch (e) { console.error('[email_triage] positive pay review failed:', e.message); return res.json({ draftable: false, reason: "Positive Pay notice: no reply is drafted. Kat's check-by-check review could not run; see the server log." }); }
+    } catch (e) { console.error('[email_triage] positive pay correspondence failed:', e.message); return res.status(500).json({ error: safeErrorMessage(e) }); }
 
     // Other UNHANDLED inbound emails from the same homeowner in a short window —
     // "forgot something / sent more info." Reply once, cover them all.
@@ -1462,9 +1468,17 @@ router.post('/:id/send', express.json(), async (req, res) => {
     // address (mkessler@bedrocktx.com) with the homeowner's real email in the
     // body, so falling back to sender_email sends the answer to the website, not
     // the person. Suggest the body email when present. (Ed 2026-07-25.)
+    let bankInquiry = false;
+    try { bankInquiry = require('../lib/banking/positive_pay_notice').isPositivePayNotice(m); } catch (_) {}
     const recipient = (to && String(to).trim())
-      || suggestReplyTo({ senderEmail: m.sender_email, senderName: m.sender_name, bodyText: m.body_full || m.body_preview }).email;
+      || (bankInquiry ? (m.extracted && m.extracted.draft && m.extracted.draft.to) || null : suggestReplyTo({ senderEmail: m.sender_email, senderName: m.sender_name, bodyText: m.body_full || m.body_preview }).email);
     if (!recipient) return res.status(400).json({ error: 'no_recipient' });
+    if (bankInquiry) {
+      // Kat's correspondence about a Positive Pay notice goes to a verified bank contact: never
+      // the automated notice address or an address on the notice we do not recognize.
+      const g = require('../lib/banking/bank_correspondence').sendGuard({ to: recipient, cc: ccList ? ccList.split(',') : [], review: m.extracted && m.extracted.positive_pay, noticeSender: m.sender_email });
+      if (!g.ok) return res.status(409).json({ error: g.error, code: 'unverified_bank_recipient' });
+    }
     const commName = m.community ? m.community.name : '';
     const subj = subject || (/^re:/i.test(m.subject || '') ? m.subject : `Re: ${m.subject || 'your message'}`);
 
@@ -1519,8 +1533,10 @@ router.post('/:id/send', express.json(), async (req, res) => {
     // answering accounting@, etc. send a fresh reply from their own mailbox instead,
     // with the history quoted inline, so the sender identity is preserved. (Issue #29.)
     const replyFrom = graphSend.personaMailbox(persona);
-    const threaded = !!m.graph_id && graphSend.sameMailbox(m.mailbox, replyFrom);
-    const inlineQuote = threaded ? '' : quoted;
+    // A bank inquiry is a fresh message: a threaded reply would go to the notice sender and quote
+    // the notice (account endings, checks, amounts, the recipient list in question).
+    const threaded = !bankInquiry && !!m.graph_id && graphSend.sameMailbox(m.mailbox, replyFrom);
+    const inlineQuote = threaded || bankInquiry ? '' : quoted;
     let html, attachments, fromMailbox, senderLabel;
     if (persona === 'emma') {
       const { buildEmmaEmail } = require('../lib/email/emma_signature');
