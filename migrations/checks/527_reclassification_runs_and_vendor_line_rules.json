@@ -1,0 +1,101 @@
+{
+  "migration": "527_reclassification_runs_and_vendor_line_rules.sql",
+  "summary": "Kat's controlled runs gain 'reclassification' (owner approves each entry in-app; nothing posts at prepare), and a contract-driven vendor_line_rules table codes a vendor's invoice lines deterministically. Seeds Canyon Gate's three Bedrock agreement lines (management fee 5810, onsite staff 5855, website 5030). No journal entry, invoice, payment or budget changes.",
+  "requires": [
+    "526_contract_term_semantics.sql"
+  ],
+  "preflight": [
+    {
+      "name": "vendor_line_rules does not exist yet",
+      "sql": "SELECT count(*)::int FROM information_schema.tables WHERE table_name = 'vendor_line_rules'",
+      "expect": 0
+    },
+    {
+      "name": "Bedrock is a vendor",
+      "sql": "SELECT count(*)::int FROM vendors WHERE id = 'e254e558-9285-4a02-9b35-7ea66d07ec91'",
+      "expect": 1
+    },
+    {
+      "name": "Canyon Gate has 5810, 5855 and 5030",
+      "sql": "SELECT count(*)::int FROM chart_of_accounts WHERE community_id = 'a0000000-0000-4000-8000-000000000003' AND account_number IN ('5810', '5855', '5030')",
+      "expect": 3
+    }
+  ],
+  "expected_changes": [
+    "accounting_runs: process may be 'reclassification'.",
+    "New table vendor_line_rules (service_role read/write, authenticated read).",
+    "Three Canyon Gate Bedrock rules: management fee -> 5810, onsite staff -> 5855, website/portal -> 5030.",
+    "No other row changes."
+  ],
+  "objects": {
+    "added": [
+      "column:vendor_line_rules.basis",
+      "column:vendor_line_rules.community_id",
+      "column:vendor_line_rules.created_at",
+      "column:vendor_line_rules.created_by",
+      "column:vendor_line_rules.gl_account_id",
+      "column:vendor_line_rules.id",
+      "column:vendor_line_rules.is_active",
+      "column:vendor_line_rules.pattern",
+      "column:vendor_line_rules.source_document_id",
+      "column:vendor_line_rules.vendor_id",
+      "constraint:vendor_line_rules.vendor_line_rules_basis_check",
+      "constraint:vendor_line_rules.vendor_line_rules_community_id_fkey",
+      "constraint:vendor_line_rules.vendor_line_rules_gl_account_id_fkey",
+      "constraint:vendor_line_rules.vendor_line_rules_pattern_check",
+      "constraint:vendor_line_rules.vendor_line_rules_pkey",
+      "constraint:vendor_line_rules.vendor_line_rules_source_document_id_fkey",
+      "constraint:vendor_line_rules.vendor_line_rules_vendor_id_fkey",
+      "index:idx_vendor_line_rules_lookup",
+      "index:ux_vendor_line_rules_active",
+      "index:vendor_line_rules_pkey",
+      "table:vendor_line_rules"
+    ],
+    "changed": [
+      "constraint:accounting_runs.accounting_runs_process_check"
+    ],
+    "removed": []
+  },
+  "row_changes": {
+    "vendor_line_rules": 3,
+    "accounting_runs": 0,
+    "journal_entries": 0,
+    "ap_invoices": 0,
+    "budget_line_items": 0
+  },
+  "protected": [
+    {
+      "table": "journal_entries",
+      "order_by": "id"
+    },
+    {
+      "table": "ap_invoices",
+      "order_by": "id"
+    },
+    {
+      "table": "budget_line_items",
+      "order_by": "id"
+    },
+    {
+      "table": "community_budgets",
+      "order_by": "id"
+    }
+  ],
+  "verify": [
+    {
+      "name": "three Bedrock rules for Canyon Gate",
+      "sql": "SELECT count(*)::int FROM vendor_line_rules WHERE community_id = 'a0000000-0000-4000-8000-000000000003' AND vendor_id = 'e254e558-9285-4a02-9b35-7ea66d07ec91' AND is_active",
+      "expect": 3
+    },
+    {
+      "name": "onsite staff codes to 5855",
+      "sql": "SELECT count(*)::int FROM vendor_line_rules r JOIN chart_of_accounts a ON a.id = r.gl_account_id WHERE r.pattern LIKE 'onsite staff%' AND a.account_number = '5855'",
+      "expect": 1
+    },
+    {
+      "name": "reclassification is an allowed run process",
+      "sql": "SELECT count(*)::int FROM pg_constraint WHERE conname = 'accounting_runs_process_check' AND pg_get_constraintdef(oid) LIKE '%reclassification%'",
+      "expect": 1
+    }
+  ]
+}
