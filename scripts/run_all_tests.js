@@ -111,6 +111,7 @@ const CHECKS = [
   'tests/test_cutoff_bs_presentation.js',
   'tests/test_positive_pay_notice.js',
   'tests/test_bank_correspondence.js',
+  'tests/test_vigilance.js',
   'tests/test_working_forecast.js',
   'tests/test_reserve_plan.js',
   'tests/test_mission_control_graph.js',
