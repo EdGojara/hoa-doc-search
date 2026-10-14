@@ -63,9 +63,9 @@
   <a class="home" href="/admin/accounting" title="Accounting">trustEd</a>
   <label>Community<select id="comm"></select></label>
   <label>Statement<select id="kind">
+    <option value="income_budget">Budget vs. Actual (revenues &amp; expenses)</option>
     <option value="balance_sheet">Balance sheet</option>
     <option value="balance_sheet_fund">Balance sheet by fund</option>
-    <option value="income_budget">Revenues &amp; expenses vs budget</option>
   </select></label>
   <label id="fundWrap" hidden>Fund<select id="fund"></select></label>
   <label>Month ending<input id="month" type="month"></label>
@@ -88,7 +88,7 @@
   const esc = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   const money = (c) => { if (c === null || c === undefined) return '<span class="pill" title="Not available in TrustEd">n/a</span>'; const n = Number(c) || 0; if (n === 0) return '–'; const s = (Math.abs(n) / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); return n < 0 ? '(' + s + ')' : s; };
   const lastDay = (ym) => { const [y, m] = ym.split('-').map(Number); return new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10); };
-  const S = { cid: null, kind: 'balance_sheet', fund: 'OPR', month: null, models: [], admin: false, stack: [] };
+  const S = { cid: null, kind: 'income_budget', fund: 'active', month: null, models: [], admin: false, stack: [] };
 
   // Admin JWT (mapping changes are admin-only on the server; this is visibility).
   window.supa = null;
@@ -108,7 +108,7 @@
   function params(extra) {
     const date = lastDay(S.month);
     const p = new URLSearchParams();
-    if (S.kind === 'income_budget') { p.set('statements', 'income_budget'); p.set('period_end', date); p.set('fund', S.fund); }
+    if (S.kind === 'income_budget') { p.set('statements', 'income_budget'); p.set('period_end', date); if (S.fund === 'active') p.set('funds', 'active'); else p.set('fund', S.fund); }
     else { p.set('statements', 'balance_sheet'); p.set('as_of', date); p.set('view', S.kind === 'balance_sheet_fund' ? 'fund' : 'consolidated'); }
     for (const k in (extra || {})) p.set(k, extra[k]);
     return p;
@@ -123,6 +123,8 @@
     $('xPdf').href = base + '/render?' + params({ format: 'pdf' });
     $('xXlsx').href = base + '/render?' + params({ format: 'xlsx' });
     const p = params(); p.set('statement', S.kind === 'income_budget' ? 'income_budget' : 'balance_sheet');
+    // Every fund's transactions in one file: the combined statement lists every account.
+    if (p.get('funds') === 'active') { p.delete('funds'); p.set('fund', 'all'); }
     $('xCsv').href = base + '/detail.csv?' + p;
   }
 
@@ -287,8 +289,8 @@
     const q = new URLSearchParams(location.search);
     const now = new Date(); const prev = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 0));
     S.month = /^\d{4}-\d{2}$/.test(q.get('month') || '') ? q.get('month') : prev.toISOString().slice(0, 7);
-    S.kind = ['balance_sheet', 'balance_sheet_fund', 'income_budget'].includes(q.get('statement')) ? q.get('statement') : 'balance_sheet';
-    S.fund = q.get('fund') || 'OPR';
+    S.kind = ['balance_sheet', 'balance_sheet_fund', 'income_budget'].includes(q.get('statement')) ? q.get('statement') : 'income_budget';
+    S.fund = q.get('fund') || 'active';
     $('month').value = S.month; $('kind').value = S.kind;
     try {
       const j = await fetch('/api/gl/communities').then((r) => r.json());
@@ -303,12 +305,15 @@
   async function loadFunds() {
     try {
       const j = await fetch('/api/gl/' + encodeURIComponent(S.cid) + '/chart-of-accounts').then((r) => r.json());
-      const codes = [...new Set((j.accounts || j.chart || []).map((a) => a.account_funds && a.account_funds.fund_code).filter(Boolean))].sort((a, b) => (a === 'OPR' ? -1 : b === 'OPR' ? 1 : a.localeCompare(b)));
+      const names = {};
+      for (const a of (j.accounts || j.chart || [])) if (a.account_funds && a.account_funds.fund_code) names[a.account_funds.fund_code] = a.account_funds.fund_name || a.account_funds.fund_code;
+      const codes = Object.keys(names).sort((a, b) => (a === 'OPR' ? -1 : b === 'OPR' ? 1 : a.localeCompare(b)));
       const list = codes.length ? codes : ['OPR'];
-      $('fund').innerHTML = list.map((c) => '<option value="' + c + '">' + esc(c) + '</option>').join('') + '<option value="all">All funds</option>';
-      if (![...list, 'all'].includes(S.fund)) S.fund = list[0];
+      // Board default: every fund on its own statement (Operating first); one fund; or all funds combined.
+      $('fund').innerHTML = '<option value="active">All funds, each on its own statement</option>' + list.map((c) => '<option value="' + c + '">' + esc(names[c] || c) + '</option>').join('') + '<option value="all">All funds combined</option>';
+      if (![...list, 'all', 'active'].includes(S.fund)) S.fund = 'active';
       $('fund').value = S.fund;
-    } catch (_) { $('fund').innerHTML = '<option value="OPR">OPR</option><option value="all">All funds</option>'; }
+    } catch (_) { $('fund').innerHTML = '<option value="active">All funds, each on its own statement</option><option value="OPR">OPR</option><option value="all">All funds combined</option>'; }
   }
   $('comm').addEventListener('change', async () => { S.cid = $('comm').value; await loadFunds(); load(); });
   $('kind').addEventListener('change', () => { S.kind = $('kind').value; load(); });
