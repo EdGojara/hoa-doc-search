@@ -19,13 +19,21 @@ const settings = { stale_check_days: 90, stale_deposit_days: 10, match_window_da
     { bank_account_id: 'sav', match: '^2026 Transfer$', account: '4015', counter_cash_account: '1110', from_fund: 'SAV', to_fund: 'RES', basis: 'Budgeted 2026 contribution.' },
     { bank_account_id: 'sav', match: '^2025 Transfer$', account: '4015', counter_cash_account: '1110', from_fund: 'SAV', to_fund: 'RES', basis: 'Cash moved.', flag: 'No board authorization for a 2025 contribution is on file.' }] };
 
-console.log('unidentified receipt (suspense)');
+console.log('unidentified receipt (suspense account, never prepaid owner assessments)');
 {
   const line = { id: 'b-propay', bank_statement_import_id: 'imp9', posting_date: '2026-09-04', amount_cents: 5000, description: 'PROPAY TRANSFER XXXXX4001', transaction_type: 'transfer' };
-  const r = B.reconcileAccountMonth({ account: { id: 'opr', label: 'Operating 2449', gl_account_number: '1000' }, period_start: '2026-09-01', period_end: '2026-09-30', opening, statements: [S9(105000)], bankTxns: [line], glLines: gl, otherBankTxns: [], homeownerPayments: [], settings,
-    codings: [{ bank_transaction_id: 'b-propay', account_number: '2400', unidentified: true, basis: 'ProPay deposit; payer not identified (Vantaca deposit register requested).' }] });
+  const base = { account: { id: 'opr', label: 'Operating 2449', gl_account_number: '1000' }, period_start: '2026-09-01', period_end: '2026-09-30', opening, statements: [S9(105000)], bankTxns: [line], glLines: gl, otherBankTxns: [], homeownerPayments: [], settings };
+  // the coding even names 2400: the suspense role wins, the coding's account is ignored
+  const codings = [{ bank_transaction_id: 'b-propay', account_number: '2400', unidentified: true, basis: 'ProPay deposit; payer not identified (Vantaca deposit register requested).' }];
+  const r = B.reconcileAccountMonth({ ...base, unidentifiedAccount: '2420', codings });
   const p = r.proposals.find((x) => x.id === 'coded:b-propay');
-  check('money in coded to 2400: Dr 1000 / Cr 2400, dated the bank line, keyed to it', p && p.posting_date === '2026-09-04' && p.source_reference === 'bankrec:b-propay' && p.lines[0].account_number === '1000' && p.lines[0].debit_cents === 5000 && p.lines[1].account_number === '2400' && p.lines[1].credit_cents === 5000);
+  check('money in held in the suspense account: Dr 1000 / Cr 2420 (not 2400), dated the bank line, keyed to it', p && p.posting_date === '2026-09-04' && p.source_reference === 'bankrec:b-propay' && p.lines[0].account_number === '1000' && p.lines[0].debit_cents === 5000 && p.lines[1].account_number === '2420' && p.lines[1].credit_cents === 5000 && !p.lines.some((l) => l.account_number === '2400'), JSON.stringify(p && p.lines));
+  const none = B.reconcileAccountMonth({ ...base, codings });
+  check('no suspense account configured: nothing proposed, never falls back to 2400', !none.proposals.length && none.exceptions.some((e) => e.code === 'unidentified_not_proposed' && /never credited to prepaid owner assessments/.test(e.text)));
+  const bare = B.reconcileAccountMonth({ ...base, unidentifiedAccount: '2420', codings: [{ bank_transaction_id: 'b-propay', unidentified: true, basis: 'ProPay deposit; payer unknown.' }] });
+  check('a coding needs no account number when unidentified', bare.proposals.length === 1 && bare.proposals[0].lines[1].account_number === '2420');
+  const out = B.reconcileAccountMonth({ ...base, bankTxns: [{ ...line, amount_cents: -5000 }], statements: [S9(95000)], unidentifiedAccount: '2420', codings });
+  check('money OUT cannot be an unidentified receipt', !out.proposals.length && out.exceptions.some((e) => e.code === 'unidentified_not_proposed' && /must be money in/.test(e.text)));
   check('described "Unidentified homeowner receipt" (the convention the owner tie-out sets aside); no property on any line', /^Unidentified homeowner receipt: PROPAY TRANSFER/.test(p.description) && p.lines.every((l) => !l.property_id));
   check('the exception says it is held until the payer is known', r.exceptions.some((e) => e.code === 'unidentified_receipt' && /until the payer is known/.test(e.text)));
   check('the month reconciles once proposed', r.totals.difference_cents === 0);

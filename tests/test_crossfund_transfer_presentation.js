@@ -2,7 +2,8 @@
 // the ACTUAL statement engine (lib/statements/model + render), on the Drama Creek fixture extended
 // with a Savings fund. The entries are exactly what Kat's reconciliation posts (PR 191): the
 // transfer account once in each fund (Dr 4015 SAV / Cr 1100; Dr 1200 RES / Cr 4015 RES) and the
-// suspense receipt (Dr 1000 / Cr 2400, "Unidentified homeowner receipt ...", no property).
+// suspense receipt (Dr 1000 / Cr 2420 Unidentified Receipts (Suspense), mig 524; "Unidentified homeowner
+// receipt ...", no property), presented apart from 2400 prepaid owner assessments.
 process.env.SUPABASE_URL = process.env.SUPABASE_URL || 'http://localhost'; process.env.SUPABASE_KEY = process.env.SUPABASE_KEY || 'test';
 const Module = require('module');
 const F = require('./fixtures/drama_creek_statements');
@@ -22,6 +23,8 @@ function addSavingsFund(db) {
   acct(1100, 'asset', 'Savings Money Market', 'f-sav');
   acct(3030, 'equity', 'Savings Fund Balance', 'f-sav');
   acct(4015, 'revenue', 'Transfer Savings to Reserve', 'f-sav', { account_subtype: 'interfund_transfer', interfund_from_fund_id: 'f-sav', interfund_to_fund_id: 'f-res' });
+  acct(2420, 'liability', 'Unidentified Receipts (Suspense)', 'f-opr', { account_subtype: 'current_liability' });
+  db.community_account_roles = [{ community_id: CID, role: 'unidentified_receipts', account_id: 'a-2420' }];
 }
 function post(db, ref, date, lines, description) {
   const id = `je-x${++seq}`;
@@ -42,7 +45,7 @@ const same = (a, b) => K.every((k) => a[k] === b[k]);
   F.seed(); db = F.getDb(); addSavingsFund(db);
   post(db, 'OPEN-SAV', '2026-07-31', [[1100, 'f-sav', 10000000, 0], [3030, 'f-sav', 0, 10000000]]);
   for (const ref of ['XFER-2025', 'XFER-2026']) post(db, ref, '2026-09-10', [[4015, 'f-sav', 4270000, 0], [1100, 'f-sav', 0, 4270000], [1200, 'f-res', 4270000, 0], [4015, 'f-res', 0, 4270000]], 'Interfund transfer SAV to RES');
-  post(db, 'UNID-1', '2026-09-04', [[1000, 'f-opr', 5000, 0], [2400, 'f-opr', 0, 5000]], 'Unidentified homeowner receipt: PROPAY TRANSFER XXXXX4001 (Operating 9/4/2026)');
+  post(db, 'UNID-1', '2026-09-04', [[1000, 'f-opr', 5000, 0], [2420, 'f-opr', 0, 5000]], 'Unidentified homeowner receipt: PROPAY TRANSFER XXXXX4001 (Operating 9/4/2026)');
   const after = { OPR: await build('OPR'), RES: await build('RES'), SAV: await build('SAV'), all: await build('all') };
 
   console.log('transfer below net income, each fund its own side');
@@ -68,6 +71,9 @@ const same = (a, b) => K.every((k) => a[k] === b[k]);
   const bs = await M.buildBalanceSheetModel(F.fakeClient(), { community_id: CID, as_of: '2026-09-30', view: 'fund', now: NOW });
   const col = (code) => bs.columns.find((c) => c.fund_code === code);
   check('every fund balances (assets = liabilities + fund balance) with the transfer posted', bs.columns.every((c) => bs.totals.balanced[c.key] !== false), JSON.stringify(bs.totals.balanced));
+  const bsLine = (n) => { for (const sec of bs.sections) for (const g of sec.groups) for (const l of g.lines) if (l.account_number === n) return { sec: sec.key, l }; return null; };
+  const u = bsLine('2420'); const pre = bsLine('2400'); const tot = (x) => x ? Object.entries(x.l.values).filter(([k]) => k !== 'total').reduce((t, [, v]) => t + Number(v || 0), 0) : 0;
+  check('balance sheet: the $50.00 sits on its own liability line "Unidentified Receipts (Suspense)", not in prepaid owner assessments', u && u.sec === 'liability' && u.l.account_name === 'Unidentified Receipts (Suspense)' && u.l.values.total === 5000 && pre && pre.l.account_id !== u.l.account_id, JSON.stringify([u, pre]));
   const cashOf = (code) => { const k = col(code) && col(code).key; let t = 0; for (const sec of bs.sections.filter((x) => x.key === 'asset')) for (const g of sec.groups) for (const l of g.lines) if (['1100', '1200'].includes(l.account_number)) t += Number(l.values[k] || 0); return t; };
   check('Savings cash is $14,600 (100,000 - 85,400); Reserve cash rose by $85,400', cashOf('SAV') === 1460000, String(cashOf('SAV')));
 
@@ -81,9 +87,13 @@ const same = (a, b) => K.every((k) => a[k] === b[k]);
   // The owner tie-out's own function finds it by its description, from the 2400 lines.
   const AR = require('../lib/ar/ar_control');
   const mini = { from(t) { const st = { f: [] }; const q = { select() { return q; }, eq(c, v) { st.f.push((r) => r[c] === v); return q; }, ilike(c, p) { const re = new RegExp('^' + p.replace(/%/g, '.*'), 'i'); st.f.push((r) => re.test(r[c] || '')); return q; }, in(c, vs) { st.f.push((r) => vs.includes(r[c])); return q; }, limit() { return q; },
-    then(res) { const src = t === 'journal_entries' ? db.journal_entries : t === 'chart_of_accounts' ? db.chart_of_accounts : db.journal_entry_lines; return Promise.resolve({ data: src.filter((r) => st.f.every((fn) => fn(r))), error: null }).then(res); } }; return q; } };
+    then(res) { const src = { journal_entries: db.journal_entries, chart_of_accounts: db.chart_of_accounts, community_account_roles: db.community_account_roles || [] }[t] || db.journal_entry_lines; return Promise.resolve({ data: src.filter((r) => st.f.every((fn) => fn(r))), error: null }).then(res); } }; return q; } };
   const found = await AR.unidentifiedReceipts(mini, CID);
-  check('the receivables tie-out identifies it as an unidentified receipt held in 2400 ($50.00, UNID-1), set aside from the owner comparison', found && found.cents === 5000 && found.references.includes('UNID-1'), JSON.stringify(found));
+  check('the receivables tie-out reports it from the suspense account ($50.00, UNID-1), outside the owner accounts so nothing is subtracted twice', found && found.cents === 5000 && found.suspense_cents === 5000 && found.in_owner_accounts_cents === 0 && found.references.includes('UNID-1') && found.account && found.account.account_number === '2420', JSON.stringify(found));
+  // a legacy receipt posted to 2400 before migration 524 is still set aside from the owner side
+  post(db, 'UNID-OLD', '2026-08-13', [[1000, 'f-opr', 2500, 0], [2400, 'f-opr', 0, 2500]], 'Unidentified homeowner receipt: Vantaca Pay card payment (legacy)');
+  const both = await AR.unidentifiedReceipts(mini, CID);
+  check('a legacy receipt in 2400 is still found and set aside (in owner accounts $25.00, suspense $50.00)', both.in_owner_accounts_cents === 2500 && both.suspense_cents === 5000 && both.references.includes('UNID-OLD'), JSON.stringify(both));
 
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
