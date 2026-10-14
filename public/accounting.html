@@ -1481,7 +1481,7 @@
   // / YTD Actual / Proposed, with the derivation it was built from and a
   // confidence grade. Not a spreadsheet cell; a number that traces to its source.
   // Badge = WHERE the number came from (source), not just how sure we are.
-  const _SRC={ contract:{c:'#166534',bg:'#dcfce7',t:'📄 Contract-verified'}, vendor_commitment:{c:'#166534',bg:'#dcfce7',t:'Vendor commitment'}, prior_budget:{c:'#1e40af',bg:'#dbeafe',t:'Adopted budget'}, trend:{c:'#92400e',bg:'#fef3c7',t:'Trend'}, one_time_adjusted:{c:'#9a3412',bg:'#ffedd5',t:'One-time removed'}, excluded:{c:'#64748b',bg:'#f1f5f9',t:'Not budgeted'}, capital_plan:{c:'#1e40af',bg:'#dbeafe',t:'Capital plan'}, estimate:{c:'#64748b',bg:'#f1f5f9',t:'Estimate'} };
+  const _SRC={ contract:{c:'#166534',bg:'#dcfce7',t:'📄 Contract'}, contract_unverified:{c:'#9a3412',bg:'#ffedd5',t:'📄 Contract (not verified)'}, forecast:{c:'#1e40af',bg:'#dbeafe',t:'Working forecast'}, assessment:{c:'#1e40af',bg:'#dbeafe',t:'Assessment'}, transfer:{c:'#1e40af',bg:'#dbeafe',t:'Transfer'}, vendor_commitment:{c:'#166534',bg:'#dcfce7',t:'Vendor commitment'}, prior_budget:{c:'#1e40af',bg:'#dbeafe',t:'Adopted budget'}, trend:{c:'#92400e',bg:'#fef3c7',t:'Trend'}, one_time_adjusted:{c:'#9a3412',bg:'#ffedd5',t:'One-time removed'}, excluded:{c:'#64748b',bg:'#f1f5f9',t:'Not budgeted'}, capital_plan:{c:'#1e40af',bg:'#dbeafe',t:'Capital plan'}, estimate:{c:'#64748b',bg:'#f1f5f9',t:'Estimate'} };
   // The four columns (Ed 2026-10-12): adopted, actual YTD through ONE cutoff, forecast with its
   // basis, proposed. Labels carry the years and the cutoff so nothing is ambiguous.
   let _llCol={ adopted:'Adopted', ytd:'Actual YTD', forecast:'Forecast', proposed:'Proposed' };
@@ -1506,8 +1506,9 @@
   const _SUG_BASIS={ contract:'contract', capital_plan:'board_project', prior_budget:'historical_forecast', trend:'historical_forecast', vendor_commitment:'historical_forecast', one_time_adjusted:'historical_forecast', estimate:'historical_forecast' };
   const _llBasisOf=(x)=>{
     if(x.proposed_source==='saved_draft') return x.saved_basis?{...x.saved_basis, recorded:true}:{amount_basis:null, recorded:false, none:true};
-    const b=x.transfer?'transfer':(x.account_type==='revenue' && /assessment|dues|maintenance fee/i.test(x.account_name||'') && x.source_type!=='excluded')?'assessment':(_SUG_BASIS[x.source_type]||null);
-    return { amount_basis:b, amount_calc:x.built_from||null, needs_review:(x.flags||[]).some(f=>f.type==='contract_unverified')||x.source_type==='estimate', review_note:((x.flags||[]).find(f=>f.type==='contract_unverified')||{}).msg||null, recorded:false };
+    // An unsaved suggestion carries the working forecast's basis (the same engine that prices it).
+    if(x.suggested_basis) return {...x.suggested_basis, recorded:false};
+    return { amount_basis:_SUG_BASIS[x.source_type]||null, amount_calc:x.built_from||null, needs_review:x.source_type==='estimate', review_note:null, recorded:false };
   };
   const _llBasisChip=(x)=>{ const b=_llBasisOf(x); if(!b.amount_basis) return x.proposed_source==='saved_draft'?'<span style="margin-left:6px; font-size:9.5px; font-weight:700; padding:1px 6px; border-radius:7px; background:#f1f5f9; color:#64748b;" title="No basis recorded on this saved line">BASIS NOT RECORDED</span>':'';
     return `<span style="margin-left:6px; font-size:9.5px; font-weight:700; padding:1px 6px; border-radius:7px; background:#f8fafc; border:1px solid #cbd5e1; color:#334155;" title="${esc((b.recorded?'Recorded basis: ':'Suggested basis: ')+(b.amount_calc||''))}">${esc(_BASIS[b.amount_basis]||b.amount_basis).toUpperCase()}</span>${b.needs_review?`<span style="margin-left:4px; font-size:9.5px; font-weight:700; padding:1px 6px; border-radius:7px; background:#fef3c7; color:#92400e;" title="${esc(b.review_note||'Needs review')}">NEEDS REVIEW</span>`:''}`; };
@@ -1551,13 +1552,13 @@
       const rev=idx.filter(o=>o.x.account_type==='revenue'), exp=idx.filter(o=>o.x.account_type==='expense');
       const rowHtml=(x,i)=>{
         // The badge names where the PROPOSED number came from: a saved amount says so; the suggestion's source is in the detail.
-        const cf=x.proposed_source==='saved_draft'?{c:'#1e3a8a',bg:'#e0e7ff',t:'Saved amount'}:(_SRC[x.source_type]||_SRC.estimate);
+        const cf=x.proposed_source==='saved_draft'?{c:'#1e3a8a',bg:'#e0e7ff',t:'Saved amount'}:(_SRC[x.source_type==='contract'&&x.contract&&x.contract.unverified?'contract_unverified':x.source_type]||_SRC.estimate);
         const move=x.prior_budget_cents? Math.round(((x.proposed_cents-x.prior_budget_cents)/Math.abs(x.prior_budget_cents))*100):null;
         const vend=(x.vendors||[]).map(v=>`${esc(v.name)} $${Math.round(v.cents/100).toLocaleString()}`).join(' · ');
         const eviden=(x.evidence||[]).map(e=>`<a href="${esc(e.url)}" target="_blank" rel="noopener" style="color:#166534; font-weight:700; text-decoration:underline;">📄 ${esc(e.label)}</a>`).join(' · ');
         const flags=(x.flags||[]);
         const flagChip=flags.length?`<span style="margin-left:6px; font-size:9.5px; font-weight:700; padding:1px 6px; border-radius:7px; background:${flags.some(f=>f.severity==='high')?'#fee2e2':'#fef3c7'}; color:${flags.some(f=>f.severity==='high')?'#991b1b':'#92400e'};" title="${esc(flags.map(f=>f.msg).join(' · '))}">⚠ REVIEW</span>`:'';
-        const flagDetail=flags.length?flags.map(f=>`<div style="margin-top:3px; color:${f.severity==='high'?'#991b1b':'#92400e'};"><strong>⚠ ${f.type==='one_time'?'Likely one-time':f.type==='below_approved'?'Below approved budget':f.type==='not_in_draft'?'Not in saved draft':f.type==='contract_unverified'?'Contract not applied':'Check postings'}:</strong> ${esc(f.msg)}</div>`).join(''):'';
+        const flagDetail=flags.length?flags.map(f=>`<div style="margin-top:3px; color:${f.severity==='high'?'#991b1b':'#92400e'};"><strong>⚠ ${f.type==='one_time'?'Likely one-time':f.type==='below_approved'?'Below approved budget':f.type==='not_in_draft'?'Not in saved draft':f.type==='contract_unverified'?'Contract not applied':f.type==='contract_missing'?'No contract on file':f.type==='needs_review'?'Needs review':'Check postings'}:</strong> ${esc(f.msg)}</div>`).join(''):'';
         return `<div style="border-bottom:1px solid #f1f5f9;">
           <div style="display:grid; grid-template-columns:56px 1fr 104px 112px 104px 120px; gap:8px; align-items:center; padding:7px 6px; font-size:12.5px;">
             <span style="font-family:ui-monospace,monospace; color:#94a3b8; font-size:11px;">${esc(x.account_number)}</span>

@@ -229,8 +229,17 @@ const item = (l, d) => l.bridge.find((b) => b.driver === d);
   check('general inflation is not stacked on a contract that sets the full-year price', item(cv, 'rate').status === 'not_applicable');
   const likely = { ...verified, id: 'vc2', execution_status: 'likely_executed', verified_by: null, verified_at: null, verification_source: null, execution_reason: 'both parties signed (machine-read)' };
   const cl = WF.buildLine(L({ budget: flat(23500000), ytd: 17370200, months: { 8: 1958300, 9: 1958300 }, contracts: [likely] }), ctx);
-  check('a likely-executed contract is shown with its would-be effect but NOT applied; confidence lowered', item(cl, 'contract').status === 'needs_verification' && item(cl, 'contract').amount_cents === null
-    && item(cl, 'contract').evidence.would_be_cost_cents === 24600000 && cl.recommendation_cents !== 24600000 && cl.confidence.model === 'low');
+  // Ed 2026-10-14: a bound contract that is not yet verified is priced from its terms (never replaced
+  // by a percentage increase) and flagged: confidence low, the line needs review.
+  const cli = item(cl, 'contract');
+  check('a likely-executed contract is priced from its terms but flagged unverified; confidence low; the line needs review', cli.status === 'applied' && cli.unverified === true && cl.recommendation_cents === 24600000
+    && cli.confidence === 'low' && /not verified as executed: needs review/.test(cli.note) && cl.confidence.model === 'low' && cl.evidence_status === 'needs_review', `${cli.status} ${cl.recommendation_cents} ${cl.evidence_status}`);
+  const gate = { id: 'vc-gate', vendor_name: 'Gate Sentry', execution_status: 'detected', status: 'active', effective_date: '2026-10-01', end_date: '2027-09-30', auto_renews: true, periodic_amount: 7089.13, periodic_frequency: 'annual', file_hash: 'g' };
+  const ups = { ...verified, id: 'vc-ups', vendor_name: 'United Protective', execution_status: 'detected', rate_schedule: [], periodic_amount: 18000, effective_date: '2026-10-01', end_date: null };
+  const twoV = WF.buildLine(L({ budget: flat(21000000), ytd: 15750000, months: { 8: 1750000, 9: 1750000 }, contracts: [ups, gate] }), ctx);
+  const bi = item(twoV, 'contract');
+  check('two contracts from different vendors on one line add up (officers + gate system), each priced from its terms, both flagged unverified', bi.status === 'applied' && bi.evidence.contract_cost_cents === 21600000 + 708913
+    && twoV.recommendation_cents === 21600000 + 708913 && bi.evidence.contracts.length === 2 && bi.evidence.calculation.some((x) => /^Gate Sentry: /.test(x)) && twoV.evidence_status === 'needs_review', `${bi.status} ${bi.evidence && bi.evidence.contract_cost_cents} ${twoV.recommendation_cents}`);
   check('no verified contract: no contractual adjustment is invented', item(a, 'contract').status === 'no_evidence' && !a.bridge.some((b) => b.driver === 'contract' && b.status === 'applied'));
   const two = WF.buildLine(L({ contracts: [verified, { ...verified, id: 'vc3' }] }), ctx);
   check('two verified contracts on one line: needs review, nothing applied', item(two, 'contract').status === 'needs_review' && item(two, 'contract').amount_cents === null);

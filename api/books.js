@@ -1648,7 +1648,15 @@ async function applyWorkingForecast(community_id, fy, acc, cutoff) {
     // forecast's (verified contract bound to the line, contractCostForYear), never a
     // vendor-name match. Kept per account for the proposed column.
     const LB = require('../lib/accounting/budget_line_basis');
-    for (const [aid, ls] of LB.forecastByAccount(m)) { const a = acc.get(aid); if (!a) continue; const c = ls.map(LB.contractFromForecastLine).filter(Boolean); if (c.length) a.wf_contract = c.length === 1 ? c[0] : { ...c[0], status: 'needs_review', note: `${c.length} contract lines in different funds; the contract amount is not applied.` }; }
+    // The target year's amount and its basis per account come from the same model (one engine).
+    for (const [aid, ls] of LB.forecastByAccount(m)) {
+      const a = acc.get(aid); if (!a) continue;
+      const c = ls.map(LB.contractFromForecastLine).filter(Boolean);
+      if (c.length) a.wf_contract = c.length === 1 ? c[0] : { ...c[0], status: 'needs_review', note: `${c.length} contract lines in different funds; the contract amount is not applied.` };
+      a.wf_final = ls.reduce((t, l) => t + Math.round(Number(l.final_cents) || 0), 0);
+      a.wf_basis = LB.basisForSavedLine({ annual_amount_cents: a.wf_final }, ls, { base_year: m.base_year });
+      a.wf_confidence = (([...ls].sort((x, y) => Math.abs(y.final_cents) - Math.abs(x.final_cents))[0] || {}).confidence || {}).final || null;
+    }
     for (const a of acc.values()) {
       const f = by.get(a.account_id);
       if (!f) { a.forecast = a.ytd_actual || 0; a.forecast_detail = { method: 'actual_only', ytd_cents: a.ytd_actual || 0, remaining_cents: 0, explanation: `No ${cutoff.base_year} budget line: the forecast is the actual through ${cutoff.as_of}.`, data_flags: [] }; continue; }
@@ -1680,24 +1688,6 @@ router.get('/budgets/living-lines', async (req, res) => {
     const cutoff = W.baseYearCutoff({ now: today, target_year: fy });
     const ytdEnd = cutoff.as_of || (cutoff.status === 'no_completed_month' ? today.toISOString().slice(0, 10) : null);
     const isYtd = ytdEnd ? await incomeStatement({ community_id, period_start: `${fy - 1}-01-01`, period_end: ytdEnd }) : { sections: { revenue: [], expenses: [] }, totals: { ytd: { revenue_cents: 0, expenses_cents: 0 } } };
-    // Vendor-commitment suggestions only (never the forecast): prior-year vendor spend is
-    // annualized by the months the GL actually COVERS this year, not
-    // the calendar months elapsed. A mid-year cutover has fewer posted months
-    // than elapsed months; dividing partial data by elapsed months understates
-    // every line. Count the distinct months that actually have postings.
-    let coverageMonths = monthsElapsed;
-    // A converted community's YTD already includes the opening YTD carryforward
-    // (Jan through the cutoff, lib/accounting/statement_periods.js), so it covers every
-    // elapsed month: annualize by months elapsed, never by the months with postings.
-    const ytdCoversYear = !!(isYtd.availability && isYtd.availability.ytd && isYtd.availability.ytd.carryforward_included.length);
-    if (!ytdCoversYear) try {
-      const jeCov = await fetchAllQuery(() => supabase.from('journal_entries')
-        .select('posting_date').eq('community_id', community_id)
-        .gte('posting_date', `${cy}-01-01`).lte('posting_date', `${cy}-12-31`), { orderBy: 'posting_date' });
-      const months = new Set((jeCov || []).map((e) => String(e.posting_date).slice(0, 7)));
-      if (months.size > 0) coverageMonths = months.size;
-    } catch (_) { /* fall back to calendar months */ }
-    const annualize = coverageMonths > 0 ? 12 / coverageMonths : 1;
 
     // Base-year ADOPTED budget: the approved (or active) budget only, the same record the
     // working forecast and Budget vs Actual read. A draft is never shown as adopted.
@@ -1774,38 +1764,34 @@ router.get('/budgets/living-lines', async (req, res) => {
         .gte('journal_entries.posting_date', `${fy - 1}-01-01`).lte('journal_entries.posting_date', `${fy - 1}-12-31`)
         .not('vendor_id', 'is', null), { orderBy: 'id' });
       const agg = {};
-      for (const l of jel) { if (!l.vendor_id) continue; const net = Number(l.debit_cents || 0) - Number(l.credit_cents || 0); (agg[l.account_id] = agg[l.account_id] || {}); agg[l.account_id][l.vendor_id] = (agg[l.account_id][l.vendor_id] || 0) + net; }
+      const mon = {};   // distinct months each vendor was paid on each account (recurring = a missing contract is worth flagging)
+      for (const l of jel) { if (!l.vendor_id) continue; const net = Number(l.debit_cents || 0) - Number(l.credit_cents || 0); (agg[l.account_id] = agg[l.account_id] || {}); agg[l.account_id][l.vendor_id] = (agg[l.account_id][l.vendor_id] || 0) + net; const mk = `${l.account_id}|${l.vendor_id}`; (mon[mk] = mon[mk] || new Set()).add(String((l.journal_entries || {}).posting_date || '').slice(0, 7)); }
       const vids = [...new Set(Object.values(agg).flatMap((v) => Object.keys(v)))];
       const vmeta = {};
       for (let i = 0; i < vids.length; i += 300) { const { data } = await supabase.from('vendors').select('id, name').in('id', vids.slice(i, i + 300)); (data || []).forEach((v) => { vmeta[v.id] = v.name; }); }
       for (const [aid, vmap] of Object.entries(agg)) {
-        const top = Object.entries(vmap).filter(([, c]) => c > 0).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([vid, c]) => ({ vendor_id: vid, name: vmeta[vid] || 'vendor', cents: Math.round(c) }));
+        const top = Object.entries(vmap).filter(([, c]) => c > 0).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([vid, c]) => ({ vendor_id: vid, name: vmeta[vid] || 'vendor', cents: Math.round(c), months: (mon[`${aid}|${vid}`] || new Set()).size }));
         if (top.length) vendorByAcct[aid] = top;
       }
     } catch (_) { /* optional */ }
 
     const usd0 = (c) => { const t = `$${Math.round(Math.abs(Number(c) || 0) / 100).toLocaleString('en-US')}`; return Number(c) < 0 ? `(${t})` : t; };   // whole dollars, negatives in parentheses
-    const ESC = 0.04; // default renewal escalation for vendor-committed lines (vendor postings, not contracts)
-    const INFL = 0.03; // default inflation on trend lines
-    // CONTRACT source (Ed 2026-10-14): ONE engine. A contract prices a line only through the
-    // working forecast: the single VERIFIED executed contract bound to the account
-    // (vendor_contracts.forecast_account_id), costed from its structured terms by
-    // lib/contracts/contract_terms.js contractCostForYear (applyWorkingForecast sets
-    // a.wf_contract). No vendor-name matching, no assumed renewal escalation, no amenity
-    // side-feed, so a line never carries two different contract amounts. A contract on file
-    // that is not verified is shown with its would-be cost and never applied.
+    // ONE ENGINE (Ed 2026-10-14): every line's suggested amount is the working forecast's final
+    // amount for that account (lib/forecast/working_forecast.js, set by applyWorkingForecast):
+    // contracts from their structured terms (verified or not; unverified ones are flagged), the
+    // base year's actual + remaining approved budget, the recorded normalizations, the inflation
+    // POLICY (an unconfirmed default is flagged) and any management override with its reason.
+    // The planner adds no percentage of its own, matches no contract by vendor name, and never
+    // silently substitutes an increase for a missing contract.
+    const LB = require('../lib/accounting/budget_line_basis');
     const signedUrl = async (fp) => { if (!fp) return null; try { const { data: s } = await supabase.storage.from('documents').createSignedUrl(fp, 3600); return (s && s.signedUrl) || null; } catch (_) { return null; } };
     const contractByAccount = {};
     for (const a of acc.values()) if (a.wf_contract) contractByAccount[a.account_id] = { ...a.wf_contract, url: await signedUrl(a.wf_contract.file_path) };
-    // fy-1 is the CURRENT year and is still in progress, so budget off the
-    // annualized FORECAST (run-rate), never the partial current-year total (which
-    // would understate every line). Vendor commitments are annualized the same way.
-    const currentYearIsPartial = (fy - 1) === cy;
-    const partialAnnualize = currentYearIsPartial ? annualize : 1;
+    const SOURCE_OF = { contract: 'contract', assessment: 'assessment', transfer: 'transfer', board_project: 'capital_plan', discretionary: 'forecast', historical_forecast: 'forecast' };
     const rows = [...acc.values()].sort((a, b) => String(a.account_number).localeCompare(String(b.account_number))).map((a) => {
       const vendors = vendorByAcct[a.account_id] || [];
-      const committedAnnual = Math.round(vendors.reduce((s, v) => s + v.cents, 0) * partialAnnualize);
-      let source_type; let confidence; let proposed_cents; let built_from; let evidence = [];
+      let source_type; let confidence; let proposed_cents; let built_from; let evidence = []; let basis = null;
+      const flags = [];
       const contract = contractByAccount[a.account_id] || null;
       const priorB = priorBudget[a.account_id] || 0;
       const isNonCash = /unrealized|realized gain|market value|investment gain|gain\s*\/\s*loss|gains?\s+(?:and|&|or)\s+loss|mark[- ]to[- ]market/i.test(a.account_name || '');
@@ -1816,92 +1802,39 @@ router.get('/budgets/living-lines', async (req, res) => {
         // list), never from prior-year spending, a run-rate or a forecast.
         source_type = 'capital_plan'; confidence = 'high'; proposed_cents = 0;
         built_from = `Reserve expenditures come only from planned capital projects. ${fy - 1} spending${a.forecast ? ` ($${(a.forecast / 100).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} projected)` : ''} is history for reference and is not carried into ${fy}.`;
+        basis = { amount_basis: 'board_project', amount_calc: 'Planned capital projects for this account (Reserve Budget).', needs_review: false, review_note: null };
       } else if (isNonCash) {
-        // Non-cash market valuations (unrealized gains/losses) aren't budgeted —
-        // they can't be assessed for or spent, and annualizing them is nonsense.
+        // Non-cash market valuations (unrealized gains/losses) aren't budgeted:
+        // they can't be assessed for or spent.
         source_type = 'excluded'; confidence = 'high'; proposed_cents = 0;
-        built_from = 'Non-cash market valuation — not budgeted (can\'t be assessed for or spent).';
-      } else if (contract && contract.status === 'applied') {
-        // The working forecast's amount for this line: the verified contract's months at
-        // the contract price (any months it does not cover from the base year).
-        source_type = 'contract'; confidence = contract.issues.length ? 'medium' : 'high';
-        proposed_cents = contract.proposed_cents;
-        built_from = `Contract (verified) — ${contract.vendor || 'vendor'}: ${contract.steps.join('; ')}${contract.covered_months != null && contract.covered_months < 12 ? `; the other ${12 - contract.covered_months} month(s) from the ${fy - 1} base` : ''}.${contract.issues.length ? ` ${contract.issues.join(' ')}` : ''}`;
-        if (contract.url) evidence = [{ label: `${contract.vendor || 'Vendor'} contract`, url: contract.url }];
+        built_from = 'Non-cash market valuation: not budgeted (it can\'t be assessed for or spent).';
+      } else if (a.wf_final != null) {
+        basis = a.wf_basis;
+        proposed_cents = a.wf_final;
+        source_type = SOURCE_OF[basis.amount_basis] || 'forecast';
+        confidence = a.wf_confidence || 'unknown';
+        built_from = LB.basisText(basis, { withReview: false }) || `${fy} working forecast`;
+        if (contract && contract.url) evidence = [{ label: `${contract.vendor || 'Vendor'} contract${contract.unverified ? ' (not verified)' : ''}`, url: contract.url }];
+        if (basis.needs_review) flags.push({ type: 'needs_review', severity: contract && contract.unverified ? 'high' : 'medium', msg: basis.review_note || 'Needs review.' });
       } else if (priorB !== 0) {
-        // ANCHOR to the board-adopted prior budget — the complete, reliable
-        // baseline. The current-year GL is a partial (often mid-cutover) window,
-        // so its annualized run-rate is not trustworthy as the base. Assessment
-        // revenue is a board decision, never a forecast.
-        const isReserveFund = String(a.fund_code || '').toUpperCase() === 'RES' || /\breserve\b/i.test(a.account_name || '');
-        if (a.account_type === 'revenue') {
-          // Reserve-fund contributions are sometimes booked as a NEGATIVE
-          // operating transfer (contra-revenue). In the budget they read as
-          // positive money INTO reserves.
-          source_type = 'prior_budget'; confidence = 'high';
-          proposed_cents = isReserveFund ? Math.abs(priorB) : priorB;
-          built_from = isReserveFund
-            ? `FY${fy - 1} adopted reserve contribution $${Math.round(Math.abs(priorB) / 100).toLocaleString()} — held flat; change it here to fund more or less into reserves.`
-            : /assessment|dues|maintenance fee/i.test(a.account_name || '')
-              ? `FY${fy - 1} adopted budget $${Math.round(priorB / 100).toLocaleString()} — assessment income is set by the board, held flat. Change it here to propose a new rate.`
-              : `FY${fy - 1} adopted budget $${Math.round(priorB / 100).toLocaleString()}, held flat (revenue is not inflated by the model).`;
-        } else {
-          source_type = 'prior_budget'; confidence = 'medium'; proposed_cents = Math.round(priorB * (1 + INFL));
-          built_from = `FY${fy - 1} adopted budget $${Math.round(priorB / 100).toLocaleString()} + ${Math.round(INFL * 100)}% inflation${a.forecast != null ? ` · ${fy - 1} forecast ${usd0(a.forecast)}` : ''}.`;
-        }
-      } else if (a.account_type === 'expense' && committedAnnual > 0 && committedAnnual >= a.forecast * 0.6) {
-        source_type = 'vendor_commitment'; confidence = 'high';
-        proposed_cents = Math.round(committedAnnual * (1 + ESC));
-        built_from = `${vendors[0].name}${vendors.length > 1 ? ` + ${vendors.length - 1} more` : ''} — ${usd0(committedAnnual)}/yr${partialAnnualize !== 1 ? ` (${fy - 1} vendor postings over ${coverageMonths} month(s), scaled to 12)` : ''} + ${Math.round(ESC * 100)}% renewal`;
-      } else if (a.forecast > 0 || a.fy1 > 0) {
-        source_type = 'trend'; confidence = (a.fy2 > 0) ? 'medium' : 'low';
-        const base = a.forecast || a.fy1;
-        proposed_cents = Math.round(base * (1 + INFL));
-        built_from = `${a.forecast ? `${fy - 1} forecast ${usd0(a.forecast)} (no ${fy - 1} budget line, so actual only, not projected for the remaining months)` : `${fy - 1} actual ${usd0(a.fy1 || 0)}`} + ${Math.round(INFL * 100)}% inflation${a.fy2 > 0 ? ` (${fy - 2} actual ${usd0(a.fy2)})` : ''}`;
+        // No forecast line (or no forecast yet): the adopted amount, unchanged and flagged. No percentage is assumed.
+        source_type = 'prior_budget'; confidence = 'low'; proposed_cents = priorB;
+        built_from = `FY${fy - 1} adopted budget ${usd0(priorB)}, carried unchanged: no ${fy} working-forecast line for this account. No percentage increase is assumed.`;
+        basis = { amount_basis: 'historical_forecast', amount_calc: built_from, needs_review: true, review_note: forecastBasis.basis === 'working_forecast' ? 'Not in the working forecast.' : forecastBasis.note };
+        flags.push({ type: 'needs_review', severity: 'medium', msg: `No working-forecast amount for this account; the ${fy - 1} adopted amount is carried unchanged. Confirm or enter the ${fy} amount.` });
       } else {
         source_type = 'estimate'; confidence = 'low'; proposed_cents = 0;
-        built_from = 'No prior budget or spending history — enter a number.';
+        built_from = 'No working-forecast line, prior budget or contract: enter a number.';
       }
-
-      // Reason about WHY the run-rate and the approved budget disagree — every
-      // other tool blindly trusts the annualized run-rate. Two failure modes:
-      // (1) a one-time cost this year (a repair, a legal matter) gets annualized
-      // into the recurring base; (2) a partial-year run-rate underfunds a fixed
-      // contract that's below its approved budget. Catch both, and for a clear
-      // one-time spike RESET the proposal to the recurring level instead of
-      // baking the spike in — the right default, flagged so Ed can override.
-      const flags = [];
-      if (a.account_type === 'expense') {
-        const priorB = priorBudget[a.account_id] || 0;
-        const prevYr = a.fy2; // full prior-year actual
-        // One-time spike: only fire on MATERIAL spikes ($20k+). Migrated
-        // communities have thin prior-year history, so "no prior data" alone is
-        // not one-time — a small recurring line (utilities, supplies) that just
-        // lacks a prior budget must NOT be zeroed. Large + far-above-prior is the
-        // real capital-event signal (monument replacement, wall/fence work).
-        const ONE_TIME_FLOOR = 2000000; // $20k
-        // prevYr null (not available in trustEd) is no evidence either way: never read as $0.
-        const isSpike = a.forecast > ONE_TIME_FLOOR && a.forecast > priorB * 3 && prevYr != null && prevYr < a.forecast * 0.25 && priorB < a.forecast * 0.4;
-        if (isSpike && source_type === 'trend') {
-          const recurring = Math.max(priorB, prevYr);
-          flags.push({ type: 'one_time', severity: 'high', msg: `Spending here ran ~$${Math.round(a.forecast / 100).toLocaleString()} this year with little prior history — likely a one-time capital cost, not recurring. Reset to the recurring level ($${Math.round(recurring / 100).toLocaleString()}); raise it if it truly repeats.` });
-          proposed_cents = Math.round(recurring * (1 + INFL));
-          source_type = 'one_time_adjusted'; confidence = 'low';
-          built_from = `one-time spike removed — recurring base $${Math.round(recurring / 100).toLocaleString()} + ${Math.round(INFL * 100)}%`;
-        }
-        // Below the approved budget — only flag when it's MATERIAL (a $5k+ line
-        // with a $3k+ gap), so trivial lines don't create review noise.
-        if (priorB >= 500000 && (priorB - proposed_cents) >= 300000 && proposed_cents < priorB * 0.7) {
-          flags.push({ type: 'below_approved', severity: 'medium', msg: `Proposed is ${Math.round((1 - proposed_cents / priorB) * 100)}% below this year's approved budget ($${Math.round(priorB / 100).toLocaleString()}). If this is a fixed contract, the partial-year run-rate is understating it — confirm before adopting.` });
-        }
-        if (source_type === 'vendor_commitment' && a.forecast > 0 && proposed_cents > a.forecast * 2) {
-          flags.push({ type: 'vendor_above_runrate', severity: 'medium', msg: `Vendor commitments here ($${Math.round(committedAnnual / 100).toLocaleString()}) run well above this account's own spend rate ($${Math.round(a.forecast / 100).toLocaleString()}) — verify the vendor postings landed on the right account.` });
-        }
+      // A vendor paid on this line month after month with no contract bound: say so, never assume one.
+      const recurring = vendors.filter((v) => v.months >= 3);
+      if (a.account_type === 'expense' && !isReserveExpense && !contract && recurring.length) {
+        flags.push({ type: 'contract_missing', severity: 'medium', msg: `No contract is bound to this line, but ${recurring.map((v) => `${v.name} (${usd0(v.cents)} over ${v.months} months)`).join(', ')} ${recurring.length === 1 ? 'was' : 'were'} paid here in ${fy - 1}. The amount is a forecast from history, not a contract. If there is a contract, attach and verify it on the working forecast and bind it to this line.` });
       }
-      // A contract on file that does not price the line (not verified, or not usable) is shown, never applied.
+      // A bound contract that does not price the line (two from one vendor, or no term covering the year): shown, never applied.
       if (contract && contract.status !== 'applied' && !isReserveExpense) {
         flags.push({ type: 'contract_unverified', severity: 'medium', msg: `${contract.note || `${contract.vendor || 'A contract'} is on file but does not price this line.`}${contract.contract_cost_cents != null ? ` It would be ${usd0(contract.contract_cost_cents)}.` : ''}` });
-        if (contract.url) evidence = [...evidence, { label: `${contract.vendor || 'Vendor'} contract (not verified)`, url: contract.url }];
+        if (contract.url) evidence = [...evidence, { label: `${contract.vendor || 'Vendor'} contract`, url: contract.url }];
       }
 
       return {
@@ -1909,8 +1842,8 @@ router.get('/budgets/living-lines', async (req, res) => {
         fund_id: a.fund_id, fund_code: a.fund_code,
         prior_budget_cents: priorBudget[a.account_id] || 0,
         forecast_cents: a.forecast, forecast_detail: a.forecast_detail || null, fund_type: a.fund_type || null, actual_ytd_cents: a.ytd_actual, forecast_ytd_cents: a.forecast_ytd ?? null, fy1_actual_cents: a.fy1, fy2_actual_cents: a.fy2,
-        proposed_cents, source_type, confidence, built_from, vendors, evidence, flags,
-        contract: contract ? { status: contract.status, vendor: contract.vendor, vendor_contract_id: contract.vendor_contract_id, source_document_id: contract.source_document_id, proposed_cents: contract.proposed_cents, contract_cost_cents: contract.contract_cost_cents } : null,
+        proposed_cents, source_type, confidence, built_from, vendors, evidence, flags, suggested_basis: basis,
+        contract: contract ? { status: contract.status, unverified: !!contract.unverified, vendor: contract.vendor, vendor_contract_id: contract.vendor_contract_id, source_document_id: contract.source_document_id, proposed_cents: contract.proposed_cents, contract_cost_cents: contract.contract_cost_cents } : null,
       };
     });
 

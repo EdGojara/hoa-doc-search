@@ -49,15 +49,22 @@ t('contract line: basis contract, its contract and document, the arithmetic, at 
   assert.deepStrictEqual([c.status, c.proposed_cents], ['applied', 6240000], 'the screen reads the same amount');
 });
 
-t('unverified contract: never applied; the line needs review and says so', () => {
+t('unverified contract (Ed 2026-10-14): priced from its terms, basis Contract with the contract, and the line needs review', () => {
   const l = buildLine(line({ contracts: [{ ...UPS, execution_status: 'likely_executed' }] }), ctx);
+  assert.strictEqual(l.recommendation_cents, 6240000, 'priced from its terms, never a percentage');
   const b = LB.basisFromForecastLine(l, ctx);
-  assert.notStrictEqual(b.amount_basis, 'contract');
-  assert.strictEqual(b.vendor_contract_id, null);
-  assert.strictEqual(b.needs_review, true);
-  assert.ok(/not verified/.test(b.review_note), b.review_note);
+  assert.deepStrictEqual([b.amount_basis, b.vendor_contract_id, b.needs_review], ['contract', 'vc-ups', true]);
+  assert.ok(/not verified as executed/.test(b.review_note), b.review_note);
   const c = LB.contractFromForecastLine(l);
-  assert.deepStrictEqual([c.status, c.proposed_cents, c.contract_cost_cents], ['needs_verification', null, 6240000]);
+  assert.deepStrictEqual([c.status, c.unverified, c.proposed_cents], ['applied', true, 6240000]);
+});
+
+t('an inflation percentage nobody confirmed is flagged as an unverified assumption', () => {
+  const b = LB.basisFromForecastLine(buildLine(line({}), ctx), ctx);
+  assert.strictEqual(b.needs_review, true);
+  assert.ok((b.review_note || '').includes('unconfirmed default assumption (3%'), b.review_note);
+  const set = LB.basisFromForecastLine(buildLine(line({}), { ...ctx, policy: { ...ctx.policy, inflation_confidence: 'medium', inflation_source: 'CPI-U Houston, set by ed' } }), ctx);
+  assert.ok(!/unconfirmed default/.test(set.review_note || ''), set.review_note);
 });
 
 t('an override whose reason is an estimate or a pending notice needs review; a settled one does not', () => {
@@ -217,23 +224,37 @@ t('living-lines: the verified contract line is priced at the working forecast\'s
   assert.strictEqual(mgt.proposed_cents, wl.recommendation_cents, 'one contract engine: screen = forecast');
 });
 
-t('living-lines: a contract NOT bound to the line never prices it by vendor name', async () => {
+t('living-lines: a contract NOT bound to the line never prices it by vendor name; the recurring vendor is flagged as a missing contract', async () => {
   world();
   const { body } = await living();
   const land = rowOf(body, 5200);
   assert.notStrictEqual(land.source_type, 'contract', land.built_from);
   assert.notStrictEqual(land.proposed_cents, Math.round(100000 * 100 * 1.04), 'the old name match + 4% is gone');
   assert.strictEqual(land.contract, null);
+  const f = land.flags.find((x) => x.type === 'contract_missing');
+  assert.ok(f && f.msg.includes('Earthcare Landscaping ($90,000 over 12 months)'), JSON.stringify(land.flags));
 });
 
-t('living-lines: a bound but unverified contract is flagged with its would-be cost and not applied', async () => {
+t('living-lines: ONE engine: every line suggestion is the working forecast final amount (no planner percentage)', async () => {
+  world();
+  const { body } = await living();
+  const wf = await call('GET', `/api/working-forecast/${CID}?year=${FY}&as_of=${BY}-12-31`);
+  for (const n of ['4000', '5810', '5200', '5300']) {
+    const r = rowOf(body, n); const w = wf.body.lines.find((l) => l.account_number === n);
+    assert.strictEqual(r.proposed_cents, w.final_cents, `${n}: planner ${r.proposed_cents} vs forecast ${w.final_cents}`);
+  }
+  const land = rowOf(body, 5200);
+  assert.ok(land.flags.some((f) => f.type === 'needs_review' && /unconfirmed default assumption/.test(f.msg)), 'the default inflation is flagged, never silent');
+});
+
+t('living-lines: a bound but unverified contract is priced from its terms and flagged (never dropped to a percentage)', async () => {
   world();
   const { body } = await living();
   const pool = rowOf(body, 5300);
-  assert.notStrictEqual(pool.source_type, 'contract');
-  const f = pool.flags.find((x) => x.type === 'contract_unverified');
-  assert.ok(f && /not verified/.test(f.msg) && /\$60,000/.test(f.msg), JSON.stringify(pool.flags));
-  assert.strictEqual(pool.contract.status, 'needs_verification');
+  assert.deepStrictEqual([pool.source_type, pool.proposed_cents, pool.contract.unverified], ['contract', 6000000, true]);
+  const f = pool.flags.find((x) => x.type === 'needs_review');
+  assert.ok(f && f.severity === 'high' && /Aegis Aquatics is priced from its terms but is likely executed, not verified/.test(f.msg), JSON.stringify(pool.flags));
+  assert.ok(pool.evidence.some((e) => /not verified/.test(e.label) && e.url.includes('pool.pdf')));
 });
 
 t('draft-budget: creates the draft with each line\'s basis; the contract line carries its contract and document', async () => {
@@ -247,7 +268,7 @@ t('draft-budget: creates the draft with each line\'s basis; the contract line ca
   assert.strictEqual(mgt.monthly_amounts_cents.reduce((a, b) => a + b, 0), mgt.annual_amount_cents);
   assert.strictEqual(lines.find((l) => l.account_id === 'a4000').amount_basis, 'assessment');
   const pool = lines.find((l) => l.account_id === 'a5300');
-  assert.deepStrictEqual([pool.amount_basis, pool.vendor_contract_id, pool.needs_review], ['historical_forecast', null, true]);
+  assert.deepStrictEqual([pool.amount_basis, pool.vendor_contract_id, pool.needs_review, pool.annual_amount_cents], ['contract', 'vc-pool', true, 6000000]);
   // The planner then shows the recorded basis with the saved amount.
   const { body } = await living();
   assert.deepStrictEqual([rowOf(body, 5810).proposed_source, rowOf(body, 5810).saved_basis.amount_basis], ['saved_draft', 'contract']);
