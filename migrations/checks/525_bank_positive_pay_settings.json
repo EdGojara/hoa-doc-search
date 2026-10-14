@@ -1,0 +1,25 @@
+{
+  "migration": "525_bank_positive_pay_settings.sql",
+  "summary": "Per-bank Positive Pay settings (exception cutoff, notice sender domain, expected notice recipients) on banks.positive_pay_settings; NewFirst: 10:00 cutoff and the four recipients from go-live. Configuration only.",
+  "requires": ["524_unidentified_receipts_account.sql"],
+  "preflight": [
+    { "name": "NewFirst National Bank is in the bank registry", "sql": "SELECT count(*)::int FROM banks WHERE id = '16e07b6a-8902-4d1a-980e-db78938b98b3' AND name = 'NewFirst National Bank'", "expect": 1 },
+    { "name": "the column does not exist yet", "sql": "SELECT count(*)::int FROM information_schema.columns WHERE table_name = 'banks' AND column_name = 'positive_pay_settings'", "expect": 0 }
+  ],
+  "expected_changes": [
+    "banks: column positive_pay_settings (jsonb) added.",
+    "banks: NewFirst National Bank's Positive Pay settings set (10:00 cutoff, newfirst.com, four expected recipients).",
+    "No other row changes."
+  ],
+  "objects": { "added": ["column:banks.positive_pay_settings"], "changed": [], "removed": [] },
+  "row_changes": { "banks": 0, "bank_accounts": 0, "journal_entries": 0 },
+  "protected": [
+    { "table": "bank_accounts", "order_by": "id" },
+    { "table": "journal_entries", "order_by": "id" }
+  ],
+  "verify": [
+    { "name": "NewFirst cutoff is 10:00", "sql": "SELECT count(*)::int FROM banks WHERE id = '16e07b6a-8902-4d1a-980e-db78938b98b3' AND positive_pay_settings->>'exception_cutoff' = '10:00'", "expect": 1 },
+    { "name": "four expected recipients, Graywood not among them", "sql": "SELECT count(*)::int FROM banks, jsonb_array_elements_text(positive_pay_settings->'expected_recipients') r WHERE id = '16e07b6a-8902-4d1a-980e-db78938b98b3' AND r NOT ILIKE '%graywood%'", "expect": 4 },
+    { "name": "only NewFirst is configured", "sql": "SELECT count(*)::int FROM banks WHERE positive_pay_settings IS NOT NULL", "expect": 1 }
+  ]
+}

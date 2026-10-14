@@ -933,6 +933,20 @@ router.post('/:id/draft-reply', express.json(), async (req, res) => {
     if (error) throw error;
     if (!m) return res.status(404).json({ error: 'not_found' });
 
+    // A bank's Positive Pay notice is never answered by email: it is Kat's accounting
+    // work (match every item to the issued-check register; exceptions to Ed). Even an
+    // explicit "Draft reply" returns her review, not a letter telling the bank that a
+    // person will release the items. (Ed 2026-10-14.)
+    try {
+      const PP = require('../lib/banking/positive_pay_notice');
+      if (PP.isPositivePayNotice({ ...m, recipients: undefined })) {
+        const { data: full } = await supabase.from('email_messages').select('recipients, received_at, extracted').eq('id', req.params.id).maybeSingle();
+        const review = await PP.reviewNotice(supabase, { ...m, recipients: (full && full.recipients) || [], received_at: (full && full.received_at) || m.received_at });
+        await supabase.from('email_messages').update({ persona: 'kat', extracted: { ...((full && full.extracted) || {}), positive_pay: review } }).eq('id', req.params.id);
+        return res.json({ draftable: false, positive_pay: review, reason: `Positive Pay notice: this is Kat's accounting work, not an email to answer. ${review.summary}` });
+      }
+    } catch (e) { console.error('[email_triage] positive pay review failed:', e.message); return res.json({ draftable: false, reason: "Positive Pay notice: no reply is drafted. Kat's check-by-check review could not run; see the server log." }); }
+
     // Other UNHANDLED inbound emails from the same homeowner in a short window —
     // "forgot something / sent more info." Reply once, cover them all.
     const siblings = await findSiblingEmails({ id: req.params.id, ...m });
@@ -1158,6 +1172,25 @@ router.post('/:id/draft-reply', express.json(), async (req, res) => {
     console.error('[email_triage] draft-reply failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
   }
+});
+
+// POST /:id/positive-pay-decided — a person records that the notice's items were decided in
+// the bank's portal (pay / return), so Kat's deadline watch stops. A record of what a person
+// did at the bank; nothing here acts on a bank. Staff only.
+router.post('/:id/positive-pay-decided', express.json(), async (req, res) => {
+  try {
+    const { requireStaff } = require('./_require_admin');
+    const u = await requireStaff(req, res); if (!u) return;
+    const note = String((req.body && req.body.note) || '').trim().slice(0, 500);
+    if (!note) return res.status(400).json({ error: 'note_required', detail: 'Say what was decided in the bank portal (e.g. "Paid all three").' });
+    const { data: m, error } = await supabase.from('email_messages').select('extracted').eq('id', req.params.id).maybeSingle();
+    if (error) throw error;
+    if (!m || !m.extracted || !m.extracted.positive_pay) return res.status(404).json({ error: 'not_a_positive_pay_notice' });
+    const pp = { ...m.extracted.positive_pay, decided_at: new Date().toISOString(), decided_by: u.email || u.full_name || 'staff', decision_note: note };
+    const { error: ue } = await supabase.from('email_messages').update({ triage_status: 'handled', extracted: { ...m.extracted, positive_pay: pp } }).eq('id', req.params.id);
+    if (ue) throw ue;
+    res.json({ ok: true, positive_pay: pp });
+  } catch (err) { console.error('[email_triage] positive-pay-decided failed:', err.message); res.status(500).json({ error: safeErrorMessage(err) }); }
 });
 
 // POST /:id/forward-internal — hand this item to a teammate to verify / weigh
