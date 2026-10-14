@@ -45,10 +45,11 @@ t('does not re-suggest when the body email equals the sender', () => {
   assert.strictEqual(s.email, 'jane@gmail.com');
 });
 
-t('handles E-mail / Reply-to / From labels and trailing punctuation', () => {
+t('handles E-mail / Reply-to labels and trailing punctuation; From: is a header line, not a form field', () => {
   assert.strictEqual(extractFormContact('E-mail: a@b.com.').email, 'a@b.com');
   assert.strictEqual(extractFormContact('Reply-To: c@d.org').email, 'c@d.org');
-  assert.strictEqual(extractFormContact('From: e@f.net\n').email, 'e@f.net');
+  // "From:" is an email header line (it appears in every quoted reply), never a form field (2026-10-14).
+  assert.strictEqual(extractFormContact('From: e@f.net\n').email, null);
 });
 
 t('ignores an unlabeled email sitting in prose', () => {
@@ -58,7 +59,7 @@ t('ignores an unlabeled email sitting in prose', () => {
 });
 
 t('empty / null body is safe', () => {
-  assert.deepStrictEqual(extractFormContact(''), { name: null, email: null, phone: null });
+  assert.deepStrictEqual(extractFormContact(''), { name: null, email: null, phone: null, fields: 0 });
   const s = suggestReplyTo({ senderEmail: 'x@y.com', bodyText: null });
   assert.strictEqual(s.email, 'x@y.com');
 });

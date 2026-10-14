@@ -19,7 +19,19 @@ const multer = require('multer');
 const { createClient } = require('@supabase/supabase-js');
 const { safeErrorMessage } = require('./_safe_error');
 const { draftReply } = require('../lib/email/draft_reply');
-const { suggestReplyTo } = require('../lib/email/reply_recipient');
+const { suggestReplyTo, replyAllCc, isValidEmail, normEmail } = require('../lib/email/reply_recipient');
+// The message's real To / Cc / Reply-To from Graph (ingest keeps only part of it).
+async function messageHeaders(m) {
+  if (!m || !m.graph_id || !m.mailbox) return { to: [], cc: [], replyTo: [] };
+  try { return await require('../lib/email/graph_attachments').fetchMessageRecipients(m.mailbox, m.graph_id); } catch (_) { return { to: [], cc: [], replyTo: [] }; }
+}
+// Addresses under an open vigilance case (an unexpected recipient): never copied on a reply.
+async function quarantinedAddresses() {
+  try {
+    const { data } = await supabase.from('objectives').select('subject_refs').like('subject_key', 'vigilance:recipient_change:%').not('status', 'in', '(resolved,closed)').limit(200);
+    return (data || []).map((o) => o.subject_refs && o.subject_refs.data && o.subject_refs.data.address).filter(Boolean);
+  } catch (_) { return []; }
+}
 const graphSend = require('../lib/email/graph_send');
 const graphIngest = require('../lib/email/graph_ingest');
 const { requireAdmin, getAuthedUser, OWNER_EMAIL } = require('./_require_admin');
@@ -709,10 +721,8 @@ router.get('/:id/participants', async (req, res) => {
     const sender = m.sender_email || null;
 
     // Real To+Cc from Graph (ingest kept only the mailbox).
-    let to = [], cc = [];
-    if (m.graph_id && m.mailbox) {
-      try { const { fetchMessageRecipients } = require('../lib/email/graph_attachments'); const rec = await fetchMessageRecipients(m.mailbox, m.graph_id); to = rec.to || []; cc = rec.cc || []; } catch (_) {}
-    }
+    const hdr = await messageHeaders(m);
+    let to = hdr.to || [], cc = hdr.cc || [];
     // Plus everyone who's been on the conversation (supplement / fallback).
     const pool = [...to, ...cc, ...(Array.isArray(m.recipients) ? m.recipients : [])];
     if (m.conversation_id) {
@@ -722,14 +732,13 @@ router.get('/:id/participants', async (req, res) => {
       } catch (_) {}
     }
 
-    const seen = new Set();
-    const others = [];
-    for (const e of pool) {
-      const n = norm(e);
-      if (!n || n === norm(sender) || SYSTEM_MAILBOXES.has(n) || seen.has(n)) continue;
-      seen.add(n); others.push(String(e).trim());
-    }
-    res.json({ reply_to: sender, reply_all_cc: others });
+    // Reply goes where the shared resolver says (Reply-To / sender / real form submitter); Reply All
+    // copies everyone else on the message, never ourselves, our AI mailboxes, or an address under
+    // an open vigilance case. (Ed 2026-10-14.)
+    const primary = suggestReplyTo({ senderEmail: sender, bodyText: m.body_full || m.body_preview, replyTo: hdr.replyTo, mailbox: m.mailbox });
+    const blocked = await quarantinedAddresses();
+    const others = replyAllCc({ primary: primary.email, senderEmail: primary.email === norm(sender) ? null : sender, to, cc: pool.slice(to.length), mailbox: m.mailbox, exclude: [...SYSTEM_MAILBOXES, ...blocked] });
+    res.json({ reply_to: primary.email, reply_to_source: primary.source, warnings: primary.warnings, reply_all_cc: others, excluded_unexpected: blocked.filter((b) => pool.map(norm).includes(norm(b))) });
   } catch (err) {
     console.error('[email_triage] participants failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
@@ -962,13 +971,13 @@ router.post('/:id/draft-reply', express.json(), async (req, res) => {
     // with the real person's email in the BODY. Suggest THAT so the reply reaches
     // the homeowner, not the website. The UI shows it as an editable To.
     // (Ed 2026-07-25 — the Bich Pham thread.)
-    const suggested = suggestReplyTo({ senderEmail: m.sender_email, senderName: m.sender_name, bodyText: m.body_full || m.body_preview });
+    const suggested = suggestReplyTo({ senderEmail: m.sender_email, senderName: m.sender_name, bodyText: m.body_full || m.body_preview, replyTo: (await messageHeaders(m)).replyTo, mailbox: m.mailbox });
     // Verify the address on send: pull the resolved owner's emails ON FILE so the
     // UI can confirm we're sending to a known-good address (and flag a stray one).
     // (Ed 2026-07-27 — Carlos has two addresses; don't send to a wrong/stale one.)
     let onFileEmails = [];
     try { onFileEmails = await ownerEmailsOnFile({ contactId: m.resolved_contact_id, propertyId: m.resolved_property_id }); } catch (_) {}
-    const recipientOut = { suggested_recipient: suggested.email, recipient_source: suggested.source, sender_email: m.sender_email, on_file_emails: onFileEmails };
+    const recipientOut = { suggested_recipient: suggested.email, recipient_source: suggested.source, recipient_warnings: suggested.warnings, sender_email: m.sender_email, on_file_emails: onFileEmails };
 
     // Persona routing: a vendor / AP conversation (came to emma@, or resolves to
     // a vendor, or is vendor-financial) is Emma's — she grounds the reply in the
@@ -1437,7 +1446,12 @@ router.post('/:id/send', express.json(), async (req, res) => {
     let body = String(_rawBody == null ? '' : _rawBody).trim();
     if (body) { try { const { proofreadEmailBody } = require('../lib/email/proofread'); body = (await proofreadEmailBody(body)).text; } catch (_) {} }
     // Optional Cc — copy a teammate, the board, another owner on the reply.
-    const ccList = String((req.body || {}).cc || '').split(/[,;]/).map((x) => x.trim()).filter((x) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(x)).join(', ');
+    // Cc exactly as the person typed it: an entry that is not a valid address stops the send
+    // (silently dropping it would send to a different set than the one approved).
+    const ccRaw = String((req.body || {}).cc || '').split(/[,;]/).map((x) => x.trim()).filter(Boolean);
+    const ccBad = ccRaw.filter((x) => !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(x));
+    if (ccBad.length) return res.status(400).json({ error: 'invalid_cc', detail: `Not a valid email address on Cc: ${ccBad.join(', ')}` });
+    const ccList = ccRaw.join(', ');
     if (!body || !String(body).trim()) return res.status(400).json({ error: 'body_required' });
     const { data: m, error } = await supabase.from('email_messages')
       .select('persona, sender_email, sender_name, body_preview, body_full, subject, classification, community_id, resolved_contact_id, resolved_property_id, resolved_vendor_id, mailbox, graph_id, internet_message_id, conversation_id, received_at, extracted, community:community_id(name)')
@@ -1480,8 +1494,17 @@ router.post('/:id/send', express.json(), async (req, res) => {
     let bankInquiry = false;
     try { bankInquiry = require('../lib/banking/positive_pay_notice').isPositivePayNotice(m); } catch (_) {}
     const recipient = (to && String(to).trim())
-      || (bankInquiry ? (m.extracted && m.extracted.draft && m.extracted.draft.to) || null : suggestReplyTo({ senderEmail: m.sender_email, senderName: m.sender_name, bodyText: m.body_full || m.body_preview }).email);
+      || (bankInquiry ? (m.extracted && m.extracted.draft && m.extracted.draft.to) || null : suggestReplyTo({ senderEmail: m.sender_email, senderName: m.sender_name, bodyText: m.body_full || m.body_preview, replyTo: (await messageHeaders(m)).replyTo, mailbox: m.mailbox }).email);
     if (!recipient) return res.status(400).json({ error: 'no_recipient' });
+    // The To the person approved is the To that is validated and used, exactly (threaded or not).
+    if (!isValidEmail(recipient)) return res.status(400).json({ error: 'invalid_recipient', detail: `Not a valid email address: ${recipient}` });
+    {
+      const sendingFrom = graphSend.personaMailbox(req.body.persona || m.persona || personaFor(m));
+      if (normEmail(recipient) === normEmail(sendingFrom)) return res.status(400).json({ error: 'recipient_is_sender', detail: `The reply is addressed to ${recipient}, the mailbox it would be sent from. Choose the person you are replying to.` });
+      const blocked = (await quarantinedAddresses()).map(normEmail);
+      const hit = [recipient, ...(ccList ? ccList.split(',') : [])].map(normEmail).filter((a) => blocked.includes(a));
+      if (hit.length) return res.status(409).json({ error: 'unexpected_recipient', detail: `Not sent: ${hit.join(', ')} is under an open investigation as an unexpected recipient.` });
+    }
     if (bankInquiry) {
       // Kat's correspondence about a Positive Pay notice goes to a verified bank contact: never
       // the automated notice address or an address on the notice we do not recognize.
@@ -1698,12 +1721,14 @@ router.post('/:id/send', express.json(), async (req, res) => {
       </div>`;
     } catch (_) { /* quoting best-effort — never block a send */ }
 
+    let verifiedRecipients = null;
     if (threaded && graphSend.sameMailbox(fromMailbox, replyFrom)) {
       // Real threaded reply — Graph carries the actual Outlook quoted history and
       // sets the In-Reply-To/References headers, so the recipient sees ONE growing
       // thread instead of a fresh email each time (Melody Hess's ask, 2026-09-09).
       // Graph adds the quote, so we send just our body (no reconstructed block).
-      await graphSend.sendReplyAs({ from: fromMailbox, sourceMailbox: m.mailbox, sourceGraphId: m.graph_id, cc: ccList || undefined, html, attachments });
+      const sent = await graphSend.sendReplyAs({ from: fromMailbox, sourceMailbox: m.mailbox, sourceGraphId: m.graph_id, to: recipient, cc: ccList || undefined, html, attachments });
+      if (sent && sent.recipients) verifiedRecipients = [...sent.recipients.to, ...sent.recipients.cc];
     } else {
       // No source message id, OR the message lives in another mailbox (shared inbox
       // answered by a persona): a fresh message from the persona's own mailbox.
@@ -1723,7 +1748,7 @@ router.post('/:id/send', express.json(), async (req, res) => {
     }
     const { data: outRow } = await supabase.from('email_messages').insert({
       mailbox: fromMailbox, direction: 'outbound', sender_email: fromMailbox,
-      sender_name: senderLabel, recipients: [recipient, ...(ccList ? ccList.split(',').map((s) => s.trim()).filter(Boolean) : [])],
+      sender_name: senderLabel, recipients: verifiedRecipients || [recipient, ...(ccList ? ccList.split(',').map((s) => s.trim()).filter(Boolean) : [])],
       subject: subj, body_preview: String(body).trim().slice(0, 2000),
       // Store the FULL sent text + thread it with the original + timestamp it, so
       // Claire's sent replies are visible and complete in trustEd — the entire
