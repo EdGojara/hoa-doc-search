@@ -1,0 +1,28 @@
+{
+  "migration": "524_unidentified_receipts_account.sql",
+  "summary": "Unidentified homeowner receipts get their own account: 2420 Unidentified Receipts (Suspense), a current liability, in every operational community that has a 2400, and the account role 'unidentified_receipts' that Kat's reconciliation reads. Configuration only; no entry, balance or homeowner ledger changes.",
+  "requires": ["514_homeowner_check_receipts.sql"],
+  "preflight": [
+    { "name": "2420 is free in every community", "sql": "SELECT count(*)::int FROM chart_of_accounts WHERE account_number = '2420'", "expect": 0 },
+    { "name": "no unidentified_receipts role exists yet", "sql": "SELECT count(*)::int FROM community_account_roles WHERE role = 'unidentified_receipts'", "expect": 0 },
+    { "name": "operational communities with a postable 2400 (each gets a 2420)", "sql": "SELECT count(*)::int FROM chart_of_accounts p JOIN communities c ON c.id = p.community_id WHERE p.account_number = '2400' AND p.is_active AND NOT p.is_summary AND coalesce(c.management_status, 'active') IN ('active','onboarding','terminating') AND (c.management_end_date IS NULL OR c.management_end_date >= current_date)", "expect": 5 }
+  ],
+  "expected_changes": [
+    "community_account_roles: role 'unidentified_receipts' allowed; the guard accepts a credit-normal liability for that role only.",
+    "chart_of_accounts: 2420 Unidentified Receipts (Suspense) added in 5 operational communities (same fund and subtype as their 2400).",
+    "community_account_roles: 5 rows pointing unidentified_receipts at those accounts.",
+    "No journal entry, balance, reconciliation or homeowner ledger changes."
+  ],
+  "objects": { "added": [], "changed": ["function:community_account_roles_guard", "constraint:community_account_roles.community_account_roles_role_check"], "removed": [] },
+  "row_changes": { "chart_of_accounts": 5, "community_account_roles": 5, "journal_entries": 0, "homeowner_transactions": 0 },
+  "protected": [
+    { "table": "journal_entries", "order_by": "id" },
+    { "table": "homeowner_transactions", "order_by": "id" }
+  ],
+  "verify": [
+    { "name": "five 2420 suspense liabilities", "sql": "SELECT count(*)::int FROM chart_of_accounts WHERE account_number = '2420' AND account_name = 'Unidentified Receipts (Suspense)' AND account_type = 'liability' AND normal_balance = 'credit'", "expect": 5 },
+    { "name": "each in the same fund as its 2400", "sql": "SELECT count(*)::int FROM chart_of_accounts s JOIN chart_of_accounts p ON p.community_id = s.community_id AND p.account_number = '2400' AND p.fund_id IS NOT DISTINCT FROM s.fund_id WHERE s.account_number = '2420'", "expect": 5 },
+    { "name": "five roles, each on its community's 2420", "sql": "SELECT count(*)::int FROM community_account_roles r JOIN chart_of_accounts a ON a.id = r.account_id AND a.community_id = r.community_id WHERE r.role = 'unidentified_receipts' AND a.account_number = '2420'", "expect": 5 },
+    { "name": "archived Eaglewood untouched", "sql": "SELECT count(*)::int FROM chart_of_accounts a JOIN communities c ON c.id = a.community_id WHERE a.account_number = '2420' AND c.management_status IN ('archived','terminated','prospect')", "expect": 0 }
+  ]
+}

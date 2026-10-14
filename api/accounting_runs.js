@@ -133,7 +133,7 @@ router.post('/community/:cid/prepare', express.json(), async (req, res) => {
     if (!isDate(b.period_month)) return res.status(400).json({ error: 'period_month must be YYYY-MM-DD' });
     if (b.run_date && !isDate(b.run_date)) return res.status(400).json({ error: 'run_date must be YYYY-MM-DD' });
     const codings = parseCodings(b.codings); if (codings.error) return res.status(400).json({ error: codings.error });
-    const r = await R.prepare(supabase, { community_id: req.params.cid, process: b.process, period_month: b.period_month, run_date: b.run_date || null, subject_id: b.process === 'bank_reconciliation' ? b.subject_id : null, actor: `${R.KAT} (requested by ${u.email || 'staff'})`, codings: codings.list });
+    const r = await R.prepare(supabase, { community_id: req.params.cid, process: b.process, period_month: b.period_month, run_date: b.run_date || null, subject_id: b.process === 'bank_reconciliation' ? b.subject_id : null, actor: `${R.KAT} (requested by ${u.email || 'staff'})`, codings: codings.list, follow_up: b.follow_up === true });
     if (r.skipped) return res.status(409).json({ error: r.skipped, code: 'not_enabled' });
     if (r.failed) return res.status(500).json({ error: r.error, run_id: r.run_id });
     res.json(r);
@@ -147,8 +147,21 @@ function parseCodings(v) {
   if (!Array.isArray(v) || v.length > 50) return { error: 'codings must be an array of at most 50' };
   const list = [];
   for (const c of v) {
-    if (!c || !UUIDRE.test(String(c.bank_transaction_id || '')) || !ACCTRE.test(String(c.account_number || '')) || !String(c.basis || '').trim()) return { error: 'each coding needs bank_transaction_id, account_number and basis (the evidence)' };
-    list.push({ bank_transaction_id: String(c.bank_transaction_id), account_number: String(c.account_number), basis: String(c.basis).trim().slice(0, 600) });
+    const hasReceipts = c && Array.isArray(c.receipts);
+    // unidentified:true takes its account from the community's unidentified_receipts role (mig 524), never the coding.
+    const unid = !!c && c.unidentified === true && !hasReceipts;
+    if (!c || !UUIDRE.test(String(c.bank_transaction_id || '')) || (!hasReceipts && !unid && !ACCTRE.test(String(c.account_number || ''))) || !String(c.basis || '').trim()) return { error: 'each coding needs bank_transaction_id, account_number (or receipts, or unidentified: true) and basis (the evidence)' };
+    if (unid) { list.push({ bank_transaction_id: String(c.bank_transaction_id), unidentified: true, basis: String(c.basis).trim().slice(0, 600) }); continue; }
+    if (!hasReceipts) { list.push({ bank_transaction_id: String(c.bank_transaction_id), account_number: String(c.account_number), basis: String(c.basis).trim().slice(0, 600) }); continue; }
+    // A deposit coded with its payout contents: one row per homeowner payment.
+    if (!c.receipts.length || c.receipts.length > 50) return { error: 'receipts must list 1 to 50 payments' };
+    const receipts = [];
+    for (const x of c.receipts) {
+      const amt = Number(x && x.amount_cents);
+      if (!x || !/^[0-9A-Za-z-]{3,20}$/.test(String(x.vantaca_account_id || '')) || !/^\d{4}-\d{2}-\d{2}$/.test(String(x.payment_date || '')) || !Number.isInteger(amt) || amt <= 0) return { error: 'each receipt needs vantaca_account_id, payment_date (YYYY-MM-DD) and a positive whole amount_cents' };
+      receipts.push({ vantaca_account_id: String(x.vantaca_account_id), payment_date: String(x.payment_date), amount_cents: amt, method: x.method ? String(x.method).slice(0, 40) : null, reference: x.reference ? String(x.reference).slice(0, 80) : null });
+    }
+    list.push({ bank_transaction_id: String(c.bank_transaction_id), basis: String(c.basis).trim().slice(0, 600), receipts });
   }
   return { list };
 }

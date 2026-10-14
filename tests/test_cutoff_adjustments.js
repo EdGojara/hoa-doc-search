@@ -20,6 +20,8 @@ const ACCOUNTS = [['1410', 'Prepaid Expenses', 'asset'], ['2000', 'Accounts Paya
 const L = (n, type, d, c = 0) => ({ account_number: n, account_type: type, debit_cents: d, credit_cents: c });
 const bill = (o) => ({ status: 'paid', ...o });
 const BS = [{ id: 'cat-acc', name: 'Accrued liabilities', section: 'liability' }, { id: 'cat-ap', name: 'Accounts payable', section: 'liability' }];
+// the approval-time read of the community's balance-sheet categories (lib/accounting/bs_categories)
+const CATS_DB = () => [...BS, { id: 'cat-pre', name: 'Prepaid expenses', section: 'asset' }].map((c) => ({ ...c, community_id: 'cg', statement: 'balance_sheet', is_active: true }));
 const AUG = {
   bs_categories: BS, period: { period_start: '2026-08-01', period_end: '2026-08-31' }, accounts: ACCOUNTS, already: new Set(), schedules_for: new Set(),
   late_bills: [bill({ id: 'b2608', vendor: 'Bedrock Association Management, LLC', invoice_number: '2608CG2', invoice_date: '2026-09-04', service_period_start: '2026-08-01', service_period_end: '2026-08-31', total_cents: 30788 }),
@@ -53,7 +55,7 @@ const balanced = (e) => e.lines.reduce((s, l) => s + l.debit_cents - l.credit_ce
   await t('GL 2100 Accrued Expenses is proposed once (the chart has none; 2300 is the pass-through clearing account), nothing else in the chart changes', () => {
     assert.deepStrictEqual(aug.additions.map((a) => [a.id, a.account_number, a.account_name, a.account_type, a.fund_code]), [['account:2100', '2100', 'Accrued Expenses', 'liability', 'OPR']]);
     assert.match(aug.additions[0].text, /No existing account, balance or mapping changes/);
-    assert.deepStrictEqual(aug.additions[0].bs_category, { id: 'cat-acc', name: 'Accrued liabilities' }, 'mapped where 2300 presents');
+    assert.deepStrictEqual(aug.additions[0].bs_category, { id: 'cat-acc', name: 'Accrued liabilities', role: 'accrued' }, 'mapped where 2300 presents');
     assert.strictEqual(C.buildProposals({ ...AUG, accounts: [...ACCOUNTS, { account_number: '2100', account_name: 'Accrued Expenses', account_type: 'liability', fund_code: 'OPR', is_active: true }] }).additions.length, 0, 'not proposed once it exists');
   });
 
@@ -110,8 +112,11 @@ const balanced = (e) => e.lines.reduce((s, l) => s + l.debit_cents - l.credit_ce
 
   await t('holds: an unbooked bill, a bill already corrected, a split-account prepaid, a missing service period', () => {
     const h = C.buildProposals({ ...AUG, already: new Set(['cutoff:b6061:accrue']), invoices: { ...AUG.invoices, b2608: { original: null }, b10295: { ...AUG.invoices.b10295, original: { ...AUG.invoices.b10295.original, lines: [L('5300', 'expense', 100000), L('5310', 'expense', 117925), L('2000', 'liability', 0, 217925)] } } } });
-    assert.ok(h.holds.some((x) => /not booked yet/.test(x.text)) && h.holds.some((x) => x.already && /already accrued/.test(x.text)) && h.holds.some((x) => /split across accounts/.test(x.text)));
-    assert.strictEqual(h.items.length, 0);
+    assert.ok(h.holds.some((x) => /not booked yet/.test(x.text)) && h.holds.some((x) => x.already && /already accrued/.test(x.text)));
+    // a ONE-month split is no longer a hold (reversing pair, next test); a multi-month split still is
+    assert.deepStrictEqual(h.items.map((i) => i.id), ['defer:b10295']);
+    const mm = C.buildProposals({ ...AUG, late_bills: [], prepaid_bills: [{ ...AUG.prepaid_bills[0], service_period_end: '2026-11-30' }], invoices: { ...AUG.invoices, b10295: { ...AUG.invoices.b10295, original: { ...AUG.invoices.b10295.original, lines: [L('5300', 'expense', 100000), L('5310', 'expense', 117925), L('2000', 'liability', 0, 217925)] } } } });
+    assert.ok(mm.holds.some((x) => /split across accounts over 3 months/.test(x.text)) && mm.items.length === 0);
     const m = C.buildProposals({ ...AUG, late_bills: [], prepaid_bills: [{ ...AUG.prepaid_bills[0], service_period_end: null }] });
     assert.ok(m.holds.some((x) => /service period is incomplete/.test(x.text)));
   });
@@ -119,7 +124,7 @@ const balanced = (e) => e.lines.reduce((s, l) => s + l.debit_cents - l.credit_ce
   await t('approval: only the authenticated owner; only ticked proposals post; account first, reversal linked to its accrual, schedule approved by the signed-in owner then recognized', async () => {
     await assert.rejects(R.approveAndPost({ from() { throw new Error('db'); } }, { run_id: 'r', approval: { channel: 'chat', email: 'egojara@bedrocktx.com', user_id: 'u' }, include: [] }), (e) => e.code === 'approval_required');
     // in-memory books
-    const db = { account_funds: [{ id: 'f-opr', fund_code: 'OPR', community_id: 'cg' }], chart_of_accounts: ACCOUNTS.map((a, i) => ({ id: `a${i}`, community_id: 'cg', account_number: a.account_number, fund_id: 'f-opr' })), journal_entries: [], recognition_schedules: [], recognition_postings: [] };
+    const db = { account_funds: [{ id: 'f-opr', fund_code: 'OPR', community_id: 'cg' }], chart_of_accounts: ACCOUNTS.map((a, i) => ({ id: `a${i}`, community_id: 'cg', account_number: a.account_number, fund_id: 'f-opr' })), journal_entries: [], recognition_schedules: [], recognition_postings: [], report_categories: CATS_DB() };
     const calls = [];
     const q = (table) => { const st = { table, filters: [], op: 'select', row: null };
       const api = { select() { return api; }, eq(k, v) { st.filters.push((r) => r[k] === v); return api; }, in(k, v) { st.filters.push((r) => v.includes(r[k])); return api; }, is(k, v) { st.filters.push((r) => (r[k] ?? null) === v); return api; }, limit() { return api; }, order() { return api; },
@@ -158,6 +163,98 @@ const balanced = (e) => e.lines.reduce((s, l) => s + l.debit_cents - l.credit_ce
       await C.postApproved(sb, run, { include: ['accrue:b2608'], approver: 'x', approval: { channel: 'in_app', user_id: 'u-ed', email: 'e' }, actor: 'k' });
       assert.strictEqual(db.journal_entries.length, before, 'already-posted entries are not posted twice');
     } finally { POSTING.postJournalEntry = orig; }
+  });
+
+  // A second community's chart (LOPF shape): no Prepaid Expenses account (only 1400 Prepaid
+  // Insurance) and a landscape bill split across two expense accounts, billed in September
+  // for October. Same engine, no community branch: the account is proposed and the split
+  // one-month bill defers with a reversing pair.
+  const LOPF_ACCTS = [['1400', 'Prepaid Insurance', 'asset'], ['2000', 'Accounts Payable', 'liability'], ['2100', 'Accrued Expenses', 'liability'], ['5200', 'Landscape Operating & Management', 'expense'], ['5205', 'Landscaping Maintenance (Lakes - MUD)', 'expense'], ['5300', 'Pool Management', 'expense']]
+    .map(([account_number, account_name, account_type]) => ({ account_number, account_name, account_type, fund_code: 'OPR', is_active: true }));
+  const LSEP = { bs_categories: [{ id: 'cat-pre', name: 'Prepaid expenses', section: 'asset' }], period: { period_start: '2026-09-01', period_end: '2026-09-30' }, accounts: LOPF_ACCTS, already: new Set(), schedules_for: new Set(), late_bills: [],
+    prepaid_bills: [bill({ id: 'b34037', vendor: 'High Tech Lawn Services LLC', invoice_number: '34037', invoice_date: '2026-09-24', service_period_start: '2026-10-01', service_period_end: '2026-10-31', total_cents: 620879 }),
+      bill({ id: 'b51405', vendor: 'LONE STAR POOL MANAGEMENT', invoice_number: '51405', invoice_date: '2026-09-15', service_period_start: '2026-10-01', service_period_end: '2026-10-31', total_cents: 124488 })],
+    invoices: { b34037: { original: { id: 'je233', reference: 'JE-2026-00233', posting_date: '2026-09-24', status: 'posted', lines: [L('5200', 'expense', 510854), L('5205', 'expense', 110025), L('2000', 'liability', 0, 620879)] } },
+      b51405: { original: { id: 'je218', reference: 'JE-2026-00218', posting_date: '2026-09-15', status: 'posted', lines: [L('5300', 'expense', 124488), L('2000', 'liability', 0, 124488)] } } } };
+  const lsep = C.buildProposals(LSEP);
+  await t('no Prepaid Expenses account: GL 1410 is proposed (never 1400 Prepaid Insurance), mapped to the prepaid category on approval', () => {
+    assert.deepStrictEqual(lsep.additions.map((a) => [a.account_number, a.account_name, a.account_type, a.normal_balance, a.bs_category && a.bs_category.id]), [['1410', 'Prepaid Expenses', 'asset', 'debit', 'cat-pre']]);
+    assert.ok(lsep.holds.length === 0, JSON.stringify(lsep.holds));
+  });
+  await t('split one-month bill (High Tech #34037, 5200 + 5205): deferral at 9/30 and an account-by-account reversal on 10/1; balanced; effects Sep -6,208.79 / Oct +6,208.79', () => {
+    const d = lsep.items.find((i) => i.id === 'defer:b34037');
+    assert.ok(d && d.entries.length === 2 && d.entries.every(balanced) && !d.schedule);
+    assert.deepStrictEqual(d.entries.map((e) => [e.posting_date, e.source_reference]), [['2026-09-30', 'cutoff:b34037:defer'], ['2026-10-01', 'cutoff:b34037:reverse-defer']]);
+    assert.deepStrictEqual(d.entries[0].lines.map((l) => [l.account_number, l.debit_cents, l.credit_cents]), [['1410', 620879, 0], ['5200', 0, 510854], ['5205', 0, 110025]]);
+    assert.ok(d.verification.reversal_mirrors_deferral && d.entries[1].reverses === 'deferral');
+    assert.deepStrictEqual(d.effects, { '2026-09': -620879, '2026-10': 620879 });
+  });
+  await t('single-account one-month bill (Lone Star #51405) keeps the existing prepaid schedule path, now on the proposed 1410', () => {
+    const d = lsep.items.find((i) => i.id === 'defer:b51405');
+    assert.ok(d && d.schedule && d.schedule.balance_account_number === '1410' && d.schedule.recognition_account_number === '5300' && d.entries.length === 1);
+    assert.deepStrictEqual(lsep.effects, { '2026-09': -745367, '2026-10': 745367 }, 'total October services booked in September: $7,453.67');
+  });
+  await t('posting the split deferral: account first, reversal linked to the deferral, idempotent on re-approval', async () => {
+    const db = { account_funds: [{ id: 'f-opr', fund_code: 'OPR', community_id: 'lopf' }], chart_of_accounts: LOPF_ACCTS.map((a, i) => ({ id: `l${i}`, community_id: 'lopf', account_number: a.account_number, fund_id: 'f-opr' })), journal_entries: [], report_categories: [] };   // LOPF: no balance-sheet categories at all
+    const q = (table) => { const st = { filters: [], op: 'select' }; const api = { select() { return api; }, eq(k, v) { st.filters.push((r) => r[k] === v); return api; }, in(k, v) { st.filters.push((r) => v.includes(r[k])); return api; }, limit() { return api; },
+      insert(row) { st.op = 'insert'; st.row = row; return api; }, single() { st.one = true; return api; },
+      then(res, rej) { let out; if (st.op === 'insert') { const r = { id: `${table}-${db[table].length + 1}`, ...st.row }; db[table].push(r); out = st.one ? r : [r]; } else { const rs = (db[table] || []).filter((r) => st.filters.every((f) => f(r))); out = st.one ? rs[0] : rs; } return Promise.resolve({ data: out, error: null }).then(res, rej); } }; return api; };
+    const maps = []; const sb = { from: q, rpc: async (n, a) => { if (n === 'set_account_report_category') maps.push(a); return { data: {}, error: null }; } };
+    const orig = POSTING.postJournalEntry; const jes = [];
+    POSTING.postJournalEntry = async (o) => { const e = { id: `je-${db.journal_entries.length + 1}`, reference: `JE-L-${db.journal_entries.length + 1}`, community_id: 'lopf', ...o }; db.journal_entries.push(e); jes.push(o); return { entry: e }; };
+    try {
+      const run = { id: 'run-lsep', community_id: 'lopf', preview: lsep };
+      await C.postApproved(sb, run, { include: ['account:1410', 'defer:b34037'], approver: 'owner (in-app)', approval: { channel: 'in_app', user_id: 'u', email: 'e' }, actor: 'Kat' });
+      assert.ok(db.chart_of_accounts.some((a) => a.account_number === '1410'), '1410 added before the entries');
+      const pre = db.report_categories.find((c) => c.name === 'Prepaids');
+      assert.ok(pre && pre.section === 'asset' && pre.statement === 'balance_sheet' && pre.community_id === 'lopf', 'a community with no categories gets the standard Prepaids category on approval');
+      const a1410 = db.chart_of_accounts.find((a) => a.account_number === '1410');
+      assert.deepStrictEqual(maps.map((m) => [m.p_account_ids[0], m.p_category_id, m.p_statement, m.p_actor]), [[a1410.id, pre.id, 'balance_sheet', 'owner (in-app)']], '1410 mapped to Prepaids by the in-app approver');
+      assert.deepStrictEqual(jes.map((j) => j.source_reference), ['cutoff:b34037:defer', 'cutoff:b34037:reverse-defer']);
+      assert.strictEqual(jes[1].reverses_je_id, db.journal_entries[0].id, 'the reversal is linked to its deferral');
+      const n = db.journal_entries.length;
+      await C.postApproved(sb, run, { include: ['defer:b34037'], approver: 'x', approval: { channel: 'in_app', user_id: 'u', email: 'e' }, actor: 'k' });
+      assert.strictEqual(db.journal_entries.length, n, 'approving again posts nothing new');
+    } finally { POSTING.postJournalEntry = orig; }
+  });
+
+  // Line-level service months (Lake Pro #263225 shape): September treatments and an October fee
+  // on one bill booked 10/1. Only the September lines accrue; the October fee stays in October.
+  await t('line service months: dates and service-period month names are read; a stray word is not', () => {
+    assert.strictEqual(C.lineServiceMonth('Monthly Lake Management Fee - October', '2026-10-01'), '2026-10');
+    assert.strictEqual(C.lineServiceMonth('Komeen Liquid(gal) - Treatment - 9-22-26 - Lake 1', '2026-10-01'), '2026-09');
+    assert.strictEqual(C.lineServiceMonth('LIFEGUARD SERVICES FOR THE MONTH OF - SEPTEMBER 2026', '2026-08-15'), '2026-09');
+    assert.strictEqual(C.lineServiceMonth('Fee - January', '2026-12-15'), '2027-01');
+    assert.strictEqual(C.lineServiceMonth('Charges may vary', '2026-10-01'), null);
+    assert.strictEqual(C.lineServiceMonth('Invoice 302 008 234 842', '2026-10-01'), null);
+  });
+  await t('a late bill accrues only its lines for the period: Lake Pro $1,406.11 to 5140 accrued 9/30, reversed 10/1; the $873.75 October fee is left in October and named', () => {
+    const LP = { period: { period_start: '2026-09-01', period_end: '2026-09-30' }, accounts: [...ACCOUNTS, { account_number: '5130', account_name: 'Lake Management', account_type: 'expense', fund_code: 'OPR', is_active: true }, { account_number: '5140', account_name: 'Lake Service', account_type: 'expense', fund_code: 'OPR', is_active: true }],
+      already: new Set(), schedules_for: new Set(), prepaid_bills: [],
+      late_bills: [bill({ id: 'b263225', vendor: 'Lake Pro, Inc.', invoice_number: '263225', invoice_date: '2026-10-01', service_period_start: '2026-09-22', service_period_end: '2026-09-29', total_cents: 227986 })],
+      invoices: { b263225: { original: { id: 'je283', reference: 'JE-2026-00283', posting_date: '2026-10-01', status: 'posted', lines: [
+        { ...L('5130', 'expense', 87375), memo: 'Monthly Lake Management Fee - October' }, { ...L('5140', 'expense', 14298), memo: 'Komeen Liquid(gal) - Treatment - 9-22-26 - Lake 1 (1)' },
+        { ...L('5140', 'expense', 101313), memo: 'Treatments - 9-29-26 - Lake 1' }, { ...L('5140', 'expense', 25000), memo: 'Extra Visit - 9-29-26' }, L('2000', 'liability', 0, 227986)] } } } };
+    const r = C.buildProposals(LP); const a = r.items.find((i) => i.id === 'accrue:b263225');
+    assert.ok(a && a.amount_cents === 140611 && a.entries.every(balanced), JSON.stringify(a && a.amount_cents));
+    assert.deepStrictEqual(a.entries[0].lines.filter((l) => l.debit_cents).map((l) => [l.account_number, l.debit_cents]), [['5140', 140611]]);
+    assert.deepStrictEqual(a.evidence.other_month_lines.map((x) => [x.account_number, x.cents, x.month]), [['5130', 87375, '2026-10']]);
+    assert.ok(/Left in 2026-10 because the line names another month/.test(a.verification.text));
+  });
+  await t('a bill whose lines name no month keeps the whole-bill accrual (Canyon Gate cases unchanged)', () => {
+    assert.strictEqual(aug.items.find((i) => i.id === 'accrue:b6061').amount_cents, 36048);
+  });
+  // Double reversal (LOPF NRG #113 016 455 245 shape): removed at the cutover and voided again.
+  await t('an entry reversed twice with no re-post is restored once, dated the second reversal, only in that month; idempotent', () => {
+    const second = { id: 'rev252', reference: 'JE-2026-00252', posting_date: '2026-09-29', lines: [L('5110', 'expense', 0, 28283), L('5110', 'expense', 104, 0), L('5110', 'expense', 0, 15893), L('2000', 'liability', 44072, 0)] };
+    const facts = { ...SEP, late_bills: [], prepaid_bills: [], double_reversals: [{ original: { id: 'je229', reference: 'JE-2026-00229', posting_date: '2026-07-13' }, first: { id: 'n229', reference: 'CONV-LPF-CUTOVER-NEUT-JE-2026-00229', posting_date: '2026-07-13' }, second, invoice_number: '113 016 455 245', vendor: 'NRG Business' }] };
+    const r = C.buildProposals(facts); const c = r.items.find((i) => i.kind === 'correction');
+    assert.ok(c && c.entries.length === 1 && balanced(c.entries[0]) && c.entries[0].posting_date === '2026-09-29' && c.entries[0].source_reference === 'correction:double-reversal:rev252');
+    assert.strictEqual(c.amount_cents, 44072, 'the net expense restored, $440.72');
+    assert.deepStrictEqual(c.effects, { '2026-09': 44072 });
+    assert.ok(c.entries[0].lines.find((l) => l.account_number === '2000').credit_cents === 44072, 'payable restored too');
+    assert.strictEqual(C.buildProposals({ ...facts, period: { period_start: '2026-08-01', period_end: '2026-08-31' } }).items.filter((i) => i.kind === 'correction').length, 0, 'not proposed in another month');
+    assert.ok(C.buildProposals({ ...facts, already: new Set(['correction:double-reversal:rev252']) }).holds.some((h) => h.already), 'already corrected: not proposed again');
   });
 
   await t('reachable: Financial dashboard button and Accounting link open /app/financial/cutoff; the page approves only through the owner-gated route', () => {

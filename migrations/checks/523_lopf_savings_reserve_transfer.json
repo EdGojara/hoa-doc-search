@@ -1,0 +1,27 @@
+{
+  "migration": "523_lopf_savings_reserve_transfer.sql",
+  "summary": "LOPF: GL 4015 Transfer Savings to Reserve (interfund transfer SAV to RES) and Kat's Savings rules for the 9/10/2026 $42,700 + $42,700 transfer lines (both cash sides; the 2025 half flagged for its missing authorization). Configuration only; nothing posts.",
+  "requires": ["520_lopf_operating_opening.sql"],
+  "preflight": [
+    { "name": "LOPF has SAV and RES funds", "sql": "SELECT count(*)::int FROM account_funds WHERE community_id = 'a0000000-0000-4000-8000-000000000002' AND fund_code IN ('SAV','RES')", "expect": 2 },
+    { "name": "4015 is free", "sql": "SELECT count(*)::int FROM chart_of_accounts WHERE community_id = 'a0000000-0000-4000-8000-000000000002' AND account_number = '4015'", "expect": 0 },
+    { "name": "1100 and 1110 exist", "sql": "SELECT count(*)::int FROM chart_of_accounts WHERE community_id = 'a0000000-0000-4000-8000-000000000002' AND account_number IN ('1100','1110')", "expect": 2 },
+    { "name": "the LOPF reconciliation automation row exists without a 4015 rule", "sql": "SELECT count(*)::int FROM community_accounting_automation WHERE community_id = 'a0000000-0000-4000-8000-000000000002' AND process = 'bank_reconciliation' AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(coalesce(settings->'transfer_rules','[]'::jsonb)) r WHERE r->>'account' = '4015')", "expect": 1 }
+  ],
+  "expected_changes": [
+    "chart_of_accounts: 4015 Transfer Savings to Reserve added (SAV fund, interfund_transfer from SAV to RES).",
+    "community_accounting_automation: two Savings transfer rules added to LOPF's bank reconciliation settings.",
+    "No journal entry, run, statement or balance changes."
+  ],
+  "objects": { "added": [], "changed": [], "removed": [] },
+  "row_changes": { "chart_of_accounts": 1, "community_accounting_automation": 0, "journal_entries": 0, "accounting_runs": 0 },
+  "protected": [
+    { "table": "journal_entries", "order_by": "id" },
+    { "table": "accounting_runs", "order_by": "id" }
+  ],
+  "verify": [
+    { "name": "4015 is an interfund transfer from SAV to RES", "sql": "SELECT count(*)::int FROM chart_of_accounts c JOIN account_funds f ON f.id = c.interfund_from_fund_id JOIN account_funds t ON t.id = c.interfund_to_fund_id WHERE c.community_id = 'a0000000-0000-4000-8000-000000000002' AND c.account_number = '4015' AND c.account_subtype = 'interfund_transfer' AND f.fund_code = 'SAV' AND t.fund_code = 'RES'", "expect": 1 },
+    { "name": "two 4015 rules on Savings, the 2025 one flagged", "sql": "SELECT count(*)::int FROM community_accounting_automation, jsonb_array_elements(settings->'transfer_rules') r WHERE community_id = 'a0000000-0000-4000-8000-000000000002' AND process = 'bank_reconciliation' AND r->>'account' = '4015' AND r->>'bank_account_id' = '8467a5a4-1291-4d94-8c28-b5f85fd862e0' AND r->>'counter_cash_account' = '1110'", "expect": 2 },
+    { "name": "the 2025 rule carries the authorization flag", "sql": "SELECT count(*)::int FROM community_accounting_automation, jsonb_array_elements(settings->'transfer_rules') r WHERE community_id = 'a0000000-0000-4000-8000-000000000002' AND process = 'bank_reconciliation' AND r->>'match' = '^2025 Transfer$' AND r->>'flag' IS NOT NULL", "expect": 1 }
+  ]
+}

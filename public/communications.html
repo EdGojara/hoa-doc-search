@@ -462,13 +462,38 @@ function msgHtml(m){
       ${!m.standing&&m.extracted&&m.extracted.follow_up?(function(){var c=m.extracted.follow_up.chased;var paid=c&&c.status==='paid';var nf=c&&c.found===false;return '<div style="font-size:12px;margin-top:5px;background:'+(paid?'#eaf7ee':nf?'#fdecec':'#fff7ed')+';border:1px solid '+(paid?'#b7e0c2':nf?'#f3c0c0':'#f6d5ad')+';border-radius:6px;padding:6px 9px;color:#1a2230;">🔔 <strong>Vendor is chasing payment.</strong> '+(c?esc(c.message||''):'Match this to the bill in Payables.')+(c&&c.found&&c.invoice_number?' <span style="color:#64748b;">(invoice '+esc(c.invoice_number)+')</span>':'')+'</div>';})():''}
       ${m.extracted&&m.extracted.draft&&m.extracted.draft.review_hint?`<div style="font-size:12px;color:#8a6d00;background:#fbf7ec;border:1px solid #e8dcae;border-radius:6px;padding:6px 9px;margin-top:5px;">💡 <strong>Claire suggests:</strong> ${esc(m.extracted.draft.review_hint)} <a href="#" onclick="event.preventDefault();forwardPrompt('${m.id}','${esc(m.sender_email||'')}'${m.extracted.draft.route&&m.extracted.draft.route.persona?`,'${esc(m.extracted.draft.route.persona)}'`:''})" style="color:#0B1D34;font-weight:600;white-space:nowrap;">↪ ${m.extracted.draft.route&&m.extracted.draft.route.name?'Hand to '+esc(m.extracted.draft.route.name):'Loop someone in'}</a></div>`:''}
       ${m.extracted&&m.extracted.forwarded?`<div style="font-size:11.5px;color:#5b21b6;font-weight:600;margin-top:4px;">↪ Forwarded to ${esc(m.extracted.forwarded.name||m.extracted.forwarded.to)}${m.extracted.forwarded.at?' · '+new Date(m.extracted.forwarded.at).toLocaleString():''} — awaiting their review</div>`:''}
+      ${m.extracted&&m.extracted.positive_pay&&m.extracted.positive_pay.items?ppPanelHtml(m):''}
       <div id="thread-${m.id}"></div>
       <div id="fwd-${m.id}"></div>
       <div class="link-row">${linkCell(m)}</div>
       <div id="glentry-${m.id}"></div>
       <div id="filemsg-${m.id}" class="result" style="margin-top:4px;"></div>
-      <div id="draft-${m.id}">${m.extracted&&m.extracted.draft?draftBoxHtml(m.id, m.extracted.draft.subject, m.extracted.draft.body, m.extracted.draft.careful, m.persona||'claire', null, m.extracted.draft.attachments, m.sender_email, {restore:true}):''}</div>
+      <div id="draft-${m.id}">${m.extracted&&m.extracted.draft?draftBoxHtml(m.id, m.extracted.draft.subject, m.extracted.draft.body, m.extracted.draft.careful, m.persona||'claire', null, m.extracted.draft.attachments, m.extracted.draft.to || m.sender_email, {restore:true}):''}</div>
     </div>`;
+}
+// Positive Pay: Kat's match of each presented check against our register, and the BANK's decision,
+// which stays "unconfirmed" until it is recorded here (as decided in the bank portal) or the check
+// clears on a statement. A match is not the bank's decision. (Ed 2026-10-14)
+function ppPanelHtml(m){
+  const pp = m.extracted.positive_pay; const items = pp.items || [];
+  const dec = (i) => i.bank_decision && i.bank_decision !== 'unconfirmed' ? '<strong style="color:#166534;">'+esc(i.bank_decision)+'</strong>'+(i.bank_decision_evidence?' <span style="opacity:.7;">('+esc(i.bank_decision_evidence)+')</span>':'') : '<strong style="color:#92400e;">unconfirmed</strong>';
+  const btn = (i, d, label) => '<button class="btn" style="padding:1px 7px;font-size:11px;" data-id="'+esc(m.id)+'" data-last4="'+esc(i.account_last4)+'" data-check="'+esc(i.check_number)+'" data-decision="'+d+'" onclick="ppDecide(this)">'+label+'</button>';
+  const row = (i) => '<div style="margin-top:3px;">'+esc(i.account_last4)+' #'+esc(i.check_number)+' $'+(i.amount_cents/100).toFixed(2)+' · '+(i.verdict==='matched'?'matches our register ('+esc(i.payee||'')+')':'<strong style="color:#991b1b;">'+esc(String(i.verdict).toUpperCase())+'</strong>')+' · bank: <span class="ppdec">'+dec(i)+'</span>'
+    +((!i.bank_decision||i.bank_decision==='unconfirmed')?' '+btn(i,'pay','Paid in portal')+' '+btn(i,'return','Returned'):'')+'</div>';
+  return '<div style="font-size:12px;margin-top:6px;background:#f8fafc;border:1px solid #dbe3ea;border-radius:6px;padding:7px 9px;">🏦 <strong>Positive Pay (Kat)</strong>'+(pp.deadline?' · cutoff '+esc(pp.deadline.central):'')+items.map(row).join('')+'<div id="ppmsg-'+esc(m.id)+'" style="margin-top:3px;"></div></div>';
+}
+async function ppDecide(b){
+  const { id, last4, check, decision } = b.dataset;
+  const line = b.parentElement; line.querySelectorAll('button').forEach((x) => { x.disabled = true; });
+  const msg = document.getElementById('ppmsg-'+id);
+  try {
+    const r = await af(API+'/'+id+'/positive-pay-decided', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ note: 'Recorded from the hub: '+decision+' '+last4+' #'+check, decisions:[{ account_last4:last4, check_number:check, decision }] }) });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.detail || j.error || 'error');
+    const item = (j.positive_pay.items||[]).find((i)=>String(i.check_number)===String(check) && String(i.account_last4)===String(last4));
+    line.querySelector('.ppdec').innerHTML = '<strong style="color:#166534;">'+esc(item?item.bank_decision:decision)+'</strong> (recorded)';
+    line.querySelectorAll('button').forEach((x) => x.remove());
+  } catch(e){ line.querySelectorAll('button').forEach((x) => { x.disabled = false; }); if (msg) msg.textContent = 'Not recorded: '+(e.message||'error'); }
 }
 // Expand/collapse the full message body + its email chain for reference.
 async function showThread(id, link){
@@ -693,9 +718,11 @@ function draftBoxHtml(id, subject, body, careful, persona, covers, genAtts, send
 function toRowHtml(id){
   const r = recipientByMsg[id] || { to:'', source:'sender', onFile:[] };
   const fromForm = r.source === 'form_body';
+  // Anything the shared recipient resolver wants the sender to know (e.g. a Reply-To at a different organization).
+  const warn = (r.warnings || []).length ? `<div class="note" style="background:#fff7ed;border:1px solid #fed7aa;border-radius:6px;padding:5px 9px;color:#9a3412;margin-top:4px;font-size:12px;">⚠ ${(r.warnings||[]).map(esc).join(' ')}</div>` : '';
   const hint = fromForm
     ? `<div class="note" style="background:#fff7ed;border:1px solid #fed7aa;border-radius:6px;padding:5px 9px;color:#9a3412;margin-top:4px;font-size:12px;">↩ This came through a website contact form. Replying here reaches <strong>${esc(r.to||'')}</strong> — the person who wrote in — not the form's address. Edit if needed.</div>`
-    : '';
+    : warn;
   // Verify the address against what's on file for this owner. Chips = known-good
   // addresses (click to use); the badge turns green when To matches one, amber
   // when it's an address we don't have on file.
@@ -744,6 +771,7 @@ async function doReplyAll(id){
     }
     const st=document.getElementById('cc-'+id);
     if(!others.length && st){ st.placeholder='No other participants found on this thread.'; }
+    if((j.excluded_unexpected||[]).length && ccEl){ ccEl.title = 'Left off: '+j.excluded_unexpected.join(', ')+' (under investigation as an unexpected recipient).'; ccEl.insertAdjacentHTML('afterend', '<div class="note" style="font-size:11.5px;color:#9a3412;">Left off Reply All: '+j.excluded_unexpected.map(esc).join(', ')+' (under investigation as an unexpected recipient).</div>'); }
   } catch(e){ alert('Could not load participants: '+(e.message||'error')); }
 }
 // A sent (outbound) email — read-only, with a Forward button so the whole
@@ -1113,7 +1141,7 @@ async function doDraft(id, persona){
   coversByMsg[id] = j.covers || [];
   attachByMsg[id] = j.auto_attachments || []; communityByMsg[id] = j.community_id || '';
   genAttsByMsg[id] = j.attachments || genAttsByMsg[id] || [];  // agent-generated files (RFP PDF) — persist across redraft
-  recipientByMsg[id] = { to: j.suggested_recipient || '', source: j.recipient_source || 'sender', onFile: j.on_file_emails || [] };
+  recipientByMsg[id] = { to: j.suggested_recipient || '', source: j.recipient_source || 'sender', onFile: j.on_file_emails || [], warnings: j.recipient_warnings || [] };
   // Baseline for encode-Ed: this fresh draft is what Claire produced on her own.
   // A regenerate resets it; a Rewrite-with-notes deliberately keeps the FIRST one.
   originalDraftByMsg[id] = j.body || '';
@@ -1136,7 +1164,7 @@ async function doRewrite(id, persona){
   if(!r.ok){ box.innerHTML = prevHtml; alert('Couldn’t rewrite: '+(j.error||'error')+'. Your draft is unchanged.'); return; }
   if(j.draftable===false){ box.innerHTML = prevHtml; alert('No draft — '+(j.reason||'')); return; }
   coversByMsg[id] = j.covers || [];
-  recipientByMsg[id] = { to: j.suggested_recipient || '', source: j.recipient_source || 'sender', onFile: j.on_file_emails || [] };
+  recipientByMsg[id] = { to: j.suggested_recipient || '', source: j.recipient_source || 'sender', onFile: j.on_file_emails || [], warnings: j.recipient_warnings || [] };
   // Keep the FIRST autonomous draft as the learning baseline — a rewrite folds in
   // Ed's notes, and the draft->sent delta should reflect his teaching, not reset.
   if (!originalDraftByMsg[id]) originalDraftByMsg[id] = j.body || '';
