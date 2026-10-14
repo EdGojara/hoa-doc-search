@@ -54,7 +54,9 @@ const base = { year: 2027, as_of: '2026-10-14', accounts, vendors, invoices, lin
   check('security expected = contracts $225,680.09 + Community Controls annualized from its cycle (sum of each invoice\'s lines)', sec.contract_cents === 22568009 && sec.continuing_uncontracted[0].annualized_cents === Math.round(74860 * 365 / 49) && sec.expected_cents === 22568009 + Math.round(74860 * 365 / 49), JSON.stringify(sec.continuing_uncontracted));
   check('the draft ($229,144.50) is within 1% of that: no revision proposed', !c('line_vs_contract', 'a5770').length);
   check('contract matched to the vendor record by name, and flagged to link it; Gate Sentry has no vendor record', c('contract_vendor_unlinked').length === 2 && /matches "United Protective Services"/.test(c('contract_vendor_unlinked')[0].text) && /no vendor record matches/.test(c('contract_vendor_unlinked')[1].text));
-  check('a contract that started but has no invoices in its account is flagged', c('contract_no_invoices').some((e) => /United Protective/.test(e.text)));
+  check('a contract 13 days in with no invoice yet is NOT flagged (no invoice is overdue)', !c('contract_no_invoices').length);
+  const later = R.reviewContracts({ ...base, as_of: '2026-12-01' });
+  check('...but 61 days in with no invoice in its account, it is', later.exceptions.some((e) => e.code === 'contract_no_invoices' && /United Protective/.test(e.text)));
   check('a steady monthly charge with no contract (Bedrock $5,200) is a MISSING CONTRACT, never "no obligation"', c('missing_contract', 'a5810').length === 1 && /not evidence there is no obligation/.test(c('missing_contract', 'a5810')[0].text));
   check('irregular project billing (Texas Access Works) is uncontracted spend, not annualized as a recurring obligation', c('uncontracted_spend', 'a5450').length === 1 && !c('missing_contract', 'a5450').length);
   check('a material draft line with no contract (pool $55,000) is flagged for Amanda even with little billing history', c('material_line_no_contract', 'a5300').length === 1 && c('material_line_no_contract', 'a5300')[0].owner === 'amanda');
@@ -71,6 +73,25 @@ const base = { year: 2027, as_of: '2026-10-14', accounts, vendors, invoices, lin
   check('an expired agreement that does not auto-renew is a decision', exp.exceptions.some((x) => x.code === 'contract_expired' && x.decision));
   const dup = R.reviewContracts({ ...base, contracts: [...base.contracts, { ...GS, id: 'gs2' }] });
   check('two contracts for the same vendor on the same account are flagged (counted twice)', dup.exceptions.some((x) => x.code === 'contract_duplicate'));
+  // Found on Canyon Gate's real folder (2026-10-14): a contract the engine cannot price month by month
+  // (Aegis: a seasonal payment schedule; mosquito control: per visit) had been read as $0 and proposed
+  // cutting the $55,000 pool line to $0.
+  const AEGIS = { id: 'aeg', vendor_name_raw: 'Aegis Aquatics, LLC', effective_date: '2026-02-01', end_date: '2027-02-28', auto_renews: true, periodic_amount: null, periodic_frequency: null, rate_schedule: [], total_amount: 50350, annualized_amount: 50350, unit_pricing: [{ unit: 'lifeguard hour', rate: 25 }], forecast_account_id: 'a5300', escalator_kind: 'fixed_pct', escalator_pct: 5 };
+  const pool = R.reviewContracts({ ...base, contracts: [...base.contracts, AEGIS] });
+  const pa = pool.by_account.find((a) => a.account_id === 'a5300');
+  check('an uncostable contract is NEVER read as $0: no line revision proposed, expected left blank', !pool.exceptions.some((e) => e.code === 'line_vs_contract' && e.account_id === 'a5300') && pa.expected_cents === null);
+  check('...it is named for Kat with the document\'s own annual figure', pool.exceptions.some((e) => e.code === 'pricing_uncostable' && /\$50,350\.00/.test(e.text) && e.owner === 'kat'));
+  const COX = { id: 'cox', vendor_name_raw: 'Cox CPA Services, Inc.', effective_date: '2025-01-01', end_date: '2026-12-31', auto_renews: false, one_time_fees: [{ date: '2025-12-31', amount: 5095 }, { date: '2027-01-01', amount: 5095, description: 'FY2026 audit' }, { date: '2027-01-01', amount: 375, description: 'FY2026 tax' }], forecast_account_id: 'a5810' };
+  const cx = R.reviewContracts({ ...base, contracts: [COX] });
+  check('a fee-only engagement whose fees fall in the year: priced from its fees, not "expired", no uncovered-month noise', cx.contracts[0].annual_cents === 547000 && !cx.exceptions.some((e) => ['contract_expired', 'pricing_uncovered_months', 'pricing_no_periodic_amount'].includes(e.code)), JSON.stringify(cx.exceptions.map((e) => e.code)));
+  const TXU = { id: 'txu', vendor_name_raw: 'TXU Energy Retail Company LLC', status: 'expired', effective_date: '2024-12-01', end_date: '2025-11-30', auto_renews: false };
+  const tx = R.reviewContracts({ ...base, contracts: [...base.contracts, TXU] });
+  check('a contract recorded expired before the year is history: listed, not priced, no exceptions', tx.history.some((h) => h.id === 'txu') && !tx.contracts.some((c) => c.id === 'txu') && !tx.exceptions.some((e) => /TXU/.test(e.text)));
+  check('a MUD-billed material line is not "missing a contract" (tariff, not agreement)', !R.reviewContracts(base).exceptions.some((e) => e.code === 'material_line_no_contract' && e.account_id === 'a5120'));
+  const NEWS = { id: 'news', vendor_name_raw: 'My Neighborhood News, LLC', effective_date: '2026-05-20', end_date: '2027-05-21', auto_renews: true, total_amount: 0, annualized_amount: 0, unit_pricing: [{ unit: 'ad', rate: 100 }] };
+  const nw = R.reviewContracts({ ...base, contracts: [...base.contracts, NEWS] });
+  check('an agreement at no cost to the association (revenue-share newsletter) raises no pricing, binding or vendor findings', !nw.exceptions.some((e) => /Neighborhood News/.test(e.text) && e.code !== 'contract_unverified'));
+  check('a seasonal schedule contract is described as a payment schedule, not per-unit pricing', /payment schedule rather than a rate/.test(pool.exceptions.find((e) => e.code === 'pricing_uncostable').text));
   check('vendor names normalize (L.P., LLC, Inc., "of South Texas")', R.normName('United Protective Services of South Texas, L.P.') === R.normName('United Protective Services'));
 }
 

@@ -115,6 +115,8 @@ const CHECKS = [
   'tests/test_reply_engine.js',
   'tests/test_working_forecast.js',
   'tests/test_budget_line_basis.js',
+  'tests/test_contract_review.js',
+  'tests/test_folder_ingest.js',
   'tests/test_reserve_plan.js',
   'tests/test_mission_control_graph.js',
   'tests/test_mission_control.js',
