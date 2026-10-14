@@ -378,7 +378,7 @@
   async function approveTreatment() {
     var d = state.detail, p = state.treatment.plan;
     if (state.approving) return;
-    if (!confirm('Approve this treatment and post it?\n\nOwners: ' + money(p.totals.homeowner_cents) + '\nAssociation: ' + money(p.totals.association_cents) + '\nBedrock: ' + money(p.totals.bedrock_cents) + '\n\nThis does not approve or pay the attorney’s bill.')) return;
+    if (!(await txConfirm('Approve this treatment and post it?\n\nOwners: ' + money(p.totals.homeowner_cents) + '\nAssociation: ' + money(p.totals.association_cents) + '\nBedrock: ' + money(p.totals.bedrock_cents) + '\n\nThis does not approve or pay the attorney’s bill.'))) return;
     state.approving = true; state.treatErr = null; renderTreatment();
     var r = await TX.post('/api/legal-review/invoices/' + encodeURIComponent(d.invoice.id) + '/approve-treatment', { revision: d.revision, posting_date: state.postDate || undefined });
     state.approving = false;
