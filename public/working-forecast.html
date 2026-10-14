@@ -126,7 +126,7 @@
   const S = { cid: null, year: 2027, asof: null, model: null, filter: 'all', q: '', admin: false };
   window.supa = null;
   async function authHeader() { try { if (window.supa) { const { data: { session } } = await window.supa.auth.getSession(); if (session && session.access_token) return { Authorization: 'Bearer ' + session.access_token }; } } catch (_) {} return {}; }
-  (async () => { try { const cfg = await fetch('/api/auth/config').then((r) => r.json()); if (!cfg.enabled) return; if (!window.supabase) await new Promise((res, rej) => { const s = document.createElement('script'); s.src = 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4'; s.onload = res; s.onerror = rej; document.head.appendChild(s); }); window.supa = window.supabase.createClient(cfg.supabase_url, cfg.supabase_anon_key); const me = await fetch('/api/me', { headers: await authHeader() }).then((r) => r.json()).catch(() => null); S.admin = !!(me && me.user && me.user.role === 'admin'); } catch (e) { console.warn('[forecast] auth bootstrap failed:', e.message); } })();
+  (async () => { try { const cfg = await fetch('/api/auth/config').then((r) => r.json()); if (!cfg.enabled) return; if (!window.supabase) await new Promise((res, rej) => { const s = document.createElement('script'); s.src = 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4'; s.onload = res; s.onerror = rej; document.head.appendChild(s); }); window.supa = window.supabase.createClient(cfg.supabase_url, cfg.supabase_anon_key); const me = await fetch('/api/me', { headers: await authHeader() }).then((r) => r.json()).catch(() => null); S.admin = !!(me && me.user && me.user.role === 'admin'); if (S.admin && S.model) render(); } catch (e) { console.warn('[forecast] auth bootstrap failed:', e.message); } })();
 
   async function load() {
     $('out').innerHTML = '<div class="msg">Building the forecast from the books…</div>';
@@ -177,7 +177,7 @@
       <div class="panel"><h4>Assumptions in this model</h4>${(s.assumptions || []).map((a) => `<div class="drv"><div>${esc(a.text)}<br><span class="k">${esc(a.source || '')}</span></div><div><span class="conf ${a.confidence}">${esc(a.confidence)} confidence</span></div></div>`).join('')}
       <div class="drv"><div>Revenue is not inflated by the model<br><span class="k">Assessment changes are board decisions; revenue lines carry the ${M.base_year} level. Unbudgeted revenue (for example unrealized investment gains) is excluded unless recorded as recurring.</span></div><div></div></div>
       <div class="drv"><div>Unknown is not zero<br><span class="k">Drivers without evidence show "needs evidence" and are excluded from the arithmetic, lowering confidence.</span></div><div></div></div></div></div>`;
-    const tools = `<div class="tools"><div class="seg">${[['all', 'All lines'], ['review', 'Needs review'], ['incomplete', 'Incomplete data'], ['override', 'Overridden']].map(([k, t]) => `<button data-f="${k}" class="${S.filter === k ? 'on' : ''}">${t}</button>`).join('')}</div><input id="q" placeholder="Find an account" value="${esc(S.q)}"></div>`;
+    const tools = `<div class="tools"><div class="seg">${[['all', 'All lines'], ['review', 'Needs review'], ['incomplete', 'Incomplete data'], ['override', 'Overridden']].map(([k, t]) => `<button data-f="${k}" class="${S.filter === k ? 'on' : ''}">${t}</button>`).join('')}</div><input id="q" placeholder="Find an account" value="${esc(S.q)}">${S.admin ? `<button class="btn gold" id="draftBasis" title="No ${M.target_year} budget yet: creates the draft at the final amounts. A draft exists: records why each line is what it is (contract, forecast, transfer...) without changing any amount.">Draft budget: record each line's basis</button>` : ''}</div>`;
     const keep = (l) => (S.filter === 'all' || (S.filter === 'review' && ['needs_review', 'needs_board_decision'].includes(l.evidence_status)) || (S.filter === 'incomplete' && l.evidence_status === 'incomplete_source_data') || (S.filter === 'override' && l.override))
       && (!S.q || `${l.account_number} ${l.account_name}`.toLowerCase().includes(S.q.toLowerCase()));
     const head = `<tr><th>Account</th><th>Fund</th><th>${M.base_year}<br>approved</th><th>${M.base_year}<br>YTD actual</th><th>${M.base_year}<br>forecast</th><th>Normal-<br>ization</th><th>Contract /<br>known</th><th>Inflation /<br>rate</th><th>Recurring<br>volatility</th><th class="model">TrustEd<br>${M.target_year}</th><th>Override</th><th>Final<br>${M.target_year}</th><th>Confidence</th><th>Evidence</th></tr>`;
@@ -205,6 +205,18 @@
     }
     $('out').innerHTML = status + cards + drivers + tools + `<div class="gridwrap"><table class="g"><thead>${head}</thead><tbody>${rows.join('')}</tbody></table></div>`;
     document.querySelectorAll('.seg button').forEach((b) => b.addEventListener('click', () => { S.filter = b.dataset.f; render(); }));
+    // Migration 521 (Ed 2026-10-14): the draft budget records each line's basis from this forecast.
+    const db = $('draftBasis'); if (db) db.addEventListener('click', async () => {
+      if (!confirm(`Record the basis of every ${M.target_year} draft budget line from this forecast? If no ${M.target_year} budget exists, a DRAFT is created at the final amounts. An existing draft keeps every amount.`)) return;
+      db.disabled = true;
+      try {
+        const r = await fetch(`/api/working-forecast/${encodeURIComponent(S.cid)}/draft-budget`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...(await authHeader()) }, body: JSON.stringify({ year: S.year, as_of: S.asof }) });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) { alert(j.message || j.error || 'Could not record the basis.'); return; }
+        const by = Object.entries(j.by_basis || {}).map(([k, n]) => `${n} ${k.replace(/_/g, ' ')}`).join(', ');
+        alert(`${j.mode === 'draft_created' ? 'Draft budget created' : 'Basis recorded on the existing draft (no amount changed)'}: ${j.lines} lines (${by}); ${j.needs_review} need review.`);
+      } catch (e) { alert(e.message); } finally { db.disabled = false; }
+    });
     $('q').addEventListener('input', (e) => { S.q = e.target.value; const pos = e.target.selectionStart; render(); const q = $('q'); q.focus(); q.setSelectionRange(pos, pos); });
     document.querySelectorAll('tr.ln').forEach((tr) => tr.addEventListener('click', () => openLine(tr.dataset.k)));
   }
