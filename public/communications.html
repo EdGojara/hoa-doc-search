@@ -467,7 +467,7 @@ function msgHtml(m){
       <div class="link-row">${linkCell(m)}</div>
       <div id="glentry-${m.id}"></div>
       <div id="filemsg-${m.id}" class="result" style="margin-top:4px;"></div>
-      <div id="draft-${m.id}">${m.extracted&&m.extracted.draft?draftBoxHtml(m.id, m.extracted.draft.subject, m.extracted.draft.body, m.extracted.draft.careful, m.persona||'claire', null, m.extracted.draft.attachments, m.sender_email, {restore:true}):''}</div>
+      <div id="draft-${m.id}">${m.extracted&&m.extracted.draft?draftBoxHtml(m.id, m.extracted.draft.subject, m.extracted.draft.body, m.extracted.draft.careful, m.persona||'claire', null, m.extracted.draft.attachments, m.extracted.draft.to || m.sender_email, {restore:true}):''}</div>
     </div>`;
 }
 // Expand/collapse the full message body + its email chain for reference.

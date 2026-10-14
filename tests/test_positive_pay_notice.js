@@ -80,7 +80,9 @@ console.log('review on books (in-memory)');
   const fs = require('fs'); const src = fs.readFileSync(require.resolve('../lib/email/graph_ingest'), 'utf8');
   check('ingest drafts no reply of any kind for it, skips vendor bill and payment-chase matching, and stores Kat\'s review', (src.match(/if \(!draft && !ppNotice/g) || []).length >= 8 && /!ppNotice && isCompletionAck/.test(src) && (src.match(/!light && !ppNotice && email\.direction === 'inbound' && \['vendor_financial'/g) || []).length === 2 && /positive_pay: ppNotice \?/.test(src) && /if \(ppNotice\) row\.persona = 'kat'/.test(src));
   const tri = fs.readFileSync(require.resolve('../api/email_triage'), 'utf8');
-  check('"Draft reply" on it returns Kat\'s review (draftable false), never a letter', /isPositivePayNotice\(\{ \.\.\.m, recipients: undefined \}\)/.test(tri) && /draftable: false, positive_pay: review/.test(tri));
+  check('"Draft reply" on it is NOT refused: Kat drafts correspondence to a verified bank contact for approval (processing stays separate)', /isPositivePayNotice\(\{ \.\.\.m, recipients: undefined \}\)/.test(tri) && /BC\.draftForNotice\(/.test(tri) && !/draftable: false, positive_pay: review/.test(tri));
+  check('sending it is a fresh message (never threaded to the notice sender, never quoting the notice) behind the bank-recipient guard', /const threaded = !bankInquiry &&/.test(tri) && /threaded \|\| bankInquiry \? '' : quoted/.test(tri) && /sendGuard\(/.test(tri));
+  check('ingest still drafts nothing for a routine notice, but Kat prepares the inquiry when a recipient is new and unexpected', /newly_added \|\| \[\]\)\.some\(\(a\) => \(ppReview\.recipients\.unexpected/.test(src) && /bank_inquiry: true/.test(src));
 
   console.log('deadline watch');
   const now = new Date('2026-10-14T12:30:00Z');
