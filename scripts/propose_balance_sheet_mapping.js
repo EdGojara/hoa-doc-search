@@ -26,13 +26,7 @@
 require('dotenv').config();
 const { createClient } = require('@supabase/supabase-js');
 
-const CATS = {
-  cash: { section: 'asset', name: 'Cash & cash equivalents', display_order: 10 },
-  reserve: { section: 'asset', name: 'Reserve & investment accounts', display_order: 20 },
-  prepaid: { section: 'asset', name: 'Prepaids', display_order: 40 },
-  deferred: { section: 'liability', name: 'Deferred assessments', display_order: 20 },
-  fund_balance: { section: 'equity', name: 'Fund balance', display_order: 10 },
-};
+const { CATS } = require('../lib/accounting/bs_categories');   // the one standard definition
 const BANK_ROLE = { operating: 'cash', reserve: 'reserve', capital_improvement: 'reserve', special_assessment: 'reserve' };
 const RECOG_ROLE = { prepaid_expense: 'prepaid', deferred_revenue: 'deferred' };
 

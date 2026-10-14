@@ -20,6 +20,8 @@ const ACCOUNTS = [['1410', 'Prepaid Expenses', 'asset'], ['2000', 'Accounts Paya
 const L = (n, type, d, c = 0) => ({ account_number: n, account_type: type, debit_cents: d, credit_cents: c });
 const bill = (o) => ({ status: 'paid', ...o });
 const BS = [{ id: 'cat-acc', name: 'Accrued liabilities', section: 'liability' }, { id: 'cat-ap', name: 'Accounts payable', section: 'liability' }];
+// the approval-time read of the community's balance-sheet categories (lib/accounting/bs_categories)
+const CATS_DB = () => [...BS, { id: 'cat-pre', name: 'Prepaid expenses', section: 'asset' }].map((c) => ({ ...c, community_id: 'cg', statement: 'balance_sheet', is_active: true }));
 const AUG = {
   bs_categories: BS, period: { period_start: '2026-08-01', period_end: '2026-08-31' }, accounts: ACCOUNTS, already: new Set(), schedules_for: new Set(),
   late_bills: [bill({ id: 'b2608', vendor: 'Bedrock Association Management, LLC', invoice_number: '2608CG2', invoice_date: '2026-09-04', service_period_start: '2026-08-01', service_period_end: '2026-08-31', total_cents: 30788 }),
@@ -53,7 +55,7 @@ const balanced = (e) => e.lines.reduce((s, l) => s + l.debit_cents - l.credit_ce
   await t('GL 2100 Accrued Expenses is proposed once (the chart has none; 2300 is the pass-through clearing account), nothing else in the chart changes', () => {
     assert.deepStrictEqual(aug.additions.map((a) => [a.id, a.account_number, a.account_name, a.account_type, a.fund_code]), [['account:2100', '2100', 'Accrued Expenses', 'liability', 'OPR']]);
     assert.match(aug.additions[0].text, /No existing account, balance or mapping changes/);
-    assert.deepStrictEqual(aug.additions[0].bs_category, { id: 'cat-acc', name: 'Accrued liabilities' }, 'mapped where 2300 presents');
+    assert.deepStrictEqual(aug.additions[0].bs_category, { id: 'cat-acc', name: 'Accrued liabilities', role: 'accrued' }, 'mapped where 2300 presents');
     assert.strictEqual(C.buildProposals({ ...AUG, accounts: [...ACCOUNTS, { account_number: '2100', account_name: 'Accrued Expenses', account_type: 'liability', fund_code: 'OPR', is_active: true }] }).additions.length, 0, 'not proposed once it exists');
   });
 
@@ -122,7 +124,7 @@ const balanced = (e) => e.lines.reduce((s, l) => s + l.debit_cents - l.credit_ce
   await t('approval: only the authenticated owner; only ticked proposals post; account first, reversal linked to its accrual, schedule approved by the signed-in owner then recognized', async () => {
     await assert.rejects(R.approveAndPost({ from() { throw new Error('db'); } }, { run_id: 'r', approval: { channel: 'chat', email: 'egojara@bedrocktx.com', user_id: 'u' }, include: [] }), (e) => e.code === 'approval_required');
     // in-memory books
-    const db = { account_funds: [{ id: 'f-opr', fund_code: 'OPR', community_id: 'cg' }], chart_of_accounts: ACCOUNTS.map((a, i) => ({ id: `a${i}`, community_id: 'cg', account_number: a.account_number, fund_id: 'f-opr' })), journal_entries: [], recognition_schedules: [], recognition_postings: [] };
+    const db = { account_funds: [{ id: 'f-opr', fund_code: 'OPR', community_id: 'cg' }], chart_of_accounts: ACCOUNTS.map((a, i) => ({ id: `a${i}`, community_id: 'cg', account_number: a.account_number, fund_id: 'f-opr' })), journal_entries: [], recognition_schedules: [], recognition_postings: [], report_categories: CATS_DB() };
     const calls = [];
     const q = (table) => { const st = { table, filters: [], op: 'select', row: null };
       const api = { select() { return api; }, eq(k, v) { st.filters.push((r) => r[k] === v); return api; }, in(k, v) { st.filters.push((r) => v.includes(r[k])); return api; }, is(k, v) { st.filters.push((r) => (r[k] ?? null) === v); return api; }, limit() { return api; }, order() { return api; },
@@ -193,17 +195,21 @@ const balanced = (e) => e.lines.reduce((s, l) => s + l.debit_cents - l.credit_ce
     assert.deepStrictEqual(lsep.effects, { '2026-09': -745367, '2026-10': 745367 }, 'total October services booked in September: $7,453.67');
   });
   await t('posting the split deferral: account first, reversal linked to the deferral, idempotent on re-approval', async () => {
-    const db = { account_funds: [{ id: 'f-opr', fund_code: 'OPR', community_id: 'lopf' }], chart_of_accounts: LOPF_ACCTS.map((a, i) => ({ id: `l${i}`, community_id: 'lopf', account_number: a.account_number, fund_id: 'f-opr' })), journal_entries: [] };
+    const db = { account_funds: [{ id: 'f-opr', fund_code: 'OPR', community_id: 'lopf' }], chart_of_accounts: LOPF_ACCTS.map((a, i) => ({ id: `l${i}`, community_id: 'lopf', account_number: a.account_number, fund_id: 'f-opr' })), journal_entries: [], report_categories: [] };   // LOPF: no balance-sheet categories at all
     const q = (table) => { const st = { filters: [], op: 'select' }; const api = { select() { return api; }, eq(k, v) { st.filters.push((r) => r[k] === v); return api; }, in(k, v) { st.filters.push((r) => v.includes(r[k])); return api; }, limit() { return api; },
       insert(row) { st.op = 'insert'; st.row = row; return api; }, single() { st.one = true; return api; },
       then(res, rej) { let out; if (st.op === 'insert') { const r = { id: `${table}-${db[table].length + 1}`, ...st.row }; db[table].push(r); out = st.one ? r : [r]; } else { const rs = (db[table] || []).filter((r) => st.filters.every((f) => f(r))); out = st.one ? rs[0] : rs; } return Promise.resolve({ data: out, error: null }).then(res, rej); } }; return api; };
-    const sb = { from: q, rpc: async () => ({ data: {}, error: null }) };
+    const maps = []; const sb = { from: q, rpc: async (n, a) => { if (n === 'set_account_report_category') maps.push(a); return { data: {}, error: null }; } };
     const orig = POSTING.postJournalEntry; const jes = [];
     POSTING.postJournalEntry = async (o) => { const e = { id: `je-${db.journal_entries.length + 1}`, reference: `JE-L-${db.journal_entries.length + 1}`, community_id: 'lopf', ...o }; db.journal_entries.push(e); jes.push(o); return { entry: e }; };
     try {
       const run = { id: 'run-lsep', community_id: 'lopf', preview: lsep };
       await C.postApproved(sb, run, { include: ['account:1410', 'defer:b34037'], approver: 'owner (in-app)', approval: { channel: 'in_app', user_id: 'u', email: 'e' }, actor: 'Kat' });
       assert.ok(db.chart_of_accounts.some((a) => a.account_number === '1410'), '1410 added before the entries');
+      const pre = db.report_categories.find((c) => c.name === 'Prepaids');
+      assert.ok(pre && pre.section === 'asset' && pre.statement === 'balance_sheet' && pre.community_id === 'lopf', 'a community with no categories gets the standard Prepaids category on approval');
+      const a1410 = db.chart_of_accounts.find((a) => a.account_number === '1410');
+      assert.deepStrictEqual(maps.map((m) => [m.p_account_ids[0], m.p_category_id, m.p_statement, m.p_actor]), [[a1410.id, pre.id, 'balance_sheet', 'owner (in-app)']], '1410 mapped to Prepaids by the in-app approver');
       assert.deepStrictEqual(jes.map((j) => j.source_reference), ['cutoff:b34037:defer', 'cutoff:b34037:reverse-defer']);
       assert.strictEqual(jes[1].reverses_je_id, db.journal_entries[0].id, 'the reversal is linked to its deferral');
       const n = db.journal_entries.length;
