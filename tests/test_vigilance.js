@@ -57,7 +57,7 @@ function world() {
   check('detects the new outside recipient on the bank series (no one asked)', r.results.length === 1 && x.signal.detector === 'recipient_change' && x.signal.data.address === GW && r.counterparty.type === 'bank');
   check('investigates: first seen 10/13, on none of the earlier notices, in none of our records', /on none of the 5 earlier messages/.test(x.fact_basis.observed.map((o) => o.text).join(' ')) && /in none of our vendors, contacts/.test(x.fact_basis.observed.map((o) => o.text).join(' ')));
   check('assesses: high risk, Kat owns it, plan = open case + bank inquiry', x.assessment.risk === 'high' && x.assessment.owner === 'kat' && x.assessment.plan.join() === 'open_case,prepare_bank_inquiry');
-  check('acts within permission: inquiry PREPARED (not sent) to the verified contact, facts in, only unknowns asked', r.draft && r.draft.to === 'mhess@newfirst.com' && r.draft.status === 'pending' && /first appeared on October 13, 2026/.test(r.draft.body) && /Who requested and authorized the addition/.test(r.draft.body));
+  check('acts within permission: inquiry PREPARED (not sent) to the verified contact, tagged banking (approval required), facts in, only unknowns asked', r.draft && r.draft.to === 'mhess@newfirst.com' && r.draft.status === 'pending' && r.draft.topic === 'banking' && r.draft.send_policy.decision === 'approval_required' && /first appeared on October 13, 2026/.test(r.draft.body) && /Who requested and authorized the addition/.test(r.draft.body));
   const o = db.objectives[0];
   check('records a case on the operator spine: owner Kat, high priority, REVIEW, waiting on the approval', o && o.subject_key === `vigilance:recipient_change:newfirst.com:${GW}` && o.owner_persona === 'kat' && o.priority === 'high' && o.autonomy_class === 'REVIEW' && o.status === 'waiting_human');
   check('audit trail: opened, investigated, assessed, next action, escalated', ['opened', 'note', 'note', 'next_action', 'escalated'].every((k, i) => (db.objective_events.filter((e) => e.objective_id === o.id)[i] || {}).kind === k), JSON.stringify(db.objective_events.map((e) => e.kind)));
@@ -85,6 +85,7 @@ function world() {
     w.db.email_messages.push(notice('2026-10-15T11:56:00Z'));
     const f2 = await F.followCase(w.sb, oo, { now: new Date('2026-10-15T12:30:00Z'), notify: async () => ({ ok: true }) });
     check('resolved by evidence: the 10/15 notice no longer carries the address; the case closes citing it', f2 === 'resolved' && oo.status === 'resolved' && /not on the 2026-10-15 message/.test(w.db.objective_events.find((e) => e.kind === 'closed').summary));
+    check('a reply from the bank alone never closed it (it went to a person for review first)', w.db.objective_events.findIndex((e) => e.kind === 'message_in') < w.db.objective_events.findIndex((e) => e.kind === 'closed'));
   }
 
   console.log('overdue: Ed hears once');
@@ -94,7 +95,13 @@ function world() {
     const late = new Date('2026-10-16T15:00:00Z');
     const a1 = await F.followCase(w.sb, oo, { now: late, notify: async (t) => { t3.push(t); return { ok: true }; } });
     const a2 = await F.followCase(w.sb, oo, { now: late, notify: async (t) => { t3.push(t); return { ok: true }; } });
-    check('past due with no reply or resolution: one overdue text, then quiet', a1 === 'overdue' && a2 === 'open' && t3.length === 1);
+    check('past due while the prepared inquiry still awaits approval: one reminder, no follow-up to a message never sent, then quiet', a1 === 'overdue' && a2 === 'open' && t3.length === 1 && !/Follow-up/.test(t3[0]) && !w.db.email_messages.find((m) => m.id === n.id).extracted);
+    // the inquiry is then approved and sent: the case records it and waits on the bank; no answer -> Kat prepares the follow-up
+    w.db.email_messages.push({ id: 'sent2', direction: 'outbound', sender_email: 'kat@bedrocktx.com', recipients: ['mhess@newfirst.com'], subject: 'Positive Pay notification recipient: request for confirmation', received_at: '2026-10-16T16:00:00Z', body_full: `we noticed that ${GW} was recently added` });
+    oo.next_action_due = '2026-10-16T15:00:00Z'; w.db.objective_events = w.db.objective_events.filter((e) => !/^Overdue/.test(e.summary || ''));
+    const a3 = await F.followCase(w.sb, oo, { now: new Date('2026-10-19T15:00:00Z'), notify: async (t) => { t3.push(t); return { ok: true }; } });
+    const src = w.db.email_messages.find((m) => m.id === n.id);
+    check('approved inquiry detected as sent (waiting on the bank); still no answer later: Kat prepares a follow-up to Melody for approval and tells Ed once', oo.subject_refs.contacted && oo.subject_refs.contacted.message_id === 'sent2' && a3 === 'overdue' && src.extracted && src.extracted.draft && src.extracted.draft.to === 'mhess@newfirst.com' && /Following up on our email of October 16, 2026/.test(src.extracted.draft.body) && src.extracted.draft.send_policy.decision === 'approval_required' && /Follow-up to mhess@newfirst.com prepared/.test(t3[1]), JSON.stringify([a3, t3]));
   }
 
   console.log('catch-up: mail that arrived before vigilance existed is examined');
@@ -123,7 +130,10 @@ function world() {
   }
 
   console.log('controls');
-  check('no teammate may send, act in a bank portal, move money or change banking details on her own', ['kat', 'emma', 'amanda', 'claire'].every((p) => P.HUMAN.every((a) => !P.can(p, a))));
+  check('no teammate may act in a bank portal, move money or change banking details on her own', ['kat', 'emma', 'amanda', 'claire'].every((p) => P.ALWAYS_HUMAN.every((a) => !P.can(p, a))));
+  check('sending is RISK-BASED: routine communication follows the sender\'s own autonomy policy (no added approval)', P.sendDecision({ topic: 'routine' }).decision === 'sender_policy' && P.sendDecision().decision === 'sender_policy');
+  check('banking, payment changes, legal, enforcement and security always need a person\'s approval', ['banking', 'payment_change', 'legal', 'enforcement', 'security'].every((t) => P.sendDecision({ topic: t }).decision === 'approval_required'));
+  check('a vigilance bank inquiry is tagged banking (approval required)', P.topicFor('recipient_change', 'bank') === 'banking' && P.topicFor('payment_instructions', 'vendor') === 'payment_change' && P.topicFor('amount_outlier', 'vendor') === 'routine');
   check('an action outside the owner\'s permission is never performed; it becomes an escalation', (() => { const a = { owner: 'claire', plan: ['open_case', 'prepare_bank_inquiry'] }; return V.act(null, { data: {} }, a, { received_at: '2026-10-14T00:00:00Z' }, {}).then((r) => r.refused.includes('prepare_bank_inquiry') && !r.done.length); })() instanceof Promise);
   const refusedCheck = await V.act(null, { data: {} }, { owner: 'claire', plan: ['open_case', 'prepare_bank_inquiry'] }, { received_at: '2026-10-14T00:00:00Z' }, {});
   check('...and it is refused in practice (claire may not prepare a bank inquiry)', refusedCheck.refused.includes('prepare_bank_inquiry') && !refusedCheck.done.length);
