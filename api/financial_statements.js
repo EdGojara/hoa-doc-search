@@ -125,6 +125,26 @@ router.get('/:cid/income-budget', async (req, res) => {
   } catch (err) { fail(res, 'income-budget', err); }
 });
 
+// GET /:cid/board-budget-report?target_year=2027&as_of=2026-09-30&budget_id=..&format=pdf|html
+// The printable board budget report (lib/budget/board_report): a presentation of the proposed-budget
+// models, never a second calculation. PROPOSED until the budget's status is approved. Read-only.
+router.get('/:cid/board-budget-report', async (req, res) => {
+  try {
+    if (!(await booksGate(req, res))) return;
+    const B = require('../lib/budget/board_report');
+    const as_of = dateParam(req.query.as_of, monthEndBefore(today()));
+    if (!as_of) return res.status(400).json({ error: 'as_of_must_be_YYYY-MM-DD' });
+    const target_year = Number(req.query.target_year) || Number(as_of.slice(0, 4)) + 1;
+    const budget_id = /^[0-9a-f-]{36}$/i.test(String(req.query.budget_id || '')) ? req.query.budget_id : null;
+    const report = await B.buildBoardReport(supabase, { community_id: req.params.cid, target_year, as_of, budget_id });
+    if (String(req.query.format || 'pdf') === 'html') return res.set('Content-Type', 'text/html').send(B.renderBoardReportHtml(report));
+    const slug = String(report.community.name || 'budget').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+    res.set('Content-Type', 'application/pdf');
+    res.set('Content-Disposition', `${req.query.download ? 'attachment' : 'inline'}; filename="${slug}-${report.budget.approved ? 'adopted' : 'proposed'}-${target_year}-budget.pdf"`);
+    res.send(await B.boardReportPdf(report));
+  } catch (err) { fail(res, 'board-budget-report', err); }
+});
+
 router.get('/:cid/render', async (req, res) => {
   try {
     if (!(await booksGate(req, res))) return;
