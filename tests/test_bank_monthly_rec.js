@@ -123,6 +123,19 @@ check('the error is shown as corrected', be2.exceptions.some((e) => e.code === '
 const be3 = reconcileAccountMonth({ ...base, period_start: '2026-09-01', period_end: '2026-09-30', statements: [s8b, s9e], bankTxns: [...vant, fix], glLines: glBooks,
   codings: [beCoding, { bank_transaction_id: fix.id, bank_error_correction_of: c1004.id, basis: '' }] });
 check('a correction with no evidence is not accepted', be3.exceptions.some((e) => e.code === 'bank_error_correction_unmatched'));
+// Masking guards: a bank-error coding can only ever explain a check-number variance.
+const stray = bk('imp9e', '2026-09-14', -1500, 'WIRE 8812', null, 'wire');
+const s9s = { ...s9e, id: 'imp9s', ending_balance_cents: s9e.beginning_balance_cents - 1500 };
+const strayRun = reconcileAccountMonth({ ...base, period_start: '2026-09-01', period_end: '2026-09-30', statements: [s8b, { ...s9s }], bankTxns: [...vant, { ...stray, bank_statement_import_id: 'imp9s' }], glLines: glBooks,
+  codings: [beCoding, { bank_transaction_id: stray.id, bank_error: true, expected_cents: 0, basis: 'not a check' }] });
+check('a bank-error coding on a non-check bank line is ignored: it stays an unexplained bank line', strayRun.items.some((i) => i.category === 'bank_only' && i.bank_transaction_id === stray.id) && strayRun.status !== 'reconciled', strayRun.status);
+const wrongFix = bk('imp9w', '2026-09-12', -55, 'ENCODING CORRECTION CHECK 1004', null, 'adjustment');
+const s9w = { id: 'imp9w', statement_period_start: '2026-09-01', statement_period_end: '2026-09-30', beginning_balance_cents: s8b.ending_balance_cents, ending_balance_cents: s8b.ending_balance_cents - 55 };
+const wrongRun = reconcileAccountMonth({ ...base, period_start: '2026-09-01', period_end: '2026-09-30', statements: [s8b, s9w], bankTxns: [...vant, wrongFix], glLines: glBooks,
+  codings: [beCoding, { bank_transaction_id: wrongFix.id, bank_error_correction_of: c1004.id, basis: 'bank letter' }] });
+check('a "correction" of the wrong amount does not offset the error and stays a bank line', wrongRun.exceptions.some((e) => e.code === 'bank_error_correction_unmatched') && wrongRun.items.some((i) => i.category === 'bank_only' && i.bank_transaction_id === wrongFix.id) && wrongRun.status !== 'reconciled');
+const mixed = reconcileAccountMonth({ ...base, period_start: '2026-09-01', period_end: '2026-09-30', statements: [s8b, { ...s9s }], bankTxns: [...vant, { ...stray, bank_statement_import_id: 'imp9s' }], glLines: glBooks, codings: [beCoding] });
+check('a confirmed bank error never lets an unrelated unexplained line reconcile', mixed.status !== 'reconciled' && mixed.exceptions.some((e) => e.severity === 'open' && e.bank_transaction_id === stray.id), mixed.status);
 
 console.log('stale items');
 const r4 = reconcileAccountMonth({ ...base, period_start: '2026-11-01', period_end: '2026-11-30', statements: [s8b, s9, { id: 'imp10', statement_period_start: '2026-10-01', statement_period_end: '2026-10-31', beginning_balance_cents: s9.ending_balance_cents, ending_balance_cents: s9.ending_balance_cents }, { id: 'imp11', statement_period_start: '2026-11-01', statement_period_end: '2026-11-30', beginning_balance_cents: s9.ending_balance_cents, ending_balance_cents: s9.ending_balance_cents }], bankTxns: [...vant, ...sep], glLines: glFixed });
