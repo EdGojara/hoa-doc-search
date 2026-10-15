@@ -71,6 +71,7 @@ router.post('/charges', express.json(), async (req, res) => {
     const result = await createCharge(req.body || {});
     res.json(result);
   } catch (err) {
+    if (require('../lib/accounting/ownership').isBooksClosed(err)) return res.status(409).json({ error: 'books_closed', detail: err.message });
     if (err.code === 'invalid_input' || err.code === 'invalid_state' || err.code === 'period_closed') {
       return res.status(400).json({ error: err.message, code: err.code });
     }

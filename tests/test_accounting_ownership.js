@@ -79,6 +79,19 @@ t('migration 528 closes the ledger on the same rule as accountingStatus', () => 
     for (const [c, open] of cases) assert.strictEqual(O.accountingStatus(c, '2026-10-15').enabled, open, c.name);
   }
 });
+t('#209 review: refusals are 409s, vendor merges keep closed books intact, conversions refuse early', () => {
+  const O = require('../lib/accounting/ownership');
+  assert.ok(O.isBooksClosed({ code: 'financials_not_enabled' }) && O.isBooksClosed({ message: 'books_closed: posting refused: Eaglewood is a former client (archived).' }) && !O.isBooksClosed({ code: 'period_closed', message: 'x' }) && !O.isBooksClosed(null));
+  const n = (f) => (src(f).match(/isBooksClosed\(err\)\) return res\.status\(409\)/g) || []).length;
+  assert.strictEqual(n('api/books.js'), 4, 'post, transfer, edit, void'); assert.strictEqual(n('api/ar.js'), 1); assert.strictEqual(n('api/ap.js'), 2);
+  const vm = src('lib/ap/vendor_master.js');
+  assert.ok(/if \(t === 'journal_entry_lines'\) \{[^\n]*continue; \}/.test(vm) && !/from\('journal_entry_lines'\)\.update/.test(vm), 'a vendor merge never rewrites ledger lines (history keeps its vendor)');
+  const ob = src('lib/onboarding/service.js');
+  assert.ok(/booksStatus\(view\.batch\.community_id\)[\s\S]{0,120}ServiceError\(409, 'BOOKS_CLOSED'/.test(ob) && /booksStatus = \(communityId\) => require\('\.\.\/accounting\/ownership'\)\.accountingStatusFor/.test(ob), 'execute refuses a closed community before writing');
+  assert.ok(/accountingStatusFor\(s, CID\)[\s\S]{0,200}process\.exit\(1\)/.test(src('scripts/migrate_community_gl.js')), 'the GL rebuild script refuses early');
+  const sql = src('migrations/528_books_closed_guard.sql');
+  assert.ok(/SECURITY DEFINER\s+SET search_path = public/.test(sql) && /REVOKE ALL ON FUNCTION community_books_closed_reason\(uuid\) FROM PUBLIC/.test(sql) && !/TO service_role, authenticated/.test(sql));
+});
 t('violations and ACC never ask it (Eaglewood keeps both in trustEd)', () => {
   const dir = path.join(__dirname, '..', 'api');
   const nonFinancial = fs.readdirSync(dir).filter((f) => /violation|acc|arc|inspection|drv/i.test(f) && f.endsWith('.js'));

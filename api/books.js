@@ -147,6 +147,7 @@ router.post('/journal-entries', express.json({ limit: '256kb' }), async (req, re
     const result = await postJournalEntry(req.body || {});
     res.json(result);
   } catch (err) {
+    if (require('../lib/accounting/ownership').isBooksClosed(err)) return res.status(409).json({ error: 'books_closed', detail: err.message });
     if (err.code === 'unbalanced' || err.code === 'invalid_input' || err.code === 'period_closed') {
       return res.status(400).json({ error: err.message, code: err.code });
     }
@@ -191,6 +192,7 @@ router.post('/transfer', express.json({ limit: '32kb' }), async (req, res) => {
     const result = await postJournalEntry({ community_id, posting_date: date, description: desc, source_module: 'manual', lines });
     res.json({ ok: true, entry: result.entry });
   } catch (err) {
+    if (require('../lib/accounting/ownership').isBooksClosed(err)) return res.status(409).json({ error: 'books_closed', detail: err.message });
     if (err.code === 'unbalanced' || err.code === 'invalid_input' || err.code === 'period_closed') return res.status(400).json({ error: err.message, code: err.code });
     console.error('[books] transfer failed:', err); res.status(500).json({ error: safeErrorMessage(err) });
   }
@@ -287,6 +289,7 @@ router.patch('/journal-entries/:id', express.json({ limit: '256kb' }), async (re
     });
     res.json(result);
   } catch (err) {
+    if (require('../lib/accounting/ownership').isBooksClosed(err)) return res.status(409).json({ error: 'books_closed', detail: err.message });
     if (['unbalanced', 'invalid_input', 'period_closed', 'invalid_state', 'not_found'].includes(err.code)) {
       return res.status(400).json({ error: err.message, code: err.code });
     }
@@ -337,6 +340,7 @@ router.post('/journal-entries/:id/void', express.json(), async (req, res) => {
     });
     res.json(result);
   } catch (err) {
+    if (require('../lib/accounting/ownership').isBooksClosed(err)) return res.status(409).json({ error: 'books_closed', detail: err.message });
     if (err.code === 'invalid_input' || err.code === 'invalid_state' || err.code === 'not_found' || err.code === 'period_closed') {
       return res.status(400).json({ error: err.message, code: err.code });
     }

@@ -29,7 +29,10 @@
 -- history and exports stay available. Every active community is unaffected.
 --
 -- Changing a community's status back (e.g. reopening it) is itself the owner's
--- decision; this migration adds no override.
+-- decision; this migration adds no override. A controlled owner-only correction path for
+-- trustEd-books communities after their last day is proposed separately for Ed's decision.
+-- Bulk backfills that update journal_entries / journal_entry_lines across communities must
+-- exclude closed communities (community_books_closed_reason(community_id) IS NULL).
 -- Record ownership: function and triggers only; no data rows change.
 -- ============================================================================
 BEGIN;
@@ -38,6 +41,8 @@ CREATE OR REPLACE FUNCTION community_books_closed_reason(p_community uuid)
 RETURNS text
 LANGUAGE sql
 STABLE
+SECURITY DEFINER
+SET search_path = public
 AS $$
   SELECT CASE
     WHEN c.id IS NULL THEN NULL
@@ -119,6 +124,7 @@ CREATE TRIGGER trg_journal_entry_lines_books_closed
   BEFORE INSERT OR UPDATE OR DELETE ON journal_entry_lines
   FOR EACH ROW EXECUTE FUNCTION journal_entry_lines_books_closed_guard();
 
-GRANT EXECUTE ON FUNCTION community_books_closed_reason(uuid) TO service_role, authenticated;
+REVOKE ALL ON FUNCTION community_books_closed_reason(uuid) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION community_books_closed_reason(uuid) TO service_role;
 
 COMMIT;

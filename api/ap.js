@@ -575,6 +575,7 @@ router.post('/invoices', express.json(), async (req, res) => {
     const result = await createInvoice(req.body || {});
     res.json(result);
   } catch (err) {
+    if (require('../lib/accounting/ownership').isBooksClosed(err)) return res.status(409).json({ error: 'books_closed', detail: err.message });
     if (err.code === 'invalid_input' || err.code === 'invalid_state' || err.code === 'period_closed' || err.code === 'before_gl_cutover') {
       return res.status(400).json({ error: err.message, code: err.code });
     }
@@ -692,6 +693,7 @@ router.post('/reimbursements', express.json(), async (req, res) => {
       related_party: true,
     });
   } catch (err) {
+    if (require('../lib/accounting/ownership').isBooksClosed(err)) return res.status(409).json({ error: 'books_closed', detail: err.message });
     if (err.code === 'invalid_input' || err.code === 'invalid_state' || err.code === 'period_closed' || err.code === 'before_gl_cutover') {
       return res.status(400).json({ error: err.message, code: err.code });
     }
