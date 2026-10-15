@@ -161,6 +161,40 @@ t('tick: one Emma task per missing bill, stable source_ref, no duplicates on re-
   } finally { lifecycle.operationalCommunities = realOps; }
 });
 
+t('write scope: the job writes ONLY Mission Control rows (work_items + their audit events), never bills, journal entries, payments or email', async () => {
+  const lifecycle = require('../lib/community/lifecycle');
+  const realOps = lifecycle.operationalCommunities;
+  lifecycle.operationalCommunities = async () => [{ id: 'c-cg', name: 'Canyon Gate at Cinco Ranch', is_demo: false }];
+  try {
+    const store = {
+      ap_invoices: FX.bills.map((b, i) => ({ id: `inv-${i}`, community_id: 'c-cg', status: 'paid', ...b, vendors: { name: b.vendor_name, is_legal_counsel: false } })),
+      vendor_contracts: FX.contracts.map((c) => ({ ...c, community_id: 'c-cg' })),
+      work_items: [{ id: 'wi-old', source_ref: 'ap-missing-bill:c-cg:acct:9999999:2026-01-01', source_type: 'agent', status: 'new' }],
+      work_item_events: [],
+    };
+    const inner = fakeSupabase(store);
+    const writes = [];
+    const spy = { from(table) {
+      const q = inner.from(table);
+      for (const op of ['insert', 'update', 'upsert', 'delete']) {
+        const orig = q[op];
+        q[op] = (...a) => { writes.push(`${table}.${op}`); return orig ? orig.apply(q, a) : q; };
+      }
+      return q;
+    }, rpc() { writes.push('rpc'); return Promise.resolve({ data: null, error: null }); } };
+    const tasks = [];
+    const r = await tick({ supabase: spy, today: new Date('2026-10-15T12:00:00Z'), logger: { log() {}, warn() {}, error() {} }, upsertTask: async (o) => { tasks.push(o); return { id: 'x', created: true }; } });
+    assert.ok(r.created > 0 && r.resolved === 1, JSON.stringify(r));
+    const tables = new Set(writes.map((w) => w.split('.')[0]));
+    assert.deepStrictEqual([...tables].sort(), ['work_item_events', 'work_items'], writes.join(', '));
+    assert.ok(tasks.every((o) => o.assigned_to === 'Emma' && /^ap-missing-bill:/.test(o.source_ref)));
+    // And the module cannot reach posting, payment, approval, email or AI code.
+    const src = require('fs').readFileSync(require.resolve('../lib/ap/missing_bills'), 'utf8');
+    const reqs = [...src.matchAll(/require\(['"]([^'"]+)['"]\)/g)].map((m) => m[1]).sort();
+    assert.deepStrictEqual(reqs, ['../../api/mission_control', '../community/lifecycle', '../db/fetch_all']);
+  } finally { lifecycle.operationalCommunities = realOps; }
+});
+
 (async () => {
   for (const r of results) {
     try { await r.fn(); console.log(`  ✓ ${r.name}`); }
