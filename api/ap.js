@@ -912,6 +912,7 @@ router.get('/invoices/:id', async (req, res) => {
         vendorName: (invoice.vendors && invoice.vendors.name) || invoice.vendor_name || null,
         communityId: invoice.community_id,
         totalCents: invoice.total_cents,
+        lines: lines || [], accountNumber: invoice.account_number || null, excludeInvoiceId: invoice.id, excludeJournalEntryId: invoice.posting_journal_entry_id || null,
       });
     } catch (e) { console.warn('[ap] recurrence profile skipped:', e.message); }
     // Does this vendor owe this community a credit? Asked HERE, at the moment of
@@ -1110,10 +1111,11 @@ router.post('/invoices/:id/approve', express.json(), async (req, res) => {
     if (solo) {
       try {
         const { getRecurrenceProfile } = require('../lib/ap/recurring');
-        const { data: full } = await supabase.from('ap_invoices').select('vendor_id, community_id, total_cents, vendors(name)').eq('id', id).maybeSingle();
+        const { data: full } = await supabase.from('ap_invoices').select('vendor_id, community_id, total_cents, account_number, posting_journal_entry_id, vendors(name), ap_invoice_lines(description, amount_cents)').eq('id', id).maybeSingle();
         const rec = await getRecurrenceProfile({
           vendorId: full && full.vendor_id, vendorName: full && full.vendors && full.vendors.name,
           communityId: full && full.community_id, totalCents: full && full.total_cents,
+          lines: (full && full.ap_invoice_lines) || [], accountNumber: (full && full.account_number) || null, excludeInvoiceId: id, excludeJournalEntryId: (full && full.posting_journal_entry_id) || null,
         });
         policy = require('../lib/ap/approval_policy').approvalPath(rec);
       } catch (e) { console.warn('[ap] release policy note skipped:', e.message); }
@@ -1579,6 +1581,13 @@ router.post('/invoices/:id/post-coded', async (req, res) => {
     });
     const biggest = lines.filter((l) => l.amount_cents > 0).sort((a, b) => b.amount_cents - a.amount_cents)[0];
     await supabase.from('ap_invoices').update({ coded_gl_account_id: biggest ? biggest.gl_account_id : null, posting_journal_entry_id: jeId || null, updated_at: new Date().toISOString() }).eq('id', id);
+    if (!jeId) {
+      // Say WHY it did not post. "ok" with nothing on the books is how two
+      // Canyon Gate bills sat unbooked through September. (Ed 2026-10-15.)
+      const recon = require('../lib/ap/line_reconcile').reconcileLines({ lineCents: lines.map((l) => l.amount_cents), totalCents: inv.total_cents, statedTaxCents: inv.tax_cents || 0 });
+      return res.status(409).json({ error: recon.ok ? 'not_posted' : 'lines_do_not_add_up',
+        detail: recon.ok ? 'The journal entry did not post (no open period for the invoice date, no A/P account, or the bill is waiting on its GL cutover review). Nothing was booked.' : recon.message });
+    }
     res.json({ ok: true, posting_journal_entry_id: jeId, posted: !!jeId, accounts: new Set(lines.map((l) => l.gl_account_id)).size });
   } catch (err) { console.error('[ap] post-coded failed:', err); res.status(500).json({ error: safeErrorMessage(err) }); }
 });

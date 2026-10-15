@@ -10,6 +10,8 @@
 //
 //   node scripts/backfill_ap_approval_path.js          # dry run, prints the plan
 //   node scripts/backfill_ap_approval_path.js --write   # actually writes
+//   ... --all-open   re-decide EVERY open bill, not just unrouted ones (after a
+//                    rule change, e.g. the 2026-10-15 same-kind-of-bill test)
 // ============================================================================
 require('dotenv').config({ override: true });
 const { createClient } = require('@supabase/supabase-js');
@@ -17,6 +19,7 @@ const { decideApprovalPath } = require('../lib/ap/decide_path');
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 const WRITE = process.argv.includes('--write');
+const ALL_OPEN = process.argv.includes('--all-open');
 const money = (c) => '$' + (Number(c || 0) / 100).toLocaleString('en-US', { minimumFractionDigits: 2 });
 
 (async () => {
@@ -28,11 +31,13 @@ const money = (c) => '$' + (Number(c || 0) / 100).toLocaleString('en-US', { mini
     return;
   }
 
-  const { data, error } = await supabase.from('ap_invoices')
-    .select('id, community_id, vendor_id, total_cents, status, vendors(name), communities(name)')
-    .is('approval_path', null)
+  let q = supabase.from('ap_invoices')
+    .select('id, community_id, vendor_id, total_cents, account_number, status, posting_journal_entry_id, approval_path_reason, vendors(name), communities(name), ap_invoice_lines(description, amount_cents)')
     .in('status', ['awaiting_approval', 'on_hold'])
+    .order('id')
     .limit(1000);
+  if (!ALL_OPEN) q = q.is('approval_path', null);
+  const { data, error } = await q;
   if (error) throw error;
   if (!data || !data.length) { console.log('Nothing to backfill — every open bill already has a route.'); return; }
 
@@ -40,9 +45,11 @@ const money = (c) => '$' + (Number(c || 0) / 100).toLocaleString('en-US', { mini
   let mgr = 0, rel = 0, failed = 0;
   for (const inv of data) {
     const vendorName = (inv.vendors && inv.vendors.name) || null;
+    if (/^LINES DON'T ADD UP/.test(String(inv.approval_path_reason || ''))) continue;   // a held bill keeps its hold reason
     let row;
     try {
-      row = await decideApprovalPath({ vendorId: inv.vendor_id, vendorName, communityId: inv.community_id, totalCents: inv.total_cents });
+      row = await decideApprovalPath({ vendorId: inv.vendor_id, vendorName, communityId: inv.community_id, totalCents: inv.total_cents,
+        lines: inv.ap_invoice_lines || [], accountNumber: inv.account_number || null, excludeInvoiceId: inv.id, excludeJournalEntryId: inv.posting_journal_entry_id || null });
     } catch (e) { console.log(`  ✗ ${vendorName}: ${e.message}`); failed++; continue; }
     row.approval_path === 'release' ? rel++ : mgr++;
     console.log(`  ${row.approval_path === 'release' ? '✅ release      ' : '👤 manager_review'}  ${money(inv.total_cents).padStart(11)}  ${String(vendorName || '').slice(0, 26).padEnd(26)} ${String((inv.communities && inv.communities.name) || '').slice(0, 18).padEnd(18)} — ${row.approval_path_why}`);

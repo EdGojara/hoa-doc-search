@@ -47451,6 +47451,9 @@ ${questionsPage}
       // bills (no invoice-level account either) still show "no GL".
       const invAcct = (inv.coded_account && !apIsSplit) ? inv.coded_account : null;
       const openForApproval = inv.status === 'awaiting_approval' && !!inv.posting_journal_entry_id;
+      // Intake held this bill because its lines don't add up to the total (and the
+      // gap isn't its sales tax). lib/ap/line_reconcile LINES_HOLD_MARK. (Ed 2026-10-15.)
+      const apLinesHold = (() => { const m = String(inv.approval_path_reason || '').match(/^LINES DON'T ADD UP: (.*)$/) || String(inv.notes || '').match(/LINES DON'T ADD UP: (.*?Post as coded\.)/); return m ? m[1] : ''; })();
       const canApprove = openForApproval;   // legacy name kept for the rest of the render
       const notFinal = inv.status !== 'paid' && inv.status !== 'voided';
       // A bill coded line by line has to be CORRECTABLE line by line, or the split
@@ -47576,7 +47579,7 @@ ${questionsPage}
               <div style="background:#f5f8fc; padding:10px 14px; border-radius:6px; font-size:12.5px;">
                 <div>Confidence: ${apConfidenceBadge(inv.auto_coding_confidence)}</div>
                 <div style="margin-top:4px;">Signal: <code style="background:#fff; padding:1px 6px; border-radius:3px;">${apEsc(inv.auto_coding_signal || '—')}</code></div>
-                <div style="margin-top:4px;">JE: ${inv.posting_journal_entry_id ? '<span style="color:#16a34a;">✓ Posted</span>' : '<span style="color:#dc2626;">⚠ Not posted — GL coding incomplete</span>'}</div>
+                <div style="margin-top:4px;">JE: ${inv.posting_journal_entry_id ? '<span style="color:#16a34a;">✓ Posted</span>' : (apLinesHold ? '<span style="color:#dc2626;">⚠ Not posted — lines do not add up to the bill</span>' : '<span style="color:#dc2626;">⚠ Not posted — GL coding incomplete</span>')}</div>
                 ${credits.length ? `
                   <div style="margin-top:8px; padding:10px 12px; border-radius:6px; background:#fef2f2; border:2px solid #b91c1c;">
                     <div style="font-weight:800; color:#b91c1c;">💳 THIS VENDOR OWES US A CREDIT${applied && applied.applied ? '' : " — don't pay full"}</div>
@@ -47637,7 +47640,10 @@ ${questionsPage}
             </div>
           </div>
 
-          ${inv.status === 'awaiting_approval' && !inv.posting_journal_entry_id ? `
+          ${apLinesHold && !inv.posting_journal_entry_id ? `
+            <div style="margin-top:16px; padding:8px 12px; border-radius:6px; background:#fef2f2; border:2px solid #b91c1c; font-size:12px; color:#7f1d1d;">
+              <strong>Held: the lines don't add up to the bill.</strong> ${apEsc(apLinesHold)}
+            </div>` : inv.status === 'awaiting_approval' && !inv.posting_journal_entry_id ? `
             <div style="margin-top:16px; padding:8px 12px; border-radius:6px; background:#fffbeb; border:1px solid #fde047; font-size:12px; color:#92400e;">
               ${inv.coded_account
                 ? `<strong>Coded, but not posted yet</strong> — this bill is coded to <strong>${apEsc(inv.coded_account.account_number)} ${apEsc(inv.coded_account.account_name)}</strong> (auto-coded at low confidence, so it was held for a look). The journal entry hasn't posted, so there are no approval buttons yet. If the account is right, click <strong>Apply &amp; post</strong> on it above — the JE posts and the approval buttons appear. If not, use <em>Change</em>.`
