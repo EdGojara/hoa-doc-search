@@ -69,6 +69,8 @@ COMMENT ON FUNCTION community_books_closed_reason(uuid) IS
 CREATE OR REPLACE FUNCTION journal_entries_books_closed_guard()
 RETURNS trigger
 LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
 AS $$
 DECLARE
   v_reason text;
@@ -94,6 +96,8 @@ $$;
 CREATE OR REPLACE FUNCTION journal_entry_lines_books_closed_guard()
 RETURNS trigger
 LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
 AS $$
 DECLARE
   v_reason text;
