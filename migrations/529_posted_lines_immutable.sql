@@ -35,11 +35,18 @@
 --   never turned back into a draft (that would unlock its lines);
 --   a void is final (voided -> anything else, or a changed void_reversal_je_id,
 --   is refused: the reversal is live, so un-voiding would count it twice);
+--   posted -> voided only with its reversal already posted (void_reversal_je_id
+--   names an entry whose reverses_je_id is this one, the same rule as 502);
+--   posted -> superseded only with superseded_by_conversion set;
+--   superseded is final, except a reviewed conversion rollback that sets the
+--   transaction-local flag trusted.conversion_restore = 'on'
+--   (neither 'voided' without a reversal nor 'superseded' counts in balances,
+--   so a bare status flip must never take a posted entry off the books);
 --   community_id, posting_date, period_id, total_debits_cents,
 --   total_credits_cents and reverses_je_id never change.
 --   Allowed: description, notes, source document links, needs_review,
 --   classification_reason, prior_period_through, last_edited_*, the void flip
---   (posted -> voided with its reversal), the superseded flip and its restore.
+--   (posted -> voided with its reversal) and a conversion's superseded flip.
 --   Every application path that updates a header (lib/accounting/posting.js
 --   voidJournalEntry + editJournalEntry, lib/ap/intake.js document links,
 --   lib/accounting/record_vendor_payment.js review flag, the 466 / 488 / 498 /
@@ -113,6 +120,30 @@ BEGIN
       RAISE EXCEPTION 'posted_lines_immutable: % is voided; a void is final (post a new entry instead)', OLD.reference
         USING ERRCODE = 'P0001';
     END IF;
+    -- Neither 'voided' without its reversal nor 'superseded' counts in balances
+    -- (lib/accounting/je_status.js countsInGl), so a status flip alone must never
+    -- take a posted entry off the books.
+    -- posted -> voided: only with its reversal recorded (the same rule as 502).
+    IF OLD.status = 'posted' AND NEW.status = 'voided'
+       AND NOT (NEW.void_reversal_je_id IS NOT NULL
+                AND EXISTS (SELECT 1 FROM journal_entries r WHERE r.id = NEW.void_reversal_je_id AND r.reverses_je_id = NEW.id)) THEN
+      RAISE EXCEPTION 'posted_lines_immutable: % can only be voided by a reversal entry that is already posted (void_reversal_je_id must name an entry that reverses it)', OLD.reference
+        USING ERRCODE = 'P0001';
+    END IF;
+    -- posted -> superseded: only by a conversion, which names itself.
+    IF OLD.status = 'posted' AND NEW.status = 'superseded' AND nullif(btrim(coalesce(NEW.superseded_by_conversion, '')), '') IS NULL THEN
+      RAISE EXCEPTION 'posted_lines_immutable: % can only be superseded by a conversion (superseded_by_conversion is required)', OLD.reference
+        USING ERRCODE = 'P0001';
+    END IF;
+    -- superseded is final: restoring it would count it again beside the conversion's
+    -- replacement entries. The one exception is a reviewed conversion rollback that
+    -- sets the transaction-local flag trusted.conversion_restore = 'on' (no
+    -- application writer does; only an owner-run, reviewed SQL transaction).
+    IF OLD.status = 'superseded' AND NEW.status IS DISTINCT FROM 'superseded'
+       AND NOT (NEW.status = 'posted' AND coalesce(current_setting('trusted.conversion_restore', true), '') = 'on') THEN
+      RAISE EXCEPTION 'posted_lines_immutable: % is superseded by conversion %; it is not restored (a reviewed conversion rollback sets trusted.conversion_restore)', OLD.reference, OLD.superseded_by_conversion
+        USING ERRCODE = 'P0001';
+    END IF;
     IF (NEW.community_id, NEW.posting_date, NEW.period_id, NEW.total_debits_cents, NEW.total_credits_cents, NEW.reverses_je_id)
        IS DISTINCT FROM (OLD.community_id, OLD.posting_date, OLD.period_id, OLD.total_debits_cents, OLD.total_credits_cents, OLD.reverses_je_id) THEN
       RAISE EXCEPTION 'posted_lines_immutable: % (%) keeps its community, date, period, amounts and reversal link; post a correcting entry instead', OLD.reference, OLD.status
@@ -126,7 +157,7 @@ $$;
 COMMENT ON FUNCTION journal_entry_lines_posted_guard() IS
   'Refuses DELETE, and any UPDATE that changes a line, when the line''s journal entry is not a draft. Posted lines are permanent; correct by a new entry. (mig 529; scar LOPF JE-2026-00169..00172)';
 COMMENT ON FUNCTION journal_entries_posted_guard() IS
-  'A non-draft journal entry never returns to draft, a void is final, and its community, posting date, period, totals and reverses_je_id never change. Metadata (description, notes, document links, needs_review, classification_reason, prior-period flag), the void flip and the superseded flip / restore are allowed. (mig 529)';
+  'A non-draft journal entry never returns to draft, a void is final, and its community, posting date, period, totals and reverses_je_id never change. Metadata (description, notes, document links, needs_review, classification_reason, prior-period flag), the void flip with its reversal and a conversion''s superseded flip are allowed; posted -> voided needs its reversal, posted -> superseded needs superseded_by_conversion, superseded is final unless trusted.conversion_restore is set. (mig 529)';
 
 DROP TRIGGER IF EXISTS trg_journal_entry_lines_posted_guard ON journal_entry_lines;
 CREATE TRIGGER trg_journal_entry_lines_posted_guard

@@ -5,10 +5,13 @@
 //     statement and the lines survive (before 529 the same SQL strips them);
 //   - every legitimate path still works: posting (header, then lines), the failed-insert
 //     rollback (delete a header that has no lines), the draft edit (delete + reinsert a
-//     draft's lines, change its totals, then post it), the void flip, the superseded flip and
-//     its restore, description / notes edits, a no-op line write;
+//     draft's lines, change its totals, then post it), the void flip with its reversal, a conversion's
+//     superseded flip, description / notes edits, a no-op line write;
+//   - no bare status flip takes a posted entry off the books: voided needs its reversal,
+//     superseded needs its conversion, superseded is final without the rollback flag;
 //   - a non-draft entry cannot return to draft, change its totals, have a line moved into it;
-//   - the four known empty LOPF headers do not block the apply; a fifth one does (preflight);
+//   - preflight: exactly the four known empty LOPF headers are exempt (scoped to LOPF's community);
+//     a fifth, the same reference in another community, or a line/header mismatch blocks it;
 //   - when migration 528 is present it is applied too and both guards refuse on their own.
 // Postgres 17 (PGlite). Skips without PGlite. --print-objects prints the catalog diff.
 import fs from 'fs';
@@ -39,9 +42,9 @@ fs.writeFileSync(path.join(dir, 'checks', F.replace('.sql', '.json')), JSON.stri
 check('every prerequisite named by the 529 checks file is a real migration file', realChecks.requires.every((x) => fs.existsSync(`${REPO}/migrations/${x}`)));
 
 const id = (n) => `00000000-0000-0000-0000-${String(n).padStart(12, '0')}`;
-const LOPF = id(1), EW = id(2), A2000 = id(20), A5205 = id(52);
+const LOPF = 'a0000000-0000-4000-8000-000000000002', OTHER = id(3), EW = id(2), A2000 = id(20), A5205 = id(52);
 
-async function buildWorld({ fifthEmpty = false } = {}) {
+async function buildWorld({ fifthEmpty = false, sameRefElsewhere = false, mismatched = false } = {}) {
   const db = new PGlite();
   // Production GL shapes: 170 (journal_entries / journal_entry_lines with the RESTRICT FKs),
   // 454 (superseded status + audit), 382/516 lifecycle columns (read by 528 when present).
@@ -65,8 +68,8 @@ async function buildWorld({ fifthEmpty = false } = {}) {
       CHECK (debit_cents >= 0 AND credit_cents >= 0), CHECK (NOT (debit_cents > 0 AND credit_cents > 0)), CHECK (debit_cents > 0 OR credit_cents > 0));
     CREATE TABLE schema_migrations (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), filename text NOT NULL UNIQUE, sha256 text NOT NULL,
       applied_at timestamptz NOT NULL DEFAULT now(), applied_by text, duration_ms integer, error text);
-    INSERT INTO schema_migrations (filename, sha256) VALUES ('170_gl_foundation.sql', 'recorded'), ('454_journal_entry_superseded_status.sql', 'recorded'), ('516_community_archived_status.sql', 'recorded');
-    INSERT INTO communities (id, name) VALUES ('${LOPF}', 'Lakes of Pine Forest');
+    INSERT INTO schema_migrations (filename, sha256) VALUES ('170_gl_foundation.sql', 'recorded'), ('454_journal_entry_superseded_status.sql', 'recorded'), ('516_community_archived_status.sql', 'recorded'), ('528_books_closed_guard.sql', 'recorded');
+    INSERT INTO communities (id, name) VALUES ('${LOPF}', 'Lakes of Pine Forest'), ('${OTHER}', 'Another Active');
     INSERT INTO communities (id, name, management_status, financials_active, books_of_record) VALUES ('${EW}', 'Former Client', 'archived', false, 'vantaca');
     INSERT INTO chart_of_accounts (id, community_id, account_number) VALUES ('${A2000}', '${LOPF}', '2000'), ('${A5205}', '${LOPF}', '5205');
   `);
@@ -78,6 +81,14 @@ async function buildWorld({ fifthEmpty = false } = {}) {
     const { rows: [n] } = await db.query(`INSERT INTO journal_entries (community_id, posting_date, reference, source_module, total_debits_cents, total_credits_cents, reverses_je_id) VALUES ($1, '2026-07-28', $2, 'reversal', $3, $3, $4) RETURNING id`, [LOPF, `CONV-LPF-20260731-NEUT-${ref}`, c, h.id]);
     await db.query(`INSERT INTO journal_entry_lines (journal_entry_id, line_number, account_id, debit_cents) VALUES ($1, 1, $2, $3)`, [n.id, A2000, c]);
     await db.query(`INSERT INTO journal_entry_lines (journal_entry_id, line_number, account_id, credit_cents) VALUES ($1, 2, $2, $3)`, [n.id, A5205, c]);
+  }
+  // Same reference number in another community (references are numbered per community): must NOT be exempt.
+  if (sameRefElsewhere) await db.query(`INSERT INTO journal_entries (community_id, posting_date, reference, total_debits_cents, total_credits_cents) VALUES ($1, '2026-07-28', 'JE-2026-00169', 4000, 4000)`, [OTHER]);
+  // A posted entry whose lines exist but do not total its header.
+  if (mismatched) {
+    const { rows: [m] } = await db.query(`INSERT INTO journal_entries (community_id, posting_date, reference, total_debits_cents, total_credits_cents) VALUES ($1, '2026-09-03', 'JE-2026-00998', 5000, 5000) RETURNING id`, [OTHER]);
+    await db.query(`INSERT INTO journal_entry_lines (journal_entry_id, line_number, account_id, debit_cents) VALUES ($1, 1, $2, 4000)`, [m.id, A5205]);
+    await db.query(`INSERT INTO journal_entry_lines (journal_entry_id, line_number, account_id, credit_cents) VALUES ($1, 2, $2, 4000)`, [m.id, A2000]);
   }
   if (fifthEmpty) await db.query(`INSERT INTO journal_entries (community_id, posting_date, reference, total_debits_cents, total_credits_cents) VALUES ($1, '2026-09-02', 'JE-2026-00999', 5000, 5000)`, [LOPF]);
   const client = { query: async (sql, params) => {
@@ -181,10 +192,21 @@ check('a void is final: voided -> posted is refused (its reversal is live)', IMM
 check('a void is final: its reversal link cannot be cleared', IMM.test(await err(`UPDATE journal_entries SET void_reversal_je_id = NULL WHERE id = $1`, [posted]) || ''));
 check('notes on a voided entry stay editable', (await err(`UPDATE journal_entries SET notes = 'voided: duplicate' WHERE id = $1`, [posted])) === null);
 
-// Conversion retirement (454): posted -> superseded, and its restore superseded -> posted.
+// Conversion retirement (454): posted -> superseded by a conversion; superseded is final.
 const sup = await postedAccrual('VANTACA-DAILY-0701', 300);
-check('the superseded flip still works', (await err(`UPDATE journal_entries SET status = 'superseded', superseded_at = now(), superseded_reason = 'conversion', superseded_by_conversion = 'CONV-T' WHERE id = $1`, [sup])) === null);
-check('... and its restore', (await err(`UPDATE journal_entries SET status = 'posted' WHERE id = $1`, [sup])) === null);
+check('posted -> superseded WITHOUT naming a conversion is refused (superseded does not count in balances)', IMM.test(await err(`UPDATE journal_entries SET status = 'superseded', superseded_at = now(), superseded_reason = 'x' WHERE id = $1`, [sup]) || ''));
+check('a conversion superseded flip (superseded_by_conversion set) still works', (await err(`UPDATE journal_entries SET status = 'superseded', superseded_at = now(), superseded_reason = 'conversion', superseded_by_conversion = 'CONV-T' WHERE id = $1`, [sup])) === null);
+check('superseded -> posted (restore) is refused without the rollback flag (it would double-count beside the replacements)', IMM.test(await err(`UPDATE journal_entries SET status = 'posted' WHERE id = $1`, [sup]) || ''));
+check('superseded -> voided is refused', IMM.test(await err(`UPDATE journal_entries SET status = 'voided' WHERE id = $1`, [sup]) || ''));
+const restore = await (async () => { try { await db.exec(`BEGIN; SELECT set_config('trusted.conversion_restore', 'on', true); UPDATE journal_entries SET status = 'posted' WHERE id = '${sup}'; COMMIT;`); return null; } catch (e) { try { await db.exec('ROLLBACK'); } catch (_) {} return e.message; } })();
+check('a reviewed conversion rollback (transaction-local trusted.conversion_restore) can restore it', restore === null && (await q1(`SELECT status FROM journal_entries WHERE id = $1`, [sup])).status === 'posted', restore);
+await db.exec(`UPDATE journal_entries SET status = 'superseded', superseded_at = now(), superseded_reason = 'conversion', superseded_by_conversion = 'CONV-T' WHERE id = '${sup}'`);
+check('... and the flag does not outlive its transaction', IMM.test(await err(`UPDATE journal_entries SET status = 'posted' WHERE id = $1`, [sup]) || ''));
+
+// posted -> voided without its reversal is refused.
+const nv = await postedAccrual('JE-2026-T0300', 700);
+check('posted -> voided with NO reversal is refused (voided-without-reversal does not count in balances)', IMM.test(await err(`UPDATE journal_entries SET status = 'voided' WHERE id = $1`, [nv]) || ''));
+check('posted -> voided naming an entry that does NOT reverse it is refused', IMM.test(await err(`UPDATE journal_entries SET status = 'voided', void_reversal_je_id = $2 WHERE id = $1`, [nv, sup]) || ''));
 
 // The four LOPF headers stay exactly as they were.
 check('JE-2026-00169..00172 unchanged: four posted headers, $6,277.75, still no lines (529 repairs nothing)', await (async () => {
@@ -214,6 +236,12 @@ if (HAS_528) {
 const drift = await buildWorld({ fifthEmpty: true });
 const plan2 = await A.planMigration({ ...ctx(drift.client), filename: F });
 check('drift: a FIFTH non-draft entry with no lines stops the plan at preflight (new damage must be looked at first)', plan2.status !== 'ready' && !plan2.plan_token, JSON.stringify({ status: plan2.status }));
+const sameRef = await buildWorld({ sameRefElsewhere: true });
+const plan3 = await A.planMigration({ ...ctx(sameRef.client), filename: F });
+check('the exemption is scoped to Lakes of Pine Forest: JE-2026-00169 with no lines in ANOTHER community stops the plan', plan3.status !== 'ready' && !plan3.plan_token, JSON.stringify({ status: plan3.status }));
+const mism = await buildWorld({ mismatched: true });
+const plan4 = await A.planMigration({ ...ctx(mism.client), filename: F });
+check('an entry whose lines exist but do not total its header stops the plan', plan4.status !== 'ready' && !plan4.plan_token, JSON.stringify({ status: plan4.status }));
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
