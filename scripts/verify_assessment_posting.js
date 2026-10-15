@@ -95,7 +95,13 @@ const check = (label, cond) => { log(`  ${cond ? 'PASS' : 'FAIL'}  ${label}`); i
   // 8) CLEANUP — remove all artifacts.
   log('\n--- cleanup ---');
   const subId = r1.subledger && r1.subledger.id;
-  if (jeId) { await supabase.from('journal_entry_lines').delete().eq('journal_entry_id', jeId); await supabase.from('journal_entries').delete().eq('id', jeId); }
+  // A posted entry's lines are permanent (migration 529): if the database refuses, stop before
+  // removing the payment and subledger rows, or the GL keeps an entry nothing else explains.
+  if (jeId) {
+    const { error: lErr } = await supabase.from('journal_entry_lines').delete().eq('journal_entry_id', jeId);
+    const { error: hErr } = lErr ? { error: null } : await supabase.from('journal_entries').delete().eq('id', jeId);
+    if (lErr || hErr) { console.error(`  could not remove the test entry (${(lErr || hErr).message}); void it in the app instead. Nothing else was removed.`); process.exit(1); }
+  }
   if (subId) await supabase.from('homeowner_transactions').delete().eq('id', subId);
   await supabase.from('payments').delete().eq('processor_session_id', SESSION);
   const { data: batch } = await supabase.from('transaction_upload_batches').select('id').eq('community_id', live.id).eq('period_label', 'Online Payments').eq('source_format', 'manual').maybeSingle();

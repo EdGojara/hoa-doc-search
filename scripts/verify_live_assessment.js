@@ -57,7 +57,14 @@ const log = (...a) => console.log(...a);
 
   if (CLEANUP) {
     log('\n--- cleanup ($1 test artifacts) ---');
-    if (je) { await supabase.from('journal_entry_lines').delete().eq('journal_entry_id', je.id); await supabase.from('journal_entries').delete().eq('id', je.id); log('  deleted JE', je.reference); }
+    // A posted entry's lines are permanent (migration 529): if the database refuses, stop before
+    // removing the payment and subledger rows, or the GL keeps an entry nothing else explains.
+    if (je) {
+      const { error: lErr } = await supabase.from('journal_entry_lines').delete().eq('journal_entry_id', je.id);
+      const { error: hErr } = lErr ? { error: null } : await supabase.from('journal_entries').delete().eq('id', je.id);
+      if (lErr || hErr) { console.error(`  could not remove ${je.reference} (${(lErr || hErr).message}); void it in the app instead. Nothing else was removed.`); process.exit(1); }
+      log('  deleted JE', je.reference);
+    }
     if (sub) { await supabase.from('homeowner_transactions').delete().eq('id', sub.id); log('  deleted subledger row'); }
     await supabase.from('payments').delete().eq('processor_session_id', sessionId); log('  deleted payment ledger rows');
     const { data: batch } = await supabase.from('transaction_upload_batches').select('id').eq('community_id', communityId).eq('period_label', 'Online Payments').eq('source_format', 'manual').maybeSingle();
