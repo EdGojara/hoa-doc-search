@@ -54,7 +54,7 @@ const num = (v) => { let t = String(v || '').trim(); if (t === '-' || t === '') 
 
   if (!APPLY) { console.log('\nDRY RUN — pass --apply to rebuild JE-2026-OPEN.'); return; }
 
-  await s.from('journal_entry_lines').delete().eq('journal_entry_id', je.id);
+  { const { error: delErr } = await s.from('journal_entry_lines').delete().eq('journal_entry_id', je.id); if (delErr) { console.error(`Refused deleting journal_entry_lines: ${delErr.message} (a posted entry is permanent, migration 529; void it in the app). Stopping before anything is re-imported.`); process.exit(1); } }
   const lines = [];
   let i = 0;
   for (const [n, v] of Object.entries(bs)) {

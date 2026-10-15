@@ -126,6 +126,8 @@ await db.query(`INSERT INTO journal_entries (community_id, posting_date, referen
 const scar = await err(`DELETE FROM journal_entry_lines WHERE journal_entry_id = $1`, [je]);
 check('THE SCAR: deleting a posted entry\'s lines (open month, active community) is refused', IMM.test(scar || ''), scar);
 check('... and both lines are still there', (await linesOf(je)) === 2);
+const own = require(`${REPO}/lib/accounting/ownership.js`);
+check('the app maps the real refusal to a 409 (ownership.isPostedEntryPermanent recognises the trigger message, and isBooksClosed does not)', own.isPostedEntryPermanent({ message: scar }) && !own.isBooksClosed({ message: scar }) && !own.isPostedEntryPermanent({ message: 'books_closed: x' }));
 check('deleting a single posted line by id is refused', IMM.test(await err(`DELETE FROM journal_entry_lines WHERE id = (SELECT id FROM journal_entry_lines WHERE journal_entry_id = $1 LIMIT 1)`, [je]) || ''));
 check('re-coding a posted line in place (account) is refused', IMM.test(await err(`UPDATE journal_entry_lines SET account_id = $2 WHERE journal_entry_id = $1 AND line_number = 1`, [je, A2000]) || ''));
 check('changing a posted line\'s amount is refused', IMM.test(await err(`UPDATE journal_entry_lines SET debit_cents = 1 WHERE journal_entry_id = $1 AND line_number = 1`, [je]) || ''));

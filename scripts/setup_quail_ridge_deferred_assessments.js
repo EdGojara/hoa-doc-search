@@ -42,12 +42,12 @@ const f = (c) => '$' + (c / 100).toLocaleString('en-US', { minimumFractionDigits
 
   // idempotent: clear prior deferral JE + schedule (+ its recognition JEs)
   const { data: oldDef } = await s.from('journal_entries').select('id').eq('community_id', CID).eq('reference', 'JE-2026-ASMT-DEFER');
-  for (const j of oldDef || []) { await s.from('journal_entry_lines').delete().eq('journal_entry_id', j.id); await s.from('journal_entries').delete().eq('id', j.id); }
+  for (const j of oldDef || []) { { const { error: delErr } = await s.from('journal_entry_lines').delete().eq('journal_entry_id', j.id); if (delErr) { console.error(`Refused deleting journal_entry_lines: ${delErr.message} (a posted entry is permanent, migration 529; void it in the app). Stopping before anything is re-imported.`); process.exit(1); } } { const { error: delErr } = await s.from('journal_entries').delete().eq('id', j.id); if (delErr) { console.error(`Refused deleting journal_entries: ${delErr.message} (a posted entry is permanent, migration 529; void it in the app). Stopping before anything is re-imported.`); process.exit(1); } } }
   const { data: prior } = await s.from('recognition_schedules').select('id').eq('community_id', CID).eq('schedule_type', 'deferred_revenue');
   for (const p of prior || []) {
     const { data: posts } = await s.from('recognition_postings').select('journal_entry_id').eq('schedule_id', p.id);
     const jeIds = (posts || []).map((x) => x.journal_entry_id).filter(Boolean);
-    if (jeIds.length) { await s.from('journal_entry_lines').delete().in('journal_entry_id', jeIds); await s.from('journal_entries').delete().in('id', jeIds); }
+    if (jeIds.length) { { const { error: delErr } = await s.from('journal_entry_lines').delete().in('journal_entry_id', jeIds); if (delErr) { console.error(`Refused deleting journal_entry_lines: ${delErr.message} (a posted entry is permanent, migration 529; void it in the app). Stopping before anything is re-imported.`); process.exit(1); } } { const { error: delErr } = await s.from('journal_entries').delete().in('id', jeIds); if (delErr) { console.error(`Refused deleting journal_entries: ${delErr.message} (a posted entry is permanent, migration 529; void it in the app). Stopping before anything is re-imported.`); process.exit(1); } } }
     await s.from('recognition_schedules').delete().eq('id', p.id);
   }
 
