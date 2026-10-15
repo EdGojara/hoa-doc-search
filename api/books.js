@@ -237,6 +237,9 @@ router.get('/journal-entries', async (req, res) => {
       const hit = new Set((lns || []).map((l) => l.journal_entry_id));
       filtered = filtered.filter((e) => hit.has(e.id));
     }
+    // Integrity exceptions (no lines / lines not matching the header), live and read-only.
+    try { await require('../lib/accounting/je_integrity').annotateIntegrity(supabase, filtered); }
+    catch (e) { console.warn('[books] JE integrity check failed:', e.message); filtered.forEach((x) => { x.integrity = undefined; }); }
     res.json({ journal_entries: filtered });
   } catch (err) {
     console.error('[books] list JEs failed:', err);
@@ -254,6 +257,9 @@ router.get('/journal-entries/:id', async (req, res) => {
         .eq('journal_entry_id', id).order('line_number'),
     ]);
     if (!je) return res.status(404).json({ error: 'not_found' });
+    // Integrity exception, computed from ALL lines (paged), read-only.
+    try { await require('../lib/accounting/je_integrity').annotateIntegrity(supabase, [je]); }
+    catch (e) { console.warn('[books] JE integrity check failed:', id, e.message); }
     res.json({ entry: je, lines: lines || [] });
   } catch (err) {
     console.error('[books] JE detail failed:', err);
@@ -358,18 +364,23 @@ function voidRefusal(res, err) {
 router.get('/journal-entries/:id/void-preview', async (req, res) => {
   const owner = await requireOwner(req, res); if (!owner) return;
   try {
-    const { planVoid } = require('../lib/accounting/void_entry');
-    res.json(await planVoid({ supabase, journal_entry_id: req.params.id, reversal_date: req.query.reversal_date }));
+    const { planVoid, publicPlan } = require('../lib/accounting/void_entry');
+    res.json(publicPlan(await planVoid({ supabase, journal_entry_id: req.params.id, reversal_date: req.query.reversal_date, actor_id: owner.user.id })));
   } catch (err) { voidRefusal(res, err); }
 });
 
+// Who voids is the session, never the request: a body naming an actor or approver is refused.
+const VOID_ACTOR_FIELDS = ['posted_by_user_id', 'voided_by_user_id', 'actor_user_id', 'actor_name', 'user_id', 'approver', 'approver_user_id', 'approved_by', 'approved_by_user_id', 'edited_by_user_id'];
 router.post('/journal-entries/:id/void', express.json({ limit: '64kb' }), async (req, res) => {
   const owner = await requireOwner(req, res); if (!owner) return;
   try {
-    const { void_reason, reversal_date } = req.body || {};
+    const body = req.body || {};
+    const named = VOID_ACTOR_FIELDS.filter((k) => body[k] !== undefined);
+    if (named.length) return res.status(400).json({ error: 'actor_from_session', code: 'actor_from_session', detail: `The person voiding is the signed-in owner; the request may not name one (${named.join(', ')}). Nothing was changed.` });
+    const { void_reason, reversal_date, preview_hash } = body;
     const { voidAsOwner } = require('../lib/accounting/void_entry');
     const result = await voidAsOwner({
-      supabase, journal_entry_id: req.params.id, void_reason, reversal_date,
+      supabase, journal_entry_id: req.params.id, void_reason, reversal_date, preview_hash,
       actor: { id: owner.user.id, name: owner.full_name || owner.email },
     });
     console.log('[books] void JE', result.voided, '->', result.reversal.reference, 'by', owner.email);

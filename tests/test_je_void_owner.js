@@ -9,10 +9,16 @@
 // Locks:
 //   1. AUTH. Only the signed-in OWNER may preview or void. No session, a staff
 //      session and a second admin are refused, and nothing posts. A user id in
-//      the request body is ignored: the actor is the session's owner. (The
-//      route used to trust body.posted_by_user_id.)
+//      the request body is REFUSED (400): the actor is the session's owner.
+//      (The route used to trust body.posted_by_user_id.)
+//   1b. CONFIRMATION. The void posts only with the preview_hash the server
+//      issued for that exact preview (entry, date, lines, owner): missing,
+//      tampered, for another entry or date, stale, or expired -> refused.
 //   2. REVERSAL DATE. Defaults to the original's posting date; must be a real
-//      date, not before the original, in an open month, after any close.
+//      date, not before the original, not after today, in an open month, after
+//      any close. REASON at least 10 characters.
+//   2b. INTEGRITY EXCEPTIONS (no lines / lines not matching the header) are
+//      flagged on the list and the detail, read-only, and are never voided.
 //   3. REFUSALS SURFACED. already voided, a void reversal, already reversed
 //      (a conversion NEUT), books closed (app check and migration 528),
 //      posted entries immutable (migration 529), no open period, migration
@@ -125,7 +131,7 @@ function seed() {
     account_funds: [], journal_entries: [], journal_entry_lines: [], journal_entry_corrections: [],
   };
   // JE-2026-00169: header kept, lines deleted 9/28 (the scar). NEUT reversed it on 7/28; REPOST re-posted it on 8/1.
-  je('je-169', { reference: 'JE-2026-00169', period_id: 'p-07', posting_date: '2026-07-28', source_module: 'ap_invoice' });
+  je('je-169', { reference: 'JE-2026-00169', period_id: 'p-07', posting_date: '2026-07-28', source_module: 'ap_invoice', total_debits_cents: 87750, total_credits_cents: 87750 });
   je('je-neut', { reference: 'CONV-LPF-20260731-NEUT-JE-2026-00169', period_id: 'p-07', posting_date: '2026-07-28', source_module: 'reversal', reverses_je_id: 'je-169' });
   jl('je-neut', 1, A.x2000, 87750, 0); jl('je-neut', 2, A.x5205, 0, 87750);
   je('je-repost', { reference: 'CONV-LPF-20260731-REPOST-JE-2026-00169', period_id: 'p-08', posting_date: '2026-08-01', source_module: 'manual' });
@@ -167,8 +173,16 @@ async function call(method, p, { token, body } = {}) {
   const r = await fetch(base + p, { method, headers, body: body ? JSON.stringify(body) : undefined });
   return { status: r.status, body: await r.json().catch(() => ({})) };
 }
-const voidIt = (id, body, token = 'tok-owner') => call('POST', `/api/books/journal-entries/${id}/void`, { token, body });
 const preview = (id, date, token = 'tok-owner') => call('GET', `/api/books/journal-entries/${id}/void-preview${date ? `?reversal_date=${date}` : ''}`, { token });
+// The page's flow: preview, then POST echoing the preview_hash. `raw` posts the body exactly as given.
+async function voidIt(id, body, token = 'tok-owner', { raw = false } = {}) {
+  const b = { ...(body || {}) };
+  if (!raw && b.preview_hash === undefined) {
+    const pv = await preview(id, b.reversal_date, token);
+    if (pv.status === 200) b.preview_hash = pv.body.preview_hash;
+  }
+  return call('POST', `/api/books/journal-entries/${id}/void`, { token, body: b });
+}
 const REASON = 'Duplicate of the 9/14 payment entry';
 
 let failed = 0; let passed = 0;
@@ -219,8 +233,17 @@ function nothingPosted(before) {
     await refused(await voidIt('je-dup', { void_reason: REASON, posted_by_user_id: OWNER.id }, 'tok-staff'), 403, 'owner_only');
     nothingPosted(n);
   });
-  await t('owner void: body-supplied user id ignored; actor, reversal and corrections record are the session owner', async () => {
-    const r = await voidIt('je-dup', { void_reason: REASON, reversal_date: '2026-09-15', posted_by_user_id: 'u-attacker', voided_by_user_id: 'u-attacker', actor_user_id: 'u-attacker' });
+  await t('owner session naming an actor or approver in the body -> 400 actor_from_session, nothing posted', async () => {
+    const n = entryCount();
+    for (const k of ['posted_by_user_id', 'voided_by_user_id', 'actor_user_id', 'approver', 'approved_by', 'user_id']) {
+      await refused(await voidIt('je-dup', { void_reason: REASON, [k]: 'u-attacker' }), 400, 'actor_from_session', new RegExp(k));
+      await refused(await voidIt('je-dup', { void_reason: REASON, [k]: OWNER.id }), 400, 'actor_from_session');
+    }
+    nothingPosted(n);
+    assert.ok(!JSON.stringify(db).includes('u-attacker'));
+  });
+  await t('owner void: actor, reversal and corrections record (with the preview hash) are the session owner; original preserved', async () => {
+    const r = await voidIt('je-dup', { void_reason: REASON, reversal_date: '2026-09-15' });
     assert.strictEqual(r.status, 200, JSON.stringify(r.body));
     const orig = header('je-dup');
     const rev = header(orig.void_reversal_je_id);
@@ -230,15 +253,79 @@ function nothingPosted(before) {
     assert.strictEqual(rev.posted_by_user_id, OWNER.id);
     assert.strictEqual(rev.reverses_je_id, 'je-dup');
     assert.strictEqual(rev.posting_date, '2026-09-15');
-    assert.ok(!JSON.stringify(db).includes('u-attacker'), 'the body-supplied id must not be stored anywhere');
     const c = db.journal_entry_corrections[0];
     assert.ok(c, 'a corrections record is written');
     assert.deepStrictEqual({ kind: c.kind, original: c.original_je_id, corrected: c.corrected_je_id, correcting: c.correcting_je_id, actor: c.actor_user_id, name: c.actor_name, reason: c.reason },
       { kind: 'void', original: 'je-dup', corrected: 'je-dup', correcting: rev.id, actor: OWNER.id, name: 'Ed Gojara', reason: REASON });
+    assert.match(c.preview_hash, /^\d{13}\.[0-9a-f]{64}$/, 'the confirmed preview hash is recorded');
+    // The original entry and its lines are preserved exactly: the void flips status and posts a reversal.
+    assert.deepStrictEqual(db.journal_entry_lines.filter((l) => l.journal_entry_id === 'je-dup').map((l) => [l.account_id, l.debit_cents, l.credit_cents]), [[A.x2000, 12500, 0], [A.x1000, 0, 12500]]);
+    assert.strictEqual(orig.total_debits_cents, 12500); assert.strictEqual(orig.posting_date, '2026-09-15');
     // reversal lines are the original's, flipped
     const rl = db.journal_entry_lines.filter((l) => l.journal_entry_id === rev.id).map((l) => [l.account_id, l.debit_cents, l.credit_cents]);
     assert.deepStrictEqual(rl, [[A.x2000, 0, 12500], [A.x1000, 12500, 0]]);
     assert.match(r.body.message, /JE-2026-00300 voided\. Reversal JE-2026-T\d+ posted 2026-09-15 for \$125\.00/);
+  });
+
+  realLog('confirmation: the void posts only with the preview the server issued');
+  await t('no preview hash -> 400 confirmation_required (a direct API call cannot skip the confirmation)', async () => {
+    const n = entryCount();
+    await refused(await voidIt('je-dup', { void_reason: REASON }, 'tok-owner', { raw: true }), 400, 'confirmation_required');
+    nothingPosted(n);
+  });
+  await t('tampered hash, a hash for another entry, or for another date -> 409 preview_mismatch', async () => {
+    const n = entryCount();
+    const good = (await preview('je-dup')).body.preview_hash;
+    const bad = good.slice(0, -1) + (good.endsWith('0') ? '1' : '0');
+    await refused(await voidIt('je-dup', { void_reason: REASON, preview_hash: bad }), 409, 'preview_mismatch');
+    const other = (await preview('je-repost')).body.preview_hash;
+    await refused(await voidIt('je-dup', { void_reason: REASON, preview_hash: other }), 409, 'preview_mismatch');
+    await refused(await voidIt('je-dup', { void_reason: REASON, reversal_date: '2026-09-20', preview_hash: good }), 409, 'preview_mismatch');
+    nothingPosted(n);
+  });
+  await t('preview older than 30 minutes -> 409 preview_expired', async () => {
+    const n = entryCount();
+    await refused(await voidIt('je-dup', { void_reason: REASON, preview_hash: `${Date.now() - 31 * 60000}.${'a'.repeat(64)}` }), 409, 'preview_expired');
+    nothingPosted(n);
+  });
+  await t('the entry changed after the preview (a line differs) -> 409 preview_mismatch', async () => {
+    const n = entryCount();
+    const h = (await preview('je-dup')).body.preview_hash;
+    db.journal_entry_lines.find((l) => l.id === 'je-dup-L1').memo = 'changed after preview';
+    await refused(await voidIt('je-dup', { void_reason: REASON, preview_hash: h }), 409, 'preview_mismatch');
+    nothingPosted(n);
+  });
+  await t('the signed payload never reaches the client', async () => {
+    const r = await preview('je-dup');
+    assert.ok(r.body.preview_hash && !('_payload' in r.body));
+  });
+
+  realLog('integrity exceptions (live, read-only)');
+  const seedMismatch = () => {
+    je('je-mis', { reference: 'JE-2026-00301', period_id: 'p-09', posting_date: '2026-09-16', source_module: 'manual' });
+    jl('je-mis', 1, A.x5205, 5000, 0); jl('je-mis', 2, A.x2000, 0, 5000);
+    header('je-mis').total_debits_cents = 6000; header('je-mis').total_credits_cents = 6000;
+  };
+  await t('list and detail flag JE-2026-00169 (header $877.50, no lines) and a header/line mismatch, nothing else, and write nothing', async () => {
+    seedMismatch();
+    const snap = JSON.stringify(db);
+    const list = await call('GET', `/api/books/journal-entries?community_id=${C}`);
+    assert.strictEqual(list.status, 200, JSON.stringify(list.body));
+    const flagged = Object.fromEntries(list.body.journal_entries.filter((e) => e.integrity).map((e) => [e.reference, e.integrity.code]));
+    assert.deepStrictEqual(flagged, { 'JE-2026-00169': 'no_lines', 'JE-2026-00301': 'totals_mismatch' });
+    const d = await call('GET', '/api/books/journal-entries/je-169');
+    assert.strictEqual(d.body.entry.integrity.code, 'no_lines');
+    assert.match(d.body.entry.integrity.message, /\$877\.50 but it has no lines/);
+    assert.strictEqual((await call('GET', '/api/books/journal-entries/je-neut')).body.entry.integrity, null);
+    assert.strictEqual(JSON.stringify(db), snap, 'integrity checks are read-only');
+  });
+  await t('an integrity-exception entry is never voided (409 integrity_exception), preview included', async () => {
+    seedMismatch();
+    const n = entryCount();
+    await refused(await preview('je-169'), 409, 'integrity_exception', /JE-2026-00169 is an integrity exception/);
+    await refused(await voidIt('je-169', { void_reason: REASON }, 'tok-owner', { raw: true }), 409, 'integrity_exception');
+    await refused(await voidIt('je-mis', { void_reason: REASON }), 409, 'integrity_exception', /header says/);
+    nothingPosted(n);
   });
 
   realLog('preview (reads only)');
@@ -266,6 +353,16 @@ function nothingPosted(before) {
     await refused(await preview('je-dup', 'yesterday'), 400, 'invalid_reversal_date');
     nothingPosted(n);
   });
+  await t('after today (Central) -> 400 reversal_in_future, even in an open period', async () => {
+    const n = entryCount();
+    const { todayCentral } = require('../lib/accounting/void_entry');
+    const d = new Date(`${todayCentral()}T12:00:00Z`); d.setUTCDate(d.getUTCDate() + 1);
+    const tomorrow = d.toISOString().slice(0, 10);
+    db.accounting_periods.push({ id: 'p-far', community_id: C, fiscal_year: 2099, period_number: 1, period_start: '2026-11-01', period_end: '2099-12-31', status: 'open' });
+    await refused(await voidIt('je-dup', { void_reason: REASON, reversal_date: tomorrow }), 400, 'reversal_in_future', /after today/);
+    await refused(await preview('je-dup', tomorrow), 400, 'reversal_in_future');
+    nothingPosted(n);
+  });
   await t('before the original -> 400 reversal_before_original', async () => {
     const n = entryCount();
     await refused(await voidIt('je-dup', { void_reason: REASON, reversal_date: '2026-09-14' }), 400, 'reversal_before_original', /before JE-2026-00300/);
@@ -279,8 +376,9 @@ function nothingPosted(before) {
     nothingPosted(n);
   });
   await t('no period at all for the date -> 409 period_closed', async () => {
+    je('je-jun', { reference: 'JE-2026-00050', period_id: null, posting_date: '2026-06-10', source_module: 'manual' }); jl('je-jun', 1, A.x5205, 300, 0); jl('je-jun', 2, A.x2000, 0, 300);
     const n = entryCount();
-    await refused(await voidIt('je-dup', { void_reason: REASON, reversal_date: '2027-03-01' }), 409, 'period_closed', /2027-03-01/);
+    await refused(await voidIt('je-jun', { void_reason: REASON, reversal_date: '2026-06-30' }), 409, 'period_closed', /No open period covers 2026-06-30/);
     nothingPosted(n);
   });
   await t('books closed through the date (migration 502) -> 409 period_closed', async () => {
@@ -300,6 +398,7 @@ function nothingPosted(before) {
     const n = entryCount();
     await refused(await voidIt('je-dup', {}), 400, 'void_reason_required');
     await refused(await voidIt('je-dup', { void_reason: '   ' }), 400, 'void_reason_required');
+    await refused(await voidIt('je-dup', { void_reason: 'dup' }), 400, 'void_reason_too_short', /at least 10 characters/);
     nothingPosted(n);
   });
 
@@ -311,9 +410,13 @@ function nothingPosted(before) {
     await refused(await voidIt(header('je-dup').void_reversal_je_id, { void_reason: REASON }), 409, 'is_void_reversal', /void is final/);
     assert.strictEqual(entryCount(), n); assert.strictEqual(db.journal_entry_corrections.length, corr);
   });
-  await t('already reversed by a conversion NEUT -> 409 already_reversed (JE-2026-00169 itself)', async () => {
+  await t('already reversed by another posted entry -> 409 already_reversed', async () => {
+    je('je-a', { reference: 'JE-2026-00310', period_id: 'p-09', posting_date: '2026-09-20', source_module: 'manual' });
+    jl('je-a', 1, A.x5205, 700, 0); jl('je-a', 2, A.x2000, 0, 700);
+    je('je-a-rev', { reference: 'CONV-LPF-20260731-NEUT-JE-2026-00310', period_id: 'p-09', posting_date: '2026-09-20', source_module: 'reversal', reverses_je_id: 'je-a' });
+    jl('je-a-rev', 1, A.x2000, 700, 0); jl('je-a-rev', 2, A.x5205, 0, 700);
     const n = entryCount();
-    await refused(await voidIt('je-169', { void_reason: REASON }), 409, 'already_reversed', /CONV-LPF-20260731-NEUT-JE-2026-00169/);
+    await refused(await voidIt('je-a', { void_reason: REASON }), 409, 'already_reversed', /CONV-LPF-20260731-NEUT-JE-2026-00310/);
     nothingPosted(n);
   });
   await t('former client / books not kept in trustEd -> 409 books_closed', async () => {
@@ -379,12 +482,14 @@ function nothingPosted(before) {
     const src = html.slice(start, end);
     assert.ok(/void-preview\?reversal_date=/.test(src) && /headers: await chkAuthHeader\(\)/.test(src), 'preview sends the session token');
     assert.ok(/\/void`, \{ method:'POST', headers: Object\.assign\(\{'Content-Type':'application\/json'\}, await chkAuthHeader\(\)\)/.test(src), 'void sends the session token');
+    assert.ok(/preview_hash: plan\.preview_hash/.test(src), 'void echoes the confirmed preview hash');
     assert.ok(/await txConfirm\(\{/.test(src), 'in-page confirmation (native confirm() is suppressed in embedded browsers)');
     assert.ok(!/[^.\w]confirm\(/.test(src) && !/alert\(/.test(src), 'no native confirm()/alert() in the void flow');
     assert.ok(!/user_id/.test(src), 'the page never sends a user id');
     assert.ok(/showErr\(j, r\.status\)/.test(src), 'refusals are shown');
     assert.ok(/<script src="\/app\/confirm\.js"><\/script>/.test(html), 'txConfirm is loaded on the page');
-    assert.ok(/jevWire\(id, e\)/.test(html) && /e\.status==='posted' && window\._isAdmin/.test(html), 'the action is offered on posted entries to the admin session');
+    assert.ok(/jevWire\(id, e\)/.test(html) && /canVoid = e\.status==='posted' && window\._isAdmin && !e\.integrity/.test(html), 'offered on posted entries to the admin session, never on an integrity exception');
+    assert.ok(/⚠ integrity exception/.test(html) && /⚠ Integrity exception\./.test(html), 'the list badge and the detail banner exist');
   });
 
   server.close();

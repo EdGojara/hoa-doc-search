@@ -281,6 +281,7 @@ const CHECKS = [
   'tests/sql/527_apply_one_e2e.mjs',
   'tests/sql/529_apply_one_e2e.mjs',
   'tests/sql/529_guards_combined_e2e.mjs',
+  'tests/sql/530_owner_void_e2e.mjs',
   'tests/test_ai_router.js',
   'tests/test_check_register_grouping.js',
   'scripts/check_model_ids.js',
