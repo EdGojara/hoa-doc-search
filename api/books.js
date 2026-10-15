@@ -28,7 +28,7 @@ const express = require('express');
 const multer = require('multer');
 const crypto = require('crypto');
 const { createClient } = require('@supabase/supabase-js');
-const { postJournalEntry, voidJournalEntry, editJournalEntry } = require('../lib/accounting/posting');
+const { postJournalEntry, editJournalEntry } = require('../lib/accounting/posting');
 const { onboardCommunityToGL, openInitialPeriods } = require('../lib/accounting/coa_template');
 const { balanceSheet, incomeStatement, equityStatement, budgetVsActual, budgetVsActualGrouped } = require('../lib/accounting/financial_statements');
 // A YTD amount that is not available in trustEd (null: a period ending before a conversion
@@ -237,6 +237,9 @@ router.get('/journal-entries', async (req, res) => {
       const hit = new Set((lns || []).map((l) => l.journal_entry_id));
       filtered = filtered.filter((e) => hit.has(e.id));
     }
+    // Integrity exceptions (no lines / lines not matching the header), live and read-only.
+    try { await require('../lib/accounting/je_integrity').annotateIntegrity(supabase, filtered); }
+    catch (e) { console.warn('[books] JE integrity check failed:', e.message); filtered.forEach((x) => { x.integrity = undefined; }); }
     res.json({ journal_entries: filtered });
   } catch (err) {
     console.error('[books] list JEs failed:', err);
@@ -254,6 +257,9 @@ router.get('/journal-entries/:id', async (req, res) => {
         .eq('journal_entry_id', id).order('line_number'),
     ]);
     if (!je) return res.status(404).json({ error: 'not_found' });
+    // Integrity exception, computed from ALL lines (paged), read-only.
+    try { await require('../lib/accounting/je_integrity').annotateIntegrity(supabase, [je]); }
+    catch (e) { console.warn('[books] JE integrity check failed:', id, e.message); }
     res.json({ entry: je, lines: lines || [] });
   } catch (err) {
     console.error('[books] JE detail failed:', err);
@@ -334,23 +340,52 @@ router.get('/classify', async (req, res) => {
   }
 });
 
-router.post('/journal-entries/:id/void', express.json(), async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { void_reason, reversal_date, posted_by_user_id } = req.body || {};
-    const result = await voidJournalEntry({
-      journal_entry_id: id, void_reason, reversal_date, posted_by_user_id,
-    });
-    res.json(result);
-  } catch (err) {
-    if (require('../lib/accounting/ownership').isBooksClosed(err)) return res.status(409).json({ error: 'books_closed', detail: err.message });
-    if (require('../lib/accounting/ownership').isPostedEntryPermanent(err)) return res.status(409).json({ error: 'posted_entry_permanent', detail: 'A posted journal entry is permanent. Post a correcting entry (or void it, which posts a reversal) instead.' });
-    if (err.code === 'invalid_input' || err.code === 'invalid_state' || err.code === 'not_found' || err.code === 'period_closed') {
-      return res.status(400).json({ error: err.message, code: err.code });
-    }
-    console.error('[books] void JE failed:', err);
-    res.status(500).json({ error: safeErrorMessage(err) });
+// ---------------------------------------------------------------------------
+// Void a posted entry: OWNER ONLY, signed in (Ed 2026-10-15).
+// A void posts a reversal and marks the original voided; it is a correction of
+// the association's books, so it is the owner's authenticated action in the
+// app. The actor is the signed-in owner from the session. Any user id in the
+// request body is ignored (it used to be trusted as posted_by_user_id).
+// The preview reads only; the owner confirms exactly what it shows.
+// ---------------------------------------------------------------------------
+function voidRefusal(res, err) {
+  const own = require('../lib/accounting/ownership');
+  if (own.isBooksClosed(err)) return res.status(409).json({ error: 'books_closed', code: 'books_closed', detail: err.message });
+  if (own.isPostedEntryPermanent(err)) return res.status(409).json({ error: 'posted_entry_permanent', code: 'posted_entry_permanent', detail: `The database refused the void: ${String(err.message || '').replace(/^posted_lines_immutable:\s*/, '')}. Nothing was changed.` });
+  if (err && err.detail && err.status) return res.status(err.status).json({ error: err.code, code: err.code, detail: err.detail });
+  if (err && err.code === 'period_closed') return res.status(409).json({ error: 'period_closed', code: 'period_closed', detail: `${String(err.message || '').replace(/^period_closed:\s*/, '')}. Nothing was changed.` });
+  if (err && (err.code === 'invalid_input' || err.code === 'invalid_state' || err.code === 'not_found' || err.code === 'unbalanced')) {
+    return res.status(err.code === 'not_found' ? 404 : 400).json({ error: err.code, code: err.code, detail: `${String(err.message || '').replace(/_/g, ' ')}. Nothing was changed.` });
   }
+  console.error('[books] void JE failed:', err && err.message);
+  return res.status(500).json({ error: 'void_failed', detail: safeErrorMessage(err) });
+}
+
+router.get('/journal-entries/:id/void-preview', async (req, res) => {
+  const owner = await requireOwner(req, res); if (!owner) return;
+  try {
+    const { planVoid, publicPlan } = require('../lib/accounting/void_entry');
+    res.json(publicPlan(await planVoid({ supabase, journal_entry_id: req.params.id, reversal_date: req.query.reversal_date, actor_id: owner.user.id })));
+  } catch (err) { voidRefusal(res, err); }
+});
+
+// Who voids is the session, never the request: a body naming an actor or approver is refused.
+const VOID_ACTOR_FIELDS = ['posted_by_user_id', 'voided_by_user_id', 'actor_user_id', 'actor_name', 'user_id', 'approver', 'approver_user_id', 'approved_by', 'approved_by_user_id', 'edited_by_user_id'];
+router.post('/journal-entries/:id/void', express.json({ limit: '64kb' }), async (req, res) => {
+  const owner = await requireOwner(req, res); if (!owner) return;
+  try {
+    const body = req.body || {};
+    const named = VOID_ACTOR_FIELDS.filter((k) => body[k] !== undefined);
+    if (named.length) return res.status(400).json({ error: 'actor_from_session', code: 'actor_from_session', detail: `The person voiding is the signed-in owner; the request may not name one (${named.join(', ')}). Nothing was changed.` });
+    const { void_reason, reversal_date, preview_hash } = body;
+    const { voidAsOwner } = require('../lib/accounting/void_entry');
+    const result = await voidAsOwner({
+      supabase, journal_entry_id: req.params.id, void_reason, reversal_date, preview_hash,
+      actor: { id: owner.user.id, name: owner.full_name || owner.email },
+    });
+    console.log('[books] void JE', result.voided, '->', result.reversal.reference, 'by', owner.email);
+    res.json(result);
+  } catch (err) { voidRefusal(res, err); }
 });
 
 // ---------------------------------------------------------------------------
