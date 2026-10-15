@@ -52,7 +52,7 @@ t('every financial chokepoint asks the ownership rule', () => {
     'lib/ap/intake.js': /accounting\/ownership'\)\.accountingStatusFor/,
     'api/email_triage.js': /accounting\/ownership'\)\.accountingStatusFor/,
     'lib/accounting/ap_engine.js': /ownership'\)\.assertFinancialsEnabled\(supabase, community_id, 'Creating a payable'\)[\s\S]*ownership'\)\.assertFinancialsEnabled\(supabase, community_id, 'Recording a vendor payment'\)/,
-    'lib/accounting/posting.js': /ap_posting \|\| \['ap_invoice', 'ap_billback'\]\.includes\(source_module\)[\s\S]{0,120}assertFinancialsEnabled/,
+    'lib/accounting/posting.js': /\n  await require\('\.\/ownership'\)\.assertFinancialsEnabled\(supabase, community_id, `Posting \(\$\{source_module \|\| 'manual'\}\)`\);/,
     'lib/accounting/check_run.js': /ownership'\)\.accountingStatusFor[\s\S]*ownership'\)\.accountingStatusFor/,
     'lib/accounting/record_vendor_payment.js': /ownership'\)\.accountingStatusFor/,
   };
@@ -60,6 +60,24 @@ t('every financial chokepoint asks the ownership rule', () => {
   const ap = src('api/ap.js');
   assert.strictEqual((ap.match(/financialsDisabledIds\(supabase\)/g) || []).length, 2, 'manager + owner queues');
   assert.strictEqual((ap.match(/accounting\/ownership'\)\.accountingStatusFor\(supabase, inv\.community_id\)/g) || []).length, 2, 'approve + mark-paid');
+});
+t('every journal entry asks the ownership rule, not only AP (Ed 2026-10-15)', () => {
+  const p = src('lib/accounting/posting.js');
+  assert.ok(!/if \(ap_posting \|\| \['ap_invoice', 'ap_billback'\]\.includes\(source_module\)\) \{\s*await require\('\.\/ownership'\)/.test(p), 'the AP-only condition is gone');
+  const m = src('lib/accounting/monthly_runs.js');
+  assert.ok(/accountingStatusFor\(supabase, community_id\);\s*if \(!own\.enabled\) return \{ skipped: own\.reason/.test(m), 'Kat prepares no run for a closed community');
+  assert.ok(/assertFinancialsEnabled\(supabase, run\.community_id, 'Approving this run'\)/.test(m), 'no run of a closed community can be approved');
+});
+t('migration 528 closes the ledger on the same rule as accountingStatus', () => {
+  const sql = src('migrations/528_books_closed_guard.sql');
+  for (const re of [/books_of_record IS DISTINCT FROM 'trusted'/, /financials_active IS FALSE/, /management_status IN \('archived', 'terminated'\)/, /management_status = 'terminating' AND c\.management_end_date IS NOT NULL\s+AND c\.management_end_date < \(now\(\) AT TIME ZONE 'America\/Chicago'\)::date/, /management_status = 'prospect'/]) assert.ok(re.test(sql), String(re));
+  assert.ok(/BEFORE INSERT OR UPDATE OR DELETE ON journal_entries\s/.test(sql) && /BEFORE INSERT OR UPDATE OR DELETE ON journal_entry_lines\s/.test(sql), 'both ledger tables, every write');
+  assert.ok(!/(DELETE FROM|UPDATE journal_entries|INSERT INTO journal_entries)/.test(sql), 'the migration itself changes no ledger rows');
+  const O = require('../lib/accounting/ownership');
+  if (O.accountingStatus) {
+    const cases = [[{ name: 'E', management_status: 'archived', books_of_record: 'vantaca', financials_active: false }, false], [{ name: 'A', management_status: 'active', books_of_record: 'trusted', financials_active: true }, true], [{ name: 'T', management_status: 'terminating', management_end_date: '2026-01-01', books_of_record: 'trusted', financials_active: true }, false], [{ name: 'P', management_status: 'prospect', books_of_record: 'trusted', financials_active: true }, false], [{ name: 'O', management_status: 'onboarding', books_of_record: 'trusted', financials_active: true }, true]];
+    for (const [c, open] of cases) assert.strictEqual(O.accountingStatus(c, '2026-10-15').enabled, open, c.name);
+  }
 });
 t('violations and ACC never ask it (Eaglewood keeps both in trustEd)', () => {
   const dir = path.join(__dirname, '..', 'api');
