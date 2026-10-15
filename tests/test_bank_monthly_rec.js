@@ -96,6 +96,34 @@ const r3 = reconcileAccountMonth({ ...base, period_start: '2026-09-01', period_e
 check('1006 cleared since the prior month-end', r3.cleared_since_prior.some((c) => c.ref === 'JE-F'));
 check('1002 still outstanding', r3.items.some((i) => i.category === 'outstanding_check' && i.gl_ref === 'JE-B'));
 
+console.log('confirmed bank error (check image shows the GL amount)');
+const glBooks = afterGl;   // check 1004 stays 42,250 in the GL: the books are right, the bank paid 42,210
+const c1004 = vant.find((x) => x.check_number === '1004');
+const runBE = (codings, extra = {}) => reconcileAccountMonth({ ...base, statements: [s8b], bankTxns: vant, glLines: glBooks, codings, ...extra });
+const be0 = runBE([]);
+check('without evidence the variance is an open, unresolved difference', be0.status === 'in_progress' && be0.exceptions.some((e) => e.code === 'check_amount_variance' && e.severity === 'open'));
+const beCoding = { bank_transaction_id: c1004.id, bank_error: true, expected_cents: 42250, basis: 'Check image p.5: courtesy and legal amounts 422.50' };
+const be1 = runBE([beCoding]);
+const beItem = be1.items.find((i) => i.match_method === 'confirmed_bank_error');
+check('a confirmed bank error is reported as info, not as an open difference', be1.exceptions.some((e) => e.code === 'confirmed_bank_error' && e.severity === 'info') && !be1.exceptions.some((e) => e.code === 'check_amount_variance'));
+check('it stays a +40 bank-side reconciling item and nothing is proposed for it', beItem && beItem.amount_cents === 40 && be1.proposals.length === 0 && be1.totals.manual_adjustments_cents === 40);
+check('the month balances and can reconcile with the documented bank error', be1.totals.difference_cents === 0 && be1.status === 'reconciled', `${be1.status} ${JSON.stringify(be1.exceptions)}`);
+check('the report names it as a bank error for the bank to correct', /Confirmed bank errors \(the books are right; the bank is to correct\): Check 1004/.test(reportText(be1)));
+const beWrong = runBE([{ ...beCoding, expected_cents: 42210 }]);
+check('an expected amount that is not the GL amount is refused and stays open', beWrong.status === 'in_progress' && beWrong.exceptions.some((e) => e.code === 'check_amount_variance' && /not accepted: the expected amount/.test(e.text)));
+const beNoBasis = runBE([{ ...beCoding, basis: ' ' }]);
+check('a bank-error coding with no evidence is refused and stays open', beNoBasis.exceptions.some((e) => e.code === 'check_amount_variance' && /no evidence/.test(e.text)));
+const s9e = { id: 'imp9e', statement_period_start: '2026-09-01', statement_period_end: '2026-09-30', beginning_balance_cents: s8b.ending_balance_cents };
+const fix = bk('imp9e', '2026-09-12', -40, 'ENCODING CORRECTION CHECK 1004', null, 'adjustment');
+s9e.ending_balance_cents = s9e.beginning_balance_cents - 40;
+const be2 = reconcileAccountMonth({ ...base, period_start: '2026-09-01', period_end: '2026-09-30', statements: [s8b, s9e], bankTxns: [...vant, fix], glLines: glBooks,
+  codings: [beCoding, { bank_transaction_id: fix.id, bank_error_correction_of: c1004.id, basis: 'NewFirst correction 9/12' }] });
+check('the bank correction offsets the error: no bank-only line, adjustments net to zero', !be2.items.some((i) => i.category === 'bank_only') && be2.totals.manual_adjustments_cents === 0 && be2.totals.difference_cents === 0 && be2.status === 'reconciled', `${be2.status} ${JSON.stringify(be2.totals)}`);
+check('the error is shown as corrected', be2.exceptions.some((e) => e.code === 'confirmed_bank_error' && /corrected 2026-09-12/.test(e.text)));
+const be3 = reconcileAccountMonth({ ...base, period_start: '2026-09-01', period_end: '2026-09-30', statements: [s8b, s9e], bankTxns: [...vant, fix], glLines: glBooks,
+  codings: [beCoding, { bank_transaction_id: fix.id, bank_error_correction_of: c1004.id, basis: '' }] });
+check('a correction with no evidence is not accepted', be3.exceptions.some((e) => e.code === 'bank_error_correction_unmatched'));
+
 console.log('stale items');
 const r4 = reconcileAccountMonth({ ...base, period_start: '2026-11-01', period_end: '2026-11-30', statements: [s8b, s9, { id: 'imp10', statement_period_start: '2026-10-01', statement_period_end: '2026-10-31', beginning_balance_cents: s9.ending_balance_cents, ending_balance_cents: s9.ending_balance_cents }, { id: 'imp11', statement_period_start: '2026-11-01', statement_period_end: '2026-11-30', beginning_balance_cents: s9.ending_balance_cents, ending_balance_cents: s9.ending_balance_cents }], bankTxns: [...vant, ...sep], glLines: glFixed });
 check('check outstanding over 90 days is a stale-check exception', r4.exceptions.some((e) => e.code === 'stale_check' && e.gl_ref === 'JE-B') && r4.status === 'in_progress');
