@@ -24,7 +24,7 @@ function fakeDb(tables) {
       gte(k, v) { filters.push((r) => r[k] != null && String(r[k]) >= String(v)); return api; },
       lte(k, v) { filters.push((r) => r[k] != null && String(r[k]) <= String(v)); return api; },
       lt(k, v) { filters.push((r) => r[k] != null && String(r[k]) < String(v)); return api; },
-      like(k, pat) { const pre = pat.replace(/%$/, ''); filters.push((r) => String(r[k] || '').startsWith(pre)); return api; },
+      like(k, pat) { const re = new RegExp(`^${pat.split('%').map((x) => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('.*')}$`); filters.push((r) => re.test(String(r[k] || ''))); return api; },
       not(k, o, v) { const vs = String(v).replace(/[()]/g, '').split(','); filters.push((r) => (o === 'in' ? !vs.includes(r[k]) : r[k] !== null)); return api; },
       order(k, o) { ord = { k, asc: !o || o.ascending !== false }; return api; },
       limit(n) { lim = n; return api; },
@@ -145,6 +145,30 @@ console.log('plan: the packet');
   check('a distributed packet has no task', !d.tasks.some((t) => t.kind === 'packet'));
 }
 
+console.log('hand-made Canyon Gate tasks are adopted, never duplicated');
+{
+  const handmade = [
+    { source_ref: 'cg-close-2026-08-09:ar02', title: 'CG AR-02: owner credits off by 50.00 (Aug and Sep)' },
+    { source_ref: 'cg-close-2026-08-09:bank-recs', title: 'CG Aug/Sep close: 10 bank-rec runs awaiting owner approval' },
+    { source_ref: 'cg-close-2026-08:data03-1410', title: 'CG 1410 Prepaid: 621.12 stale converted balance (DATA-03 Aug/Sep)' },
+    { source_ref: 'cg-close-2026-09:missing-bills', title: 'CG missing September bills: Star 2 weeks, Gexa 4 accounts' },
+    { source_ref: 'cg-close-2026-08-09:board-package', title: 'CG board reporting: next meeting date unknown, no packet beyond August' },
+  ];
+  const p = K.planCommunity({ community: C, today: '2026-10-15', meeting: null, handmade, periods: [
+    aug([R('CASH-01', 'BLOCK'), R('AR-02', 'BLOCK'), R('DATA-03', 'BLOCK')]), sep([R('CASH-01', 'BLOCK'), R('AR-02', 'BLOCK'), R('AP-01', 'BLOCK'), R('CUT-01', 'BLOCK'), R('DATA-03', 'BLOCK')])] });
+  const refs = p.tasks.map((t) => t.source_ref);
+  const by = Object.fromEntries(p.adopted.map((a) => [a.source_ref, a.adopted_by]));
+  check('bank recs (CASH-01) for both months are the hand-made bank-rec task', by['close:cg:2026-08:CASH-01'] === 'cg-close-2026-08-09:bank-recs' && by['close:cg:2026-09:CASH-01'] === 'cg-close-2026-08-09:bank-recs');
+  check('AR-02 for both months is the hand-made ar02 task', by['close:cg:2026-08:AR-02'] === 'cg-close-2026-08-09:ar02' && by['close:cg:2026-09:AR-02'] === 'cg-close-2026-08-09:ar02');
+  check('a month named in the title extends the ref (DATA-03 "Aug/Sep" covers September too)', by['close:cg:2026-08:DATA-03'] === 'cg-close-2026-08:data03-1410' && by['close:cg:2026-09:DATA-03'] === 'cg-close-2026-08:data03-1410');
+  check('a hand-made task scoped to August only does not cover September', K.adoptingTask({ kind: 'block', control: 'DATA-03', period: '2026-09' }, [{ source_ref: 'cg-close-2026-08:data03-1410', title: 'CG 1410 Prepaid stale balance (DATA-03)' }]) === null);
+  check('late bills (CUT-01 Sep) are the hand-made missing-bills task', by['close:cg:2026-09:CUT-01'] === 'cg-close-2026-09:missing-bills');
+  check('the meeting date is the hand-made board-package task', by['meeting:cg:next'] === 'cg-close-2026-08-09:board-package' && !refs.includes('meeting:cg:next'));
+  check('nothing covers Sep AP-01, so it is created', refs.includes('close:cg:2026-09:AP-01'));
+  check('adopted items are not planned, so no adopted subject is ever duplicated', p.adopted.every((a) => !refs.includes(a.source_ref)));
+  check('a hand-made task on another subject is not adopted by month alone', K.adoptingTask({ kind: 'block', control: 'AP-01', period: '2026-08' }, [{ source_ref: 'cg-close-2026-08:opening-ap', title: 'opening AP from conversion' }]) === null);
+}
+
 console.log('Kat\'s review is recorded only when something changed');
 {
   const results = [R('CASH-01', 'BLOCK'), R('CUT-01', 'PASS'), R('CUT-02', 'PASS'), R('CUT-03', 'PASS'), R('IF-01', 'PASS')];
@@ -178,6 +202,7 @@ console.log('Kat\'s review is recorded only when something changed');
     check('a changed task is updated and a new one created', calls.up.includes('close:cg:2026-08') && calls.up.includes('meeting:cg:next') && r.updated === 1 && r.created === 1, JSON.stringify(r));
     check('a cleared BLOCK\'s task is closed by evidence', calls.res.includes('close:cg:2026-08:AR-02') && r.resolved === 1);
     check('a person\'s task and hand-made agent tasks are never closed', !calls.res.includes('close:cg:2026-07:GL-01') && !calls.res.includes('cg-close-2026-08-09:bank-recs'));
+    check('hand-made tasks are never written at all', !sb.writes.some((w) => w.table === 'work_items'));
   }
 
   console.log('the run: dry run writes nothing; the packet is built as a draft only when due');
@@ -216,7 +241,7 @@ console.log('Kat\'s review is recorded only when something changed');
     const st = await K.loadCommunityState(sb, { id: 'cg' }, { today: '2026-10-15', dryRun: true, review: async (pid) => { reviewed.push(pid); return { results: [], changed: false }; } });
     check('the months the packet reports are loaded through the cutoff, even if not over', st.periods.map((p) => p.id).join() === 'p9,p10' && st.periods.find((p) => p.id === 'p10').not_ended === true);
     check('Kat reviews only months that are over', reviewed.join() === 'p9');
-    const assumed = await K.loadCommunityState(sb, { id: 'cg' }, { today: '2026-10-15', dryRun: true, meeting: { meeting_date: '2026-12-02' } });
+    const assumed = await K.loadCommunityState(sb, { id: 'cg' }, { today: '2026-10-15', dryRun: true, meeting: { meeting_date: '2026-12-02' }, review: async () => ({ results: [], changed: false }) });
     check('a dry run can assume a meeting date', assumed.meeting.meeting_date === '2026-12-02' && assumed.meeting.source === 'assumed');
   }
 
@@ -269,6 +294,66 @@ console.log('Kat\'s review is recorded only when something changed');
     check('the daily job is registered through the opt-in gate (off unless SCHEDULER_ENABLED names it)', /name: 'close_cadence'/.test(sched) && /scheduler\.register\(\{\s*name: 'close_cadence'/.test(sched));
     const ed = fs.readFileSync(path.join(__dirname, '../api/ed.js'), 'utf8');
     check('Ed\'s pending queue includes the close/packet sources', /close\/cadence'\)\.pendingSources/.test(ed));
+  }
+
+  console.log('runtime guard: the live sweep cannot reach close/override/accept/approve/post/distribute/send');
+  {
+    // Real loader + real reviewIfChanged; only the books gather and the checklist are stubbed.
+    const root = path.join(__dirname, '..');
+    const gp = require.resolve(path.join(root, 'lib/close/gather')); const cp = require.resolve(path.join(root, 'lib/close/controls'));
+    const sp = require.resolve(path.join(root, 'lib/close/service')); const kp = require.resolve(path.join(root, 'lib/close/cadence'));
+    const saved = { g: require.cache[gp], c: require.cache[cp], s: require.cache[sp], k: require.cache[kp] };
+    const results = [R('CASH-01', 'BLOCK'), R('CUT-01', 'PASS'), R('CUT-02', 'PASS'), R('CUT-03', 'PASS'), R('IF-01', 'PASS')];
+    require.cache[gp] = { id: gp, filename: gp, loaded: true, exports: { gatherCloseInput: async (_sb, cid, pid) => ({ period: { id: pid, status: 'open' }, facts: { fingerprint: `fp-${pid}` } }), _parts: {} } };
+    require.cache[cp] = { id: cp, filename: cp, loaded: true, exports: { evaluateClose: () => ({ results, summary: { block: 1, warning: 0, pass: 4, total: 5 } }), ENGINE_VERSION: 'close-b.1' } };
+    delete require.cache[sp]; delete require.cache[kp];
+    const K2 = require(kp);
+    const svc2 = require(sp);
+    const ALLOWED_RPC = new Set(['close_record_run']);
+    const FORBIDDEN_TABLES = new Set(['accounting_runs', 'accounting_run_events', 'bank_reconciliations', 'journal_entries', 'journal_entry_lines', 'period_closes', 'accounting_periods',
+      'board_packet_distribution_log', 'outbound_email_drafts', 'email_messages', 'statement_mapping_overrides', 'period_close_events']);
+    const base = fakeDb({
+      communities: [{ id: 'cg', name: 'Canyon Gate', gl_cutover_date: '2026-08-01', board_package_config: null }],
+      accounting_periods: [{ id: 'p8', community_id: 'cg', period_start: '2026-08-01', period_end: '2026-08-31', status: 'open', period_type: 'monthly' },
+        { id: 'p9', community_id: 'cg', period_start: '2026-09-01', period_end: '2026-09-30', status: 'closed', period_type: 'monthly' }],
+      period_closes: [], period_close_runs: [], period_close_events: [], meetings: [], board_packets: [], board_packet_sections: [], work_items: [],
+      meeting_agendas: [{ id: 'a1', community_id: 'cg', meeting_date: '2026-10-28', meeting_type: 'regular', title: 'October Board Meeting' }],
+    });
+    const rpcs = [];
+    const guarded = {
+      rpc: async (name) => { rpcs.push(name); if (!ALLOWED_RPC.has(name)) throw new Error(`FORBIDDEN rpc ${name}`); return { data: { run_id: 'run-1', status: 'review' }, error: null }; },
+      from: (t) => {
+        const q = base.from(t);
+        for (const op of ['insert', 'update', 'upsert', 'delete']) {
+          const orig = q[op];
+          q[op] = (...a) => { if (FORBIDDEN_TABLES.has(t) || (t === 'board_packets' && op === 'update')) throw new Error(`FORBIDDEN ${op} on ${t}`); if (!orig) throw new Error(`unexpected ${op} on ${t}`); return orig.apply(q, a); };
+        }
+        return q;
+      },
+    };
+    // Every authority path in the close service throws if the sweep reaches it.
+    const hits = [];
+    for (const fn of ['closePeriod', 'overrideBlock', 'acceptWarnings', 'reopenPeriod', 'addEvidence']) svc2[fn] = () => { hits.push(fn); throw new Error(`FORBIDDEN ${fn}`); };
+    const mrPath = require.resolve(path.join(root, 'lib/accounting/monthly_runs'));
+    const mrSaved = require.cache[mrPath];
+    require.cache[mrPath] = { id: mrPath, filename: mrPath, loaded: true, exports: new Proxy({}, { get: (_t, k) => () => { hits.push(`monthly_runs.${String(k)}`); throw new Error('FORBIDDEN monthly_runs'); } }) };
+    const mc = { up: [], res: [] };
+    let assembled = null;
+    const r = await K2.runCadence({ supabase: guarded, env: {}, now: Date.parse('2026-10-15T15:00:00Z'), deps: {
+      communities: async () => [{ id: 'cg' }],
+      upsertAgentTask: async (o) => { mc.up.push(o.source_ref); return { id: 'w', created: true }; },
+      resolveAgentTask: async (ref) => { mc.res.push(ref); return { resolved: 0 }; },
+      assemblePackage: async (a) => { assembled = a; return { packet_id: 'pk', period_label: a.period_label, needs: [] }; },
+      packetReadiness: async () => ({ ok: false, reasons: [] }) } });
+    check('the live sweep completes against the guarded database', r.ok === true && r.failed === 0, JSON.stringify(r.errors));
+    check('no close / override / accept / reopen / accounting-run path was reached', hits.length === 0, hits.join());
+    check('the only database function it calls is close_record_run (Kat\'s review)', rpcs.length >= 1 && rpcs.every((n) => n === 'close_record_run'), rpcs.join());
+    check('it wrote no period, close record, run approval, posting, distribution or email row', !base.writes.some((w) => FORBIDDEN_TABLES.has(w.table)));
+    check('its only direct write is the meeting record from the saved agenda', base.writes.length === 1 && base.writes[0].table === 'meetings', JSON.stringify(base.writes.map((w) => w.table)));
+    check('the packet for that meeting is not built while August is open', assembled === null);
+    check('tasks go through Mission Control\'s agent upsert', mc.up.includes('close:cg:2026-08:CASH-01'));
+    require.cache[mrPath] = mrSaved;
+    require.cache[gp] = saved.g; require.cache[cp] = saved.c; require.cache[sp] = saved.s; require.cache[kp] = saved.k;
   }
 
   console.log('Mission Control: an agent task kept under a derived key is that item, not a second card');

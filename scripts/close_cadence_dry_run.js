@@ -41,6 +41,7 @@ if (md && !/^\d{4}-\d{2}-\d{2}$/.test(md)) { console.error('--meeting-date must 
       const tag = p.would.create.includes(t.source_ref) ? 'CREATE' : p.would.update.includes(t.source_ref) ? 'UPDATE' : 'same  ';
       console.log(`    ${tag} [${t.assigned_to}] ${t.title}${t.due_date ? ` (due ${t.due_date}, ${t.urgency})` : ` (${t.urgency})`}\n           ref ${t.source_ref}\n           next: ${t.next_step}`);
     }
+    for (const a of p.adopted) console.log(`    ADOPT  ${a.source_ref} -> existing hand-made task ${a.adopted_by} (not created, not edited)`);
     for (const ref of p.would.resolve) console.log(`    RESOLVE ${ref}`);
     for (const n of p.notes) console.log(`  NOTE ${n}`);
   }
