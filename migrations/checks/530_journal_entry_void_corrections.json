@@ -1,0 +1,54 @@
+{
+  "migration": "530_journal_entry_void_corrections.sql",
+  "summary": "The corrections trail (journal_entry_corrections, mig 503) accepts kind 'void', so an owner void of a posted journal entry is recorded with the original entry, its reversal, actor, time and reason. Adds journal_entry_void_audit_ready() so the void route confirms the trail can take the record before it posts anything. Repairs nothing; no row changes.",
+  "requires": [
+    "503_journal_entry_corrections.sql"
+  ],
+  "preflight": [
+    {
+      "name": "the readiness function does not exist yet",
+      "sql": "SELECT count(*)::int FROM pg_proc WHERE proname = 'journal_entry_void_audit_ready'",
+      "expect": 0
+    },
+    {
+      "name": "every existing correction uses one of the three AP kinds",
+      "sql": "SELECT count(*)::int FROM journal_entry_corrections WHERE kind NOT IN ('ap_recode', 'ap_line_recode', 'ap_hold_prior_periods')",
+      "expect": 0
+    }
+  ],
+  "expected_changes": [
+    "journal_entry_corrections_kind_check now allows 'ap_recode', 'ap_line_recode', 'ap_hold_prior_periods' and 'void' (was the first three).",
+    "New function journal_entry_void_audit_ready() returning true; EXECUTE granted to service_role.",
+    "No row changes. Append-only trigger on journal_entry_corrections unchanged."
+  ],
+  "objects": {
+    "added": [
+      "function:journal_entry_void_audit_ready"
+    ],
+    "changed": [
+      "constraint:journal_entry_corrections.journal_entry_corrections_kind_check"
+    ],
+    "removed": []
+  },
+  "row_changes": {
+    "journal_entry_corrections": 0
+  },
+  "protected": [
+    {
+      "table": "journal_entry_corrections",
+      "order_by": "id"
+    }
+  ],
+  "verify": [
+    {
+      "name": "the readiness function answers true",
+      "sql": "SELECT count(*)::int FROM (SELECT journal_entry_void_audit_ready() AS ok) x WHERE ok",
+      "expect": 1
+    },
+    {
+      "name": "the kind check allows void",
+      "sql": "SELECT count(*)::int FROM pg_constraint WHERE conname = 'journal_entry_corrections_kind_check' AND pg_get_constraintdef(oid) LIKE '%''void''%'",
+      "expect": 1
+    }
+  ]
+}

@@ -90,6 +90,7 @@ const CHECKS = [
   'tests/test_ap_as_of.js',
   'tests/test_ap_cutover.js',
   'tests/test_posted_je_immutable.js',
+  'tests/test_je_void_owner.js',
   'tests/test_home_sales_balance.js',
   'tests/test_ownership_transfer_single_path.js',
   'tests/test_home_sales_closing_checks.js',

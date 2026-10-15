@@ -3491,7 +3491,20 @@
       </div>
       <div style="margin-top:10px;"><label class="muted" style="font-size:12px;">Reason for this edit (audit note)</label><input type="text" id="jee-editreason" placeholder="What changed and why" style="padding:7px; width:100%; border:1px solid var(--rule); border-radius:6px;"></div>
       ${histHtml}
+      ${e.status==='voided' ? `<div style="margin-top:12px; padding:10px 12px; border:1px solid #fecaca; background:#fef2f2; border-radius:8px; font-size:12.5px; color:#7f1d1d;"><strong>Voided${e.voided_at?' '+esc(String(e.voided_at).slice(0,10)):''}.</strong> ${esc(e.void_reason||'')} A reversal entry offsets it; a void is final.</div>` : ''}
+      ${(e.status==='posted' && window._isAdmin) ? `<div id="jev-panel" style="display:none; margin-top:14px; padding:12px 14px; border:1px solid #fca5a5; border-radius:8px; background:#fffafa;">
+        <div style="font-weight:700; font-size:13.5px; color:#7f1d1d; margin-bottom:6px;">Void ${esc(e.reference||'this entry')}</div>
+        <div class="muted" style="font-size:12px; margin-bottom:8px;">Voiding never deletes. It posts a reversal (every line flipped) on the date below and marks this entry voided. The date must be in an open month.</div>
+        <div style="display:flex; gap:12px; flex-wrap:wrap; align-items:flex-end;">
+          <div><label class="muted" style="font-size:12px; display:block;">Reversal date</label><input type="date" id="jev-date" value="${esc((e.posting_date||'').slice(0,10))}" style="padding:6px; border:1px solid var(--rule); border-radius:6px;"></div>
+          <div style="flex:1 1 280px;"><label class="muted" style="font-size:12px; display:block;">Reason (required, kept with the entry)</label><input type="text" id="jev-reason" maxlength="1000" placeholder="Why this entry comes off the books" style="padding:7px; width:100%; border:1px solid var(--rule); border-radius:6px;"></div>
+          <button id="jev-preview" style="padding:7px 14px; border:1px solid var(--rule); border-radius:6px; background:#fff; cursor:pointer;">Preview</button>
+        </div>
+        <div id="jev-out" style="margin-top:10px;"></div>
+        <div style="display:flex; justify-content:flex-end; margin-top:10px;"><button id="jev-go" disabled style="padding:8px 16px; border:none; border-radius:6px; background:#8E2A22; color:#fff; font-weight:600; cursor:pointer; opacity:.5;">Void entry…</button></div>
+      </div>` : ''}
       <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:14px;">
+        ${(e.status==='posted' && window._isAdmin) ? `<button id="jev-open" style="margin-right:auto; padding:8px 14px; border:1px solid #fca5a5; border-radius:6px; background:#fff; color:#8E2A22; cursor:pointer;">Void entry…</button>` : ''}
         <button id="jee-cancel" style="padding:8px 14px; border:1px solid var(--rule); border-radius:6px; background:#fff; cursor:pointer;">Cancel</button>
         <button id="jee-save" style="padding:8px 16px; border:none; border-radius:6px; background:#166534; color:#fff; font-weight:600; cursor:pointer;">Save changes</button>
       </div></div>`;
@@ -3500,8 +3513,64 @@
     $('jee-cancel').addEventListener('click', ()=>m.remove());
     $('jee-add').addEventListener('click', ()=>jeeAddLine(opts, {}));
     $('jee-save').addEventListener('click', ()=>jeSaveEdit(id));
+    if ($('jev-open')) jevWire(id, e);
     lines.forEach((ln)=>jeeAddLine(opts, ln));
     jeeUpdateTotals();
+  }
+
+  // ---- Void a posted entry: owner only (Ed 2026-10-15) ----------------------
+  // Preview (reads only) -> in-page confirmation listing exactly what posts ->
+  // POST. The server decides who may void (signed-in owner) and records the
+  // actor from the session. Every refusal is shown here, never swallowed.
+  function jevWire(id, e) {
+    let plan = null;   // the preview the owner is looking at; void is enabled only for it
+    const out = $('jev-out'), go = $('jev-go');
+    const setGo = () => { const ok = !!plan && plan.reversal_date === $('jev-date').value && $('jev-reason').value.trim().length > 0; go.disabled = !ok; go.style.opacity = ok ? '1' : '.5'; };
+    const showErr = (j, status) => { out.innerHTML = `<div style="padding:9px 11px; border:1px solid #fecaca; background:#fef2f2; border-radius:6px; color:#7f1d1d; font-size:12.5px;"><strong>Not voided.</strong> ${esc(jevMessage(j, status))}</div>`; };
+    const acctLabel = (l) => `${l.account_number||'?'} ${l.account_name||''}`.trim();
+    $('jev-open').addEventListener('click', ()=>{ $('jev-panel').style.display='block'; $('jev-open').style.display='none'; $('jev-reason').focus(); });
+    $('jev-date').addEventListener('change', ()=>{ plan = null; out.innerHTML=''; setGo(); });
+    $('jev-reason').addEventListener('input', setGo);
+    $('jev-preview').addEventListener('click', async ()=>{
+      plan = null; setGo(); out.innerHTML = '<span class="muted" style="font-size:12.5px;">Checking…</span>';
+      try {
+        const r = await fetch(`/api/books/journal-entries/${encodeURIComponent(id)}/void-preview?reversal_date=${encodeURIComponent($('jev-date').value)}`, { headers: await chkAuthHeader() });
+        const j = await r.json().catch(()=>({}));
+        if (!r.ok) return showErr(j, r.status);
+        plan = j;
+        const rows = j.lines.map((l)=>`<tr><td style="padding:3px 6px;">${esc(acctLabel(l))}</td><td class="num" style="padding:3px 6px;">${l.debit_cents?fmt(l.debit_cents):''}</td><td class="num" style="padding:3px 6px;">${l.credit_cents?fmt(l.credit_cents):''}</td><td style="padding:3px 6px; font-size:11.5px;" class="muted">${esc(l.memo||'')}</td></tr>`).join('');
+        const bal = j.balances ? `<div style="font-weight:600; font-size:12.5px; margin-top:10px;">Account balances, all dates (dry run)</div>
+          <table style="width:100%; font-size:12.5px;"><thead><tr><th style="text-align:left;">Account</th><th class="num">Now</th><th class="num">Change</th><th class="num">After void</th></tr></thead><tbody>${j.balances.map((b)=>`<tr><td style="padding:3px 6px;">${esc(acctLabel(b))}</td><td class="num" style="padding:3px 6px;">${fmt(b.before_cents)}</td><td class="num" style="padding:3px 6px;">${fmt(b.change_cents)}</td><td class="num" style="padding:3px 6px; font-weight:600;">${fmt(b.after_cents)}</td></tr>`).join('')}</tbody></table>`
+          : `<div class="muted" style="font-size:12px; margin-top:8px;">${esc(j.balances_note||'Balances unavailable.')}</div>`;
+        out.innerHTML = `<div style="font-size:12.5px; margin-bottom:4px;">Will post on <strong>${esc(j.reversal_date)}</strong> (period ${esc(j.period.period_start)} to ${esc(j.period.period_end)}, ${esc(j.period.status)}):</div>
+          <table style="width:100%; font-size:12.5px;"><thead><tr><th style="text-align:left;">Account</th><th class="num">Debit</th><th class="num">Credit</th><th style="text-align:left;">Memo</th></tr></thead><tbody>${rows}
+          <tr><td style="padding:3px 6px; font-weight:700; border-top:1px solid var(--rule);">Total</td><td class="num" style="padding:3px 6px; font-weight:700; border-top:1px solid var(--rule);">${fmt(j.totals.debit_cents)}</td><td class="num" style="padding:3px 6px; font-weight:700; border-top:1px solid var(--rule);">${fmt(j.totals.credit_cents)}</td><td style="border-top:1px solid var(--rule);"></td></tr></tbody></table>${bal}`;
+        setGo();
+      } catch (err) { showErr({ detail: 'Could not reach the server: ' + err.message }, 0); }
+    });
+    go.addEventListener('click', async ()=>{
+      const reason = $('jev-reason').value.trim();
+      if (!plan || !reason) return setGo();
+      const ok = await txConfirm({
+        title: `Void ${e.reference||'entry'}`,
+        message: `This posts a reversal of ${e.reference||'the entry'} dated ${plan.reversal_date} and marks ${e.reference||'it'} voided. A void is final.\nReason: ${reason}`,
+        items: plan.lines.map((l)=>({ label: `${l.debit_cents?'Dr':'Cr'} ${acctLabel(l)}`, cents: l.debit_cents || l.credit_cents })),
+        total_cents: plan.totals.debit_cents, confirmLabel: 'Post reversal and void', danger: true,
+      });
+      if (!ok) return;
+      go.disabled = true; go.textContent = 'Voiding…';
+      try {
+        const r = await fetch(`/api/books/journal-entries/${encodeURIComponent(id)}/void`, { method:'POST', headers: Object.assign({'Content-Type':'application/json'}, await chkAuthHeader()), body: JSON.stringify({ reversal_date: plan.reversal_date, void_reason: reason }) });
+        const j = await r.json().catch(()=>({}));
+        if (!r.ok) { go.textContent = 'Void entry…'; plan = null; setGo(); return showErr(j, r.status); }
+        out.innerHTML = `<div style="padding:9px 11px; border:1px solid #bbf7d0; background:#f0fdf4; border-radius:6px; color:#14532d; font-size:12.5px;"><strong>Done.</strong> ${esc(j.message||'Voided.')}</div>`;
+        go.textContent = 'Voided'; renderJe();
+      } catch (err) { go.textContent = 'Void entry…'; showErr({ detail: 'Could not reach the server: ' + err.message + '. Reload the entry before trying again; the void may have posted.' }, 0); }
+    });
+  }
+  function jevMessage(j, status) {
+    if (status === 403) return 'Only the owner, signed in, can void a posted entry.';
+    return (j && (j.detail || j.error)) || ('HTTP ' + status);
   }
   function jeeAddLine(optsFn, ln) {
     const tr = document.createElement('tr');
