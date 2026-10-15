@@ -104,6 +104,7 @@ const CHECKS = [
   'tests/test_statement_presentation.js',
   'tests/test_monthly_interest.js',
   'tests/test_bank_monthly_rec.js',
+  'tests/test_bank_error_carry.js',
   'tests/test_bank_rec_receipts.js',
   'tests/test_bank_rec_suspense_transfer.js',
   'tests/test_crossfund_transfer_presentation.js',
