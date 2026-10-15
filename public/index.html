@@ -47453,7 +47453,7 @@ ${questionsPage}
       const openForApproval = inv.status === 'awaiting_approval' && !!inv.posting_journal_entry_id;
       // Intake held this bill because its lines don't add up to the total (and the
       // gap isn't its sales tax). lib/ap/line_reconcile LINES_HOLD_MARK. (Ed 2026-10-15.)
-      const apLinesHold = (() => { const m = String(inv.approval_path_reason || '').match(/^LINES DON'T ADD UP: (.*)$/) || String(inv.notes || '').match(/LINES DON'T ADD UP: (.*?Post as coded\.)/); return m ? m[1] : ''; })();
+      const apLinesHold = (() => { const m = String(inv.approval_path_reason || '').match(/^LINES DON'T ADD UP: (.*)$/) || String(inv.notes || '').match(/LINES DON'T ADD UP: (.*?)(?= loaded from | Association:|$)/); return m ? m[1] : ''; })();
       const canApprove = openForApproval;   // legacy name kept for the rest of the render
       const notFinal = inv.status !== 'paid' && inv.status !== 'voided';
       // A bill coded line by line has to be CORRECTABLE line by line, or the split
@@ -48330,8 +48330,15 @@ ${questionsPage}
     window.apPostCoded = async function (invId) {
       try {
         const fetchFn = window._authFetch || fetch;
-        const r = await fetchFn('/api/ap/invoices/' + encodeURIComponent(invId) + '/post-coded', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
-        const j = await r.json();
+        const post = (body) => fetchFn('/api/ap/invoices/' + encodeURIComponent(invId) + '/post-coded', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+        let r = await post({});
+        let j = await r.json();
+        // Unstated sales tax never posts on its own: a person confirms the exact
+        // amount (PR #207 review).
+        if (r.status === 409 && j.error === 'derived_tax_unconfirmed') {
+          if (!confirm(j.detail + ' Post this bill with ' + apFmtCents(j.tax_cents) + ' as sales tax?')) return;
+          r = await post({ confirm_tax_cents: j.tax_cents }); j = await r.json();
+        }
         if (!r.ok) throw new Error(j.detail || j.error || 'post failed');
         apOpenInvoice(invId); apLoadList(); apLoadCounts(); apLoadManagerQueue();
       } catch (e) { alert('Could not post the split: ' + e.message); }

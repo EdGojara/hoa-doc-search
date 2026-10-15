@@ -41,6 +41,7 @@ function fakeClient() {
         eq(c, v) { st.filters.push([c, v]); return q; }, neq() { return q; }, in() { return q; }, is() { return q; },
         ilike() { return q; }, or() { return q; }, not() { return q; }, gte() { return q; }, lte() { return q; }, lt() { return q; }, gt() { return q; },
         insert(p) {
+          if (table === 'ap_invoice_lines' && db.failLineInsert) { db.failLineInsert = false; st.op = 'insert_fail'; st.inserted = []; return q; }
           st.op = 'insert';
           const list = (Array.isArray(p) ? p : [p]).map((r, i) => ({ id: `${table}-${(db[table] || []).length + i + 1}`, ...r }));
           if (!db[table]) db[table] = [];
@@ -52,7 +53,8 @@ function fakeClient() {
         async single() { return { data: st.inserted ? st.inserted[0] : (rows()[0] || null), error: null }; },
         async maybeSingle() { return { data: st.op === 'insert' ? st.inserted[0] : (rows()[0] || null), error: null }; },
         then(res, rej) {
-          if (st.op === 'update') { for (const r of rows()) Object.assign(r, st.payload); return Promise.resolve({ data: null, error: null }).then(res, rej); }
+          if (st.op === 'update') { for (const r of rows()) Object.assign(r, st.payload); (db.updates = db.updates || []).push({ table, filters: st.filters, payload: st.payload }); return Promise.resolve({ data: null, error: null }).then(res, rej); }
+          if (st.op === 'insert_fail') return Promise.resolve({ data: null, error: { message: 'simulated insert failure' } }).then(res, rej);
           if (st.op === 'insert') return Promise.resolve({ data: st.inserted, error: null }).then(res, rej);
           return Promise.resolve({ data: rows(), error: null }).then(res, rej);
         },
@@ -98,10 +100,17 @@ t('Earthcare #1348: lines $8,862.58 + stated tax $731.17 = $9,593.75 -> stated_t
   const r = reconcileLines({ lineCents: [886258], totalCents: 959375, statedTaxCents: 73117 });
   assert.strictEqual(r.ok, true); assert.strictEqual(r.kind, 'stated_tax'); assert.strictEqual(r.tax_cents, 73117);
 });
-t('Star #30053 with NO stated tax: the $187.48 gap is exactly 8.25% of $2,272.36 -> derived_tax', () => {
+t('Star #30053 with NO stated tax: the $187.48 gap is exactly 8.25% -> derived_tax, NOT ok until a person confirms', () => {
   const r = reconcileLines({ lineCents: [165091, 60480, 1665], totalCents: 245984, statedTaxCents: 0 });
-  assert.strictEqual(r.kind, 'derived_tax'); assert.strictEqual(r.tax_cents, 18748); assert.strictEqual(r.rate, 0.0825);
-  assert.match(r.message, /8\.25% Texas sales tax/);
+  assert.strictEqual(r.kind, 'derived_tax'); assert.strictEqual(r.ok, false); assert.strictEqual(r.tax_cents, 18748); assert.strictEqual(r.rate, 0.0825);
+  assert.match(r.message, /8\.25% Texas sales tax/); assert.match(r.message, /confirm it with Post as coded/);
+  assert.deepStrictEqual(salesTaxLines([{ amount_cents: 227236, gl_account_id: 'a' }], r), [], 'no tax line from an unconfirmed derivation');
+  const ok = reconcileLines({ lineCents: [165091, 60480, 1665], totalCents: 245984, allowDerived: true });
+  assert.strictEqual(ok.ok, true); assert.match(ok.message, /Confirmed as sales tax by a person/);
+});
+t('why derived tax never posts on its own: a dropped $3 fee on a $40 bill "is" 7.5% tax', () => {
+  const r = reconcileLines({ lineCents: [4000], totalCents: 4300 });
+  assert.strictEqual(r.kind, 'derived_tax'); assert.strictEqual(r.ok, false);
 });
 t('Earthcare #1348 with no stated tax: also derivable (8.25%)', () => {
   assert.strictEqual(reconcileLines({ lineCents: [886258], totalCents: 959375 }).kind, 'derived_tax');
@@ -121,7 +130,7 @@ t('any other gap is a mismatch with a plain reason (short, over, stated tax that
 });
 t('tax splits proportionally across the accounts it taxes, to the cent', () => {
   const lines = [{ amount_cents: 500000, gl_account_id: 'L' }, { amount_cents: 300000, gl_account_id: 'I' }, { amount_cents: 86258, gl_account_id: 'L' }, { amount_cents: 0, gl_account_id: 'E' }];
-  const tax = salesTaxLines(lines, { kind: 'stated_tax', tax_cents: 73117, rate: 0.0825 });
+  const tax = salesTaxLines(lines, { ok: true, kind: 'stated_tax', tax_cents: 73117, rate: 0.0825 });
   assert.strictEqual(tax.reduce((s, l) => s + l.amount_cents, 0), 73117);
   assert.deepStrictEqual(tax.map((l) => l.gl_account_id).sort(), ['I', 'L']);
   assert.ok(tax.every((l) => l.description === 'Sales Tax'));
@@ -193,6 +202,50 @@ t('Post as coded on an already-loaded bill whose lines are the subtotal (the two
   const refused = await postAccrualForInvoice({ invoiceId: 'existing-bad', communityId: 'c-cg', vendorId: 'v-star',
     glLines: [{ accountId: 'acct-5770', cents: 100000 }], totalCents: 245984, taxCents: 18748, invoiceDate: '2026-10-05' });
   assert.strictEqual(refused, null); assert.strictEqual(posted.length, 0);
+});
+
+t('intake: a derived (unstated) tax is HELD: no tax line, no journal entry, manager review, the probable tax named', async () => {
+  posted.length = 0;
+  const out = await commitInvoice({ extracted: { ...STAR, invoice_number: '30053-D', tax_cents: 0 }, vendorId: 'v-star-d', communityId: 'c-cg', sha256: 'sha-d', storagePath: 'd.pdf', intakeMethod: 'email', sourceRef: 'email:d' });
+  assert.strictEqual(out.posting_journal_entry_id, null); assert.strictEqual(posted.length, 0);
+  assert.ok(!linesOf(out.invoice_id).some((l) => l.description === 'Sales Tax'));
+  const row = inv(out.invoice_id);
+  assert.strictEqual(row.approval_path, 'manager_review'); assert.strictEqual(row.needs_review, true);
+  assert.match(row.approval_path_reason, /8\.25% Texas sales tax/); assert.match(row.approval_path_why, /a person confirms it/);
+});
+
+t('postSplitAccrual is strict by default (re-code, split, hold-prior-periods, attorney backstop); derived posts only with allowDerivedTax', async () => {
+  posted.length = 0;
+  const base = { invoiceId: 'x-derived', communityId: 'c-cg', vendorId: 'v-star', glLines: [{ accountId: 'acct-5770', cents: 227236 }], totalCents: 245984, taxCents: 0, invoiceDate: '2026-10-05' };
+  assert.strictEqual(await postAccrualForInvoice(base), null); assert.strictEqual(posted.length, 0);
+  assert.ok(await postAccrualForInvoice({ ...base, allowDerivedTax: true })); assert.strictEqual(posted.length, 1);
+  const src = require('fs').readFileSync(require.resolve('../api/ap.js'), 'utf8');
+  const route = src.slice(src.indexOf("router.post('/invoices/:id/post-coded'"), src.indexOf("router.post('/invoices/:id/hold-prior-periods'"));
+  assert.ok(route.length > 100);
+  assert.strictEqual((src.match(/allowDerivedTax/g) || []).length, (route.match(/allowDerivedTax/g) || []).length, 'only Post as coded, behind a confirmation, passes allowDerivedTax');
+  assert.ok(/body\.confirm_tax_cents == null\) return res\.status\(409\)\.json\(\{ error: 'derived_tax_unconfirmed'/.test(src));
+  assert.ok(/is_legal_counsel\) return res\.status\(409\)/.test(src), 'never for an attorney bill');
+  const intakeSrc = require('fs').readFileSync(require.resolve('../lib/ap/intake.js'), 'utf8');
+  assert.ok(!/allowDerivedTax: true/.test(intakeSrc), 'intake and the attorney backstop never allow derived tax');
+});
+
+t('the journal entry carries the tax reconciliation in classification_reason', async () => {
+  posted.length = 0; db.updates = [];
+  const out = await commitInvoice({ extracted: { ...STAR, invoice_number: '30053-R' }, vendorId: 'v-star-r', communityId: 'c-cg', sha256: 'sha-r', storagePath: 'r.pdf', intakeMethod: 'email', sourceRef: 'email:r' });
+  assert.ok(out.posting_journal_entry_id);
+  const je = db.updates.find((u) => u.table === 'journal_entries' && u.payload.classification_reason);
+  assert.match(je.payload.classification_reason, /stated sales tax \$187\.48/);
+  db.updates = [];
+  await postAccrualForInvoice({ invoiceId: 'pc', communityId: 'c-cg', vendorId: 'v', glLines: [{ accountId: 'acct-5770', cents: 227236 }], totalCents: 245984, taxCents: 18748, invoiceDate: '2026-10-05', classificationReason: 'Posted as coded.' });
+  const je2 = db.updates.find((u) => u.table === 'journal_entries');
+  assert.match(je2.payload.classification_reason, /^Posted as coded\. Lines \$2,272\.36 plus the invoice's stated sales tax/);
+});
+
+t('if the lines cannot be saved, the bill is held (the single-account fallback never posts the total unchecked)', async () => {
+  posted.length = 0; db.failLineInsert = true;
+  const out = await commitInvoice({ extracted: { ...STAR, invoice_number: '30053-F' }, vendorId: 'v-star-f', communityId: 'c-cg', sha256: 'sha-f', storagePath: 'f.pdf', intakeMethod: 'email', sourceRef: 'email:f' });
+  assert.strictEqual(posted.length, 0); assert.strictEqual(out.posting_journal_entry_id, null);
+  assert.match(inv(out.invoice_id).approval_path_reason, /could not be saved/);
 });
 
 (async () => {

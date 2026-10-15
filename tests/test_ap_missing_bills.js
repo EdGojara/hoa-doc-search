@@ -161,6 +161,30 @@ t('tick: one Emma task per missing bill, stable source_ref, no duplicates on re-
   } finally { lifecycle.operationalCommunities = realOps; }
 });
 
+t('auto-close: only tasks still "new" are closed, and the closing note is appended, never overwriting the notes Emma wrote', async () => {
+  const lifecycle = require('../lib/community/lifecycle');
+  const realOps = lifecycle.operationalCommunities;
+  lifecycle.operationalCommunities = async () => [{ id: 'c-cg', name: 'Canyon Gate at Cinco Ranch', is_demo: false }];
+  try {
+    const store = {
+      ap_invoices: FX.bills.map((b, i) => ({ id: `inv-${i}`, community_id: 'c-cg', status: 'paid', ...b, vendors: { name: b.vendor_name, is_legal_counsel: false } })),
+      vendor_contracts: [], work_item_events: [],
+      work_items: [
+        { id: 'wi-new', source_ref: 'ap-missing-bill:c-cg:acct:1111111:2026-08-01', source_type: 'agent', status: 'new', notes: 'Emma: asked vendor 9/20.' },
+        { id: 'wi-busy', source_ref: 'ap-missing-bill:c-cg:acct:2222222:2026-08-01', source_type: 'agent', status: 'in_progress', notes: 'Emma: vendor says it was mailed.' },
+      ],
+    };
+    const r = await tick({ supabase: fakeSupabase(store), today: new Date('2026-10-15T12:00:00Z'), logger: { log() {}, warn() {}, error() {} }, upsertTask: async () => ({ id: 'x', created: true }) });
+    const closed = store.work_items.find((w) => w.id === 'wi-new'), busy = store.work_items.find((w) => w.id === 'wi-busy');
+    assert.strictEqual(closed.status, 'done');
+    assert.ok(closed.notes.startsWith('Emma: asked vendor 9/20.'), closed.notes);
+    assert.match(closed.notes, /Closed by the missing-bill check on 2026-10-15/);
+    assert.strictEqual(busy.status, 'in_progress', 'a task Emma is working is hers to close');
+    assert.strictEqual(busy.notes, 'Emma: vendor says it was mailed.');
+    assert.strictEqual(r.resolved, 1);
+  } finally { lifecycle.operationalCommunities = realOps; }
+});
+
 t('write scope: the job writes ONLY Mission Control rows (work_items + their audit events), never bills, journal entries, payments or email', async () => {
   const lifecycle = require('../lib/community/lifecycle');
   const realOps = lifecycle.operationalCommunities;
