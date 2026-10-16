@@ -402,6 +402,91 @@ const env = (vars, fn) => { const old = {}; for (const k of Object.keys(vars)) {
     for (const k of ['Vendor recommendation:', 'Project recommendation:', 'Preliminary funding recommendation:', 'Reserve-study status:', 'Contract readiness:', 'Monitoring plan:']) assert.ok(rep.includes(`  ${k}`), `report prints ${k}`);
   });
 
+  console.log('\nQuantities from stored line items (deterministic)');
+  const LI = require('../lib/vendors/line_items');
+  const itemOf = (key) => JSON.parse(JSON.stringify(fx.proposals.find((p) => p.key === key)));
+  const build = (props) => C.buildComparisonRecord({ community: fx.community, project: fx.project, proposals: props, requirements: req, facts, today: fx.today, intent });
+
+  await t('iTech counts are computed from the stored line items: 14 new + 13 reused = 27 cameras, 20 licenses, subtotal matches', async () => {
+    const q = LI.computeQuantities(itemOf('itech-2026-a'));
+    const e = fx.expected.itech_line_items;
+    assert.strictEqual(q.status, 'stored'); assert.deepStrictEqual(q.errors, []);
+    for (const k of ['cameras_new', 'cameras_reused', 'cameras_total', 'licenses', 'embedded_server_cameras']) assert.strictEqual(q.values[k], e[k], k);
+    assert.deepStrictEqual(q.subtotal, { items_cents: e.items_cents, printed_cents: e.printed_cents, matches: true });
+    assert.deepStrictEqual(q.uncertain, e.uncertain);
+  });
+
+  await t('determinism: the same stored line items give byte-identical quantities, open items and summary on every run', async () => {
+    const a = build(JSON.parse(JSON.stringify(fx.proposals))); const b = build(JSON.parse(JSON.stringify(fx.proposals)));
+    assert.strictEqual(JSON.stringify(a.quantities), JSON.stringify(b.quantities));
+    assert.strictEqual(JSON.stringify(a.open_items), JSON.stringify(b.open_items));
+    assert.strictEqual(C.renderBoardSummary(a, { greetingName: 'Hugh' }), C.renderBoardSummary(b, { greetingName: 'Hugh' }));
+    // A model-stated total on the item is ignored: counts come from the line items.
+    const noisy = JSON.parse(JSON.stringify(fx.proposals)); const it = noisy.find((p) => p.key === 'itech-2026-a'); it.scope.cameras_total = 28; it.scope.cameras_new = 15;
+    assert.strictEqual(JSON.stringify(build(noisy).quantities), JSON.stringify(a.quantities));
+  });
+
+  await t('a line-item sum that does not match the printed subtotal is uncertain and becomes an open item', async () => {
+    const it = itemOf('itech-2026-a'); it.line_items.find((l) => l.category === 'materials_labor').extended_cents = 4400000;
+    const q = LI.computeQuantities(it);
+    const u = q.uncertain.find((x) => x.field === 'upfront_cents');
+    assert.ok(u && /do not add up/.test(u.reason)); assert.deepStrictEqual(u.values.map((v) => [v.value, v.page]), [[4400000, '7'], [4461975, 7]]);
+    const r = build([it]);
+    assert.ok(r.open_items.some((i) => i.topic === 'quantity: the subtotal' && /\$44,000\.00 per page 7; \$44,619\.75 per page 7, unconfirmed/.test(i.request)));
+  });
+
+  await t('a cover/narrative count that disagrees with the itemized table is uncertain, shown as "N per page X; M per page Y, unconfirmed"', async () => {
+    const it = itemOf('itech-2026-a'); it.scope_statements.push({ category: 'camera_new', quantity: 1, page: 1, excerpt: 'cover: 15 new cameras' });
+    const q = LI.computeQuantities(it);
+    assert.ok(q.uncertain.some((x) => x.field === 'cameras_new' && /disagree/.test(x.reason)));
+    assert.strictEqual(LI.renderQuantity(q, 'cameras_new'), '14 per page 4; 15 per page 1-3, unconfirmed');
+    const r = build([it]);
+    assert.ok(r.open_items.some((i) => i.topic === 'quantity: new cameras'));
+    const s = C.renderBoardSummary(r, { greetingName: 'Hugh' });
+    assert.match(s, /a camera count that is not yet confirmed \(new 14 per page 4; 15 per page 1-3, unconfirmed; reused 13\)/);
+    assert.ok(!/\b2[78] cameras\b/.test(s), 'no total stated while a component is unconfirmed');
+  });
+
+  await t('the Board summary states no count that is not in the computed values', async () => {
+    const q = run.result.record.quantities.find((x) => x.key === 'itech-2026-a').values;
+    const allowed = new Set(Object.values(q).filter((v) => v != null).map(String));
+    for (const m of run.result.summary.matchAll(/\b(\d+) (cameras?(?! proposals)|reused|new|licenses?)\b/g)) assert.ok(allowed.has(m[1]), `"${m[0]}" is not a computed value`);
+    assert.match(run.result.summary, /27 cameras \(13 reused, 14 new\)/); assert.match(run.result.summary, /a camera schedule \(27 cameras, 20 licenses\)/);
+  });
+
+  await t('source pages are carried through to the stored audit and the quantities record', async () => {
+    const note = run.result.record.audit.find((a) => /^Quantities for iTech/.test(a.note)).note;
+    assert.match(note, /from stored line items: cameras 27 = new 14 \(p\. 3, 4\), reused 13 \(p\. 3\), licenses 20 \(p\. 3\); line items \$44,619\.75 vs printed subtotal \$44,619\.75: match/);
+    const pv = run.result.record.quantities.find((x) => x.key === 'itech-2026-a').provenance;
+    assert.ok(pv.licenses.every((p) => p.page === 3 && /20- DW Licenses/.test(p.excerpt)));
+  });
+
+  await t('line items not yet stored: counts are labelled provisional; no line items at all: provisional too', async () => {
+    const it = itemOf('itech-2026-a'); it.line_items_stored = false;
+    assert.strictEqual(LI.computeQuantities(it).status, 'not_yet_stored');
+    assert.match(C.renderBoardSummary(build([it]), { greetingName: 'Hugh' }), /27 cameras \(13 reused, 14 new\) \(provisional: line items not yet stored\)/);
+    const bare = itemOf('itech-2026-b');
+    assert.strictEqual(LI.computeQuantities(bare).status, 'none');
+  });
+
+  await t('backfill: dry run by default, skips proposals that already have line items, never overwrites; --apply writes extracted_data only', async () => {
+    const B = require('../scripts/backfill_proposal_line_items');
+    const writes = [];
+    const rows = [{ id: 'vp-old', file_path: 'rfps/x/old.pdf', file_hash: null, extracted_data: { company_name: 'iTech' } }, { id: 'vp-new', file_path: 'rfps/x/new.pdf', extracted_data: { comparison_items: [itemOf('itech-2026-a')] } }];
+    const db = { from(table) { const q = { select() { return q; }, order() { return q; }, limit() { return q; }, eq() { return q; }, maybeSingle() { return Promise.resolve({ data: rows[0], error: null }); }, update(row) { writes.push({ table, row }); return { eq: () => Promise.resolve({ error: null }) }; }, then(r, j) { return Promise.resolve({ data: rows, error: null }).then(r, j); } }; return q; },
+      storage: { from: () => ({ download: async () => ({ data: { arrayBuffer: async () => Buffer.from('pdf') }, error: null }) }) } };
+    const extract = async () => ({ items: [itemOf('itech-2026-a')], diagnostic: { invalid: [] } });
+    const plan = await B.plan(db, { community: 'cg', extract });
+    assert.deepStrictEqual(plan.map((p) => p.action), ['store', 'skip']);
+    assert.strictEqual(plan[0].computed[0].values.cameras_total, 27);
+    assert.strictEqual(writes.length, 0, 'planning writes nothing');
+    await B.apply(db, plan);
+    assert.strictEqual(writes.length, 1); assert.strictEqual(writes[0].table, 'vendor_proposals');
+    assert.deepStrictEqual(Object.keys(writes[0].row), ['extracted_data']);
+    assert.ok(writes[0].row.extracted_data.line_items_sha256 && writes[0].row.extracted_data.comparison_items[0].line_items.length === 23);
+    assert.strictEqual(writes[0].row.extracted_data.company_name, 'iTech', 'existing extraction kept');
+  });
+
   await t('without community records the summary carries no "From ... records" line (nothing invented)', async () => {
     assert.ok(!/records:/.test(summary));
   });

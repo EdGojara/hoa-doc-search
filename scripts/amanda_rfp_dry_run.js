@@ -55,7 +55,7 @@ function readOnly(client) {
   const deny = (what) => () => { throw new Error(`dry run is read-only: ${what} refused`); };
   return new Proxy(client, { get(t, k) {
     if (k === 'rpc') return deny('rpc');
-    if (k === 'storage') return { from: () => ({ upload: deny('storage upload'), remove: deny('storage remove'), download: (...a) => t.storage.from(...a).download(...a) }) };
+    if (k === 'storage') return { from: (bucket) => ({ upload: deny('storage upload'), remove: deny('storage remove'), download: (path) => t.storage.from(bucket).download(path) }) };
     if (k === 'from') return (table) => { const b = t.from(table); for (const m of ['insert', 'update', 'upsert', 'delete']) b[m] = deny(`${m} on ${table}`); return b; };
     return t[k];
   } });
