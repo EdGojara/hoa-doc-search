@@ -111,7 +111,10 @@ function report({ result: r, facts, extracted, writes }) {
     L.push('\nCONCLUSIONS (kept separate)');
     L.push(`  Vendor recommendation: ${cc.vendor_recommendation.vendor} (${cc.vendor_recommendation.basis})`);
     L.push(`  Project recommendation: ${cc.project_recommendation.decision} (${cc.project_recommendation.basis})`);
+    L.push(`  Preliminary funding recommendation: ${cc.funding_recommendation.source || 'none'} (${cc.funding_recommendation.basis}; ${cc.funding_recommendation.label || 'n/a'})`);
+    L.push(`  Reserve-study status: ${cc.reserve_study_status.label}`);
     L.push(`  Contract readiness: ${cc.contract_readiness.label}`);
+    L.push(`  Monitoring plan: ${cc.monitoring_plan.label}`);
     const sec = (title, list, f) => { L.push(`\n${title}`); for (const x of list) L.push(`  ${f(x)}`); };
     sec('STRENGTHS', rv.strengths, (x) => `[${x.lens}] ${x.text}  <${x.source}>`);
     sec('WEAKNESSES / RISKS', rv.weaknesses_risks, (x) => `[${x.lens}${x.severity === 'minor' ? ', minor' : ''}] ${x.text}  <${x.source}>`);

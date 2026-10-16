@@ -299,9 +299,13 @@ const env = (vars, fn) => { const old = {}; for (const k of Object.keys(vars)) {
   await t("the Board summary's opening answers the ask: move toward iTech, subject to diligence, no rebid, no monitoring unless required", async () => {
     const paras = run.result.summary.split('\n\n');
     const rec = paras.find((p) => p.startsWith('Recommendation:'));
-    assert.match(rec, /^Recommendation: move toward iTech\. Its August 19, 2026 proposal is the preferred direction for hardware, installation and cloud access\/storage with no monitoring, subject to the diligence items below; there is no need to restart the bid process, and monitoring should not be added unless iTech confirms it is required/);
-    assert.strictEqual(paras.indexOf(rec), 2, 'right after the greeting and situation');
-    assert.match(paras[1], /Cameras are down and installation cannot start before December, so this needs to move quickly/);
+    assert.match(rec, /^Recommendation: move toward iTech: its August 19, 2026 proposal is the preferred direction for hardware, installation and cloud access\/storage with no monitoring, subject to the diligence items below\. There is no need to restart the bid process, and monitoring should not be added unless iTech confirms it is required for the access the Board wants\. Because cameras are down and installation cannot start before December, this is moving now\./);
+    assert.strictEqual(paras.indexOf(rec), 1, 'the answer comes first, right after the greeting');
+    assert.ok(paras.findIndex((p) => p.startsWith('Situation:')) > paras.indexOf(rec), 'Situation follows the answer');
+    // The first sentence after the greeting carries the recommendation when the sender asked a direct question.
+    const firstSentence = paras[1].split(/(?<=[.?!])\s+/)[0];
+    assert.match(firstSentence, /move toward iTech: its August 19, 2026 proposal is the preferred direction/);
+    assert.deepStrictEqual(require('../lib/team/intent').checkIntent(paras.slice(0, 2).join('\n\n').split(/(?<=[.?!])\s+/)[0] + ' cameras are down', run.result.record.intent).filter((i) => i.code === 'unanswered_ask'), []);
     assert.match(paras.find((p) => p.startsWith('Action underway:')), /because cameras are down and installation cannot start before December, the requests to iTech .* prepared on the workflow record now, so iTech can fix the scope and hold an installation date/);
     assert.deepStrictEqual(D.checkDecisionReady(run.result.summary, { confidence: { mode: 'transition', cash_label: 'provisional' }, intent: run.result.record.intent }), { ok: true, issues: [] });
   });
@@ -368,6 +372,34 @@ const env = (vars, fn) => { const old = {}; for (const k of Object.keys(vars)) {
     const src = fs.readFileSync(path.join(__dirname, '..', 'lib', 'community', 'amanda_reply.js'), 'utf8');
     assert.ok(src.indexOf('intentLib.extractIntent(') < src.indexOf('propertyContext(') || src.indexOf('intentLib.extractIntent(') < src.indexOf('prepareComparison('), 'intent is extracted before the analysis');
     assert.ok(/intentLib\.intentBlock\(intent\)/.test(src) && /intentLib\.INTENT_FIRST_RULE/.test(src) && /, intent \};/.test(src) && /retryNote\(dr\.issues, intent\)/.test(src));
+  });
+
+  await t('the run-rate sentence joins vendor names cleanly (legal suffixes like ", LLC" / ", L.P." never leave a stray comma)', async () => {
+    const R2 = require('../lib/vendors/proposal_review');
+    const n = run.result.record.proposals.find((x) => x.key === 'itech-2026-a');
+    const ctx = [{ kind: 'contract', source: 'trustEd:vendor_contracts', text: 'x', data: { category: 'security', annual_cents: 21663893, vendor: 'United Protective Services of South Texas, L.P.' } },
+      { kind: 'contract', source: 'trustEd:vendor_contracts', text: 'y', data: { category: 'security', annual_cents: 675155, vendor: 'Gate Sentry, LLC' } }];
+    const rv2 = R2.reviewProposal(n, { requirements: req, facts, context: ctx });
+    const brief = rv2.strengths.concat(rv2.weaknesses_risks).find((x) => /run-rate/.test(x.brief || '')).brief;
+    assert.match(brief, /less the United Protective and Gate Sentry contracts/);
+    assert.ok(!/,\s+contracts|Sentry,/.test(brief), brief);
+  });
+
+  await t("the schedule note quotes the sender's sentence and interprets it (earliest installation December)", async () => {
+    const notes = C.boardRequirements(fx.board_email.body).notes.join(' | ');
+    assert.match(notes, /schedule: earliest installation December \(sender: "Even if we said yes today, they wouldn't be able to install us until December\."\)/);
+    assert.ok(!/schedule: install us until/.test(notes));
+  });
+
+  await t('the structured conclusions carry all six keys and the Board summary is rendered from them', async () => {
+    const c = run.result.record.review.conclusions;
+    assert.deepStrictEqual(Object.keys(c).sort(), ['contract_readiness', 'funding_recommendation', 'monitoring_plan', 'project_recommendation', 'reserve_study_status', 'vendor_recommendation']);
+    const line = run.result.summary.split('\n\n').find((p) => p.startsWith('Conclusions:'));
+    assert.ok(line.includes(c.reserve_study_status.label.charAt(0).toUpperCase() + c.reserve_study_status.label.slice(1)));
+    assert.ok(line.includes(c.contract_readiness.label.charAt(0).toUpperCase() + c.contract_readiness.label.slice(1)));
+    assert.ok(line.includes(c.monitoring_plan.label.charAt(0).toUpperCase() + c.monitoring_plan.label.slice(1)));
+    const rep = DRY.report(run);
+    for (const k of ['Vendor recommendation:', 'Project recommendation:', 'Preliminary funding recommendation:', 'Reserve-study status:', 'Contract readiness:', 'Monitoring plan:']) assert.ok(rep.includes(`  ${k}`), `report prints ${k}`);
   });
 
   await t('without community records the summary carries no "From ... records" line (nothing invented)', async () => {
