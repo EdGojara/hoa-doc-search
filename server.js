@@ -5905,6 +5905,13 @@ app.get('/download-rfp/:bidRequestId', async (req, res) => {
 
     let structured = bidRequest.structured_rfp;
 
+    // A structured RFP document (lib/vendors/rfp_document.js) has no scopeItems; the
+    // regenerate fallback below would OVERWRITE it with a freshly generated scope. It is
+    // printed from the RFP panel instead (GET /api/vendors/rfps/:id/document?format=html).
+    if (structured && structured.schema === 'trusted.rfp.v2') {
+      return res.status(409).json({ error: 'This RFP is a structured document. Open it from the RFP panel (Vendor copy or Board copy).' });
+    }
+
     // Fallback: regenerate structured RFP on the fly if it wasn't saved
     if (!structured || !structured.scopeItems || structured.scopeItems.length === 0) {
       try {

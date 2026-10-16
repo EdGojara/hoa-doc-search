@@ -26,6 +26,7 @@ const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024 } });
 const { BEDROCK_MGMT_CO_ID } = require('../lib/company');
+const { safeErrorMessage } = require('./_safe_error');
 
 const router = express.Router();
 
@@ -337,8 +338,12 @@ router.get('/', async (req, res) => {
 });
 
 // GET /api/vendors/:id  — vendor detail with recent invoices + documents
-router.get('/:vendorId', async (req, res) => {
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+router.get('/:vendorId', async (req, res, next) => {
   const { vendorId } = req.params;
+  // Registered before GET /rfps, /benchmarks and /spend, so a non-uuid segment is one of
+  // those routes, never a vendor id (it used to answer them with "Vendor not found").
+  if (!UUID_RE.test(vendorId)) return next();
   try {
     const { data: vendor, error: vErr } = await supabase
       .from('vendors')
@@ -1039,6 +1044,47 @@ router.get('/rfps/:id', async (req, res) => {
   } catch (err) {
     console.error('[vendors] rfp detail failed:', err.message);
     res.status(500).json({ error: err.message });
+  }
+});
+
+// ----------------------------------------------------------------------------
+// GET /api/vendors/rfps/:id/document — the structured RFP on this record
+// ----------------------------------------------------------------------------
+// ?format=json (default): { document, validation, comparison, audiences } where
+//   comparison lines up every returned response (vendor_proposals.extracted_data.rfp_response)
+//   on the same pricing form and compliance matrix. Read-only; never ranks or awards.
+// ?format=html&audience=vendor|board: the printable copy (lib/vendors/rfp_document_render.js).
+//   Refused (409) while the document fails validation, so a leaking or half-built RFP
+//   cannot be printed.
+router.get('/rfps/:id/document', async (req, res) => {
+  try {
+    const RD = require('../lib/vendors/rfp_document');
+    const { fetchAll } = require('../lib/db/fetch_all');
+    const { data: rfp, error: rErr } = await supabase
+      .from('bid_requests')
+      .select('id, title, status, community_id, structured_rfp')
+      .eq('id', req.params.id)
+      .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+      .maybeSingle();
+    if (rErr) throw rErr;
+    if (!rfp) return res.status(404).json({ error: 'RFP not found' });
+    const doc = rfp.structured_rfp;
+    if (!doc || doc.schema !== RD.SCHEMA) return res.status(404).json({ error: 'rfp_document_not_found' });
+    const validation = RD.validateRfpDocument(doc);
+    if (req.query.format === 'html') {
+      const audience = req.query.audience === 'board' ? 'board' : 'vendor';
+      if (!validation.ok) return res.status(409).json({ error: 'rfp_document_invalid', validation });
+      const { renderRfpHtml } = require('../lib/vendors/rfp_document_render');
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      return res.send(renderRfpHtml(doc, { audience }));
+    }
+    const proposals = await fetchAll(supabase, 'vendor_proposals', { select: 'id, proposer_company_name, extracted_data', filters: { bid_request_id: rfp.id } });
+    const comparison = RD.compareResponses(doc, proposals);
+    // Management-only items are for staff in the app; the Board copy never carries them.
+    res.json({ rfp: { id: rfp.id, title: rfp.title, status: rfp.status }, document: doc, validation, comparison });
+  } catch (err) {
+    console.error('[vendors] rfp document failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
   }
 });
 
