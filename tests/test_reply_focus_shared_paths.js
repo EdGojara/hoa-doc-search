@@ -120,6 +120,11 @@ async function t(name, fn) {
     assert.ok(/You asked about something the Board already decided/.test(promptText(CALLS[1])));
     assert.deepStrictEqual(d.focus_issues, []);
     assert.ok(verifyHughReply(d.body).ok);
+    // Diagnostic: the retry ran, on what, with the exact required sentences; the retried text was graded.
+    assert.strictEqual(d.focus_retry.retried, true);
+    assert.ok(d.focus_retry.first_issues.includes('bidder_list_missing') && d.focus_retry.first_issues.includes('no_review_step'), d.focus_retry.first_issues.join(','));
+    assert.ok(d.focus_retry.retry_note.includes("I'll propose a bidder list for the Board to confirm.") && d.focus_retry.retry_note.includes('The draft RFP comes back to the Board for review before anything goes to vendors.'));
+    assert.ok(/Include these two sentences exactly as written/.test(promptText(CALLS[0])), 'closing names the sentences');
   });
 
   await t('draft_reply: a draft still failing after the retry is flagged and marked careful', async () => {

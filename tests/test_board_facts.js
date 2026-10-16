@@ -138,6 +138,27 @@ const codes = (r) => [...new Set(r.issues.map((i) => i.code))].sort();
     assert.ok(codes(checkKevin("Hi Kevin,\n\nI agree with the distinction you're making, and I don't think we're actually on different pages. When I said \"proceed,\" I meant continuing diligence, not signing.")).includes('defensive'));
   });
 
+  await t('RFP request: the closing instruction and the retry note name the two required sentences verbatim', () => {
+    const sig = focus.substantiveSignals(hughLatest);
+    const closing = focus.closingInstruction({ senderFirst: 'Hugh', signals: sig, questioned: null, relatedRequests: [], settled: constraints });
+    assert.ok(closing.includes(focus.BIDDER_LIST_SENTENCE) && closing.includes(focus.RFP_REVIEW_SENTENCE), closing);
+    // The 426d04db Hugh general run: bidder list "to you", no review sentence.
+    const bad = "Hugh,\n\nI'm building the RFP now, scoped to purchase-and-own hardware, installation and cloud storage/access only, no monitoring. I'll bring you a bidder list to confirm rather than reaching out to anyone myself.";
+    const r = checkHugh(bad);
+    assert.deepStrictEqual(codes(r).filter((c) => /bidder|review/.test(c)), ['bidder_list_missing', 'no_review_step']);
+    const note = focus.retryNote(r.issues, { latestText: hughLatest, senderFirstName: 'Hugh' });
+    assert.ok(note.includes(focus.BIDDER_LIST_SENTENCE) && note.includes(focus.RFP_REVIEW_SENTENCE), note);
+    const fixed = bad.replace("I'll bring you a bidder list to confirm rather than reaching out to anyone myself.", `${focus.BIDDER_LIST_SENTENCE} ${focus.RFP_REVIEW_SENTENCE}`);
+    assert.ok(!codes(checkHugh(fixed)).some((c) => /bidder|review/.test(c)), JSON.stringify(checkHugh(fixed).issues));
+    assert.ok(verifyHughReply(fixed).results.filter((x) => /bidder|review|vendors to invite/.test(x.name)).every((x) => x.ok));
+  });
+  await t('Hugh criterion "does not name vendors to invite": a correct negation passes, a commitment fails', () => {
+    const ok = (s) => verifyHughReply(s).results.find((x) => /name vendors to invite/.test(x.name)).ok;
+    assert.ok(ok("I'll bring you a bidder list to confirm rather than reaching out to anyone myself."));
+    assert.ok(!ok('I will invite iTech and Envera to rebid on this normalized scope.'));
+    assert.ok(!ok("I'll reach out to Envera for refreshed pricing."));
+  });
+
   // ------------------------------------------------ generalization: not Canyon Gate strings
   await t('another community, another vendor: the same rules from its own records', async () => {
     const bids = [{ id: 'b1', title: 'Pool Resurfacing 2027', status: 'evaluating', selected_proposal_id: null, structured_rfp: null, closed_at: null }];

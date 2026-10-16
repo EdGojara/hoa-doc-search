@@ -100,6 +100,7 @@ function readOnly(sb) {
   console.log('\nREGENERATED DRAFT (not saved, not sent)\n' + '-'.repeat(60) + `\n${d.body}\n` + '-'.repeat(60));
   console.log(`disposition: ${d.disposition}/${d.confidence}   reply-focus issues: ${d.focus_issues.length ? d.focus_issues.join(', ') : 'none'}`);
   console.log(`review_hint: ${d.review_hint}`);
+  if (d.focus_retry) console.log(`corrective retry: ran=${d.focus_retry.retried}; first draft failed on: ${(d.focus_retry.first_issues || []).join(', ') || 'nothing'}${d.focus_retry.retry_error ? `; retry error: ${d.focus_retry.retry_error}` : ''}${d.focus_retry.retry_note ? `\n  retry note:\n${d.focus_retry.retry_note.split('\n').map((l) => '    ' + l).join('\n')}` : ''}`);
 
   if (/^treasurer@canyongateatcincoranch\.com$/i.test(email.sender_email) && /camera/i.test(email.subject || '')) {
     const { verifyKevinReply } = require('../tests/fixtures/amanda-reply-focus/kevin_expectations');
