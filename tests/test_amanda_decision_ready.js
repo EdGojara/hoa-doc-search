@@ -95,10 +95,10 @@ function fakeDb(seed, failTables = []) {
 
   await t('Amanda\'s board replies get the rule, the facts before drafting, and the check with one retry', async () => {
     const src = fs.readFileSync(path.join(__dirname, '..', 'lib', 'community', 'amanda_reply.js'), 'utf8');
-    assert.ok(/boardDecisionFacts\(supabase, communityId, inboundText\)/.test(src), 'facts are retrieved before drafting');
+    assert.ok(/boardDecisionFactsDetailed\(supabase, communityId, inboundText\)/.test(src), 'facts (with their confidence) are retrieved before drafting');
     assert.ok(/BOARD DECISION FACTS \(retrieved from trustEd before drafting/.test(src), 'facts go into the prompt');
     assert.ok(/if \(audience === 'board'\) system \+= '\\n\\n' \+ decisionReady\.DECISION_READY_RULE/.test(src), 'rule on board drafts');
-    assert.ok(/checkDecisionReady\(out\);\s*if \(!dr\.ok\) \{ out = await ask\(decisionReady\.retryNote\(dr\.issues\)\)/.test(src), 'one corrective retry');
+    assert.ok(/checkDecisionReady\(out, drOpts\);\s*if \(!dr\.ok\) \{ out = await ask\(decisionReady\.retryNote\(dr\.issues, intent\)\)/.test(src), 'one corrective retry, with the data-confidence and intent checks');
     assert.ok(!/Give 2 to 3 options with the tradeoffs/.test(src), 'the old options-first instruction is gone');
   });
 

@@ -1,0 +1,1110 @@
+{
+  "_about": "Canyon Gate at Cinco Ranch security-camera proposals, as received. Every proposal field below was transcribed from the real documents (no invented figures): the 9/17/2026 and 10/15/2026 board emails (attachments named exactly as received), the July 2026 board packet 'Security Camera Proposals.pdf' (OneDrive, sha256 below), and the standalone Envera quote Q-19538-2. db_seed matches the live read-only dry run of 2026-10-16 (operating $41,104.86 and reserve $948,452.23, both provisional; no month closed; operating 5313/3170 and Edward Jones not reconciled). It is not a live read.",
+  "community": {
+    "id": "a0000000-0000-4000-8000-000000000003",
+    "name": "Canyon Gate at Cinco Ranch"
+  },
+  "today": "2026-10-16",
+  "project": {
+    "title": "Security Camera System Upgrade 2026",
+    "service_category": "security"
+  },
+  "board_email": {
+    "subject": "Camera Proposals",
+    "from": "president@canyongateatcincoranch.com",
+    "sender_name": "Hugh Durlam",
+    "received_at": "2026-10-16T00:51:08Z",
+    "body": "Board, attached are the recent proposals we have received for upgrading our security camera system. We had another instance of a resident hitting the gate tonight and got pretty aggressive with the guard on duty. Camera angles are becoming an issue as we have many down. We need to act quickly on this. Even if we said yes today, they wouldn't be able to install us until December.\n\nAmanda, would you please review these proposals and give us an assessment of them. Some of them may have different options, but we are only interested in purchasing the hardware, having it installed, and cloud storage/access. We are not interested in any monitoring.",
+    "attachments": [
+      {
+        "name": "image001.png",
+        "isInline": true,
+        "size": 12881
+      },
+      {
+        "name": "Canyon Gate at Cinco Ranch Qoute 19538.pdf",
+        "isInline": false,
+        "size": 41859
+      },
+      {
+        "name": "CGHOASecProps2026.pdf",
+        "isInline": false,
+        "size": 6417781
+      },
+      {
+        "name": "iTech_Video Proposal_Sept 2026.pdf",
+        "isInline": false,
+        "size": 922646
+      }
+    ]
+  },
+  "proposals": [
+    {
+      "key": "itech-2026-a",
+      "vendor_name": "iTech Monitoring, Inc.",
+      "document": {
+        "source_kind": "email_attachment",
+        "filename": "iTech_Video Proposal_Sept 2026.pdf",
+        "size_bytes": 922646,
+        "received_at": "2026-09-17",
+        "message": "iTech Proposa/Contract (Zane Hickman, 9/17/2026)"
+      },
+      "document_date": "2026-08-19",
+      "quote_number": null,
+      "expires_on": null,
+      "budgetary": true,
+      "pricing": {
+        "upfront_cents": 4461975,
+        "tax_rate_pct": 7.25,
+        "tax_included": false,
+        "recurring": [
+          {
+            "label": "Annual Maintenance Agreement & MyDW Health Monitoring",
+            "monthly_cents": 44000,
+            "required": false,
+            "min_term_months": 12,
+            "auto_renews": true,
+            "taxable": null,
+            "provides": [
+              "cloud_access",
+              "maintenance",
+              "health_alerts",
+              "firmware_updates"
+            ]
+          }
+        ]
+      },
+      "scope": {
+        "summary": "Digital Watchdog Spectrum: reuse 10 Club House + 3 Guard Shack cameras, swap 4 CH + 2 GS (2 wide-angle, 2 turrets, 2 LPR), add 3 Basketball Pavilion + 3 Guard Shack + 2 Back Entrance Gate (CaaS with embedded server); 2 x 12TB servers with UPS; PoE switches; point-to-point link to the Pavilion",
+        "locations": [
+          "Club House",
+          "Guard Shack",
+          "Basketball Pavilion",
+          "Back Entrance Gate"
+        ],
+        "storage": "2 x 12TB DW Spectrum servers",
+        "retention_days": null
+      },
+      "model": {
+        "ownership": "association",
+        "monitoring": "none",
+        "cloud_access": "with_plan"
+      },
+      "warranty": null,
+      "insurance": null,
+      "exclusions": [
+        "Additional 110V power if needed",
+        "Faults in the current system (likely change order)",
+        "Plan excludes acts of God, power surges, vandalism, vehicle strikes, other trades"
+      ],
+      "assumptions": [
+        "Enough power for all devices",
+        "All surveillance wiring runs to the main headend",
+        "Client provides network access"
+      ],
+      "timing": null,
+      "change_order": "Budgetary bid, subject to change after the PM pre-installation survey; existing faults will likely need a change order.",
+      "payment_terms": "50% upon acceptance + tax, 50% upon completion + tax; 3% fee on card payments over $1,000",
+      "other_terms": [
+        "Maintenance plan effective 12 months from installation; renews automatically without 30 days notice"
+      ],
+      "documents_included": [
+        "proposal",
+        "scope of work",
+        "equipment list",
+        "maintenance agreement summary"
+      ],
+      "references_not_attached": [
+        "camera layout (\"indicated ... on the Camera Layout Attached separately from this bid\")",
+        "detailed project map and scope of work (provided only upon acceptance)"
+      ],
+      "contract_terms": {
+        "term_renewal": {
+          "status": "partial",
+          "text": "This agreement is effective upon completion of the project installation for 12 months and Automatically renews without 30 day notice from client."
+        },
+        "service_levels": {
+          "status": "partial",
+          "text": "On-site service 8am-5pm Monday-Friday, up to 4 hours a month / 2 trip fees; remote support business hours; \"priority response\" with no stated response time"
+        },
+        "change_orders": {
+          "status": "adverse",
+          "text": "There are some Faults with the Current Surveillance System, and it will need troubleshooting and likely a change order for any unforeseen issues. Any Additional Faults will need to be addressed as they present themselves."
+        },
+        "acceptance": {
+          "status": "partial",
+          "text": "Visuals will be Adjusted once Installation is Complete."
+        }
+      },
+      "line_items": [
+        {
+          "description": "12Tb Custom Server w/DW Spectrum",
+          "category": "recorder",
+          "quantity": 2,
+          "unit": "each",
+          "unit_price_cents": null,
+          "extended_cents": null,
+          "page": 3,
+          "excerpt": "1. 2- 12Tb Custom Server w/DW Specturm",
+          "certainty": "certain"
+        },
+        {
+          "description": "DW Licenses",
+          "category": "license",
+          "quantity": 20,
+          "unit": "each",
+          "unit_price_cents": null,
+          "extended_cents": null,
+          "page": 3,
+          "excerpt": "2. 20- DW Licenses",
+          "certainty": "certain"
+        },
+        {
+          "description": "5MP IR Turret Camera",
+          "category": "camera_new",
+          "quantity": 7,
+          "unit": "each",
+          "unit_price_cents": null,
+          "extended_cents": null,
+          "page": 4,
+          "excerpt": "3. 7- 5MP IR Turret Camera",
+          "certainty": "certain"
+        },
+        {
+          "description": "4K Bullet Wide Angle Lens Camera w/100' IR Range",
+          "category": "camera_new",
+          "quantity": 2,
+          "unit": "each",
+          "unit_price_cents": null,
+          "extended_cents": null,
+          "page": 4,
+          "excerpt": "4. 2- 4K Bullet Wide Angle Lens Camera w/100' IR Range",
+          "certainty": "certain"
+        },
+        {
+          "description": "4K CaaS Bullet Camera w/Embedded Server and Varifocal Lens",
+          "category": "camera_new",
+          "quantity": 2,
+          "unit": "each",
+          "unit_price_cents": null,
+          "extended_cents": null,
+          "page": 4,
+          "excerpt": "5. 2- 4k Bullet CaaS Bullet Camera w/Embeded Server and Varifocal Lens",
+          "certainty": "certain",
+          "embedded_server": true
+        },
+        {
+          "description": "5MP LPR Bullet Camera w/80' IR Range",
+          "category": "camera_new",
+          "quantity": 2,
+          "unit": "each",
+          "unit_price_cents": null,
+          "extended_cents": null,
+          "page": 4,
+          "excerpt": "6. 2- 5MP LPR Bullet Camera w/80' IR Range",
+          "certainty": "certain"
+        },
+        {
+          "description": "5MP Bullet Varifocal Lens Camera w/140' IR Range",
+          "category": "camera_new",
+          "quantity": 1,
+          "unit": "each",
+          "unit_price_cents": null,
+          "extended_cents": null,
+          "page": 4,
+          "excerpt": "7. 1- 5MP Bullet Varifocal Lens Camera w/ 140' IR Range",
+          "certainty": "certain"
+        },
+        {
+          "description": "DW Turret Back Boxes",
+          "category": "other",
+          "quantity": 7,
+          "unit": "each",
+          "unit_price_cents": null,
+          "extended_cents": null,
+          "page": 4,
+          "excerpt": "8. 7- DW Turret Back Boxes",
+          "certainty": "certain"
+        },
+        {
+          "description": "DW Bullet Back Boxes",
+          "category": "other",
+          "quantity": 7,
+          "unit": "each",
+          "unit_price_cents": null,
+          "extended_cents": null,
+          "page": 4,
+          "excerpt": "9. 7- DW Bullet Back Boxes",
+          "certainty": "certain"
+        },
+        {
+          "description": "DW Pole Mount Kit",
+          "category": "other",
+          "quantity": 1,
+          "unit": "each",
+          "unit_price_cents": null,
+          "extended_cents": null,
+          "page": 4,
+          "excerpt": "10. 1- DW Pole Mount Kit",
+          "certainty": "certain"
+        },
+        {
+          "description": "1 Week Lift Rental",
+          "category": "other",
+          "quantity": 1,
+          "unit": "each",
+          "unit_price_cents": null,
+          "extended_cents": null,
+          "page": 4,
+          "excerpt": "11. 1- 1 Week Lift Rental",
+          "certainty": "certain"
+        },
+        {
+          "description": "1500V Backup Battery Mini Tower",
+          "category": "recorder",
+          "quantity": 2,
+          "unit": "each",
+          "unit_price_cents": null,
+          "extended_cents": null,
+          "page": 4,
+          "excerpt": "12. 2- 1500V Backup Battery Mini Tower",
+          "certainty": "certain"
+        },
+        {
+          "description": "16Port PoE Ubiquiti Switch",
+          "category": "network",
+          "quantity": 1,
+          "unit": "each",
+          "unit_price_cents": null,
+          "extended_cents": null,
+          "page": 4,
+          "excerpt": "13. 1- 16Port PoE Ubiquiti Switch",
+          "certainty": "certain"
+        },
+        {
+          "description": "24Port PoE Ubiquiti Switch",
+          "category": "network",
+          "quantity": 1,
+          "unit": "each",
+          "unit_price_cents": null,
+          "extended_cents": null,
+          "page": 4,
+          "excerpt": "14. 1- 24Port PoE Ubiquiti Switch",
+          "certainty": "certain"
+        },
+        {
+          "description": "5Port PoE Hardened Switch",
+          "category": "network",
+          "quantity": 2,
+          "unit": "each",
+          "unit_price_cents": null,
+          "extended_cents": null,
+          "page": 4,
+          "excerpt": "15. 2- 5Port PoE Hardened Switch",
+          "certainty": "certain"
+        },
+        {
+          "description": "Outdoor Rated NEMA Enclosure",
+          "category": "network",
+          "quantity": 1,
+          "unit": "each",
+          "unit_price_cents": null,
+          "extended_cents": null,
+          "page": 4,
+          "excerpt": "16. 1- Outdoor Rated NEMA Enclosure",
+          "certainty": "certain"
+        },
+        {
+          "description": "Conduit Runs",
+          "category": "labor",
+          "quantity": 4,
+          "unit": "each",
+          "unit_price_cents": null,
+          "extended_cents": null,
+          "page": 4,
+          "excerpt": "17. 4- Conduit Runs",
+          "certainty": "certain"
+        },
+        {
+          "description": "PM Pre-Installation Site Survey",
+          "category": "labor",
+          "quantity": 1,
+          "unit": "each",
+          "unit_price_cents": null,
+          "extended_cents": null,
+          "page": 4,
+          "excerpt": "18. 1- PM Pre-Installation Site Survey",
+          "certainty": "certain"
+        },
+        {
+          "description": "Point-to-Point Nano Stations",
+          "category": "network",
+          "quantity": 1,
+          "unit": "each",
+          "unit_price_cents": null,
+          "extended_cents": null,
+          "page": 4,
+          "excerpt": "19. 1- Point-to-Point Nano Stations",
+          "certainty": "certain"
+        },
+        {
+          "description": "Cat6 Cable Run",
+          "category": "network",
+          "quantity": 8,
+          "unit": "each",
+          "unit_price_cents": null,
+          "extended_cents": null,
+          "page": 4,
+          "excerpt": "20. 8- Cat6 Cable Run",
+          "certainty": "certain"
+        },
+        {
+          "description": "Installation",
+          "category": "labor",
+          "quantity": 1,
+          "unit": "each",
+          "unit_price_cents": null,
+          "extended_cents": null,
+          "page": 4,
+          "excerpt": "21. 1- Installation",
+          "certainty": "certain"
+        },
+        {
+          "description": "Coordination with DW Spectrum for programming, testing, and setup",
+          "category": "labor",
+          "quantity": 1,
+          "unit": "each",
+          "unit_price_cents": null,
+          "extended_cents": null,
+          "page": 4,
+          "excerpt": "22. 1- Coordination with DW Spectrum for programming, testing, and setup",
+          "certainty": "certain"
+        },
+        {
+          "description": "Material & Labor",
+          "category": "materials_labor",
+          "quantity": 1,
+          "unit": "lot",
+          "unit_price_cents": 4461975,
+          "extended_cents": 4461975,
+          "page": 7,
+          "excerpt": "Material & Labor $44,619.75 1 $44,619.75",
+          "certainty": "certain"
+        }
+      ],
+      "scope_statements": [
+        {
+          "category": "camera_reused",
+          "quantity": 13,
+          "page": 3,
+          "excerpt": "iTech will reuse 10 Cameras at the Club House and 3 Cameras at the Guard Shack"
+        },
+        {
+          "category": "camera_new",
+          "quantity": 6,
+          "page": 3,
+          "excerpt": "iTech will Swap out 4 Cameras at the Club House and 2 at the Guard Shack"
+        },
+        {
+          "category": "camera_new",
+          "quantity": 8,
+          "page": 3,
+          "excerpt": "iTech will install 3 New Cameras at both the Basketball Pavilion and Guard Shack and 2 at the Back Entrance Gate (\"The 3 Pavilion Cameras\"; \"the 3 at the CH\" refers to the Pavilion turrets, so no extra camera)"
+        }
+      ],
+      "line_items_stored": true,
+      "printed_subtotal_cents": 4461975,
+      "printed_subtotal_page": 7
+    },
+    {
+      "key": "itech-2026-b",
+      "vendor_name": "iTech Monitoring, Inc.",
+      "document": {
+        "source_kind": "email_attachment",
+        "filename": "iTech_Video Proposal_Sept 2026.pdf",
+        "size_bytes": 922646,
+        "received_at": "2026-10-16",
+        "message": "Camera Proposals (Hugh Durlam, 10/15/2026)"
+      },
+      "document_date": "2026-08-19",
+      "budgetary": true,
+      "pricing": {
+        "upfront_cents": 4461975,
+        "tax_rate_pct": 7.25,
+        "tax_included": false,
+        "recurring": [
+          {
+            "label": "Annual Maintenance Agreement & MyDW Health Monitoring",
+            "monthly_cents": 44000,
+            "required": false,
+            "min_term_months": 12,
+            "auto_renews": true,
+            "provides": [
+              "cloud_access",
+              "maintenance",
+              "health_alerts",
+              "firmware_updates"
+            ]
+          }
+        ]
+      },
+      "scope": {
+        "cameras_total": 27,
+        "cameras_new": 14,
+        "cameras_reused": 13,
+        "locations": [
+          "Club House",
+          "Guard Shack",
+          "Basketball Pavilion",
+          "Back Entrance Gate"
+        ],
+        "licenses": 20,
+        "embedded_server_cameras": 2
+      },
+      "model": {
+        "ownership": "association",
+        "monitoring": "none",
+        "cloud_access": "with_plan"
+      }
+    },
+    {
+      "key": "itech-2024",
+      "vendor_name": "iTech Monitoring, Inc.",
+      "document": {
+        "source_kind": "library_document",
+        "filename": "Security Camera Proposals.pdf",
+        "pages": "1-9",
+        "size_bytes": 6417443,
+        "sha256": "c6db2ee49d26b253094e7ab341a573f290ae288f63a5dd0e1a41214d345f028b",
+        "received_at": "2026-07-09",
+        "message": "July 2026 board packet (same packet re-sent as CGHOASecProps2026.pdf on 9/17 and 10/15)"
+      },
+      "document_date": "2024-03-28",
+      "budgetary": true,
+      "pricing": {
+        "upfront_cents": 3821102,
+        "tax_rate_pct": 7.25,
+        "tax_included": false,
+        "recurring": []
+      },
+      "scope": {
+        "summary": "Digital Watchdog Spectrum: 2 x 12TB servers, 16 DW licenses, 6 turrets, 2 4K wide-angle, 2 varifocal CaaS, 2 LPR, wireless bridge",
+        "cameras_total": 12,
+        "cameras_new": 12,
+        "cameras_reused": null,
+        "locations": [
+          "Club House",
+          "Guard Shack"
+        ],
+        "licenses": 16
+      },
+      "model": {
+        "ownership": "association",
+        "monitoring": "none",
+        "cloud_access": null
+      },
+      "change_order": "Budgetary bid; existing faults will likely need a change order.",
+      "payment_terms": "50% upon acceptance, 50% upon completion"
+    },
+    {
+      "key": "envera-q19538-2-packet",
+      "vendor_name": "Envera Systems",
+      "document": {
+        "source_kind": "library_document",
+        "filename": "Security Camera Proposals.pdf",
+        "pages": "10-14",
+        "size_bytes": 6417443,
+        "sha256": "c6db2ee49d26b253094e7ab341a573f290ae288f63a5dd0e1a41214d345f028b",
+        "received_at": "2026-07-09"
+      },
+      "document_date": "2026-06-05",
+      "quote_number": "Q-19538-2",
+      "expires_on": "2026-08-31",
+      "pricing": {
+        "upfront_cents": 6008753,
+        "tax_rate_pct": null,
+        "tax_included": false,
+        "recurring": [
+          {
+            "label": "Monthly services (monitoring, service and maintenance plan, licensing, Starlink line)",
+            "monthly_cents": 245354,
+            "required": true,
+            "min_term_months": 60,
+            "auto_renews": false,
+            "taxable": null,
+            "provides": [
+              "active_monitoring",
+              "maintenance",
+              "cloud_access"
+            ]
+          }
+        ]
+      },
+      "scope": {
+        "summary": "Guard Shack, Rec Center (pool, basketball, pickleball), Resident Exit, Tranquility Park; NVRs, firewalls, battery backup; Starlink backup internet",
+        "cameras_total": 34,
+        "locations": [
+          "Guard Shack",
+          "Rec Center",
+          "Resident Exit",
+          "Tranquility Park"
+        ],
+        "retention_days": null
+      },
+      "model": {
+        "ownership": null,
+        "monitoring": "included",
+        "cloud_access": "included"
+      },
+      "warranty": "Parts and labor covered during the primary period under the Service & Maintenance Plan; ground loops 90 days",
+      "exclusions": [
+        "Permits, bonds, surveys, drawings",
+        "Internet lines (5 Mbps up/down minimum) and head-end power"
+      ],
+      "timing": "About six weeks to install and test",
+      "payment_terms": "50% of installation + two months of services at signing; 40% within 5 days of start; 10% within 5 days of completion",
+      "other_terms": [
+        "Minimum 60-month agreement for monthly services",
+        "Local sales tax may be added to One-Time Total",
+        "Sales tax will be added to Monthly Investment"
+      ]
+    },
+    {
+      "key": "envera-q19538-2-standalone",
+      "vendor_name": "Envera Systems",
+      "document": {
+        "source_kind": "email_attachment",
+        "filename": "Canyon Gate at Cinco Ranch Qoute 19538.pdf",
+        "size_bytes": 41859,
+        "received_at": "2026-10-16",
+        "message": "Camera Proposals (Hugh Durlam, 10/15/2026)"
+      },
+      "document_date": "2026-06-05",
+      "quote_number": "Q-19538-2",
+      "expires_on": "2026-08-31",
+      "pricing": {
+        "upfront_cents": 6008753,
+        "tax_rate_pct": null,
+        "tax_included": false,
+        "recurring": [
+          {
+            "label": "Monthly services",
+            "monthly_cents": 245354,
+            "required": true,
+            "min_term_months": 60,
+            "taxable": null,
+            "provides": [
+              "active_monitoring",
+              "maintenance",
+              "cloud_access"
+            ]
+          }
+        ]
+      },
+      "model": {
+        "ownership": null,
+        "monitoring": "included",
+        "cloud_access": "included"
+      },
+      "other_terms": [
+        "Minimum 60-month agreement for monthly services",
+        "Local sales tax may be added to One-Time Total",
+        "Sales tax will be added to Monthly Investment"
+      ]
+    },
+    {
+      "key": "netwatch-2026",
+      "vendor_name": "Netwatch USA",
+      "document": {
+        "source_kind": "library_document",
+        "filename": "Security Camera Proposals.pdf",
+        "pages": "15-27",
+        "size_bytes": 6417443,
+        "sha256": "c6db2ee49d26b253094e7ab341a573f290ae288f63a5dd0e1a41214d345f028b",
+        "received_at": "2026-07-09"
+      },
+      "document_date": "2026-07-09",
+      "pricing": {
+        "unpriced": true,
+        "recurring": []
+      },
+      "scope": {
+        "summary": "Cvedia analytics for proactive video monitoring (PVM), Hanwha/Wave VMS with 30 days retention; Guard House, Club House, South Gate",
+        "cameras_total": 30,
+        "locations": [
+          "Guard House",
+          "Club House",
+          "South Gate"
+        ],
+        "retention_days": 30
+      },
+      "model": {
+        "ownership": null,
+        "monitoring": "required",
+        "cloud_access": null
+      },
+      "exclusions": [
+        "Customer provides internet to the Netwatch equipment",
+        "Customer provides constant 120VAC power at every location"
+      ]
+    }
+  ],
+  "db_seed": {
+    "chart_of_accounts": [
+      {
+        "id": "a1000",
+        "account_number": "1000",
+        "account_name": "Operating Cash - NewFirst",
+        "account_type": "asset",
+        "fund_id": "opr"
+      },
+      {
+        "id": "a1005",
+        "account_number": "1005",
+        "account_name": "Operating Cash - Columbia (3170)",
+        "account_type": "asset",
+        "fund_id": "opr"
+      },
+      {
+        "id": "a1200",
+        "account_number": "1200",
+        "account_name": "Reserve Money Market",
+        "account_type": "asset",
+        "fund_id": "res"
+      },
+      {
+        "id": "a1201",
+        "account_number": "1201",
+        "account_name": "Reserve - Edward Jones",
+        "account_type": "asset",
+        "fund_id": "res"
+      },
+      {
+        "id": "a5770",
+        "account_number": "5770",
+        "account_name": "Security Services",
+        "account_type": "expense",
+        "fund_id": "opr"
+      },
+      {
+        "id": "a4000",
+        "account_number": "4000",
+        "account_name": "Assessments",
+        "account_type": "revenue",
+        "fund_id": "opr"
+      }
+    ],
+    "account_funds": [
+      {
+        "id": "opr",
+        "fund_code": "OPR",
+        "fund_name": "Operating"
+      },
+      {
+        "id": "res",
+        "fund_code": "RES",
+        "fund_name": "Reserve"
+      }
+    ],
+    "v_trial_balance": [
+      {
+        "account_number": "1000",
+        "total_debits_cents": 4010460,
+        "total_credits_cents": 0
+      },
+      {
+        "account_number": "1005",
+        "total_debits_cents": 100026,
+        "total_credits_cents": 0
+      },
+      {
+        "account_number": "1200",
+        "total_debits_cents": 100517,
+        "total_credits_cents": 0
+      },
+      {
+        "account_number": "1201",
+        "total_debits_cents": 94744706,
+        "total_credits_cents": 0
+      }
+    ],
+    "bank_accounts": [
+      {
+        "id": "b5313",
+        "account_nickname": "NewFirst Operating",
+        "account_last4": "5313",
+        "gl_account_number": "1000"
+      },
+      {
+        "id": "b3170",
+        "account_nickname": "Columbia Operating",
+        "account_last4": "3170",
+        "gl_account_number": "1005"
+      },
+      {
+        "id": "b3186",
+        "account_nickname": "Columbia Reserve MM",
+        "account_last4": "3186",
+        "gl_account_number": "1200"
+      },
+      {
+        "id": "bej",
+        "account_nickname": "Edward Jones",
+        "account_last4": "0409",
+        "gl_account_number": "1201"
+      }
+    ],
+    "bank_reconciliations": [
+      {
+        "bank_account_id": "b3186",
+        "period_end": "2026-07-31",
+        "status": "reconciled"
+      },
+      {
+        "bank_account_id": "b5313",
+        "period_end": "2026-08-31",
+        "status": "in_progress"
+      },
+      {
+        "bank_account_id": "b5313",
+        "period_end": "2026-09-30",
+        "status": "in_progress"
+      },
+      {
+        "bank_account_id": "b3170",
+        "period_end": "2026-08-31",
+        "status": "in_progress"
+      }
+    ],
+    "accounting_periods": [
+      {
+        "period_start": "2026-08-01",
+        "period_end": "2026-08-31",
+        "status": "open"
+      },
+      {
+        "period_start": "2026-09-01",
+        "period_end": "2026-09-30",
+        "status": "open"
+      }
+    ],
+    "community_budgets": [
+      {
+        "id": "bud26",
+        "fiscal_year": 2026,
+        "status": "approved"
+      }
+    ],
+    "budget_line_items": [
+      {
+        "account_id": "a5770",
+        "annual_amount_cents": 23500000
+      },
+      {
+        "account_id": "a4000",
+        "annual_amount_cents": 102742500
+      }
+    ],
+    "journal_entry_lines": [],
+    "ap_invoices": [],
+    "board_motions": [],
+    "vendor_contracts": []
+  },
+  "expected": {
+    "detect": true,
+    "requirements": {
+      "ownership": true,
+      "cloud_access": true,
+      "monitoring": false
+    },
+    "status": {
+      "itech-2026-a": "current",
+      "itech-2026-b": "duplicate",
+      "itech-2024": "historical",
+      "envera-q19538-2-packet": "expired",
+      "envera-q19538-2-standalone": "duplicate",
+      "netwatch-2026": "current"
+    },
+    "recommended_key": "itech-2026-a",
+    "tolerance_cents": 100,
+    "costs": {
+      "itech-2026-a": {
+        "upfront_total_cents": 4785468,
+        "recurring_counted_monthly_cents": 0,
+        "tco_cents": 4785468,
+        "addon_monthly_cents": 44000,
+        "tco_with_addons_cents": 7425468,
+        "tax_basis": "stated"
+      },
+      "envera-q19538-2-packet": {
+        "upfront_total_cents": 6444388,
+        "recurring_counted_monthly_cents": 263142,
+        "tco_cents": 22232908,
+        "minimum_commitment_cents": 22232908,
+        "tax_basis": "estimated"
+      }
+    },
+    "not_viable": [
+      "envera-q19538-2-packet",
+      "netwatch-2026"
+    ],
+    "open_item_topics_for_recommended": [
+      "change-order control",
+      "camera schedule and licensing",
+      "retention",
+      "remote/cloud access cost",
+      "renewal and termination",
+      "warranty",
+      "insurance",
+      "schedule"
+    ],
+    "cash_labels": {
+      "Operating": "provisional",
+      "Reserve": "provisional"
+    },
+    "review": {
+      "vendor": "iTech Monitoring, Inc.",
+      "project": "proceed",
+      "contract_ready": false,
+      "must_recognize": [
+        "budgetary",
+        "change order",
+        "retention",
+        "cloud",
+        "warranty",
+        "installation"
+      ],
+      "counsel_terms": [
+        "termination",
+        "indemnification",
+        "limitation_of_liability",
+        "insurance",
+        "data_ownership",
+        "data_export",
+        "cybersecurity_privacy",
+        "change_orders"
+      ],
+      "context_sources": [
+        "trustEd:vendor_contracts",
+        "trustEd:reserve_components",
+        "trustEd:email_messages"
+      ],
+      "context_must_omit": [
+        "A-Beautiful Pools",
+        "Pool closing",
+        "Gate Operators",
+        "Camera Proposals",
+        "United Protective - Contract",
+        "tax-exempt"
+      ]
+    },
+    "cash_totals": {
+      "Operating": 4110486,
+      "Reserve": 94845223
+    },
+    "conclusions": {
+      "vendor": "iTech Monitoring, Inc.",
+      "project": "proceed",
+      "funding": "reserve",
+      "reserve_study": "not_designated",
+      "contract_ready": false,
+      "contract_conditional": true,
+      "monitoring_plan_recommended": false
+    },
+    "itech_line_items": {
+      "cameras_new": 14,
+      "cameras_reused": 13,
+      "cameras_total": 27,
+      "licenses": 20,
+      "embedded_server_cameras": 2,
+      "items_cents": 4461975,
+      "printed_cents": 4461975,
+      "uncertain": []
+    }
+  },
+  "_context_about": "context_seed: snapshot of Canyon Gate records in trustEd as documented in the 2026-10-10..12 accounting and budget workpapers (UPS contract 96321a51 and Gate Sentry contract 506222f2 with their annualized amounts; Texas Access Works slide-gate, Star Protection, Alert 360 and A-Beautiful Pools bills; the open guard-services project; the 2024 audit reserve components Gates and Gate Operators; the 9/17/2026 board email thread). Not a live read.",
+  "context_seed": {
+    "vendor_contracts": [
+      {
+        "id": "96321a51-d765-4fe2-ae37-adcfbd87f39a",
+        "vendor_name_raw": "United Protective Services of South Texas, L.P.",
+        "service_category": "security",
+        "service_description": "24/7 unarmed security officer post",
+        "annualized_amount": 216638.93,
+        "status": "active",
+        "notes": "association-signed; vendor countersignature missing"
+      },
+      {
+        "id": "506222f2-dd38-4708-ba45-856f64b3b29d",
+        "vendor_name_raw": "Gate Sentry",
+        "service_category": "security",
+        "service_description": "visitor management tablets at the gate",
+        "annualized_amount": 6751.55,
+        "status": "active"
+      }
+    ],
+    "ap_invoices": [
+      {
+        "vendor_id": "v-taw",
+        "total_cents": 2203561,
+        "invoice_date": "2026-09-04",
+        "status": "paid",
+        "vendors": {
+          "name": "Texas Access Works LLC"
+        }
+      },
+      {
+        "vendor_id": "v-taw",
+        "total_cents": 2203561,
+        "invoice_date": "2026-09-28",
+        "status": "paid",
+        "vendors": {
+          "name": "Texas Access Works LLC"
+        }
+      },
+      {
+        "vendor_id": "v-star",
+        "total_cents": 1294920,
+        "invoice_date": "2026-07-31",
+        "status": "paid",
+        "vendors": {
+          "name": "Star Protection Agency LLC"
+        }
+      },
+      {
+        "vendor_id": "v-alert",
+        "total_cents": 45136,
+        "invoice_date": "2026-08-15",
+        "status": "paid",
+        "vendors": {
+          "name": "Alert 360"
+        }
+      },
+      {
+        "vendor_id": "v-alert",
+        "total_cents": 45136,
+        "invoice_date": "2026-09-15",
+        "status": "paid",
+        "vendors": {
+          "name": "Alert 360"
+        }
+      },
+      {
+        "vendor_id": "v-abp",
+        "total_cents": 395575,
+        "invoice_date": "2026-08-31",
+        "status": "paid",
+        "vendors": {
+          "name": "A-Beautiful Pools"
+        }
+      }
+    ],
+    "vendor_projects": [
+      {
+        "id": "p-guard",
+        "title": "Security Services Contract — Vendor Evaluation 2026",
+        "category": "general",
+        "stage": "board_deciding",
+        "stage_since": "2026-07-20T12:00:00-05:00",
+        "vendor_name": null,
+        "description": "Evaluation of the 24/7 manned security post contract"
+      }
+    ],
+    "reserve_components": [
+      {
+        "id": "rc-gates",
+        "component_name": "Gates",
+        "category": "site",
+        "remaining_useful_life_years": 0,
+        "useful_life_years": 20
+      },
+      {
+        "id": "rc-gateops",
+        "component_name": "Gate Operators",
+        "category": "site",
+        "remaining_useful_life_years": 1,
+        "useful_life_years": 10
+      }
+    ],
+    "email_messages": [
+      {
+        "id": "em-1016",
+        "subject": "Camera Proposals",
+        "body_preview": "Board, attached are the recent proposals we have received for upgrading our security camera system.",
+        "sender_email": "president@canyongateatcincoranch.com",
+        "sender_name": "Hugh Durlam",
+        "received_at": "2026-10-16T00:51:08Z",
+        "direction": "inbound",
+        "graph_id": "AAMk-1016",
+        "conversation_id": "conv-camera",
+        "internet_message_id": "<LV2PR18MB98836885@outlook.com>"
+      },
+      {
+        "id": "em-0917a",
+        "subject": "iTech Proposa/Contract",
+        "body_preview": "Can you please review this contract/proposal from iTech and give us any feedback. I have attached all three proposals received in a second file for records showing the other two proposals in addition to iTech, with whom we are going to presumably contract.",
+        "sender_email": "zane.w.hickman@jci.com",
+        "sender_name": "Zane Hickman",
+        "received_at": "2026-09-17T20:36:39Z",
+        "direction": "inbound"
+      },
+      {
+        "id": "em-0917b",
+        "subject": "RE: iTech Proposa/Contract",
+        "body_preview": "I have gone through all three proposals, the iTech Digital Watchdog system you are leaning toward along with the Envera and Netwatch bids",
+        "sender_email": "amandaalbright@bedrocktx.com",
+        "sender_name": "Amanda Albright",
+        "received_at": "2026-09-17T22:56:13Z",
+        "direction": "outbound"
+      },
+      {
+        "id": "em-pool",
+        "subject": "Pool closing for the season",
+        "body_preview": "When does the pool close?",
+        "sender_email": "resident@example.com",
+        "sender_name": "Resident",
+        "received_at": "2026-10-01T15:00:00Z",
+        "direction": "inbound"
+      },
+      {
+        "id": "em-1016-reply",
+        "graph_id": "AAMk-1016r",
+        "conversation_id": "conv-camera",
+        "subject": "RE: Camera Proposals",
+        "body_preview": "Thanks Hugh, reviewing the camera proposals now.",
+        "sender_email": "treasurer@canyongateatcincoranch.com",
+        "sender_name": "Treasurer",
+        "received_at": "2026-10-16T02:10:00Z",
+        "direction": "inbound"
+      },
+      {
+        "id": "em-ups-0922",
+        "subject": "United Protective - Contract - For Review",
+        "body_preview": "Attached is the security contract for review, with the COI and our tax-exempt status letter.",
+        "sender_email": "contracts@unitedprotective.com",
+        "sender_name": "United Protective Services",
+        "received_at": "2026-09-22T15:00:00Z",
+        "direction": "inbound"
+      },
+      {
+        "id": "em-ups-0924",
+        "subject": "RE: United Protective - Contract - For Review",
+        "body_preview": "Updated certificate of insurance and tax exemption attached.",
+        "sender_email": "contracts@unitedprotective.com",
+        "sender_name": "United Protective Services",
+        "received_at": "2026-09-24T15:00:00Z",
+        "direction": "inbound"
+      }
+    ],
+    "board_motions": [],
+    "vendors": [
+      {
+        "id": "v-itech",
+        "name": "iTech Monitoring, Inc.",
+        "dba": null,
+        "w9_on_file": null,
+        "is_active": true
+      }
+    ]
+  }
+}

@@ -1,0 +1,120 @@
+{
+  "_about": "Canyon Gate camera proposals: one-time save, option (a) create, selective confidence (Ed, chat instruction 2026-10-16). Modes are explicit per proposal. Keys are document-hash prefixes from the 2026-10-16 live preview cache (rfp_pcache2); source_version pins the reviewed cache version. sources point at the existing email attachments (Graph ids are from the egojara@ mailbox; replace with the mailbox you read if different). Duplicate copies are references on the canonical row, never rows. A library_documents row with the same hash is linked automatically by the dry run.",
+  "community_id": "a0000000-0000-4000-8000-000000000003",
+  "community_name": "Canyon Gate at Cinco Ranch",
+  "storage_mode": "create",
+  "bid_request": {
+    "title": "Security Camera System 2026 (Canyon Gate at Cinco Ranch)",
+    "service_category": "security",
+    "vendor_type": "Security Services"
+  },
+  "requirements": {
+    "ownership": true,
+    "cloud_access": true,
+    "monitoring": false
+  },
+  "approval": {
+    "channel": "chat_instruction",
+    "approved_by_label": "Ed Gojara (chat instruction 2026-10-16)",
+    "approved_by_user_id": null,
+    "approved_at": "2026-10-16T00:00:00-05:00"
+  },
+  "proposals": [
+    {
+      "document_sha256": "ac51a7ebb06324b8221e5df8f02668856b391b167a37bac2cab82d54f499d917",
+      "proposal_key": "ac51a7eb-1",
+      "mode": "full",
+      "source_version": 1,
+      "sources": [
+        {
+          "kind": "email_attachment",
+          "mailbox": "egojara@bedrocktx.com",
+          "message_graph_id": "AAMkAGM3OGE5YTg4LWEzNmUtNDRjMi04NTNiLTNhNWIyNDRkZWY2ZgBGAAAAAABupyvmikPwTI6azeACOgbfBwDzKq26BwHYRb3xzjmIY0pmAAAAAAEMAADzKq26BwHYRb3xzjmIY0pmAAcsdyzrAAA=",
+          "attachment_name": "iTech_Video Proposal_Sept 2026.pdf",
+          "sha256": "ac51a7ebb06324b8221e5df8f02668856b391b167a37bac2cab82d54f499d917",
+          "received_at": "2026-09-17"
+        },
+        {
+          "kind": "email_attachment",
+          "mailbox": "egojara@bedrocktx.com",
+          "message_graph_id": "AAMkAGM3OGE5YTg4LWEzNmUtNDRjMi04NTNiLTNhNWIyNDRkZWY2ZgBGAAAAAABupyvmikPwTI6azeACOgbfBwDzKq26BwHYRb3xzjmIY0pmAAAAAAEMAADzKq26BwHYRb3xzjmIY0pmAAc_xbx9AAA=",
+          "attachment_name": "iTech_Video Proposal_Sept 2026.pdf",
+          "sha256": "ac51a7ebb06324b8221e5df8f02668856b391b167a37bac2cab82d54f499d917",
+          "received_at": "2026-10-16"
+        }
+      ]
+    },
+    {
+      "document_sha256": "c6db2ee49d26b253094e7ab341a573f290ae288f63a5dd0e1a41214d345f028b",
+      "proposal_key": "c6db2ee4-1",
+      "mode": "historical_minimal",
+      "source_version": 1,
+      "replaced_by_key": "ac51a7eb-1",
+      "sources": [
+        {
+          "kind": "email_attachment",
+          "mailbox": "egojara@bedrocktx.com",
+          "message_graph_id": "AAMkAGM3OGE5YTg4LWEzNmUtNDRjMi04NTNiLTNhNWIyNDRkZWY2ZgBGAAAAAABupyvmikPwTI6azeACOgbfBwDzKq26BwHYRb3xzjmIY0pmAAAAAAEMAADzKq26BwHYRb3xzjmIY0pmAAcsdyzrAAA=",
+          "attachment_name": "CGHOASecProps2026.pdf",
+          "sha256": "c6db2ee49d26b253094e7ab341a573f290ae288f63a5dd0e1a41214d345f028b",
+          "received_at": "2026-09-17"
+        },
+        {
+          "kind": "email_attachment",
+          "mailbox": "egojara@bedrocktx.com",
+          "message_graph_id": "AAMkAGM3OGE5YTg4LWEzNmUtNDRjMi04NTNiLTNhNWIyNDRkZWY2ZgBGAAAAAABupyvmikPwTI6azeACOgbfBwDzKq26BwHYRb3xzjmIY0pmAAAAAAEMAADzKq26BwHYRb3xzjmIY0pmAAc_xbx9AAA=",
+          "attachment_name": "CGHOASecProps2026.pdf",
+          "sha256": "c6db2ee49d26b253094e7ab341a573f290ae288f63a5dd0e1a41214d345f028b",
+          "received_at": "2026-10-16"
+        }
+      ]
+    },
+    {
+      "document_sha256": "18f0e4fbb683608af33348962ff4f2d551d7576a3f4cdb5199288747af57bb53",
+      "proposal_key": "18f0e4fb-1",
+      "mode": "proposal_facts_only",
+      "source_version": 1,
+      "duplicates": [
+        {
+          "document_sha256": "c6db2ee49d26b253094e7ab341a573f290ae288f63a5dd0e1a41214d345f028b",
+          "proposal_key": "c6db2ee4-2",
+          "pages": "10-14"
+        }
+      ],
+      "sources": [
+        {
+          "kind": "email_attachment",
+          "mailbox": "egojara@bedrocktx.com",
+          "message_graph_id": "AAMkAGM3OGE5YTg4LWEzNmUtNDRjMi04NTNiLTNhNWIyNDRkZWY2ZgBGAAAAAABupyvmikPwTI6azeACOgbfBwDzKq26BwHYRb3xzjmIY0pmAAAAAAEMAADzKq26BwHYRb3xzjmIY0pmAAc_xbx9AAA=",
+          "attachment_name": "Canyon Gate at Cinco Ranch Qoute 19538.pdf",
+          "sha256": "18f0e4fbb683608af33348962ff4f2d551d7576a3f4cdb5199288747af57bb53",
+          "received_at": "2026-10-16"
+        }
+      ]
+    },
+    {
+      "document_sha256": "c6db2ee49d26b253094e7ab341a573f290ae288f63a5dd0e1a41214d345f028b",
+      "proposal_key": "c6db2ee4-3",
+      "mode": "proposal_facts_only",
+      "source_version": 1,
+      "sources": [
+        {
+          "kind": "email_attachment",
+          "mailbox": "egojara@bedrocktx.com",
+          "message_graph_id": "AAMkAGM3OGE5YTg4LWEzNmUtNDRjMi04NTNiLTNhNWIyNDRkZWY2ZgBGAAAAAABupyvmikPwTI6azeACOgbfBwDzKq26BwHYRb3xzjmIY0pmAAAAAAEMAADzKq26BwHYRb3xzjmIY0pmAAcsdyzrAAA=",
+          "attachment_name": "CGHOASecProps2026.pdf",
+          "sha256": "c6db2ee49d26b253094e7ab341a573f290ae288f63a5dd0e1a41214d345f028b",
+          "received_at": "2026-09-17"
+        },
+        {
+          "kind": "email_attachment",
+          "mailbox": "egojara@bedrocktx.com",
+          "message_graph_id": "AAMkAGM3OGE5YTg4LWEzNmUtNDRjMi04NTNiLTNhNWIyNDRkZWY2ZgBGAAAAAABupyvmikPwTI6azeACOgbfBwDzKq26BwHYRb3xzjmIY0pmAAAAAAEMAADzKq26BwHYRb3xzjmIY0pmAAc_xbx9AAA=",
+          "attachment_name": "CGHOASecProps2026.pdf",
+          "sha256": "c6db2ee49d26b253094e7ab341a573f290ae288f63a5dd0e1a41214d345f028b",
+          "received_at": "2026-10-16"
+        }
+      ]
+    }
+  ]
+}

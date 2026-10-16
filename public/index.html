@@ -36575,6 +36575,22 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
     }
   })();
 
+  // Deep link from Amanda's Board summary: /?tab=vendor&rfp=<bid_request id> opens that
+  // comparison on the RFP / Bid Workflow (Ed 2026-10-16). Retry pattern per CLAUDE.md.
+  (function () {
+    let rfpId = null;
+    try { rfpId = new URLSearchParams(location.search).get('rfp'); } catch (_) {}
+    if (!rfpId || !/^[0-9a-f-]{36}$/i.test(rfpId)) return;
+    function _open() {
+      if (typeof window.switchTab !== 'function') return false;
+      try { window.switchTab('vendor'); } catch (_) {}
+      rfpOpenDetail(rfpId);
+      return true;
+    }
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', () => { if (!_open()) setTimeout(_open, 0); });
+    else if (!_open()) setTimeout(_open, 0);
+  })();
+
   function setPath(p) {
     vwState.path = p;
     document.getElementById('pathBtnA').classList.toggle('active', p === 'A');

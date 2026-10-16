@@ -1,0 +1,25 @@
+{
+  "migration": "531_rfp_workflow_audit_actions.sql",
+  "summary": "rfp_decision_log accepts Amanda's RFP / Bid Workflow audit steps (associate, classify, analyze, request_queued) and RFP-level rows with no proposal_id. No data changes.",
+  "requires": [],
+  "preflight": [
+    { "name": "rfp_decision_log exists", "sql": "SELECT count(*)::int FROM information_schema.tables WHERE table_name = 'rfp_decision_log'", "expect": 1 },
+    { "name": "proposal_id is still NOT NULL", "sql": "SELECT count(*)::int FROM information_schema.columns WHERE table_name = 'rfp_decision_log' AND column_name = 'proposal_id' AND is_nullable = 'NO'", "expect": 1 }
+  ],
+  "expected_changes": [
+    "rfp_decision_log.action CHECK gains associate, classify, analyze, request_queued.",
+    "rfp_decision_log.proposal_id becomes nullable.",
+    "No row changes."
+  ],
+  "objects": { "added": [], "changed": ["constraint:rfp_decision_log.rfp_decision_log_action_check", "column:rfp_decision_log.proposal_id"], "removed": [] },
+  "row_changes": { "rfp_decision_log": 0, "vendor_proposals": 0, "bid_requests": 0 },
+  "protected": [
+    { "table": "rfp_decision_log", "order_by": "id" },
+    { "table": "vendor_proposals", "order_by": "id" },
+    { "table": "bid_requests", "order_by": "id" }
+  ],
+  "verify": [
+    { "name": "proposal_id is nullable", "sql": "SELECT count(*)::int FROM information_schema.columns WHERE table_name = 'rfp_decision_log' AND column_name = 'proposal_id' AND is_nullable = 'YES'", "expect": 1 },
+    { "name": "action check allows the workflow steps", "sql": "SELECT count(*)::int FROM pg_constraint WHERE conname = 'rfp_decision_log_action_check' AND pg_get_constraintdef(oid) LIKE '%request_queued%'", "expect": 1 }
+  ]
+}
