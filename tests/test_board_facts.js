@@ -135,6 +135,10 @@ const codes = (r) => [...new Set(r.issues.map((i) => i.code))].sort();
     assert.ok(codes(checkHugh(base + "I'm treating this RFP as the fastest path forward, rather than opening a new multi-vendor bidding cycle, which would add weeks.")).includes('contradicts_rfp'));
     assert.ok(!codes(checkHugh(base + 'Nothing here is ready to sign yet.')).includes('implies_execution_ready'));
     assert.ok(codes(checkHugh(base + 'The Board is ready to sign once you agree.')).includes('implies_execution_ready'));
+    // Live Hugh general run on 0ca9b667.
+    const reopen = "I'm treating this RFP as the fastest clean path forward rather than reopening a slow full bid cycle, so I can get a draft in front of the Board quickly.";
+    assert.ok(codes(checkHugh(base + reopen)).includes('contradicts_rfp'));
+    assert.ok(!verifyHughReply(base + reopen).results.find((x) => x.name === 'does not refuse or replace the requested RFP').ok);
     assert.ok(codes(checkKevin("Hi Kevin,\n\nI agree with the distinction you're making, and I don't think we're actually on different pages. When I said \"proceed,\" I meant continuing diligence, not signing.")).includes('defensive'));
   });
 
