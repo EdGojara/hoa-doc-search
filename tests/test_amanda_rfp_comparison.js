@@ -107,8 +107,15 @@ const env = (vars, fn) => { const old = {}; for (const k of Object.keys(vars)) {
 
   await t('normalized costs match the documents within tolerance (tax, plan, 60-month TCO, minimum commitment)', async () => {
     for (const [k, exp] of Object.entries(fx.expected.costs)) for (const [field, v] of Object.entries(exp)) { if (typeof v === 'number') near(byKey[k][field], v, fx.expected.tolerance_cents, `${k}.${field}`); else assert.strictEqual(byKey[k][field], v, `${k}.${field}`); }
-    assert.strictEqual(byKey['itech-2026-a'].recurring[0].counted, true, 'optional plan counted: it is the only way to get the cloud access the Board asked for');
-    assert.match(byKey['itech-2026-a'].recurring[0].counted_reason, /cloud access/);
+    const plan = byKey['itech-2026-a'].recurring[0];
+    assert.strictEqual(plan.counted, false, 'the optional monitoring plan is not in the recommended configuration');
+    assert.strictEqual(plan.conditional_addon, true, 'shown as a conditional add-on');
+    assert.match(plan.counted_reason, /bundles monitoring the Board does not want.*unless the vendor confirms it is required for cloud access/);
+    // Generalized: once the vendor confirms the plan is required for the wanted access, it is counted in the base.
+    const confirmed = { ...fx.proposals.find((p) => p.key === 'itech-2026-a'), key: 'confirmed' };
+    confirmed.pricing = { ...confirmed.pricing, recurring: [{ ...confirmed.pricing.recurring[0], vendor_confirmed_required: true }] };
+    const nc = C.normalizeProposal({ ...confirmed, status: 'current' }, { requirements: req });
+    assert.strictEqual(nc.recurring[0].counted, true); assert.strictEqual(nc.tco_cents, 7425468); assert.strictEqual(nc.addon_monthly_cents, 0);
     assert.strictEqual(byKey['itech-2026-a'].ownership, 'association');
     for (const f of ['scope', 'upfront_cents', 'recurring', 'contract_term_months', 'tco_cents', 'ownership', 'monitoring', 'warranty', 'insurance', 'exclusions', 'assumptions', 'implementation_timing', 'change_order_exposure', 'other_terms']) assert.ok(f in byKey['itech-2026-a'], `normalized structure has ${f}`);
   });
@@ -144,13 +151,14 @@ const env = (vars, fn) => { const old = {}; for (const k of Object.keys(vars)) {
   const summary = C.renderBoardSummary(record, { greetingName: 'Hugh', link: 'https://my.bedrocktxai.com/?tab=vendor&rfp=00000000-0000-0000-0000-000000000000' });
   await t('the Board email is a short decision-ready summary that links to the comparison and passes every check', async () => {
     for (const label of ['Situation:', 'Recommendation:', 'Why:', 'Open items before signing:', 'Action underway:', 'Board decision needed:']) assert.ok(summary.includes(label), label);
-    assert.match(summary, /\$47,854\.68/); assert.match(summary, /\$74,255/); assert.match(summary, /expired/); assert.match(summary, /rfp=/);
+    assert.match(summary, /\$47,854\.68/); assert.match(summary, /Base installed cost is approximately \$47,854\.68 including estimated tax\./); assert.match(summary, /expired/); assert.match(summary, /rfp=/);
     assert.match(summary, /provisional/, 'the material limitation is stated once');
     assert.strictEqual((summary.match(/provisional/g) || []).length, 1, 'no repetitive disclaimers');
     assert.ok(!/which (?:proposal|one) is current|would you like me to|let me know how|shall I compare|I will check/i.test(summary));
     assert.ok(!/funds are (?:definitively )?available|fully funded/i.test(summary));
     assert.deepStrictEqual(D.checkDecisionReady(summary, { confidence: { mode: 'transition', cash_label: 'provisional' } }), { ok: true, issues: [] });
-    assert.ok(summary.split(/\s+/).length < 400, `summary is concise (${summary.split(/\s+/).length} words)`);
+    // Ed's required wording (base vs optional plan, the Reserve-funding paragraph, six conclusions) sets the floor.
+    assert.ok(summary.split(/\s+/).length < 500, `summary is concise (${summary.split(/\s+/).length} words)`);
   });
 
   console.log('\nMulti-lens risk and completeness review');
@@ -189,8 +197,10 @@ const env = (vars, fn) => { const old = {}; for (const k of Object.keys(vars)) {
     assert.strictEqual(c.project_recommendation.decision, fx.expected.review.project);
     assert.strictEqual(c.contract_readiness.ready, fx.expected.review.contract_ready);
     assert.strictEqual(c.contract_readiness.outstanding, rv.required_conditions.length);
-    assert.match(c.contract_readiness.label, /^not ready to sign, \d+ items outstanding$/);
-    assert.match(summary, /Vendor: iTech is the preferred vendor\. Project: proceed\. Contract: not ready to sign/);
+    assert.match(c.contract_readiness.label, /^conditional, not ready to sign \(\d+ items outstanding\)$/);
+    assert.match(summary, /Vendor recommendation: iTech\. Project recommendation: Proceed\. Preliminary funding recommendation: Reserve\./);
+    assert.match(summary, /Contract readiness: Conditional, not ready to sign/);
+    assert.match(summary, /Monitoring plan: Not recommended unless iTech confirms it is required/);
   });
 
   console.log('\nWorkflow orchestration (fixture replay, no production writes)');
@@ -199,7 +209,8 @@ const env = (vars, fn) => { const old = {}; for (const k of Object.keys(vars)) {
     const used = run.result.record.review.by_proposal['itech-2026-a'].community_context_used;
     for (const src of fx.expected.review.context_sources) assert.ok(used.some((u) => u.source === src), src);
     assert.ok(used.every((u) => /^trustEd:/.test(u.source)));
-    assert.match(run.result.summary, /From Canyon Gate records: on an annual run-rate basis, Security Services \(\$235,000\/yr\) less the United Protective and Gate Sentry contracts leaves about \$11,610\/yr, enough for the plan's \$5,280\/yr \(this is not the amount remaining in this year's budget\).*no camera contract is on file.*reserve study has no camera component.*leaning toward iTech/);
+    assert.match(run.result.summary, /From Canyon Gate records: on an annual run-rate basis, Security Services \(\$235,000\/yr\) less the United Protective and Gate Sentry contracts leaves about \$11,610\/yr, enough for the optional plan's \$5,280\/yr if it turns out to be required \(this is not the amount remaining in this year's budget\).*no camera contract is on file.*leaning toward iTech/);
+    assert.match(run.result.summary, /the current reserve study\/budget does not specifically include a camera-system component, so this would be a Board funding decision rather than use of an already designated reserve line item/);
     const budget = run.result.record.review.by_proposal['itech-2026-a'].strengths.find((x) => x.source === 'trustEd:vendor_contracts' && x.lens === 'financial');
     assert.ok(budget, 'the budget-line finding rests on trustEd contracts, not the proposal');
   });
@@ -238,6 +249,35 @@ const env = (vars, fn) => { const old = {}; for (const k of Object.keys(vars)) {
 
   await t('fixture books match the live read-only run (operating $41,104.86, reserve $948,452.23, both provisional)', async () => {
     for (const [fund, cents] of Object.entries(fx.expected.cash_totals)) assert.strictEqual(facts.funds.find((x) => x.fund === fund).balance_cents, cents, fund);
+  });
+
+  await t('the recorded conclusions: iTech, proceed, Reserve (preliminary), not designated for cameras, conditional contract, no monitoring plan', async () => {
+    const c = run.result.record.review.conclusions; const e = fx.expected.conclusions;
+    assert.strictEqual(c.vendor_recommendation.vendor, e.vendor);
+    assert.strictEqual(c.project_recommendation.decision, e.project);
+    assert.strictEqual(c.funding_recommendation.source, e.funding); assert.strictEqual(c.funding_recommendation.preliminary, true);
+    assert.match(c.funding_recommendation.basis, /useful life beyond the current year.*operating liquidity/);
+    assert.strictEqual(c.reserve_study_status.status, e.reserve_study); assert.match(c.reserve_study_status.label, /not specifically budgeted or designated for cameras/);
+    assert.strictEqual(c.contract_readiness.ready, e.contract_ready); assert.strictEqual(c.contract_readiness.conditional, e.contract_conditional);
+    assert.strictEqual(c.monitoring_plan.recommended, e.monitoring_plan_recommended);
+    const s = run.result.summary;
+    assert.match(s, /Reserve-study status: Not specifically budgeted or designated for cameras\./);
+    assert.match(s, /Preliminary funding recommendation: Reserve\. This is a capital security\/infrastructure project with a useful life extending beyond the current year, and using Reserve would better preserve operating liquidity\./);
+    assert.match(s, /Current reported balances are also provisional while reconciliation and close work remain incomplete/);
+  });
+
+  await t('$74,254.68 never appears without the optional-plan qualification; the Board is not asked to approve the plan by default', async () => {
+    const s = run.result.summary;
+    assert.match(s, /If Canyon Gate elected to add iTech's optional \$440\.00\/month plan, the 5-year total would be approximately \$74,254\.68\. Because the Board has stated it does not want monitoring, that recurring plan is not part of my recommended configuration unless iTech confirms it is required for the desired remote\/cloud functionality\./);
+    const texts = [s, run.result.plan.comparison.row.recommendation_summary, run.result.block, DRY.report(run), JSON.stringify(run.result.record.review)];
+    for (const text of texts) {
+      for (const sentence of String(text).split(/(?<=\.)\s+|\n/)) if (/74,254\.68|74,255/.test(sentence)) assert.match(sentence, /optional/i, `unqualified: ${sentence.slice(0, 160)}`);
+    }
+    const decision = s.split('\n\n').find((p) => p.startsWith('Board decision needed:'));
+    assert.ok(!/plus the \$440/.test(decision), 'the plan is not approved by default');
+    assert.match(decision, /The optional \$440\.00\/month plan is not included; it comes back to the Board only if iTech confirms it is required/);
+    assert.ok(run.result.record.open_items.some((i) => i.topic === 'remote/cloud access cost'), 'the cloud-access cost diligence item stays');
+    assert.strictEqual(run.result.record.ranking.ranked[0].tco_cents, 4785468, 'ranked on the base configuration');
   });
 
   await t('without community records the summary carries no "From ... records" line (nothing invented)', async () => {

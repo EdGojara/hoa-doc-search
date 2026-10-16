@@ -556,8 +556,10 @@
     "costs": {
       "itech-2026-a": {
         "upfront_total_cents": 4785468,
-        "recurring_counted_monthly_cents": 44000,
-        "tco_cents": 7425468,
+        "recurring_counted_monthly_cents": 0,
+        "tco_cents": 4785468,
+        "addon_monthly_cents": 44000,
+        "tco_with_addons_cents": 7425468,
         "tax_basis": "stated"
       },
       "envera-q19538-2-packet": {
@@ -625,6 +627,15 @@
     "cash_totals": {
       "Operating": 4110486,
       "Reserve": 94845223
+    },
+    "conclusions": {
+      "vendor": "iTech Monitoring, Inc.",
+      "project": "proceed",
+      "funding": "reserve",
+      "reserve_study": "not_designated",
+      "contract_ready": false,
+      "contract_conditional": true,
+      "monitoring_plan_recommended": false
     }
   },
   "_context_about": "context_seed: snapshot of Canyon Gate records in trustEd as documented in the 2026-10-10..12 accounting and budget workpapers (UPS contract 96321a51 and Gate Sentry contract 506222f2 with their annualized amounts; Texas Access Works slide-gate, Star Protection, Alert 360 and A-Beautiful Pools bills; the open guard-services project; the 2024 audit reserve components Gates and Gate Operators; the 9/17/2026 board email thread). Not a live read.",
