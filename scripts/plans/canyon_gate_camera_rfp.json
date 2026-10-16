@@ -92,11 +92,11 @@
           "Canyon Gate at Cinco Ranch Owners Association, Inc. (the Association) requests proposals to replace and expand its common-area security camera system. Every bidder receives the same scope, camera schedule, pricing form and compliance matrix so the Board can compare responses on the same basis."
         ],
         "items": [
-          "A site walk is strongly recommended. Your price must include conditions that a site walk would have shown (existing faults, power, cable paths); they will not be accepted later as change orders.",
-          "Send questions in writing to amandaalbright@bedrocktx.com by the question deadline. Answers go to every bidder.",
+          "A site walk is strongly recommended, not mandatory. Walks meet at the Club House, 20422 Canyon Gate Blvd, Katy, TX 77450, by appointment; request one by email to amandaalbright@bedrocktx.com. Your price must include conditions reasonably discoverable from a site walk (for example existing faults, power and cable paths).",
+          "Send questions in writing to amandaalbright@bedrocktx.com by the question deadline, with the subject line: Canyon Gate Security Camera RFP - Question - [Company Name]. Answers go to every bidder.",
           "Complete the pricing form as provided. Enter 0 for any line that does not apply.",
           "Answer every line of the compliance matrix with Comply, Exception or Not Applicable, and explain every Exception and Not Applicable.",
-          "Include the full contract package listed in this RFP. A bid without it cannot be evaluated.",
+          "Include the full contract package listed in this RFP. Bids that are materially incomplete may be deemed non-responsive.",
           "Pricing must remain valid for at least 45 days after the response deadline.",
           "Submitting a bid does not create a contract. No work is authorized until the Association signs a written contract."
         ]
@@ -251,7 +251,7 @@
           "The bid is a fixed price for the full scope."
         ],
         "items": [
-          "Change orders only for conditions that could not reasonably have been found before bidding, or for scope the Association adds.",
+          "Change orders only for conditions that were not reasonably discoverable before bidding, or for scope the Association adds.",
           "No change-order work starts without the Association's written approval of scope and price.",
           "State unit prices now: an added camera installed, an added cable run, an added license, and the hourly labor rate."
         ]
@@ -287,7 +287,7 @@
         ],
         "items": [
           "Title to all equipment passes to the Association on payment. Nothing is leased or provided as a service, other than the cloud services listed on the pricing form.",
-          "All recorded video and data belong to the Association.",
+          "The Association retains ownership of all recorded video and data. The bidder and any cloud provider receive only the rights to process it that are needed to deliver the contracted services, with no other use and no sale, and must delete or return it on termination as the Association directs.",
           "At acceptance, hand over the administrator credentials for every device and account, and all licenses registered to the Association.",
           "If the Association later ends any service with the bidder, the system must keep recording on site and remain usable."
         ]
@@ -311,8 +311,8 @@
           "Include a current certificate of insurance with the bid."
         ],
         "items": [
-          "The certificate must name Canyon Gate at Cinco Ranch Owners Association, Inc. as additional insured.",
-          "General liability of at least 1,000,000 per occurrence and 2,000,000 aggregate, and workers' compensation as required by law. State any other coverage carried.",
+          "Confirm that you can name Canyon Gate at Cinco Ranch Owners Association, Inc. as additional insured.",
+          "State the limits you carry for general liability, workers' compensation and any other coverage. The Association will confirm the final required limits before award.",
           "Provide your Texas Private Security Bureau license number."
         ]
       },
@@ -728,7 +728,7 @@
       {
         "id": "R-17",
         "section": "change_orders",
-        "requirement": "Fixed price; change orders only for undiscoverable conditions or added scope, with written approval first; unit prices stated.",
+        "requirement": "Fixed price; change orders only for conditions not reasonably discoverable before bidding or for added scope, with written approval first; unit prices stated.",
         "basis": "baseline"
       },
       {
@@ -746,7 +746,7 @@
       {
         "id": "R-20",
         "section": "ownership",
-        "requirement": "Association owns the equipment and data; administrator credentials and licenses handed over at acceptance.",
+        "requirement": "Association retains ownership of all equipment and data; bidder and cloud provider processing limited to the contracted services, no other use or sale, deletion or return on termination; administrator credentials and licenses handed over at acceptance.",
         "basis": "board"
       },
       {
@@ -758,7 +758,7 @@
       {
         "id": "R-22",
         "section": "insurance",
-        "requirement": "Certificate of insurance naming the Association as additional insured, with the stated limits; Texas Private Security Bureau license provided.",
+        "requirement": "Current certificate of insurance with the bid, confirmation the Association can be named additional insured, and limits carried stated; Texas Private Security Bureau license provided.",
         "basis": "board"
       },
       {
@@ -843,7 +843,7 @@
       {
         "id": "B-04",
         "audience": "board",
-        "text": "Confirm the insurance limits (general liability 1,000,000 per occurrence and 2,000,000 aggregate).",
+        "text": "Confirm the final required insurance limits before award. Recommended minimums: general liability 1,000,000 per occurrence and 2,000,000 aggregate, and workers' compensation as required by law. The vendor copy asks bidders to state their limits and does not make these pass/fail.",
         "source": "Management"
       },
       {
@@ -885,7 +885,7 @@
       {
         "id": "M-05",
         "audience": "management",
-        "text": "Confirm the site address printed on the RFP before it is issued.",
+        "text": "Site walk meeting point set to the Club House, 20422 Canyon Gate Blvd, Katy, TX 77450 (called the Facility in a contract in trustEd; staff meetings are held there). Walks are scheduled by email to amandaalbright@bedrocktx.com.",
         "source": "Management"
       },
       {
@@ -907,7 +907,7 @@
         "source": "Ed decision 2026-10-16"
       }
     ],
-    "contract_package_note": "Required with every bid. A bid missing any item is incomplete.",
+    "contract_package_note": "Required with every bid. Bids that are materially incomplete may be deemed non-responsive.",
     "schedule": {
       "recommended_response_deadline": "2026-11-02T17:00:00-06:00",
       "recommended_response_deadline_display": "Monday, November 2, 2026 at 5:00 p.m. Central",
@@ -927,7 +927,7 @@
         {
           "milestone": "Site walk, by appointment (strongly recommended)",
           "date": "2026-10-22",
-          "note": "Through Monday, October 26"
+          "note": "Through Monday, October 26; meet at the Club House, 20422 Canyon Gate Blvd, Katy, TX 77450"
         },
         {
           "milestone": "Written questions due",
@@ -975,7 +975,7 @@
       ]
     },
     "submission": {
-      "instructions": "Email the complete response (pricing form, compliance matrix, camera schedule and contract package) as PDF files to amandaalbright@bedrocktx.com by the response deadline. Use the subject line: Canyon Gate Security Camera RFP Response. Late responses may not be considered.",
+      "instructions": "Email the complete response (pricing form, compliance matrix, camera schedule and contract package) as PDF files to amandaalbright@bedrocktx.com by the response deadline, with the subject line: Canyon Gate Security Camera RFP - Bid Submission - [Company Name]. Late responses may not be considered.",
       "submit_to_email": "amandaalbright@bedrocktx.com"
     }
   }
