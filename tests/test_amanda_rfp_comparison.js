@@ -158,7 +158,7 @@ const env = (vars, fn) => { const old = {}; for (const k of Object.keys(vars)) {
     assert.ok(!/funds are (?:definitively )?available|fully funded/i.test(summary));
     assert.deepStrictEqual(D.checkDecisionReady(summary, { confidence: { mode: 'transition', cash_label: 'provisional' } }), { ok: true, issues: [] });
     // Ed's required wording (base vs optional plan, the Reserve-funding paragraph, six conclusions) sets the floor.
-    assert.ok(summary.split(/\s+/).length < 500, `summary is concise (${summary.split(/\s+/).length} words)`);
+    assert.ok(summary.split(/\s+/).length < 560, `summary is concise (${summary.split(/\s+/).length} words)`);
   });
 
   console.log('\nMulti-lens risk and completeness review');
@@ -278,6 +278,96 @@ const env = (vars, fn) => { const old = {}; for (const k of Object.keys(vars)) {
     assert.match(decision, /The optional \$440\.00\/month plan is not included; it comes back to the Board only if iTech confirms it is required/);
     assert.ok(run.result.record.open_items.some((i) => i.topic === 'remote/cloud access cost'), 'the cloud-access cost diligence item stays');
     assert.strictEqual(run.result.record.ranking.ranked[0].tco_cents, 4785468, 'ranked on the base configuration');
+  });
+
+  console.log('\nQuestion first: intent, constraints, urgency');
+  const I = require('../lib/team/intent');
+  const intent = I.extractIntent({ subject: fx.board_email.subject, body: fx.board_email.body, sender_name: 'Hugh Durlam' });
+  const ckIntent = (text, it = intent) => I.checkIntent(text, it).map((i) => i.code);
+
+  await t("extracts Hugh's intent before anything else: the ask, wants, the no-monitoring exclusion, high urgency, a recommendation expected", async () => {
+    assert.match(intent.asks[0], /review these proposals and give us an assessment/);
+    assert.deepStrictEqual(intent.wants, ['hardware', 'installation', 'cloud access/storage']);
+    assert.deepStrictEqual(intent.constraints.exclusions.map((e) => e.key), ['monitoring']);
+    assert.strictEqual(intent.urgency.level, 'high');
+    for (const l of ['asked to move quickly', 'equipment is down', 'installation already delayed']) assert.ok(intent.urgency.signals.some((s) => s.label === l), l);
+    assert.strictEqual(intent.expected_guidance, 'recommendation');
+    assert.strictEqual(intent.primary_question, 'Which proposal should we move toward, given that we want hardware, installation, cloud access/storage, no monitoring, and we need to move quickly?');
+    assert.deepStrictEqual(run.result.record.intent.constraints.exclusions.map((e) => e.key), ['monitoring'], 'stored with the analysis');
+  });
+
+  await t("the Board summary's opening answers the ask: move toward iTech, subject to diligence, no rebid, no monitoring unless required", async () => {
+    const paras = run.result.summary.split('\n\n');
+    const rec = paras.find((p) => p.startsWith('Recommendation:'));
+    assert.match(rec, /^Recommendation: move toward iTech\. Its August 19, 2026 proposal is the preferred direction for hardware, installation and cloud access\/storage with no monitoring, subject to the diligence items below; there is no need to restart the bid process, and monitoring should not be added unless iTech confirms it is required/);
+    assert.strictEqual(paras.indexOf(rec), 2, 'right after the greeting and situation');
+    assert.match(paras[1], /Cameras are down and installation cannot start before December, so this needs to move quickly/);
+    assert.match(paras.find((p) => p.startsWith('Action underway:')), /because cameras are down and installation cannot start before December, the requests to iTech .* prepared on the workflow record now, so iTech can fix the scope and hold an installation date/);
+    assert.deepStrictEqual(D.checkDecisionReady(run.result.summary, { confidence: { mode: 'transition', cash_label: 'provisional' }, intent: run.result.record.intent }), { ok: true, issues: [] });
+  });
+
+  await t('flags an opening that does not answer the ask, and an unrequested generic process', async () => {
+    assert.ok(ckIntent('Hi Hugh,\n\nThanks for sending these. Envera has the widest coverage and Netwatch uses AI analytics.\n\nCameras are down, so time matters.').includes('unanswered_ask'));
+    assert.ok(ckIntent('Hi Hugh,\n\nI recommend iTech.\n\nWe should also issue a new RFP to two more vendors. Cameras are down, so time matters.').includes('adjacent_focus'));
+    assert.ok(!ckIntent('Hi Hugh,\n\nI recommend iTech; there is no need to restart the bid process. Cameras are down, so time matters.').includes('adjacent_focus'), 'a negated mention is not a proposal');
+  });
+
+  await t('flags monitoring recommended or priced by default, but not the vendor name or an explained conflict', async () => {
+    assert.ok(ckIntent('Hi Hugh,\n\nI recommend iTech plus its $440/month monitoring plan. Cameras are down, so I am moving quickly.').includes('ignored_constraint'));
+    assert.ok(!ckIntent('Hi Hugh,\n\nI recommend iTech Monitoring, Inc. at $47,854.68. Cameras are down, so I am moving quickly.').includes('ignored_constraint'), 'the company name is not the service');
+    assert.ok(!ckIntent('Hi Hugh,\n\nI recommend iTech at $47,854.68; the optional $440/month monitoring plan is not part of my recommendation unless iTech confirms it is required. Cameras are down, so I am moving quickly.').includes('ignored_constraint'));
+    assert.ok(!ckIntent('Hi Hugh,\n\nI recommend iTech with its $440/month monitoring plan because iTech confirmed it is required for cloud access. Alternatives considered: a version without monitoring, an unbundled access option. Cameras are down, so I am moving quickly.').includes('ignored_constraint'), 'explained, with alternatives');
+  });
+
+  await t('flags a reply that ignores the urgency, and options without the guidance asked for; the retry names each', async () => {
+    assert.ok(ckIntent('Hi Hugh,\n\nI recommend iTech at $47,854.68.').includes('urgency_omitted'));
+    assert.ok(ckIntent('Hi Hugh,\n\nHere is where things stand on the cameras, which are down:\n1. iTech at $47,854.68\n2. Envera at $64,443.88').includes('options_without_guidance'));
+    const note = D.retryNote(D.checkDecisionReady('Hi Hugh,\n\nThanks.\n\nEnvera covers the most locations.\n\nI recommend iTech plus its $440/month monitoring plan.', { intent }).issues, intent);
+    assert.match(note, /Start by answering it: Which proposal should we move toward/); assert.match(note, /excluded \(monitoring\)/); assert.match(note, /urgent/);
+  });
+
+  console.log('\nExplicit constraints override default packages');
+  await t('if iTech confirms the plan is required, the summary explains the conflict, names alternatives, queues a compliant-version request, and still passes', async () => {
+    const props = fx.proposals.map((p) => p.key !== 'itech-2026-a' ? p : { ...p, pricing: { ...p.pricing, recurring: [{ ...p.pricing.recurring[0], vendor_confirmed_required: true }] } });
+    const r = C.buildComparisonRecord({ community: fx.community, project: fx.project, proposals: props, requirements: req, facts, today: fx.today, intent });
+    const c = r.constraint_conflicts.find((x) => x.kind === 'recommended_includes_excluded');
+    assert.ok(c && c.constraint === 'monitoring'); assert.match(c.reason, /confirmed .* required for remote\/cloud access/);
+    assert.ok(c.alternatives.some((a) => /version without the excluded monitoring/.test(a)) && c.alternatives.some((a) => /Envera/.test(a)));
+    assert.ok(r.open_items.some((i) => i.topic === 'compliant version' && /iTech/.test(i.vendor)));
+    const s = C.renderBoardSummary(r, { greetingName: 'Hugh' });
+    assert.match(s, /This conflicts with the Board's instruction \(no monitoring\): .*Alternatives considered: .*Weighing those, I still recommend iTech/);
+    assert.ok(D.checkDecisionReady(s, { intent }).issues.every((i) => i.code !== 'ignored_constraint'));
+  });
+
+  await t('"not vendor X": an excluded vendor is never recommended, and a draft recommending it without explanation is flagged', async () => {
+    const it = I.extractIntent({ subject: 'Pool bids', body: 'Please give us your recommendation on the pool management bids. We do not want Aegis again.' });
+    assert.deepStrictEqual(it.constraints.exclusions.map((e) => e.key), ['vendor:aegis']);
+    const mk = (key, vendor, cents) => ({ key, vendor_name: vendor, document: { filename: `${key}.pdf` }, document_date: '2026-10-01', pricing: { upfront_cents: cents, tax_rate_pct: 8.25 }, model: { ownership: 'association', monitoring: 'none' } });
+    const r = C.buildComparisonRecord({ community: fx.community, project: { title: 'Pool Management 2027', service_category: 'pool_management' }, proposals: [mk('a', 'Aegis Aquatics', 3000000), mk('s', 'SwimCo LLC', 3500000)], requirements: {}, facts: null, today: fx.today, intent: it });
+    assert.strictEqual(r.recommendation.vendor_name, 'SwimCo LLC', 'the cheaper excluded vendor is not recommended');
+    assert.ok(r.ranking.not_viable.find((x) => x.key === 'a').reasons.some((m) => /the Board said not to use Aegis/.test(m)));
+    assert.ok(ckIntent('Hi,\n\nI recommend Aegis Aquatics at $30,000.', it).includes('ignored_constraint'));
+  });
+
+  await t('when every option violates a constraint, the summary says so, gives the reason and alternatives, and recommends asking for compliant versions', async () => {
+    const only = fx.proposals.filter((p) => ['envera-q19538-2-packet', 'netwatch-2026'].includes(p.key)).map((p) => ({ ...p, expires_on: null }));
+    const r = C.buildComparisonRecord({ community: fx.community, project: fx.project, proposals: only, requirements: req, facts, today: fx.today, intent });
+    assert.strictEqual(r.recommendation, null);
+    const nb = r.constraint_conflicts.find((x) => x.kind === 'no_option_satisfies');
+    assert.ok(nb && /monitoring/.test(nb.reason));
+    assert.ok(r.open_items.filter((i) => i.topic === 'compliant version').length >= 2, 'a compliant-version request per vendor');
+    const s = C.renderBoardSummary(r, { greetingName: 'Hugh' });
+    assert.match(s, /Recommendation: none of the proposals meets the Board's instruction as quoted, so I do not recommend approving any of them yet\. My recommendation is to ask Envera and Netwatch for versions that meet it\./);
+    assert.match(s, /Alternatives considered: .*quotes from other vendors/);
+    assert.match(s, /because cameras are down/);
+  });
+
+  await t('shared team layer exports the rule and the check; Amanda reads intent first and passes it to the check', async () => {
+    const core = require('../lib/team/operator_core');
+    for (const k of ['INTENT_FIRST_RULE', 'extractIntent', 'intentBlock', 'checkIntent', 'intentRetryLines']) assert.ok(core[k], k);
+    const src = fs.readFileSync(path.join(__dirname, '..', 'lib', 'community', 'amanda_reply.js'), 'utf8');
+    assert.ok(src.indexOf('intentLib.extractIntent(') < src.indexOf('propertyContext(') || src.indexOf('intentLib.extractIntent(') < src.indexOf('prepareComparison('), 'intent is extracted before the analysis');
+    assert.ok(/intentLib\.intentBlock\(intent\)/.test(src) && /intentLib\.INTENT_FIRST_RULE/.test(src) && /, intent \};/.test(src) && /retryNote\(dr\.issues, intent\)/.test(src));
   });
 
   await t('without community records the summary carries no "From ... records" line (nothing invented)', async () => {
