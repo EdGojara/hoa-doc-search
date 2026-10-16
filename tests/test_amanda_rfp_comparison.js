@@ -487,6 +487,67 @@ const env = (vars, fn) => { const old = {}; for (const k of Object.keys(vars)) {
     assert.strictEqual(writes[0].row.extracted_data.company_name, 'iTech', 'existing extraction kept');
   });
 
+  console.log('\nLine-item versions: reuse, no re-extraction; versioned reprocessing');
+  const V = require('../lib/vendors/line_item_versions');
+  const v1 = V.addVersion({}, { items: [itemOf('itech-2026-a')], document_sha256: 'sha-A', reason: 'initial extraction', requested_by: 'backfill', at: '2026-10-16T12:00:00Z' });
+
+  await t('a rerun with the same file hash makes no new extraction (store, backfill and workflow paths)', async () => {
+    assert.deepStrictEqual(V.needsExtraction(v1, 'sha-A'), { extract: false, reason: null });
+    assert.strictEqual(V.needsExtraction({}, 'sha-A').reason, 'not_stored');
+    const B = require('../scripts/backfill_proposal_line_items');
+    let calls = 0;
+    const db = { from() { const q = { select() { return q; }, order() { return q; }, limit() { return q; }, eq() { return q; }, then(r, j) { return Promise.resolve({ data: [{ id: 'vp1', file_path: 'x.pdf', file_hash: 'sha-A', extracted_data: v1 }], error: null }).then(r, j); } }; return q; }, storage: { from: () => ({ download: async () => { calls++; return { data: null, error: null }; } }) } };
+    const plan = await B.plan(db, { extract: async () => { calls++; return { items: [] }; } });
+    assert.strictEqual(plan[0].action, 'skip'); assert.match(plan[0].reason, /approved v1/); assert.strictEqual(calls, 0, 'no download, no model call');
+    const again = await DRY.fixtureRun(); assert.deepStrictEqual(again.extracted, ['Canyon Gate at Cinco Ranch Qoute 19538.pdf'], 'only the document not on file is extracted');
+  });
+
+  await t('a hash change creates version 2 (pending review) and keeps version 1 approved and readable', async () => {
+    assert.strictEqual(V.needsExtraction(v1, 'sha-B').reason, 'hash_changed');
+    const v2 = V.addVersion(v1, { items: [itemOf('itech-2026-a')], document_sha256: 'sha-B', reason: 'source file changed', requested_by: 'backfill', at: '2026-10-17T12:00:00Z' });
+    assert.deepStrictEqual(v2.line_item_versions.map((v) => [v.version, v.status, v.document_sha256]), [[1, 'approved', 'sha-A'], [2, 'pending_review', 'sha-B']]);
+    assert.strictEqual(v2.approved_line_item_version, 1); assert.strictEqual(V.currentApproved(v2).version, 1, 'the workflow still reads v1');
+    assert.strictEqual(JSON.stringify(v2.line_item_versions[0]), JSON.stringify(v1.line_item_versions[0]), 'v1 is not modified');
+    assert.ok(v2.line_item_versions[1].differs_from_approved.some((d) => d.field === 'document_sha256'));
+    assert.strictEqual(v1.line_item_versions.length, 1, 'inputs are not mutated');
+  });
+
+  await t('a reprocessed version whose counts differ is flagged for review, never swapped in; approval keeps the old version as superseded', async () => {
+    assert.throws(() => V.needsExtraction(v1, 'sha-A', { reprocess: { reason: 'x' } }), /requested_by and reason/);
+    assert.strictEqual(V.needsExtraction(v1, 'sha-A', { reprocess: { requested_by: 'Ed', reason: 'check the 27 vs 28 count' } }).reason, 'reprocess_requested');
+    const changed = itemOf('itech-2026-a'); changed.line_items.find((l) => l.description === '5MP IR Turret Camera').quantity = 8;
+    const v2 = V.addVersion(v1, { items: [changed], document_sha256: 'sha-A', reason: 'check the 27 vs 28 count', requested_by: 'Ed' });
+    const nv = v2.line_item_versions[1];
+    assert.strictEqual(nv.status, 'pending_review');
+    assert.deepStrictEqual(nv.differs_from_approved.map((d) => [d.field, d.approved, d.new]), [['cameras_new', 14, 15], ['cameras_total', 27, 28]]);
+    assert.match(nv.review_flag, /review before approving/);
+    assert.strictEqual(V.currentApproved(v2).totals.cameras_total, 27, 'still 27 until a human approves');
+    const ap = V.approveVersion(v2, 2, { approved_by: 'Ed' });
+    assert.deepStrictEqual(ap.line_item_versions.map((v) => v.status), ['superseded', 'approved']);
+    assert.strictEqual(ap.line_item_versions.length, 2, 'nothing deleted');
+  });
+
+  await t('preview cache: the first dry run extracts and caches by hash; the second reuses it with no model call; --reprocess makes a new version and shows the diff', async () => {
+    const store = {}; const cache = { get: (sha) => store[sha] ? JSON.parse(store[sha]) : null, put: (sha, ed) => { store[sha] = JSON.stringify(ed); } };
+    const first = await DRY.fixtureRun({ previewCache: cache });
+    assert.deepStrictEqual(first.extracted, ['Canyon Gate at Cinco Ranch Qoute 19538.pdf']);
+    assert.ok(first.result.extraction_log.some((x) => x.source === 'fresh extraction' && x.cached_as_version === 1));
+    assert.ok(first.result.extraction_log.filter((x) => x.source === 'stored').length >= 2, 'documents on the record come from storage');
+    const second = await DRY.fixtureRun({ previewCache: cache });
+    assert.deepStrictEqual(second.extracted, [], 'no model call on the second run');
+    assert.ok(second.result.extraction_log.some((x) => x.source === 'preview cache v1' && x.extracted === false));
+    assert.strictEqual(JSON.stringify(second.result.record.quantities), JSON.stringify(first.result.record.quantities), 'identical quantities');
+    assert.strictEqual(second.result.summary, first.result.summary, 'identical summary');
+    const bump = (r0) => ({ ...r0, items: (r0.items || []).map((it) => ({ ...it, line_items: [{ description: 'Outdoor Bullet Camera', category: 'camera_new', quantity: 6, page: 1, excerpt: '6 Outdoor Bullet Camera - 4MP' }] })) });
+    const rp = await DRY.fixtureRun({ previewCache: cache, reprocess: { requested_by: 'Ed', reason: 'compare a fresh extraction' }, transformExtract: bump });
+    assert.ok(rp.extracted.length >= 1, 'reprocess calls the model');
+    const entry = rp.result.extraction_log.find((x) => x.source === 'fresh (reprocess)');
+    assert.ok(entry && entry.cached_as_version === 2 && entry.differs.some((d) => d.field === 'cameras_new'), JSON.stringify(entry));
+    assert.match(DRY.report(rp), /fresh \(reprocess\).*DIFFERS from the approved version: cameras_new 0 -> 6/);
+    const kept = cache.get(Object.keys(store)[0]);
+    assert.deepStrictEqual(kept.line_item_versions.map((v) => v.status), ['approved', 'pending_review'], 'v1 kept; v2 awaits review');
+  });
+
   await t('without community records the summary carries no "From ... records" line (nothing invented)', async () => {
     assert.ok(!/records:/.test(summary));
   });

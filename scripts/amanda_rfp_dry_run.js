@@ -7,6 +7,9 @@
 //   node scripts/amanda_rfp_dry_run.js                 fixture replay (Canyon Gate cameras)
 //   node scripts/amanda_rfp_dry_run.js --json          same, full record as JSON
 //   node scripts/amanda_rfp_dry_run.js --live --community=<uuid> --mailbox=<addr> --graph-id=<id>
+//        [--preview-cache=<dir>]  save in-memory line-item extractions locally (by document hash);
+//                                 a second run with the same dir reuses them without a model call
+//        [--reprocess --requested-by=<name> --reason="..."]  extract fresh as a new version and print the diff
 //        live: reads the community's workflow records, books and the message's
 //        attachments; the Supabase client is wrapped in a guard that THROWS on any
 //        insert / update / upsert / delete / rpc / storage upload.
@@ -50,6 +53,17 @@ function fakeDb(seed) {
   return db;
 }
 
+/** Local preview cache of line-item versions, one JSON file per document hash. Never the database. */
+function fileCache(dir) {
+  const fs = require('fs'); const path = require('path');
+  fs.mkdirSync(dir, { recursive: true });
+  const f = (sha) => path.join(dir, `${sha}.json`);
+  return {
+    get(sha) { try { return JSON.parse(fs.readFileSync(f(sha), 'utf8')); } catch (_) { return null; } },
+    put(sha, ed) { fs.writeFileSync(f(sha), JSON.stringify(ed, null, 2)); },
+  };
+}
+
 /** Wrap a real client so any write throws. */
 function readOnly(client) {
   const deny = (what) => () => { throw new Error(`dry run is read-only: ${what} refused`); };
@@ -65,7 +79,7 @@ const bufFor = (name) => Buffer.from(`fixture bytes for ${name}`);
 const sha = (b) => crypto.createHash('sha256').update(b).digest('hex');
 
 /** The fixture replay through the real prepareComparison(). */
-async function fixtureRun({ mode = 'dry_run' } = {}) {
+async function fixtureRun({ mode = 'dry_run', previewCache = null, reprocess = null, transformExtract = null } = {}) {
   const fx = require(FIXTURE);
   const byKey = Object.fromEntries(fx.proposals.map((p) => [p.key, p]));
   const itechFile = 'iTech_Video Proposal_Sept 2026.pdf'; const packetFile = 'CGHOASecProps2026.pdf'; const enveraFile = 'Canyon Gate at Cinco Ranch Qoute 19538.pdf';
@@ -81,10 +95,11 @@ async function fixtureRun({ mode = 'dry_run' } = {}) {
   const db = fakeDb(seed);
   const attachments = [itechFile, packetFile, enveraFile].map((f) => ({ filename: f, buffer: bufFor(f), isPdf: true }));
   const extracted = [];
-  const extract = async (buf, meta) => { extracted.push(meta.filename); return { items: meta.filename === enveraFile ? [{ ...byKey['envera-q19538-2-standalone'], document: { ...byKey['envera-q19538-2-standalone'].document, sha256: sha(buf) } }] : [], diagnostic: { invalid: [] } }; };
+  const extract0 = async (buf, meta) => { extracted.push(meta.filename); return { items: meta.filename === enveraFile ? [{ ...byKey['envera-q19538-2-standalone'], document: { ...byKey['envera-q19538-2-standalone'].document, sha256: sha(buf) } }] : [], diagnostic: { invalid: [] } }; };
+  const extract = async (buf, meta) => { const r0 = await extract0(buf, meta); return transformExtract ? transformExtract(r0, meta) : r0; };
   const email = { ...fx.board_email, id: 'em-1016', sender_email: fx.board_email.from };
   const facts = await D.boardDecisionFactsDetailed(db, fx.community.id, `${email.subject}\n${email.body}`, { today: fx.today, mode: 'transition' });
-  const r = await W.prepareComparison({ supabase: db, communityId: fx.community.id, communityName: fx.community.name, email, attachments, today: fx.today, mode, factsDetailed: facts, extract, mgmtId: 'mgmt', greetingName: 'Hugh' });
+  const r = await W.prepareComparison({ supabase: db, communityId: fx.community.id, communityName: fx.community.name, email, attachments, today: fx.today, mode, factsDetailed: facts, extract, mgmtId: 'mgmt', greetingName: 'Hugh', previewCache, reprocess });
   return { result: r, facts, extracted, writes: db.writes, fixture: fx };
 }
 
@@ -95,6 +110,10 @@ function report({ result: r, facts, extracted, writes }) {
   L.push(`DETECTED: ${r.detection.reasons.join('; ')}`);
   L.push(`REQUIREMENTS (Board's words): ${r.record.requirements.notes.join('; ')}`);
   L.push(`DOCUMENTS: ${r.record.documents.map((d) => `${d.filename} [${d.origin}]`).join(' | ')}; extracted fresh: ${extracted.join(', ') || 'none (all already on file)'}`);
+  L.push('LINE ITEMS SOURCE (per document):');
+  for (const x of r.extraction_log || []) L.push(`  ${x.file} [${x.sha256.slice(0, 12)}]: ${x.source}${x.cached_as_version ? ` (cached as v${x.cached_as_version})` : ''}${x.version ? ` (would be v${x.version})` : ''}${(x.differs || []).length ? `; DIFFERS from the approved version: ${x.differs.map((d) => `${d.field} ${d.approved} -> ${d.new}`).join(', ')}` : (x.extracted && (x.version || x.cached_as_version > 1) ? '; no difference from the approved version' : '')}`);
+  L.push('LINE ITEMS SOURCE (per proposal):');
+  for (const n of r.record.proposals.filter((x) => x.status !== 'duplicate')) L.push(`  ${n.vendor_name} ${n.document_date}: ${(r.record.quantities.find((q) => q.key === n.key) || {}).status === 'stored' ? 'stored on the record' : ((n.source || {}).source_kind === 'vendor_proposal' ? 'stored (no line items yet)' : 'not stored')}`);
   L.push('\nCLASSIFICATION');
   for (const n of r.record.proposals) L.push(`  ${n.status.padEnd(10)} ${n.vendor_name} ${n.document_date || ''} (${(n.source || {}).filename}${(n.source || {}).pages ? ` pp.${n.source.pages}` : ''}) : ${n.status_reason}`);
   L.push(`\nNORMALIZED COSTS (${r.record.horizon_months}-month horizon)`);
@@ -158,7 +177,10 @@ async function liveRun(args) {
   const bodyText = typeof text === 'string' ? text : (text && text.body) || '';
   const email = { ...(stored || {}), graph_id: args['graph-id'] || (stored && stored.graph_id) || null, subject: args.subject || (stored && stored.subject) || 'proposals', body: bodyText || (stored && (stored.body_full || stored.body_preview)) || '' };
   const facts = await D.boardDecisionFactsDetailed(db, cid, email.body);
-  const r = await W.prepareComparison({ supabase: db, communityId: cid, communityName: c.name, email, mailbox: args.mailbox, graphId: args['graph-id'], mode: 'dry_run', factsDetailed: facts });
+  if (args.reprocess && (!args['requested-by'] || !args.reason)) throw new Error('--reprocess needs --requested-by=<name> and --reason="..."');
+  const reprocess = args.reprocess ? { requested_by: args['requested-by'], reason: args.reason } : null;
+  const previewCache = args['preview-cache'] ? fileCache(args['preview-cache']) : null;
+  const r = await W.prepareComparison({ supabase: db, communityId: cid, communityName: c.name, email, mailbox: args.mailbox, graphId: args['graph-id'], mode: 'dry_run', factsDetailed: facts, reprocess, previewCache });
   if (!r.is_matter) return `Not a comparison matter: ${JSON.stringify(r.detection)}`;
   return report({ result: r, facts, extracted: [], writes: [] });
 }
@@ -173,4 +195,4 @@ if (require.main === module) {
   })().catch((e) => { console.error('dry run failed:', e.message); process.exit(1); });
 }
 
-module.exports = { fixtureRun, report, fakeDb, readOnly };
+module.exports = { fixtureRun, report, fakeDb, readOnly, fileCache };
