@@ -723,6 +723,19 @@ const env = (vars, fn) => { const old = {}; for (const k of Object.keys(vars)) {
     assert.throws(() => SAVE.planSave({ ...savePlan(), proposals: [{ ...savePlan().proposals[0], mode: undefined }] }, itemsByDoc, { ...opts, snapshot: emptySnap }), /mode must be one of/, 'a mode is never inferred');
   });
 
+  await t('facts-only and historical rows store no locations and no count fields; full mode is unchanged', async () => {
+    // The live Netwatch extraction shape: an inconsistent site list plus count fields in scope.
+    const live = { ...itemOf('netwatch-2026'), scope: { summary: 'Netwatch PVM design across Guard House, Club House, and South Gate', locations: ['Guard House', 'Club House', 'South Gate', 'North Gate'], storage: 'Hanwha Wave VMS', retention_days: 30, cameras_total: 30, cameras_new: 29, cameras_reused: 1, licenses: 4, embedded_server_cameras: 0 } };
+    const facts = SAVE.project(live, 'proposal_facts_only');
+    assert.deepStrictEqual(facts.scope, { summary: 'Netwatch PVM design across Guard House, Club House, and South Gate', storage: 'Hanwha Wave VMS', retention_days: 30 });
+    assert.ok(!/locations|North Gate|cameras_|licenses|embedded_server/.test(JSON.stringify(facts)), JSON.stringify(facts));
+    const hist = SAVE.project({ ...itemOf('itech-2024'), scope: live.scope }, 'historical_minimal', { replacedBy: 'itech-2026-a' });
+    assert.ok(!('scope' in hist) && !/locations|cameras_|licenses/.test(JSON.stringify(hist)));
+    const full = SAVE.project(itemOf('itech-2026-a'), 'full');
+    assert.deepStrictEqual(full.line_items, itemOf('itech-2026-a').line_items, 'full mode keeps line items');
+    assert.deepStrictEqual(full.scope, itemOf('itech-2026-a').scope, 'full mode scope unchanged');
+  });
+
   await t('a chat-instruction approval is recorded as such and never as an authenticated approver', async () => {
     const v = storedOf('itech-2026-a').line_item_versions[0];
     assert.strictEqual(v.status, 'approved');
