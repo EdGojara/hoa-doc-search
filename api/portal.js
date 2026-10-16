@@ -107,11 +107,33 @@ function resolveBuilderLandingUrl(companyNames) {
 // still verify (no mass logout), drop the forgeable constant, and FAIL LOUD if
 // nothing is configured rather than silently signing with a guessable key.
 // (Ed 2026-07-28, portal-hardening.)
-const PORTAL_SECRET = process.env.PORTAL_COOKIE_SECRET || process.env.STAFF_PASSWORD || process.env.SUPABASE_KEY || null;
+// 2026-10-16 (launch blockers): sharing STAFF_PASSWORD as the cookie key means
+// anyone who knows the shared staff password can mint a homeowner or Board
+// session for any portal user. In PRODUCTION a dedicated PORTAL_COOKIE_SECRET,
+// different from STAFF_PASSWORD, is now REQUIRED: without it every portal and
+// board session is refused (sign-in and cookie checks both), loudly, while the
+// staff app keeps running. Outside production the old fallback stays so local
+// dev works, with a warning on boot.
+function resolvePortalSecret(env = process.env) {
+  const dedicated = env.PORTAL_COOKIE_SECRET || null;
+  const isProd = env.NODE_ENV === 'production';
+  if (dedicated && env.STAFF_PASSWORD && dedicated === env.STAFF_PASSWORD) {
+    return { secret: null, error: 'PORTAL_COOKIE_SECRET equals STAFF_PASSWORD. Set it to a separate random value.' };
+  }
+  if (dedicated) return { secret: dedicated, error: null };
+  if (isProd) {
+    return { secret: null, error: 'PORTAL_COOKIE_SECRET is not set. Production refuses portal and board sessions until it is.' };
+  }
+  const fallback = env.STAFF_PASSWORD || env.SUPABASE_KEY || null;
+  if (!fallback) return { secret: null, error: 'No PORTAL_COOKIE_SECRET (or dev fallback) set.' };
+  return { secret: fallback, error: null, devFallback: true };
+}
+const _portalSecretState = resolvePortalSecret();
+const PORTAL_SECRET = _portalSecretState.secret;
 if (!PORTAL_SECRET) {
-  console.error('[portal] SECURITY: no PORTAL_COOKIE_SECRET or STAFF_PASSWORD set — portal/board cookies cannot be signed securely and sign-in will refuse.');
-} else if (!process.env.PORTAL_COOKIE_SECRET && !process.env.STAFF_PASSWORD) {
-  console.warn('[portal] Signing portal cookies with SUPABASE_KEY (service-role key reuse). Set PORTAL_COOKIE_SECRET to a dedicated random value.');
+  console.error(`[portal] SECURITY: ${_portalSecretState.error} Every portal/board sign-in and cookie is refused.`);
+} else if (_portalSecretState.devFallback) {
+  console.warn('[portal] DEV ONLY: signing portal cookies with a fallback key (STAFF_PASSWORD/SUPABASE_KEY) because PORTAL_COOKIE_SECRET is unset. Production refuses this.');
 }
 
 function portalSecret() {
@@ -131,6 +153,7 @@ function signCookie(portalUserId) {
 
 function verifyCookie(token) {
   if (!token) return null;
+  if (!PORTAL_SECRET) return null; // no safe key: every session is refused (see resolvePortalSecret)
   const parts = String(token).split('.');
   if (parts.length !== 3) return null;
   const [portalUserId, ts, sig] = parts;
@@ -177,6 +200,7 @@ function signMimicCookie(portalUserId, staffEmail) {
 
 function verifyMimicCookie(token) {
   if (!token) return null;
+  if (!PORTAL_SECRET) return null; // no safe key: every session is refused (see resolvePortalSecret)
   const parts = String(token).split('.');
   if (parts.length !== 4) return null;
   const [portalUserId, emailB64, ts, sig] = parts;
@@ -1743,6 +1767,16 @@ router.get('/me', async (req, res) => {
       community_slug: p.communities?.slug || '',
     }));
 
+    // Portal "Pay now" gate: the SAME decision /pay/checkout enforces
+    // (lib/portal/pay_gate.js). Fail closed: a lookup error hides the button.
+    let payGate = { enabled: false };
+    try {
+      const { portalPayGateForCommunityId } = require('../lib/portal/pay_gate');
+      payGate = await portalPayGateForCommunityId(supabase, community.id);
+    } catch (e) {
+      console.warn('[portal /me] pay gate failed:', e.message);
+    }
+
     // In manager mode, show the actual homeowner's name in the portal
     // header/greeting — that's what "see what they see" means. Staff email
     // is preserved on the manager banner for audit/identity context.
@@ -1790,14 +1824,15 @@ router.get('/me', async (req, res) => {
         // adds Drama Creek Estates as the canonical demo community.
         is_demo: community.is_demo === true,
         // Can this community actually ACCEPT an online payment right now?
-        // The homeowner-facing "Pay now" button gates on this. Without it the
-        // portal offers a payment path the server refuses at
-        // api/payments.js createAssessmentCheckout (503
-        // community_stripe_not_onboarded) — the homeowner commits to paying and
-        // hits a wall. Same shape as amenities.js `stripe_ready`. Boolean only;
-        // the account id never goes to the browser.
-        // A connected account alone never enables Pay (lib/portal/financial_access).
-        payments_enabled: financialAccess.payments,
+        // The homeowner-facing "Pay now" button. Two checks, both must pass:
+        //   1) THE fail-closed homeowner decision (lib/portal/financial_access):
+        //      balances verified AND payments switched on for this association.
+        //      A connected Stripe account alone never enables Pay.
+        //   2) the payment-readiness evaluation /pay/checkout refuses on
+        //      (lib/portal/pay_gate.js): financials active, Stripe charges +
+        //      payouts enabled, account in the server key's mode.
+        // Boolean only; the account id never goes to the browser.
+        payments_enabled: financialAccess.payments === true && payGate.enabled === true,
       },
       balance,
       compliance,
@@ -2812,6 +2847,52 @@ router.post('/chamber/:broadcastId/viewer', express.json(), async (req, res) => 
 });
 
 // ----------------------------------------------------------------------------
+// GET /api/portal/contacts[?community=<demo-slug>]
+// Local Contacts tile. The page used /api/community-contacts/by-slug, which is
+// a staff route (behind the staff gate) and takes ANY slug. Here the community
+// comes from the caller's portal session; the only slug honoured is a DEMO
+// community's, so the sales demo works without a session and no real
+// community's directory is readable by slug.
+// ----------------------------------------------------------------------------
+router.get('/contacts', async (req, res) => {
+  try {
+    let communityId = null;
+    // A demo community by slug (sales demo; works signed in or not).
+    const slug = String(req.query.community || '').trim();
+    if (slug) {
+      const { data: demo } = await supabase.from('communities')
+        .select('id, is_demo, management_company_id').eq('slug', slug).maybeSingle();
+      if (demo && (demo.is_demo === true || demo.management_company_id === DEMO_MGMT_CO_ID)) communityId = demo.id;
+    }
+    // Otherwise the caller's own community, from the portal session only.
+    if (!communityId) {
+      const resolved = await resolveUserWithRole(req, res);
+      if (!resolved) return; // 401 sent
+      const scoped = await resolveScopedProperty(req, supabase, resolved.user);
+      if (scoped.error === 'property_outside_manager_scope') return res.status(403).json({ error: scoped.error });
+      communityId = scoped.property && scoped.property.community_id;
+      if (!communityId) return res.json({ community: null, trash_schedule: null, grouped: [] });
+    }
+    const { data: community, error: cErr } = await supabase.from('communities')
+      .select('id, name, slug, trash_schedule').eq('id', communityId).maybeSingle();
+    if (cErr) throw cErr;
+    if (!community) return res.status(404).json({ error: 'community_not_found' });
+    const { data: contacts, error } = await supabase.from('community_contacts')
+      .select('id, category, name, phone, email, url, notes, display_order')
+      .eq('community_id', community.id)
+      .eq('is_published', true)
+      .order('display_order')
+      .limit(500);
+    if (error) throw error;
+    const { groupByCategory } = require('./community_contacts');
+    res.json({ community: { name: community.name, slug: community.slug }, trash_schedule: community.trash_schedule || null, grouped: groupByCategory(contacts || []) });
+  } catch (err) {
+    console.error('[portal] contacts failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// ----------------------------------------------------------------------------
 // GET /api/portal/community-calendar
 // One calendar for the community: social events, board meetings, and the dates
 // the clubhouse is already taken.
@@ -3097,10 +3178,12 @@ async function resolveHomeownerScope(req) {
   // portal_users -> contact_id + role
   const { data: user } = await supabase
     .from('portal_users')
-    .select('id, contact_id, email, full_name, role')
+    .select('id, contact_id, email, full_name, role, status')
     .eq('id', portalUserId)
     .maybeSingle();
-  if (!user) return null;
+  // A revoked user is signed out everywhere, including Messages (now reachable
+  // without the staff cookie, so this check is the only one left).
+  if (!user || user.status === 'revoked') return null;
 
   let propertyIds = [];
 
@@ -3131,7 +3214,8 @@ async function resolveHomeownerScope(req) {
     const { data: scopes } = await supabase
       .from('portal_user_properties')
       .select('property_id')
-      .eq('portal_user_id', portalUserId);
+      .eq('portal_user_id', portalUserId)
+      .is('revoked_at', null);   // same rule as resolveScopedProperty
     propertyIds = (scopes || []).map((s) => s.property_id).filter(Boolean);
   }
 
@@ -3925,6 +4009,8 @@ router.get('/arc', async (req, res) => {
 
 router.get('/vendor-categories', async (req, res) => {
   try {
+    const resolved = await resolveUserWithRole(req, res);
+    if (!resolved) return; // 401 sent: the form is for signed-in homeowners
     const { data, error } = await supabase
       .from('vendor_categories')
       .select('id, slug, label, display_order')
@@ -4280,9 +4366,12 @@ router.post('/pay/checkout', express.json({ limit: '4kb' }), async (req, res) =>
     const { data: prop, error: pErr } = await supabase.from('properties').select('community_id').eq('id', auth.propertyId).maybeSingle();
     if (pErr) throw pErr;
     if (!prop) return res.status(404).json({ error: 'no_property' });
-    const { canDo } = require('../lib/community/lifecycle');
-    const gate = await canDo('payments', prop.community_id);
-    if (!gate.allowed) return res.status(409).json({ error: 'community_not_taking_payments', detail: gate.reason });
+    // Same gate as the Pay button (/me payments_enabled), re-asked of Stripe
+    // fresh: switch on, financials active, charges + payouts enabled, live
+    // mode in production. Any failure refuses before a session is created.
+    const { portalPayGateForCommunityId } = require('../lib/portal/pay_gate');
+    const gate = await portalPayGateForCommunityId(supabase, prop.community_id, { fresh: true });
+    if (!gate.enabled) return res.status(409).json({ error: gate.code || 'community_not_taking_payments', detail: gate.reason });
 
     const origin = process.env.APP_BASE_URL || `${req.protocol}://${req.get('host')}`;
     const { createAssessmentCheckout } = require('./payments');
@@ -4709,4 +4798,5 @@ module.exports = {
   // source of truth for "what does this portal user have access to."
   resolvePortalUser,
   resolveBuilderLandingUrl,
+  resolvePortalSecret,   // exported for tests/test_portal_launch_gates.js
 };

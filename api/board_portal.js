@@ -41,6 +41,50 @@ const router = express.Router();
 // board member sees only the communities they sit on.
 const { requireBoardViewer, canSeeCommunity, scopeCommunityIds } = require('../lib/portal/board_access');
 const { CUSTOMER_WRITING_STANDARD, stripEmDashes } = require('../lib/ai/customer_writing_standard');
+const { safeErrorMessage } = require('./_safe_error');
+
+// Board VIEW audit (2026-10-16 launch blockers). A Board member reading a
+// neighbour's account, ownership history or violations is exactly the access
+// an association gets asked about later ("who looked at my file?"), so every
+// board-scoped read of a property or a community panel is written to
+// portal_audit_log. Staff portfolio browsing is not logged here (staff have
+// their own trail); staff "view as" a board member IS logged, with the staffer
+// named. Fire-and-forget: an audit hiccup never blocks the read.
+function logBoardView(req, viewer, action, resourceType, resourceId) {
+  try {
+    if (!viewer || viewer.kind !== 'board') return;
+    let portalUserId = null;
+    try { portalUserId = require('./portal').resolvePortalUser(req).portalUserId || null; } catch (_) {}
+    const by = viewer.acting_as && viewer.acting_as.staff ? `${viewer.acting_as.staff} (view as ${viewer.email})` : viewer.email;
+    Promise.resolve(supabase.from('portal_audit_log').insert({
+      portal_user_id: portalUserId,
+      action,
+      resource_type: resourceType,
+      resource_id: resourceId || null,
+      ip_address: req.ip || null,
+      user_agent: (req.headers && req.headers['user-agent']) || null,
+      performed_by: by,
+      notes: viewer.acting_as && viewer.acting_as.mimic ? 'mimic' : null,
+    })).then((r) => { if (r && r.error) console.warn('[board_portal] view audit failed:', r.error.message); })
+      .catch((e) => console.warn('[board_portal] view audit failed:', e.message));
+  } catch (e) { console.warn('[board_portal] view audit failed:', e.message); }
+}
+
+// The ONLY summary fields the board property drawer renders
+// (public/board-portal.html renderDrawer/renderOverview). v_property_summary
+// carries more (owner contact details among them); a board member's browser
+// gets this projection, nothing else.
+const BOARD_PROPERTY_SUMMARY_FIELDS = [
+  'property_id', 'community_id', 'street_address', 'unit', 'owner_name', 'residency_type',
+  'lease_end_date', 'owned_since', 'current_balance', 'open_violations', 'worst_open_stage',
+  'lifetime_violations', 'violations_last_12mo', 'arc_decisions_count', 'arc_approved_count',
+  'arc_denied_count', 'substrate_doc_count', 'last_inspected_at',
+];
+function projectBoardSummary(row) {
+  const out = {};
+  for (const k of BOARD_PROPERTY_SUMMARY_FIELDS) if (row && row[k] !== undefined) out[k] = row[k];
+  return out;
+}
 
 // ----------------------------------------------------------------------------
 // GET /api/board-portal/communities
@@ -76,6 +120,7 @@ router.get('/community/:id/summary', async (req, res) => {
     if (!viewer) return;
     const communityId = req.params.id;
     if (!canSeeCommunity(viewer, communityId)) return res.status(403).json({ error: 'forbidden_community' });
+    logBoardView(req, viewer, 'board_view_summary', 'community', communityId);
 
     const { data: community, error: cErr } = await supabase
       .from('communities')
@@ -337,6 +382,7 @@ router.get('/community/:id/properties', async (req, res) => {
     if (!viewer) return;
     const communityId = req.params.id;
     if (!canSeeCommunity(viewer, communityId)) return res.status(403).json({ error: 'forbidden_community' });
+    logBoardView(req, viewer, 'board_view_properties', 'community', communityId);
     const openOnly = req.query.open_only === '1';
     const balanceOnly = req.query.balance_only === '1'; // AR view: only accounts that owe
     const limit = Math.max(1, Math.min(2000, parseInt(req.query.limit || '500', 10)));
@@ -432,6 +478,7 @@ router.get('/community/:id/ar-categorized', async (req, res) => {
     if (!viewer) return;
     const communityId = req.params.id;
     if (!canSeeCommunity(viewer, communityId)) return res.status(403).json({ error: 'forbidden_community' });
+    logBoardView(req, viewer, 'board_view_ar', 'community', communityId);
     const { fetchAllQuery } = require('../lib/db/fetch_all');
 
     // Owing accounts from the canonical ledger.
@@ -570,7 +617,7 @@ router.get('/property/:id', async (req, res) => {
       .from('property_ownerships')
       .select(`
         id, start_date, end_date, vesting, is_primary, source,
-        contact:contact_id ( id, full_name, primary_email )
+        contact:contact_id ( full_name )
       `)
       .eq('property_id', propertyId)
       .order('start_date', { ascending: false, nullsFirst: false })
@@ -581,14 +628,15 @@ router.get('/property/:id', async (req, res) => {
       .from('property_residencies')
       .select(`
         id, start_date, end_date, residency_type, lease_end_date,
-        contact:contact_id ( id, full_name )
+        contact:contact_id ( full_name )
       `)
       .eq('property_id', propertyId)
       .order('start_date', { ascending: false, nullsFirst: false })
       .limit(5);
 
+    logBoardView(req, viewer, 'board_view_property', 'property', propertyId);
     res.json({
-      summary,
+      summary: projectBoardSummary(summary),
       arc_decisions: arc || [],
       interactions: interactions || [],
       open_violations: openViolations || [],
@@ -598,7 +646,7 @@ router.get('/property/:id', async (req, res) => {
     });
   } catch (err) {
     console.error('[board_portal] property detail failed:', err.message);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: safeErrorMessage(err) });
   }
 });
 
@@ -757,6 +805,7 @@ router.get('/community/:id/budget', async (req, res) => {
     if (!viewer) return;
     const communityId = req.params.id;
     if (!canSeeCommunity(viewer, communityId)) return res.status(403).json({ error: 'forbidden_community' });
+    logBoardView(req, viewer, 'board_view_budget', 'community', communityId);
     const { data: community, error: cErr } = await supabase
       .from('communities').select('id, name')
       .eq('id', communityId).eq('management_company_id', BEDROCK_MGMT_CO_ID).maybeSingle();
@@ -950,6 +999,7 @@ router.get('/community/:id/violations', async (req, res) => {
     if (!viewer) return;
     const communityId = req.params.id;
     if (!canSeeCommunity(viewer, communityId)) return res.status(403).json({ error: 'forbidden_community' });
+    logBoardView(req, viewer, 'board_view_violations', 'community', communityId);
 
     const byId = {};
     // Open-violation properties, grouped by worst stage.
@@ -1422,4 +1472,4 @@ router.post('/speak', express.json({ limit: '32kb' }), async (req, res) => {
   }
 });
 
-module.exports = { router };
+module.exports = { router, projectBoardSummary, BOARD_PROPERTY_SUMMARY_FIELDS };

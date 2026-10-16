@@ -260,6 +260,7 @@ function dayName(d) {
       let _pid = ''; try { _pid = sessionStorage.getItem('bedrock_portal_property_id') || ''; } catch (_) {}
       const _urlPid = new URLSearchParams(window.location.search).get('property_id') || '';
       const _propId = _urlPid || _pid;
+      window._contactsPropId = _propId;
       const r = await fetch('/api/portal/me' + (_propId ? '?property_id=' + encodeURIComponent(_propId) : ''), { credentials: 'same-origin' });
       if (r.status === 401) {
         window.location.href = '/portal-login.html';
@@ -273,7 +274,7 @@ function dayName(d) {
   }
 
   if (!slug) {
-    slug = 'waterview';
+    slug = 'drama-creek';
     isDemo = true;
   }
 
@@ -285,7 +286,9 @@ function dayName(d) {
   }
 
   try {
-    const r = await fetch(`/api/community-contacts/by-slug/${encodeURIComponent(slug)}`);
+    // Signed in: the server picks the community from the session. Demo: only a
+    // demo community's slug is honoured.
+    const r = await fetch(isDemo ? `/api/portal/contacts?community=${encodeURIComponent(slug)}` : '/api/portal/contacts' + (window._contactsPropId ? '?property_id=' + encodeURIComponent(window._contactsPropId) : ''), { credentials: 'same-origin' });
     if (!r.ok) { let _m=`HTTP ${r.status}`; try { const j=await r.json(); if(j?.error) _m=`${j.error}${j.message?' — '+j.message:''}`; } catch(_){} throw new Error(_m); }
     const data = await r.json();
     render(data);
