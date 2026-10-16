@@ -760,7 +760,7 @@
       {
         "id": "R-22",
         "section": "insurance",
-        "requirement": "Current certificate of insurance with the bid, confirmation the Association can be named additional insured, and limits carried stated; Texas Private Security Bureau license provided.",
+        "requirement": "Current certificate of insurance, plus confirmation that the Association can be named as additional insured before award; limits carried stated; Texas Private Security Bureau license provided.",
         "basis": "board"
       },
       {
@@ -852,11 +852,8 @@
       {
         "id": "B-03",
         "audience": "board",
-        "text": "Recommended bidder approach: Issue the finalized RFP to iTech as the preferred vendor and use it to obtain a complete, binding, comparable response addressing scope, pricing, cloud storage/access, insurance, warranties, contract terms, change orders and schedule. Do not delay the project to recruit additional bidders at this stage. Envera and Netwatch remain available as prior market references. If iTech's final response is materially different from its current proposal, cannot satisfy the requirements, or the Board requests a broader competitive process, management can reopen the RFP to additional vendors.",
-        "source": "Management",
-        "status": "decided",
-        "decided_by": "Ed Gojara",
-        "decided_on": "2026-10-16"
+        "text": "Management recommendation: obtain a complete binding proposal from iTech first; broaden only if the Board requests it or on the defined triggers (iTech's final response is materially different from its current proposal, or cannot satisfy the requirements). Pending Board confirmation of scope and distribution. Envera and Netwatch remain prior market references.",
+        "source": "Management recommendation"
       },
       {
         "id": "B-04",
@@ -1002,7 +999,8 @@
           "date": "2026-12-18",
           "note": "Target"
         }
-      ]
+      ],
+      "status_note": "Proposed dates. Final dates are set in the issue version of this RFP."
     },
     "submission": {
       "instructions": "Email the complete response (pricing form, compliance matrix, camera schedule and contract package) as PDF files to amandaalbright@bedrocktx.com by the response deadline, with the subject line: Canyon Gate Security Camera RFP - Bid Submission - [Company Name]. An earlier submission is welcome. Late responses may not be considered.",
@@ -1010,8 +1008,9 @@
     }
   },
   "decision_state_notes": {
-    "management_action": "Issue RFP to iTech for a binding response; reopen to additional vendors only if iTech's response is materially different from its current proposal, cannot satisfy the requirements, or the Board requests it."
+    "management_action": "Recommended: obtain a complete binding proposal from iTech first, after Board approval of scope and distribution; reopen to additional vendors only if iTech's response is materially different from its current proposal, cannot satisfy the requirements, or the Board requests it."
   },
   "purpose": "diligence",
-  "purpose_label": "Vendor diligence / scope normalization with the preferred vendor (iTech); not a competitive rebid at this stage."
+  "purpose_label": "Vendor diligence / scope normalization with the preferred vendor (iTech); not a competitive rebid at this stage.",
+  "review_note": "Draft for Board review. The Board has not yet instructed issuance to any vendor."
 }

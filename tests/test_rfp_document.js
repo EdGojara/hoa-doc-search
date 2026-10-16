@@ -100,7 +100,9 @@ check('the Board copy carries the exact decision-state wording and Board items, 
   assert.ok(/Coverage: four locations only.*(Ed Gojara, Friday, October 16, 2026)/.test(html), 'decided B-01 rendered with attribution');
   assert.ok(/Confirm the final required insurance limits/.test(html), 'open B-04 still listed');
   assert.ok(html.includes('reopen to additional vendors only if'), 'management action note');
-  assert.ok(/Envera and Netwatch remain available as prior market references/.test(html), 'B-03 decision text');
+  assert.ok(!/Bidder list:|Recommended bidder approach/.test(html), 'B-03 no longer shown as decided');
+  assert.ok(/Management recommendation: obtain a complete binding proposal from iTech first/.test(html) && /Envera and Netwatch remain prior market references/.test(html), 'B-03 recommendation text');
+  assert.ok(/The Board has not yet instructed issuance to any vendor/.test(html), 'review status');
   assert.ok(/Purpose:.*not a competitive rebid at this stage/.test(html), 'purpose line');
   assert.ok(!/rebid|Purpose:/.test(renderRfpHtml(build(), { audience: 'vendor' })), 'purpose never in the vendor copy');
   assert.strictEqual(build().purpose, 'diligence');
