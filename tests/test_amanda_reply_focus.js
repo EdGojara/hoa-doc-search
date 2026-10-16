@@ -335,6 +335,12 @@ function loadDrafter(script) {
     assert.ok(codes('Hugh,\n\nI\'m not building a fresh RFP. I recommend the Board approve iTech.').includes('declines_request'));
     assert.ok(codes('Hugh,\n\nRather than doing the RFP, I recommend approving iTech now.').includes('declines_request'));
   });
+  await t('Kevin criterion: the db46e6e5 ingest paragraph counts as "not ready to sign"; a draft that never says so still fails', () => {
+    const ok = (s) => verifyKevinReply(s).results.find((r) => r.name === 'says the current proposal is not ready to sign').ok;
+    assert.ok(ok('I did not mean, and am not recommending, that Canyon Gate execute the current proposal or release any funds today. A fully executed final binding proposal, confirmed terms and conditions, and a certificate of insurance naming the Association as additional insured are all required before this goes to signature, and none of those are in hand yet.'));
+    assert.ok(ok('The current proposal is not ready for signature.'));
+    assert.ok(!ok('Good morning Kevin,\n\nI agree with the distinction you are making. My recommendation to proceed meant iTech is the preferred direction. Hugh asked me to prepare an RFP, and I am doing that now.'));
+  });
   await t('Kevin criterion recognizes the ways live drafts say "not ready to sign"', () => {
     const ok = (s) => verifyKevinReply(s).results.find((r) => r.name === 'says the current proposal is not ready to sign').ok;
     assert.ok(ok('It meant continuing diligence, not that Canyon Gate should sign the current proposal or release funds today.'));
