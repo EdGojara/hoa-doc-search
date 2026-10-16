@@ -50,6 +50,16 @@ check('a schedule that drops a camera is refused against the stored counts', () 
   assert.ok(!v.ok && v.errors.some((e) => /stored line items say 14/.test(e)), v.errors.join('; '));
 });
 
+check('Hugh\'s "cloud storage/access" stays in the base bid: both are Board-basis requirements and counted in the totals', () => {
+  const d = build();
+  const cloud = d.compliance_matrix.filter((r) => r.section === 'cloud_access_vs_storage');
+  assert.ok(cloud.some((r) => /^Cloud storage .* base bid/.test(r.requirement)) && cloud.some((r) => /^Cloud access included in the base bid/.test(r.requirement)));
+  assert.ok(cloud.every((r) => r.basis === 'board'));
+  assert.ok(d.pricing_form.rules.some((r) => /cloud storage and cloud access/.test(r)));
+  const t = R.computeResponseTotals({ one_time: oneTime(), recurring: [{ label: 'Cloud storage', feature: 'cloud storage, 27 cameras, 30 days', monthly_cents: 30000, required: true, is_monitoring: false, why_not_separate: 'off-site storage is a hosted service', non_monitoring_alternative: 'not monitoring' }] });
+  assert.strictEqual(t.totals.five_year_cents - t.totals.base_installed_cents, 30000 * 60);
+});
+
 check('every one of Ed\'s required sections is present, and a missing one is refused', () => {
   for (const k of R.REQUIRED_SECTIONS.security_cameras) assert.ok(build().sections.some((s) => s.key === k), `missing ${k}`);
   const p = clone(plan); p.document.sections = p.document.sections.filter((s) => s.key !== 'cloud_access_vs_storage');
@@ -161,7 +171,7 @@ const doc = build();
 const fullPackage = Object.fromEntries(R.CONTRACT_PACKAGE.map(([k]) => [k, true]));
 const allComply = doc.compliance_matrix.map((r) => ({ id: r.id, response: 'comply' }));
 const schedule = doc.camera_schedule.map((c) => ({ id: c.id, location: c.location, disposition: c.disposition }));
-const oneTime = (o = {}) => ({ equipment: 2000000, labor: 1200000, cabling_conduit: 300000, network_equipment: 250000, servers_storage: 500000, software_licenses: 150000, freight: 20000, tax: 300000, permits: 0, other_one_time: 0, ...o });
+function oneTime(o = {}) { return { equipment: 2000000, labor: 1200000, cabling_conduit: 300000, network_equipment: 250000, servers_storage: 500000, software_licenses: 150000, freight: 20000, tax: 300000, permits: 0, other_one_time: 0, ...o }; }
 
 check('totals: base = one-time lines incl. tax; first year and five year add only REQUIRED non-monitoring recurring', () => {
   const r = R.computeResponseTotals({ one_time: oneTime(), recurring: [
