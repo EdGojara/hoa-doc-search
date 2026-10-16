@@ -886,6 +886,12 @@ app.get('/app-landing.js', (req, res) => {
   res.setHeader('Cache-Control', 'no-store');
   res.type('application/javascript').send(require('./lib/app/landing_script').landingScript(process.env));
 });
+// Team public addresses for browser pages (Amanda: AMANDA_PUBLIC_EMAIL). Pages load
+// it synchronously so no HTML hard-codes an AI teammate's address.
+app.get('/team-identity.js', (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  res.type('application/javascript').send(require('./lib/email/public_identity').identityScript());
+});
 app.use('/app', (req, res, next) => {
   if (process.env.TRUSTED_APP_DISABLED === '1') return res.redirect('/');
   return next();

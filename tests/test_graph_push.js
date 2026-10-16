@@ -22,7 +22,7 @@ stub('@supabase/supabase-js', { createClient: () => ({ from(t) {
   return q;
 } }) });
 const MAILBOXES = ['info@bedrocktx.com', 'claire@bedrocktx.com', 'emma@bedrocktx.com', 'amandaalbright@bedrocktx.com', 'paige@bedrocktx.com', 'phoebe@bedrocktx.com'];
-stub('../lib/email/graph_send', { getToken: async () => 'token', isConfigured: () => true, AMANDA_MAILBOX: 'amandaalbright@bedrocktx.com', AMANDA_PUBLIC_ADDRESS: 'amanda@bedrocktx.com', TEAM_INGEST_MAILBOXES: MAILBOXES });
+stub('../lib/email/graph_send', { getToken: async () => 'token', isConfigured: () => true, AMANDA_MAILBOX: 'amandaalbright@bedrocktx.com', AMANDA_PUBLIC_EMAIL: 'amanda@bedrocktx.com', TEAM_INGEST_MAILBOXES: MAILBOXES });
 stub('../lib/email/triage', { classifyAndExtract: async () => { calls.classify += 1; return {}; }, resolveEntities: async () => ({}) });
 stub('../lib/email/graph_move', { getInboxId: async () => 'INBOX', fileMessage: async () => { calls.fileMessage += 1; return { moved: true }; } });
 const PAGE = [1, 2, 3].map((i) => ({ id: `g${i}`, internetMessageId: `<m${i}@x>`, parentFolderId: 'INBOX', receivedDateTime: '2026-10-04T19:00:00Z' }));
