@@ -77,7 +77,13 @@ const KEVIN_GOOD = `Kevin,
 I agree with the distinction you're making. My recommendation to proceed was intended to mean move forward with iTech as the preferred direction and complete the remaining diligence, not sign the current proposal or authorize work. I agree that the final binding proposal, terms and conditions, insurance and the other open items need to be resolved before anything is executed.
 
 Hugh has asked me to scrub the numbers and prepare an RFP quickly, so I'm doing that now and will bring the Board back a final comparison and approval package before anything is signed.`;
-const HUGH_GOOD = FX.live_hugh_dry_run_passing;
+const HUGH_GOOD = `Hugh,
+
+I am scrubbing the iTech numbers and building the RFP now, in trustEd on the Security Camera System 2026 record, with iTech's 2026 scope as the vendor-neutral baseline.
+
+The governing scope is the Board's direction: purchase and own the hardware, professional installation, and cloud storage/access, with no monitoring. Any maintenance plan is priced separately as optional, never in the base.
+
+I'll propose a bidder list for the Board to confirm, and the draft RFP comes back to you and the Board for review before anything goes to vendors.`;
 const kevinEmail = () => { const e = { ...FX.kevin }; delete e.id; return e; };
 const hughEmail = () => { const e = { ...FX.hugh_create_rfp }; delete e.id; return e; };
 
@@ -131,6 +137,12 @@ async function t(name, fn) {
     assert.ok(/greet them as Kevin/.test(p), 'greets Kevin');
     assert.ok(/subject to several final scope and contract confirmations/.test(p) || /QUOTED BELOW THEIR MESSAGE/.test(p), 'the recommendation he is answering');
     assert.ok(/ANSWER THE LATEST SENDER FIRST/.test(CALLS[0].system));
+    // Parity with the ingest drafter (the cause of the two live re-draft failures):
+    assert.ok(/WHO YOU ARE WRITING TO: Kevin, the Treasurer, a member of the Canyon Gate at Cinco Ranch Board/.test(CALLS[0].system), 'Board framing');
+    assert.ok(/DECISION-READY MANAGER/.test(CALLS[0].system), 'decision-ready rule');
+    assert.ok(/BOARD DECISION FACTS/.test(p), 'Board facts');
+    assert.ok(!/Writer \/ contact: Treasurer HOA/.test(p), 'no role label as the contact');
+    assert.ok(/WRITE THE REPLY NOW to Kevin[\s\S]*They questioned your word "proceed"/.test(p.slice(-1500)), 'closing instruction after all the context');
     assert.strictEqual(CALLS.length, 2, 'one corrective retry');
     assert.deepStrictEqual(d.focus_issues, []);
     assert.ok(verifyKevinReply(d.body).ok);

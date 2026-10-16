@@ -42,7 +42,7 @@ I'm scrubbing the iTech numbers and building the RFP now, in trustEd on the Secu
 
 The governing scope is the Board's direction: purchase and own the hardware, professional installation, and cloud storage/access, with no monitoring. Bidders will price any maintenance plan separately as optional, never in the base. iTech's figures normalize to $44,619.75 plus 7.25% tax, about $47,854.69, with the open items (not-to-exceed price after the site survey, retention, warranty, insurance certificate) written in as bid requirements.
 
-I'll bring the draft RFP back to you and the Board for review before anything goes to vendors.`;
+I'll propose a bidder list for the Board to confirm, and I'll bring the draft RFP back to you and the Board for review before anything goes to vendors.`;
 
 let passed = 0; let failed = 0;
 async function t(name, fn) {
@@ -304,10 +304,42 @@ function loadDrafter(script) {
     assert.ok(!v.results.find((r) => r.name === 'states she is creating the RFP now').ok);
     assert.ok(!v.results.find((r) => r.name === 'does not refuse or replace the requested RFP').ok);
   });
-  await t('Hugh: a real passing live draft (inline "Hugh, I have scrubbed ...") raises no false positive', () => {
+  await t('Hugh: an earlier live draft that committed to vendors ("I\'ll invite a short list ... iTech included") now fails, and only on the bidder rule', () => {
+    // Ed's review of #216: choosing bidders is the Board's decision (RFP item B-03).
     const r = focus.checkReplyFocus(FX.live_hugh_dry_run_passing, { latestText: hughLatest, senderFirstName: 'Hugh', constraints: hughConstraints });
-    assert.ok(r.ok, JSON.stringify(r.issues));
-    assert.ok(verifyHughReply(FX.live_hugh_dry_run_passing).ok);
+    assert.deepStrictEqual([...new Set(r.issues.map((i) => i.code))].sort(), ['bidder_list_missing', 'commits_bidders']);
+    const failed = verifyHughReply(FX.live_hugh_dry_run_passing).results.filter((x) => !x.ok).map((x) => x.name);
+    assert.ok(failed.length && failed.every((n) => /bidder/.test(n)), failed.join('; '));
+  });
+  await t('Hugh: the exact sentence Ed asked for satisfies the bidder rule; naming vendors to invite does not', () => {
+    const base = 'Hugh,\n\nI am scrubbing the numbers and building the RFP now, purchase and installation with cloud storage/access and no monitoring. ';
+    const tail = ' The draft comes back to you and the Board for review before anything goes to vendors.';
+    const good = focus.checkReplyFocus(base + "I'll propose a bidder list for the Board to confirm." + tail, { latestText: hughLatest, senderFirstName: 'Hugh', constraints: hughConstraints });
+    assert.ok(!good.issues.some((i) => /bidder/.test(i.code)), JSON.stringify(good.issues));
+    const bad = focus.checkReplyFocus(base + 'I will invite iTech and Envera to rebid on this normalized scope.' + tail, { latestText: hughLatest, senderFirstName: 'Hugh', constraints: hughConstraints });
+    assert.ok(bad.issues.some((i) => i.code === 'commits_bidders') && bad.issues.some((i) => i.code === 'bidder_list_missing'));
+  });
+  await t('closing instruction (all paths): restates the point after the context, names the questioned word, Hugh\'s request', async () => {
+    const ctx = await focus.gatherReplyContext(STORE(), kevinAtIngest(), { communityId: FX.kevin.community_id });
+    assert.strictEqual(ctx.questioned, 'proceed');
+    assert.ok(/WRITE THE REPLY NOW to Kevin/.test(ctx.closing));
+    assert.ok(/They questioned your word "proceed"/.test(ctx.closing));
+    assert.ok(/create an RFP/.test(ctx.closing));
+  });
+  await t('precision: "rather than slowing things down" is not a refusal; "I\'m starting the RFP document now" is started; real refusals still fire', () => {
+    const codes = (d) => focus.checkReplyFocus(d, { latestText: hughLatest, senderFirstName: 'Hugh' }).issues.map((i) => i.code);
+    const live = 'Hugh,\n\nI\'m starting the RFP document now in the Security Camera System 2026 record. Once it\'s drafted I\'ll propose a bidder list for the Board to confirm before anything goes out. I\'m treating the December timeline as a constraint in the RFP itself, rather than slowing things down with a fresh full bidding cycle.';
+    const c = codes(live);
+    assert.ok(!c.includes('declines_request') && !c.includes('not_started'), c.join(','));
+    assert.ok(codes('Hugh,\n\nI\'m not building a fresh RFP. I recommend the Board approve iTech.').includes('declines_request'));
+    assert.ok(codes('Hugh,\n\nRather than doing the RFP, I recommend approving iTech now.').includes('declines_request'));
+  });
+  await t('Kevin criterion recognizes the ways live drafts say "not ready to sign"', () => {
+    const ok = (s) => verifyKevinReply(s).results.find((r) => r.name === 'says the current proposal is not ready to sign').ok;
+    assert.ok(ok('It meant continuing diligence, not that Canyon Gate should sign the current proposal or release funds today.'));
+    assert.ok(ok('I did not mean signing the contract or releasing funds today.'));
+    assert.ok(ok('Those are conditions I intend to have in hand before any signature or payment goes out.'));
+    assert.ok(!ok('Thank you for getting Camera Proposals set up.'));
   });
   await t('re-ask detection needs a decision about a settled topic, not just a shared word', () => {
     const fine = focus.checkReplyFocus('Hugh,\n\nI am preparing the RFP now. When would you like installation to start, given December availability? It comes back to you for review before anything goes to vendors.', { latestText: hughLatest, senderFirstName: 'Hugh', constraints: hughConstraints });
