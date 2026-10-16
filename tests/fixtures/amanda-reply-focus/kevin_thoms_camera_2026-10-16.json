@@ -1,0 +1,362 @@
+{
+ "_source": "Production email_messages + board_members, read-only 2026-10-16. Phone numbers redacted; graph ids replaced.",
+ "kevin": {
+  "id": "fa4743bd-eb8f-41b0-b90e-f9f527e4d7aa",
+  "mailbox": "amandaalbright@bedrocktx.com",
+  "graph_id": "graph-fa4743bd",
+  "conversation_id": "AAQkADAyNzMzNjhjLWNjMDctNGEzOS1iYjc0LTY3NDg0NjRkNmZiYgAQAOmd65uSS0MAvJVQXElLD04=",
+  "direction": "inbound",
+  "sender_email": "treasurer@canyongateatcincoranch.com",
+  "sender_name": "Treasurer HOA",
+  "recipients": [
+   "amandaalbright@bedrocktx.com",
+   "president@canyongateatcincoranch.com"
+  ],
+  "subject": "Re: Camera Proposals",
+  "body_preview": "God morning Amanda,\r\nThank you for your review.  I agree we should move forward with iTech once steps are met.  However, I disagree with the recommendation to proceed immediately without a fully executed final binding proposal, terms and conditions,  and ",
+  "body_full": "God morning Amanda,\nThank you for your review. I agree we should move forward with iTech once steps are met. However, I disagree with the recommendation to proceed immediately without a fully executed final binding proposal, terms and conditions, and an insurance certificate naming the HOA as an additional insured.\nThanks, KT.\n\n\nKevin Thoms\ntreasurer@canyongateatcincoranch.com\n000.000.0000\n\n\n\n\n\nFrom: Amanda Albright <amandaalbright@bedrocktx.com>\nSent: Friday, October 16, 2026 3:18 AM\nTo: President HOA <president@canyongateatcincoranch.com>\nCc: Treasurer HOA <treasurer@canyongateatcincoranch.com>; Vice President HOA <vicepresident@canyongateatcincoranch.com>; Director HOA <director@canyongateatcincoranch.com>; Secretary HOA <secretary@canyongateatcincoranch.com>; Ed Gojara <egojara@bedrocktx.com>\nSubject: RE: Camera Proposals\n\n\nGood morning Hugh and Board,\nI completed my review of the security camera proposals against the direction you provided: Canyon Gate wants to purchase and own the equipment, have it professionally installed, maintain reliable access to live and recorded video, and avoid paying for active monitoring that the Association does not want.\nBased on that review, I recommend moving forward with iTech’s updated 2026 proposal as the preferred solution, subject to several final scope and contract confirmations before the Association signs or releases funds.\nI do not recommend beginning another full bidding cycle at this point. With multiple cameras already down, continuing concerns about camera angles, the recent gate incident, and installation availability already extending into December, there is a cost and risk associated with delay as well.\nWHY I RECOMMEND ITECH\n---------------------\nThe current iTech proposal is $44,619.75 plus tax, with 50% due upon acceptance and 50% upon completion.\nIts approach is practical. Rather than replacing the entire existing system, iTech proposes to reuse 10 clubhouse cameras and 3 guard-house cameras that remain usable, replace deficient cameras, add new coverage, replace the recording infrastructure with two 12TB Digital Watchdog servers, and add the necessary switches, backup power and network connectivity.\nIt also addresses some of the Board’s current concerns by adjusting existing camera views and adding or replacing coverage at the clubhouse, guard house, basketball pavilion and rear entrance.\nThat is much closer to the system the Board has described wanting than the Envera alternative.\nWHY I AM NOT RECOMMENDING ENVERA AS CURRENTLY PROPOSED\n------------------------------------------------------\nEnvera’s proposal is $60,087.53 upfront plus $2,453.54 per month and requires a minimum 60-month service commitment.\nThat equates to approximately $207,300 before tax over five years.\nThe package also includes recurring camera, licensing, maintenance and active-monitoring services. That may be appropriate for a community looking for a fully managed monitoring service, but it does not align well with the Board’s stated objective of purchasing the system without active monitoring.\nThe Envera quote also expired on August 31, 2026, so it would need to be refreshed before it could be accepted.\nIf the Board wants Envera maintained as a fallback, we can obtain revised pricing for a purchase/access-only configuration, but I would not delay the iTech diligence waiting on that unless the Board specifically wants Envera reconsidered.\nOTHER PROPOSALS\n---------------\nI am treating the earlier $38,211.02 iTech proposal as historical reference rather than a third current alternative.\nThe updated 2026 proposal is more detailed and reflects a revised scope, so the difference between the two prices should not be viewed simply as the same system becoming approximately $6,400 more expensive.\nThe Netwatch materials are also useful because they provide another view of the physical coverage requirements and specifically contemplate 30 days of video retention.\nHowever, the Netwatch design includes monitored cameras and after-hours monitoring, which does not match the Board’s current direction. The materials I reviewed also do not contain a complete priced proposal that can be compared directly with iTech and Envera.\nI would use Netwatch as useful design and coverage information, but I would not delay the project treating it as a third executable bid.\nIMPORTANT RISKS AND OPEN ITEMS WITH ITECH\n-----------------------------------------\nAlthough iTech is my preferred vendor, I would not recommend signing the proposal exactly as presented today.\n1. PRICE / CHANGE-ORDER EXPOSURE\nThe proposal is described as a budgetary bid. iTech also intends to conduct a pre-installation site survey and acknowledges existing faults in the current system that may require troubleshooting and potentially result in change orders.\nFor a project of this size, I do not want Canyon Gate exposed to an open-ended cost.\nI recommend requiring written Association approval before any additional work or change order is performed, and preferably obtaining either a final confirmed price following the survey or an agreed not-to-exceed amount.\n2. CLOUD ACCESS VS. CLOUD STORAGE\nThe proposal provides two 12TB local recording servers. iTech’s optional $440 per month maintenance and system-health plan includes video sharing and secure web/cloud access.\nWhat is not clear is:\n- Whether remote access is available without the $440 plan\n- Whether recorded video is actually stored in the cloud or the cloud simply provides remote access to locally stored footage\n- Whether cloud storage/access can be purchased without monitoring\n- What recurring cost, if any, applies to the configuration Canyon Gate actually wants\nCloud access and cloud storage are not the same thing, and I want that distinction resolved before the Board commits.\n3. RECORDING RETENTION\nThe proposal does not clearly state how many days of recorded footage the proposed system will retain.\nThe Board should know whether the expected retention is 15 days, 30 days, 60 days, or another period under normal recording settings.\nI recommend requiring a minimum expected retention period in writing.\n4. WARRANTY COVERAGE\nThe optional maintenance plan discusses replacement and loaner equipment for warranty issues, but I want the underlying equipment and workmanship warranties documented separately.\nThe Board should know exactly what protection exists if Canyon Gate does not purchase the $440 monthly plan.\n5. EXISTING INFRASTRUCTURE\nThe proposal assumes adequate electrical power is available and that existing surveillance wiring can be used as anticipated.\nIf those assumptions prove incorrect, additional work and cost may be necessary.\nThose potential issues should be identified during the site survey rather than after the project is underway.\n6. OPTIONAL MAINTENANCE / MONITORING PLAN\niTech offers an optional $440 per month maintenance and system-health plan.\nBased on the Board’s direction, I am not recommending that Canyon Gate add this service unless iTech confirms that some portion of it is necessary to obtain the remote access or cloud functionality the Board wants.\nThe first question I would resolve with iTech is whether Canyon Gate can purchase the equipment and installation, retain remote access to live and recorded video, and obtain the desired storage/retention without enrolling in an ongoing monitoring program.\nIf those functions can be provided separately, I would recommend excluding the $440 monthly plan.\nCONTRACT AND LIABILITY ITEMS TO RESOLVE\n---------------------------------------\nBefore execution, I recommend obtaining or confirming the following:\n- Final scope and camera-location plan following the site survey\n- Final equipment list and model numbers\n- Written confirmation that the configuration contains no active monitoring unless separately approved by the Board\n- Remote-access and cloud-storage terms and pricing\n- Expected video-retention period\n- Equipment and workmanship warranties\n- Current installation schedule and confirmation of the December availability\n- Written change-order approval procedures\n- Responsibility for unexpected wiring, electrical or network deficiencies\n- Certificate of insurance and vendor compliance documentation\n- Ownership of the equipment, recordings, credentials and system configuration\n- Canyon Gate’s right to access and export its recordings if the vendor relationship ends\n- Data-security and privacy obligations\n- Indemnification and limitation-of-liability provisions\n- Acceptance and system testing before final payment\n- Any termination, renewal or cancellation provisions applicable to recurring services\nI do not view these as reasons to stop the project. I view them as normal protections that should be addressed before Canyon Gate signs a material technology and security contract.\nFINANCIAL CONSIDERATIONS\n------------------------\nI am also mindful that this decision does not occur in isolation.\nThe Association has recently approved an assessment increase, and the Board is balancing a number of community needs and capital priorities.\nWe need to address legitimate security and infrastructure needs while also being fiscally responsible and demonstrating to homeowners that Association funds are being spent carefully.\nThat is another reason I favor the iTech direction.\nThe current iTech equipment and installation proposal is $44,619.75 plus tax.\nBy comparison, Envera’s current proposal is approximately $207,300 before tax over its required five-year term.\nBecause the Board has specifically stated that it does not want monitoring, I am not including iTech’s optional $440 monthly monitoring/maintenance plan as part of my recommended configuration unless iTech establishes that some portion of that service is required for the remote access or cloud functionality the Board wants.\nMy objective would be to preserve the functionality Canyon Gate actually needs while avoiding recurring costs for services the Board has said it does not want.\nTrustEd’s current accounting information is still being reconciled as part of our transition, so I am treating current cash and reserve figures as provisional rather than representing a particular balance as definitively available for this project.\nThe final funding source should be verified before the contract is executed.\nMY RECOMMENDATION\n-----------------\nPreferred vendor: iTech\nProject recommendation: Proceed\nAdditional full bidding round: Not recommended at this time\nContract readiness: Conditional, not yet ready to sign\nUrgency: High\nI recommend that we move forward with iTech now as the preferred vendor, resolve the remaining items promptly, and then bring the Board the final contract and approval package.\nIf the Board is comfortable with this direction, I can communicate directly with iTech to resolve the remaining scope, cloud-access, storage, warranty, change-order, insurance and contract questions.\nI would limit that communication to non-binding diligence and clarification only. I would not accept the proposal, authorize work, approve a change order, or otherwise commit the Association without the appropriate Board approval.\nOnce those items are resolved, I can update the analysis and bring the Board back a final recommendation and approval package.\nAssuming iTech confirms that Canyon Gate can obtain the requested equipment, installation, remote access and appropriate video retention without an unwanted monitoring commitment, confirms the installation schedule, and addresses the remaining contract protections without materially changing the economics, I would recommend final approval rather than delaying the project for another bidding cycle.\nThat gives us a path to address the security problem quickly while still protecting the Association financially and contractually.\nAmanda Albright\nSenior Community Manager\nBedrock Association Management — Canyon Gate at Cinco Ranch\namanda@bedrocktx.com · (832) 588-2485\n\n\nPowered by Bedrock Intelligence. A member of our team is always available if you need assistance.\n\nFrom: President HOA <president@canyongateatcincoranch.com>\nSent: Friday, 16 October 2026 00:50:24\nTo: Treasurer HOA <treasurer@canyongateatcincoranch.com>; Vice President HOA <vicepresident@canyongateatcincoranch.com>; Director HOA <director@canyongateatcincoranch.com>; Secretary HOA <secretary@canyongateatcincoranch.com>\nCc: Ed Gojara <egojara@bedrocktx.com>; Amanda Albright <amandaalbright@bedrocktx.com>\nSubject: Camera Proposals\n\n\nBoard, attached are the recent proposals we have received for upgrading our security camera system. We had another instance of a resident hitting the gate tonight and got pretty aggressive with the guard on duty. Camera angles are becoming an issue as we have many down. We need to act quickly on this. Even if we said yes today, they wouldn’t be able to install us until December.\n\nAmanda, would you please review these proposals and give us an assessment of them. Some of them may have different options, but we are only interested in purchasing the hardware, having it installed, and cloud storage/access. We are not interested in any monitoring.\n\nThank you!\n\nHugh Durlam, President\n000.000.0000\nPresident@canyongateatcincoranch.com\nCanyon Gate at Cinco Ranch",
+  "received_at": "2026-10-16T15:36:37+00:00",
+  "community_id": "a0000000-0000-4000-8000-000000000003"
+ },
+ "amanda_recommendation": {
+  "id": "78adf16a-5b71-4c31-92fd-5cc720d24ccf",
+  "mailbox": "amandaalbright@bedrocktx.com",
+  "graph_id": null,
+  "conversation_id": "AAQkADAyNzMzNjhjLWNjMDctNGEzOS1iYjc0LTY3NDg0NjRkNmZiYgAQAOmd65uSS0MAvJVQXElLD04=",
+  "direction": "outbound",
+  "sender_email": "amandaalbright@bedrocktx.com",
+  "sender_name": "Amanda Albright (Bedrock AI)",
+  "recipients": [
+   "president@canyongateatcincoranch.com",
+   "treasurer@canyongateatcincoranch.com",
+   "vicepresident@canyongateatcincoranch.com",
+   "director@canyongateatcincoranch.com",
+   "secretary@canyongateatcincoranch.com",
+   "egojara@bedrocktx.com"
+  ],
+  "subject": "Re: Camera Proposals",
+  "body_preview": "Good morning Hugh and Board,\n\nI completed my review of the security camera proposals against the direction you provided: Canyon Gate wants to purchase and own the equipment, have it professionally installed, maintain reliable access to live and recorded video, and avoid paying for active monitoring that the Association does not want.\n\nBased on that review, I recommend moving forward with iTech’s updated 2026 proposal as the preferred solution, subject to several final scope and contract confirmations before the Association signs or releases funds.\n\nI do not recommend beginning another full bidding cycle at this point. With multiple cameras already down, continuing concerns about camera angles, the recent gate incident, and installation availability already extending into December, there is a cost and risk associated with delay as well.\n\n\nWHY I RECOMMEND ITECH\n---------------------\n\nThe current iTech proposal is $44,619.75 plus tax, with 50% due upon acceptance and 50% upon completion.\n\nIts approach is practical. Rather than replacing the entire existing system, iTech proposes to reuse 10 clubhouse cameras and 3 guard-house cameras that remain usable, replace deficient cameras, add new coverage, replace the recording infrastructure with two 12TB Digital Watchdog servers, and add the necessary switches, backup power and network connectivity.\n\nIt also addresses some of the Board’s current concerns by adjusting existing camera views and adding or replacing coverage at the clubhouse, guard house, basketball pavilion and rear entrance.\n\nThat is much closer to the system the Board has described wanting than the Envera alternative.\n\n\nWHY I AM NOT RECOMMENDING ENVERA AS CURRENTLY PROPOSED\n------------------------------------------------------\n\nEnvera’s proposal is $60,087.53 upfront plus $2,453.54 per month and requires a minimum 60-month service commitment.\n\nThat equates to approximately $207,300 before tax over five years.\n\nThe package also includes recurring camera, licen",
+  "body_full": "Good morning Hugh and Board,\n\nI completed my review of the security camera proposals against the direction you provided: Canyon Gate wants to purchase and own the equipment, have it professionally installed, maintain reliable access to live and recorded video, and avoid paying for active monitoring that the Association does not want.\n\nBased on that review, I recommend moving forward with iTech’s updated 2026 proposal as the preferred solution, subject to several final scope and contract confirmations before the Association signs or releases funds.\n\nI do not recommend beginning another full bidding cycle at this point. With multiple cameras already down, continuing concerns about camera angles, the recent gate incident, and installation availability already extending into December, there is a cost and risk associated with delay as well.\n\n\nWHY I RECOMMEND ITECH\n---------------------\n\nThe current iTech proposal is $44,619.75 plus tax, with 50% due upon acceptance and 50% upon completion.\n\nIts approach is practical. Rather than replacing the entire existing system, iTech proposes to reuse 10 clubhouse cameras and 3 guard-house cameras that remain usable, replace deficient cameras, add new coverage, replace the recording infrastructure with two 12TB Digital Watchdog servers, and add the necessary switches, backup power and network connectivity.\n\nIt also addresses some of the Board’s current concerns by adjusting existing camera views and adding or replacing coverage at the clubhouse, guard house, basketball pavilion and rear entrance.\n\nThat is much closer to the system the Board has described wanting than the Envera alternative.\n\n\nWHY I AM NOT RECOMMENDING ENVERA AS CURRENTLY PROPOSED\n------------------------------------------------------\n\nEnvera’s proposal is $60,087.53 upfront plus $2,453.54 per month and requires a minimum 60-month service commitment.\n\nThat equates to approximately $207,300 before tax over five years.\n\nThe package also includes recurring camera, licensing, maintenance and active-monitoring services. That may be appropriate for a community looking for a fully managed monitoring service, but it does not align well with the Board’s stated objective of purchasing the system without active monitoring.\n\nThe Envera quote also expired on August 31, 2026, so it would need to be refreshed before it could be accepted.\n\nIf the Board wants Envera maintained as a fallback, we can obtain revised pricing for a purchase/access-only configuration, but I would not delay the iTech diligence waiting on that unless the Board specifically wants Envera reconsidered.\n\n\nOTHER PROPOSALS\n---------------\n\nI am treating the earlier $38,211.02 iTech proposal as historical reference rather than a third current alternative.\n\nThe updated 2026 proposal is more detailed and reflects a revised scope, so the difference between the two prices should not be viewed simply as the same system becoming approximately $6,400 more expensive.\n\nThe Netwatch materials are also useful because they provide another view of the physical coverage requirements and specifically contemplate 30 days of video retention.\n\nHowever, the Netwatch design includes monitored cameras and after-hours monitoring, which does not match the Board’s current direction. The materials I reviewed also do not contain a complete priced proposal that can be compared directly with iTech and Envera.\n\nI would use Netwatch as useful design and coverage information, but I would not delay the project treating it as a third executable bid.\n\n\nIMPORTANT RISKS AND OPEN ITEMS WITH ITECH\n-----------------------------------------\n\nAlthough iTech is my preferred vendor, I would not recommend signing the proposal exactly as presented today.\n\n1. PRICE / CHANGE-ORDER EXPOSURE\n\nThe proposal is described as a budgetary bid. iTech also intends to conduct a pre-installation site survey and acknowledges existing faults in the current system that may require troubleshooting and potentially result in change orders.\n\nFor a project of this size, I do not want Canyon Gate exposed to an open-ended cost.\n\nI recommend requiring written Association approval before any additional work or change order is performed, and preferably obtaining either a final confirmed price following the survey or an agreed not-to-exceed amount.\n\n\n2. CLOUD ACCESS VS. CLOUD STORAGE\n\nThe proposal provides two 12TB local recording servers. iTech’s optional $440 per month maintenance and system-health plan includes video sharing and secure web/cloud access.\n\nWhat is not clear is:\n\n- Whether remote access is available without the $440 plan\n- Whether recorded video is actually stored in the cloud or the cloud simply provides remote access to locally stored footage\n- Whether cloud storage/access can be purchased without monitoring\n- What recurring cost, if any, applies to the configuration Canyon Gate actually wants\n\nCloud access and cloud storage are not the same thing, and I want that distinction resolved before the Board commits.\n\n\n3. RECORDING RETENTION\n\nThe proposal does not clearly state how many days of recorded footage the proposed system will retain.\n\nThe Board should know whether the expected retention is 15 days, 30 days, 60 days, or another period under normal recording settings.\n\nI recommend requiring a minimum expected retention period in writing.\n\n\n4. WARRANTY COVERAGE\n\nThe optional maintenance plan discusses replacement and loaner equipment for warranty issues, but I want the underlying equipment and workmanship warranties documented separately.\n\nThe Board should know exactly what protection exists if Canyon Gate does not purchase the $440 monthly plan.\n\n\n5. EXISTING INFRASTRUCTURE\n\nThe proposal assumes adequate electrical power is available and that existing surveillance wiring can be used as anticipated.\n\nIf those assumptions prove incorrect, additional work and cost may be necessary.\n\nThose potential issues should be identified during the site survey rather than after the project is underway.\n\n\n6. OPTIONAL MAINTENANCE / MONITORING PLAN\n\niTech offers an optional $440 per month maintenance and system-health plan.\n\nBased on the Board’s direction, I am not recommending that Canyon Gate add this service unless iTech confirms that some portion of it is necessary to obtain the remote access or cloud functionality the Board wants.\n\nThe first question I would resolve with iTech is whether Canyon Gate can purchase the equipment and installation, retain remote access to live and recorded video, and obtain the desired storage/retention without enrolling in an ongoing monitoring program.\n\nIf those functions can be provided separately, I would recommend excluding the $440 monthly plan.\n\n\nCONTRACT AND LIABILITY ITEMS TO RESOLVE\n---------------------------------------\n\nBefore execution, I recommend obtaining or confirming the following:\n\n- Final scope and camera-location plan following the site survey\n- Final equipment list and model numbers\n- Written confirmation that the configuration contains no active monitoring unless separately approved by the Board\n- Remote-access and cloud-storage terms and pricing\n- Expected video-retention period\n- Equipment and workmanship warranties\n- Current installation schedule and confirmation of the December availability\n- Written change-order approval procedures\n- Responsibility for unexpected wiring, electrical or network deficiencies\n- Certificate of insurance and vendor compliance documentation\n- Ownership of the equipment, recordings, credentials and system configuration\n- Canyon Gate’s right to access and export its recordings if the vendor relationship ends\n- Data-security and privacy obligations\n- Indemnification and limitation-of-liability provisions\n- Acceptance and system testing before final payment\n- Any termination, renewal or cancellation provisions applicable to recurring services\n\nI do not view these as reasons to stop the project. I view them as normal protections that should be addressed before Canyon Gate signs a material technology and security contract.\n\n\nFINANCIAL CONSIDERATIONS\n------------------------\n\nI am also mindful that this decision does not occur in isolation.\n\nThe Association has recently approved an assessment increase, and the Board is balancing a number of community needs and capital priorities.\n\nWe need to address legitimate security and infrastructure needs while also being fiscally responsible and demonstrating to homeowners that Association funds are being spent carefully.\n\nThat is another reason I favor the iTech direction.\n\nThe current iTech equipment and installation proposal is $44,619.75 plus tax.\n\nBy comparison, Envera’s current proposal is approximately $207,300 before tax over its required five-year term.\n\nBecause the Board has specifically stated that it does not want monitoring, I am not including iTech’s optional $440 monthly monitoring/maintenance plan as part of my recommended configuration unless iTech establishes that some portion of that service is required for the remote access or cloud functionality the Board wants.\n\nMy objective would be to preserve the functionality Canyon Gate actually needs while avoiding recurring costs for services the Board has said it does not want.\n\nTrustEd’s current accounting information is still being reconciled as part of our transition, so I am treating current cash and reserve figures as provisional rather than representing a particular balance as definitively available for this project.\n\nThe final funding source should be verified before the contract is executed.\n\n\nMY RECOMMENDATION\n-----------------\n\nPreferred vendor: iTech\n\nProject recommendation: Proceed\n\nAdditional full bidding round: Not recommended at this time\n\nContract readiness: Conditional — not yet ready to sign\n\nUrgency: High\n\n\nI recommend that we move forward with iTech now as the preferred vendor, resolve the remaining items promptly, and then bring the Board the final contract and approval package.\n\nIf the Board is comfortable with this direction, I can communicate directly with iTech to resolve the remaining scope, cloud-access, storage, warranty, change-order, insurance and contract questions.\n\nI would limit that communication to non-binding diligence and clarification only. I would not accept the proposal, authorize work, approve a change order, or otherwise commit the Association without the appropriate Board approval.\n\nOnce those items are resolved, I can update the analysis and bring the Board back a final recommendation and approval package.\n\nAssuming iTech confirms that Canyon Gate can obtain the requested equipment, installation, remote access and appropriate video retention without an unwanted monitoring commitment, confirms the installation schedule, and addresses the remaining contract protections without materially changing the economics, I would recommend final approval rather than delaying the project for another bidding cycle.\n\nThat gives us a path to address the security problem quickly while still protecting the Association financially and contractually.",
+  "received_at": "2026-10-16T08:18:07.54+00:00",
+  "community_id": "a0000000-0000-4000-8000-000000000003"
+ },
+ "hugh_request": {
+  "id": "24d05a84-407d-4dc5-8f76-6d8d8f5d9b90",
+  "mailbox": "amandaalbright@bedrocktx.com",
+  "graph_id": "graph-24d05a84",
+  "conversation_id": "AAQkADAyNzMzNjhjLWNjMDctNGEzOS1iYjc0LTY3NDg0NjRkNmZiYgAQAOmd65uSS0MAvJVQXElLD04=",
+  "direction": "inbound",
+  "sender_email": "president@canyongateatcincoranch.com",
+  "sender_name": "President HOA",
+  "recipients": [
+   "treasurer@canyongateatcincoranch.com",
+   "vicepresident@canyongateatcincoranch.com",
+   "director@canyongateatcincoranch.com",
+   "secretary@canyongateatcincoranch.com"
+  ],
+  "subject": "Camera Proposals",
+  "body_preview": "Board, attached are the recent proposals we have received for upgrading our security camera system. We had another instance of a resident hitting the gate tonight and got pretty aggressive with the guard on duty. Camera angles are becoming an issue as we ",
+  "body_full": "Board, attached are the recent proposals we have received for upgrading our security camera system. We had another instance of a resident hitting the gate tonight and got pretty aggressive with the guard on duty. Camera angles are becoming an issue as we have many down. We need to act quickly on this. Even if we said yes today, they wouldn’t be able to install us until December.\n\nAmanda, would you please review these proposals and give us an assessment of them. Some of them may have different options, but we are only interested in purchasing the hardware, having it installed, and cloud storage/access. We are not interested in any monitoring.\n\nThank you!\n\nHugh Durlam, President\n\n000.000.0000\n\nPresident@canyongateatcincoranch.com\n\nCanyon Gate at Cinco Ranch",
+  "received_at": "2026-10-16T00:51:09+00:00",
+  "community_id": "a0000000-0000-4000-8000-000000000003"
+ },
+ "hugh_create_rfp": {
+  "id": "ad9a18d5-5eb3-40bd-abd4-8b36ac505e1c",
+  "mailbox": "amandaalbright@bedrocktx.com",
+  "graph_id": "graph-ad9a18d5",
+  "conversation_id": "AAQkADAyNzMzNjhjLWNjMDctNGEzOS1iYjc0LTY3NDg0NjRkNmZiYgAQAMs36U7OiOtJqe-5qss6WPk=",
+  "direction": "inbound",
+  "sender_email": "president@canyongateatcincoranch.com",
+  "sender_name": "President HOA",
+  "recipients": [
+   "amandaalbright@bedrocktx.com",
+   "egojara@bedrocktx.com"
+  ],
+  "subject": "Create RFP",
+  "body_preview": "Amanda, can you scrub the numbers on this proposal and create an RFP for me quickly?\r\n\r\nThanks!\r\n\r\n\r\nHugh Durlam, President\r\n\r\n000.000.0000\r\n\r\nPresident@canyongateatcincoranch.com\r\n\r\nCanyon Gate at Cinco Ranch",
+  "body_full": "Amanda, can you scrub the numbers on this proposal and create an RFP for me quickly?\n\n\nThanks!\n\n\nHugh Durlam, President\n000.000.0000\nPresident@canyongateatcincoranch.com\nCanyon Gate at Cinco Ranch",
+  "received_at": "2026-10-16T15:34:15+00:00",
+  "community_id": "a0000000-0000-4000-8000-000000000003"
+ },
+ "board_members": [
+  {
+   "name": "Hugh Durlam",
+   "position": "President",
+   "email": "president@canyongateatcincoranch.com",
+   "is_active": true,
+   "community_id": "a0000000-0000-4000-8000-000000000003"
+  },
+  {
+   "name": "Kevin Toms",
+   "position": "Treasurer",
+   "email": "personal-redacted@example.com",
+   "is_active": true,
+   "community_id": "a0000000-0000-4000-8000-000000000003"
+  },
+  {
+   "name": "Zane Hickman",
+   "position": "Secretary",
+   "email": "secretary@canyongateatcincoranch.com",
+   "is_active": true,
+   "community_id": "a0000000-0000-4000-8000-000000000003"
+  }
+ ],
+ "bad_draft_as_stored": {
+  "body": "Hi Treasurer,\n\nThank you for getting Camera Proposals set up, I really appreciate it. We're all set on our end, and I'll reach out if anything else comes up.",
+  "status": "pending",
+  "careful": false,
+  "persona": "amanda",
+  "subject": "Re: Camera Proposals",
+  "review_hint": "Completion confirmed — a brief thank-you is drafted. Send it to close the loop, or dismiss."
+ },
+ "bad_hugh_rfp_draft_as_stored": {
+  "body": "Good afternoon President Durlam,\n\nI reviewed the iTech Monitoring proposal in full. Here are the numbers as submitted, scrubbed for an RFP comparison:\n\nScope: reuse 10 cameras at the Clubhouse and 3 at the Guard Shack, swap 4 Clubhouse and 2 Guard Shack cameras, add 3 new cameras each at the Basketball Pavilion and Guard Shack, 2 at the Back Entrance Gate, 2 new 12TB servers, UPS backup, PoE switches at Clubhouse and Guard Shack, point to point Nano Stations, conduit runs, and coordination with DW Spectrum for setup.\n\nCost: $44,619.75 material and labor, plus 7.25% sales tax, so roughly $47,854.69 total. Payment terms are 50 percent upon acceptance and 50 percent upon completion, each split evenly between labor and materials. There is also an optional Annual Maintenance Agreement and MyDW Health Monitoring at $440 per month, which auto renews annually unless the association gives 30 days notice to cancel.\n\nA few things worth flagging before this goes out as a baseline for an RFP:\n\n1. The proposal is explicitly a budgetary bid \"subject to change,\" with a pre-installation site survey still to come, and it calls out known faults in the current system that will likely trigger a change order. That means the final number could move once iTech or any other vendor is actually on site.\n\n2. The maintenance agreement's auto-renewal and 30 day cancellation terms should be called out clearly in the RFP so every bidder is quoting apples to apples on service terms, not just equipment.\n\nOn the RFP itself, I can put together a clean comparison document using this proposal's scope of work as the baseline, so other camera and monitoring vendors are bidding against the same project description. That is a straightforward drafting task on my end and I will get started on it.\n\nBefore I send it out to other vendors, I want to confirm with you:\n\n1. Should the RFP go out only to Zane's committee's preferred vendors, or do you want our office to pull a general list of licensed security/surveillance vendors for a wider bid pool.\n2. Do you want the maintenance agreement treated as a required line item in every bid, or optional so vendors can quote with and without it.\n\nOnce I hear back on those two points, I will finalize the RFP and circulate it. Given the project is north of $40,000 and will likely need board approval regardless of which vendor is chosen, I would also recommend this come back to the full board for a vote once bids are in, rather than being decided outside a meeting.\n\nLet me know if you would like me to proceed on that basis.\n\nBest,",
+  "status": "pending",
+  "careful": true,
+  "persona": "amanda",
+  "subject": "Re: Create RFP",
+  "confidence": "high",
+  "disposition": "auto_ok",
+  "review_hint": "Amanda escalation: 2 open violation(s) [courtesy_1] · AR owes $72.52 · aud:board · grounded · auto_ok/high",
+  "disposition_reason": "routine, grounded, in-bounds, verified sender"
+ },
+ "bid_requests": [
+  {
+   "id": "9857e2cc-766b-450a-815a-c574e7572643",
+   "title": "Security Camera System 2026 (Canyon Gate at Cinco Ranch)",
+   "status": "evaluating",
+   "selected_proposal_id": null,
+   "structured_rfp": null,
+   "closed_at": null,
+   "community_id": "a0000000-0000-4000-8000-000000000003",
+   "created_at": "2026-10-16T11:23:19.420293+00:00"
+  }
+ ],
+ "live_hugh_dry_run_passing": "Hugh, I have scrubbed the iTech numbers and I am building the RFP now, scoped to purchase, installation, and cloud storage/access only, with no monitoring included per the Board's direction.\n\nOn the numbers: the proposal totals $44,619.75 plus 7.25% tax ($3,234.93), for a true total of $47,854.68, split 50/50 at acceptance and completion. That figure is hardware and installation only. The $440/month MyDW Health Monitoring and Annual Maintenance line is a separate add-on iTech quoted, not required to accept the base proposal, and it falls outside the Board's \"no monitoring\" instruction, so I am excluding it from the RFP baseline. One item needs a decision later, not now: the agreement as written auto-renews annually without 30 day notice from the client, which I'll flag as a required negotiated term in the RFP rather than something to accept as-is.\n\nI am using this iTech scope and pricing as the benchmark and building the RFP around the same specification (camera count, locations, server/storage, and cloud access) so competing bids are comparing apples to apples. I'll invite a short list of qualified camera vendors who serve this market, iTech included, and set a bid deadline that keeps us on track given the December install reality we already discussed. This does not reverse my October 16 recommendation to move on iTech's proposal; it runs the RFP in parallel per your request so the Board has competitive pricing before any contract decision.\n\nThe draft RFP comes back to you and the Board for review before anything goes out to vendors.",
+ "vendor_proposals": [
+  {
+   "id": "573a733e-344f-4025-9d00-72a80943f020",
+   "bid_request_id": "9857e2cc-766b-450a-815a-c574e7572643",
+   "vendor_name_raw": "iTech Monitoring, Inc.",
+   "total_amount": 44619.75,
+   "proposal_date": "2026-08-19",
+   "extracted_data": {
+    "classification": {
+     "status": "current",
+     "replaced_by": null,
+     "status_reason": "latest from iTech Monitoring, Inc."
+    },
+    "comparison_items": [
+     {
+      "pricing": {
+       "unpriced": false,
+       "recurring": [
+        {
+         "label": "Annual Maintenance Agreement & MyDW Health Monitoring System",
+         "taxable": null,
+         "provides": [
+          "cloud_access",
+          "maintenance",
+          "health_alerts",
+          "firmware_updates"
+         ],
+         "required": false,
+         "auto_renews": true,
+         "monthly_cents": 44000,
+         "min_term_months": 12
+        }
+       ],
+       "tax_included": false,
+       "tax_rate_pct": 7.25,
+       "upfront_cents": 4461975
+      },
+      "payment_terms": "50% Labor/50% Materials Upon Acceptance: $22,309.87+Tax; 50% Labor/50% Materials Upon Completion: $22,309.88+Tax",
+      "printed_subtotal_cents": 4461975,
+      "warranty": null,
+      "insurance": null,
+      "scope": {
+       "retention_days": null
+      },
+      "model": {
+       "ownership": "association",
+       "monitoring": "optional",
+       "cloud_access": "with_plan"
+      },
+      "budgetary": true
+     }
+    ]
+   }
+  },
+  {
+   "id": "b2da9d8a-b2ab-44ce-a85d-356aafe4d2ee",
+   "bid_request_id": "9857e2cc-766b-450a-815a-c574e7572643",
+   "vendor_name_raw": "iTech Monitoring, Inc.",
+   "total_amount": 38211.02,
+   "proposal_date": "2024-03-28",
+   "extracted_data": {
+    "classification": {
+     "status": "historical",
+     "replaced_by": "ac51a7eb-1",
+     "status_reason": "older iTech Monitoring, Inc. proposal (2024-03-28) replaced by its 2026-08-19 proposal with a different scope; kept for reference only"
+    },
+    "comparison_items": [
+     {
+      "pricing": {
+       "upfront_cents": 3821102
+      },
+      "payment_terms": null,
+      "printed_subtotal_cents": null,
+      "warranty": null,
+      "insurance": null,
+      "scope": null,
+      "model": null,
+      "budgetary": false
+     }
+    ]
+   }
+  },
+  {
+   "id": "359f9d12-2064-4e84-a85e-21c023da7f61",
+   "bid_request_id": "9857e2cc-766b-450a-815a-c574e7572643",
+   "vendor_name_raw": "Envera Systems",
+   "total_amount": 60087.53,
+   "proposal_date": "2026-06-05",
+   "extracted_data": {
+    "classification": {
+     "status": "expired",
+     "replaced_by": null,
+     "status_reason": "quote expired 2026-08-31; not approvable without refreshed pricing"
+    },
+    "comparison_items": [
+     {
+      "pricing": {
+       "unpriced": false,
+       "recurring": [
+        {
+         "label": "Guard Shack - Passive Video Surveillance",
+         "taxable": true,
+         "provides": [
+          "maintenance"
+         ],
+         "required": true,
+         "auto_renews": null,
+         "monthly_cents": 98680,
+         "min_term_months": 60
+        },
+        {
+         "label": "Rec Center - Active & Passive Video Surveillance",
+         "taxable": true,
+         "provides": [
+          "maintenance",
+          "active_monitoring"
+         ],
+         "required": true,
+         "auto_renews": null,
+         "monthly_cents": 95410,
+         "min_term_months": 60
+        },
+        {
+         "label": "Resident Exit - Passive Video Surveillance",
+         "taxable": true,
+         "provides": [
+          "maintenance"
+         ],
+         "required": true,
+         "auto_renews": null,
+         "monthly_cents": 22061,
+         "min_term_months": 60
+        },
+        {
+         "label": "Tranquillity Park - Passive Video Surveillance",
+         "taxable": true,
+         "provides": [
+          "maintenance"
+         ],
+         "required": true,
+         "auto_renews": null,
+         "monthly_cents": 17703,
+         "min_term_months": 60
+        },
+        {
+         "label": "Tranquility Park Backup Internet - Starlink",
+         "taxable": true,
+         "provides": [
+          "internet_line"
+         ],
+         "required": true,
+         "auto_renews": null,
+         "monthly_cents": 11500,
+         "min_term_months": 60
+        }
+       ],
+       "tax_included": false,
+       "tax_rate_pct": null,
+       "upfront_cents": 6008753
+      },
+      "payment_terms": "Deposit due at signing equal to 50% of installation costs and two (2) months of the monthly services costs prior to Envera scheduling work. 40% of installation will be due within 5 days of Envera beginning installation. Final 10% of installation is due within 5 days of Envera completing installation.",
+      "printed_subtotal_cents": null,
+      "warranty": "(stated)",
+      "insurance": null,
+      "scope": {
+       "retention_days": null
+      },
+      "model": {
+       "ownership": "association",
+       "monitoring": "optional",
+       "cloud_access": null
+      },
+      "budgetary": false
+     }
+    ]
+   }
+  },
+  {
+   "id": "a40c27b8-5ea5-41ea-86de-633649211bd9",
+   "bid_request_id": "9857e2cc-766b-450a-815a-c574e7572643",
+   "vendor_name_raw": "Netwatch USA",
+   "total_amount": null,
+   "proposal_date": "2026-07-09",
+   "extracted_data": {
+    "classification": {
+     "status": "current",
+     "replaced_by": null,
+     "status_reason": "latest from Netwatch USA (no price yet)"
+    },
+    "comparison_items": [
+     {
+      "pricing": {
+       "unpriced": true,
+       "recurring": [],
+       "tax_included": false,
+       "tax_rate_pct": null,
+       "upfront_cents": null
+      },
+      "payment_terms": null,
+      "printed_subtotal_cents": null,
+      "warranty": null,
+      "insurance": null,
+      "scope": {
+       "retention_days": 30
+      },
+      "model": {
+       "ownership": "vendor",
+       "monitoring": "optional",
+       "cloud_access": null
+      },
+      "budgetary": false
+     }
+    ]
+   }
+  }
+ ],
+ "live_hugh_round4": {
+  "ingest": "Hugh,\n\nI have scrubbed the iTech numbers and I am building the RFP now so we can confirm whether iTech's pricing is competitive or simply the only option on the table.\n\nOn the iTech proposal itself: total is $44,619.75 plus 7.25% tax, call it $47,854.69, split 50/50 upon acceptance and completion. That price is for purchased hardware and installation only, which lines up with the Board's direction. One item needs to come out before this is approvable as written: the proposal lists an Annual Maintenance Agreement and MyDW Health Monitoring System at $440/month, and the Board has said no monitoring. I am treating that line as declined and will confirm with iTech that the base price stands without it, since the standard 12-month warranty period following install should still be covered without paying for the monitoring add-on separately.\n\nFor the RFP, I am scoping it to purchased hardware, professional installation, and cloud storage/access only, no monitoring, so every bidder quotes on the same basis and we get a true apples-to-apples comparison against iTech. I'll propose a bidder list for the Board to confirm, and I will bring the draft RFP back to you before anything goes out to vendors.\n\nOn urgency, I am moving the RFP forward now rather than slowing this down further. Given iTech's install timeline already runs into December regardless of when we sign, running a short, scoped RFP in parallel does not cost us additional calendar time, and it gives the Board a defensible comparison before committing roughly $48,000.",
+  "general": "Hugh, I went through the iTech numbers. The $44,619.75 material/labor total checks out as the sum of the line items, split 50/50 ($22,309.87 upon acceptance, $22,309.88 upon completion), plus 7.25% sales tax not yet included. One thing to flag: the proposal includes a $440/month \"Annual Maintenance Agreement & MyDW Health Monitoring\" add-on that auto-renews without 30-day notice. Given the Board's decision that we're only purchasing hardware, installation, and cloud storage/access with no monitoring, that $440/month line needs to come out or be explicitly declined before signing, since it reads as a recurring monitoring-adjacent service bundled in under a different name.\n\nI'm building the RFP now based on that scope: purchase and ownership of the hardware, professional installation, and cloud storage/access to live and recorded video, with no active monitoring or health-monitoring service included. I'll structure it so every bidder quotes apples-to-apples against iTech's camera count and coverage areas (clubhouse, guard house, pavilion, back gate) so we can compare cleanly. Once it's drafted I'll send it back to you and the Board for review before it goes to anyone, and I'll propose a bidder list for the Board to confirm rather than selecting vendors myself.\n\nOn the urgency: I've already completed my assessment of the camera proposals (iTech vs. Envera) in the other thread and recommended iTech given the December install timeline and the gate incidents you mentioned. The RFP is a separate, parallel track in case the Board wants pricing validation before committing, but it doesn't have to delay a decision on iTech if the Board wants to move now.",
+  "persona": "Hugh, happy to do both pieces of this.\n\nOn the iTech numbers: the proposal totals $44,619.75 plus 7.25% sales tax (roughly $3,235, for a total near $47,855), split 50/50 between acceptance and completion. That matches what I quoted you earlier. One thing worth flagging, the proposal includes an optional \"Annual Maintenance Agreement & MyDW Health Monitoring\" at $440/month, which is a recurring monitoring/health-check service. Per the Board's direction that we want hardware purchase, installation, and cloud storage/access only, with no monitoring, that line should be excluded or treated as optional add-on, not part of the base accepted scope.\n\nOn the RFP: I'm building it now rather than opening a full new bid cycle, since that keeps us on the fastest path given the December install lead time you flagged. The RFP will set the scope as owned hardware, professional install, and cloud storage/access, explicitly excluding active monitoring, and will use iTech's current camera layout and itemization as the baseline scope description so bidders are quoting apples-to-apples. I'll propose a bidder list for the Board to confirm before anything goes out, and I'll bring the draft RFP back to you for review before it's sent."
+ },
+ "live_kevin_round4": {
+  "ingest": "Good morning Kevin,\n\nI agree with the distinction you are making, and to be clear, I do not disagree with you. When I used the word \"proceed,\" I meant that iTech is the preferred direction and that we should continue the diligence needed to get the project to a final, approvable package. I did not mean that Canyon Gate should sign the current proposal, release any funds, or authorize work today. A fully executed final binding proposal, agreed terms and conditions, and a certificate of insurance naming the Association as additional insured are all required before anything is executed, along with the other open items I flagged: change-order approval procedures, cloud access versus cloud storage terms, recording retention, and warranty coverage.\n\nOn Hugh's request, I am scrubbing the numbers on the proposals now and building the RFP so the scope, pricing, and contract requirements are fully defined before this comes back to the Board for a final vote.",
+  "general": "Hi Kevin,\n\nI agree with the distinction you're making, and you're right to hold the line there. When I said \"proceed,\" I meant proceeding with the diligence items I listed, the site survey, final scope and camera list, the cloud access/storage clarification, retention period, warranty terms, and the rest, not signing the current proposal or releasing any funds. I did not mean Canyon Gate should move forward on the proposal as written. We will not execute anything with iTech until there's a fully binding final proposal with confirmed terms and conditions, and a certificate of insurance naming the Association as additional insured. No signature and no payment happen without those in hand.\n\nOn Hugh's request to scrub the numbers and build an RFP, I'm preparing that now using the iTech and Envera figures already on file. Since the Board's direction is purchase-only hardware, installation, and cloud storage/access with no monitoring, that scope will be built into the RFP as the baseline every bidder has to answer to. I'll bring a proposed bidder list to the Board to confirm before anything goes out, and the draft RFP will come back to the Board for review before it's sent anywhere.",
+  "persona": "Kevin, I agree with the distinction you're making, and I want to be clear about what I meant by \"proceed.\" I did not mean signing the contract or releasing any funds today. I meant beginning the diligence steps, the site survey, written confirmation of scope, and resolving the open contract items, so we aren't losing calendar time given installation availability is already stretching into December. Executing the final binding proposal, confirmed terms and conditions, and a certificate of insurance naming Canyon Gate as additional insured are all conditions I intended to have in hand before the Association signs or pays anything, not steps to skip. That list is part of what I flagged under \"Contract and Liability Items to Resolve\" in my review.\n\nOn Hugh's request to scrub the numbers and build an RFP: I'm preparing that now using the iTech and Envera figures already reviewed, and I'll bring a bidder list to the Board to confirm before anything goes out.\n\nThe scope throughout remains purchase and ownership of the hardware, professional installation, and cloud storage/access only, no active monitoring, consistent with the Board's direction."
+ }
+}
