@@ -99,7 +99,8 @@ check('the Board copy carries the exact decision-state wording and Board items, 
   for (const k of R.DECISION_STATE_KEYS) assert.ok(html.includes(plan.expected_decision_state[k].replace(/&/g, '&amp;')), k);
   assert.ok(/Coverage: four locations only.*(Ed Gojara, Friday, October 16, 2026)/.test(html), 'decided B-01 rendered with attribution');
   assert.ok(/Confirm the final required insurance limits/.test(html), 'open B-04 still listed');
-  assert.ok(html.includes('Issue RFP to iTech for a binding response; broaden only on Board request or an unsatisfactory response.'), 'management action note');
+  assert.ok(html.includes('reopen to additional vendors only if'), 'management action note');
+  assert.ok(/Envera and Netwatch remain available as prior market references/.test(html), 'B-03 decision text');
   assert.ok(!/Netwatch material|498a15b3/.test(html));
   assert.ok(!/—/.test(html) && !/\bproceed\b/i.test(html), 'em dash or "proceed" in the Board copy');
 });

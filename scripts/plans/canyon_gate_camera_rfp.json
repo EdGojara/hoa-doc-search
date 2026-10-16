@@ -852,7 +852,7 @@
       {
         "id": "B-03",
         "audience": "board",
-        "text": "Bidder list: the first round goes to iTech Monitoring, Inc. only, for a binding response on the standardized RFP. The bidder pool broadens only if the Board requests it or iTech's final response is unsatisfactory.",
+        "text": "Recommended bidder approach: Issue the finalized RFP to iTech as the preferred vendor and use it to obtain a complete, binding, comparable response addressing scope, pricing, cloud storage/access, insurance, warranties, contract terms, change orders and schedule. Do not delay the project to recruit additional bidders at this stage. Envera and Netwatch remain available as prior market references. If iTech's final response is materially different from its current proposal, cannot satisfy the requirements, or the Board requests a broader competitive process, management can reopen the RFP to additional vendors.",
         "source": "Management",
         "status": "decided",
         "decided_by": "Ed Gojara",
@@ -929,6 +929,12 @@
         "audience": "management",
         "text": "Temporary limitation, Canyon Gate only: emailed questions and bids arrive in Amanda's mailbox but are not yet automatically linked to this RFP record or parsed. Staff attach each bid to the RFP record by hand until automated response intake ships.",
         "source": "Ed decision 2026-10-16"
+      },
+      {
+        "id": "M-09",
+        "audience": "management",
+        "text": "Reopen check: when iTech's binding response arrives, compare it with its August 19, 2026 proposal (stored line items v1, base 44,619.75 before tax) on scope, camera counts, licenses, pricing and terms, and flag material differences. Reopen triggers: materially different from its current proposal, cannot satisfy the requirements, or a Board request. Envera and Netwatch remain prior market references only.",
+        "source": "Ed decision 2026-10-16"
       }
     ],
     "contract_package_note": "Required with every bid. Bids that are materially incomplete may be deemed non-responsive.",
@@ -1004,6 +1010,6 @@
     }
   },
   "decision_state_notes": {
-    "management_action": "Issue RFP to iTech for a binding response; broaden only on Board request or an unsatisfactory response."
+    "management_action": "Issue RFP to iTech for a binding response; reopen to additional vendors only if iTech's response is materially different from its current proposal, cannot satisfy the requirements, or the Board requests it."
   }
 }
