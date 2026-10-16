@@ -937,7 +937,7 @@ router.post('/:id/draft-reply', express.json(), async (req, res) => {
     const notes = (req.body && req.body.notes) ? String(req.body.notes).slice(0, 3000) : null;
     const currentDraft = (req.body && req.body.current_draft) ? String(req.body.current_draft).slice(0, 4000) : null;
     const { data: m, error } = await supabase.from('email_messages')
-      .select('persona, subject, body_preview, body_full, conversation_id, sender_email, sender_name, classification, community_id, resolved_contact_id, resolved_property_id, resolved_vendor_id, resolution_candidates, graph_id, mailbox, has_attachments, received_at, direction, resolved_contact:resolved_contact_id(full_name), resolved_property:resolved_property_id(street_address), resolved_vendor:resolved_vendor_id(name), community:community_id(name)')
+      .select('id, persona, subject, body_preview, body_full, conversation_id, sender_email, sender_name, classification, community_id, resolved_contact_id, resolved_property_id, resolved_vendor_id, resolution_candidates, graph_id, mailbox, has_attachments, received_at, direction, resolved_contact:resolved_contact_id(full_name), resolved_property:resolved_property_id(street_address), resolved_vendor:resolved_vendor_id(name), community:community_id(name)')
       .eq('id', req.params.id).maybeSingle();
     if (error) throw error;
     if (!m) return res.status(404).json({ error: 'not_found' });
@@ -1040,8 +1040,10 @@ router.post('/:id/draft-reply', express.json(), async (req, res) => {
       const { draftPersonaReply } = require('../lib/email/persona_reply');
       const draft = await draftPersonaReply({
         persona,
-        email: { subject: m.subject, body_preview: m.body_preview, body_full: m.body_full, sender_name: m.sender_name, sender_email: m.sender_email, mailbox: m.mailbox, graph_id: m.graph_id },
+        email: { id: m.id, subject: m.subject, body_preview: m.body_preview, body_full: m.body_full, sender_name: m.sender_name, sender_email: m.sender_email, mailbox: m.mailbox, graph_id: m.graph_id,
+                 conversation_id: m.conversation_id, received_at: m.received_at },
         context: {
+          communityId: m.community_id || null,   // reply focus: Board audience, settled constraints, roster name
           communityName: m.community ? m.community.name : null,
           contactName: (m.resolved_contact && m.resolved_contact.full_name) || m.sender_name || null,
           propertyAddress: m.resolved_property ? m.resolved_property.street_address : null,

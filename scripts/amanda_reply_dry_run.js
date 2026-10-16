@@ -65,9 +65,31 @@ function readOnly(sb) {
   console.log(`STORED DRAFT (unchanged): ${stored ? JSON.stringify(stored.body) : '(none)'}`);
   console.log(`STORED review_hint: ${stored ? stored.review_hint : '(none)'}\n`);
 
-  const { draftAmandaReply } = require('../lib/community/amanda_reply');
-  const d = await draftAmandaReply({ email: input, supabase, communityId: email.community_id, communityName, contactName: null,
-    sourceMessageId: asIngest ? null : email.id, mailbox: email.mailbox, graphId: email.graph_id, diagnostic: true });
+  // --path=amanda (default: Amanda's ingest drafter), persona (the inbox re-draft for
+  // Kat / Amanda / Reese / Paige), general (Claire and every specialist, the "Draft reply"
+  // button). Those two build their own clients; this script never writes through them
+  // either (they only read), and nothing here sends.
+  const which = arg('path') || 'amanda';
+  let d;
+  if (which === 'amanda') {
+    const { draftAmandaReply } = require('../lib/community/amanda_reply');
+    d = await draftAmandaReply({ email: input, supabase, communityId: email.community_id, communityName, contactName: null,
+      sourceMessageId: asIngest ? null : email.id, mailbox: email.mailbox, graphId: email.graph_id, diagnostic: true });
+  } else {
+    const focus = require('../lib/amanda/reply_focus');
+    const fctx = await focus.gatherReplyContext(supabase, input, { communityId: email.community_id, contactName: email.sender_name });
+    if (which === 'persona') {
+      const { draftPersonaReply } = require('../lib/email/persona_reply');
+      d = await draftPersonaReply({ persona: email.persona || 'amanda', email: input, context: { communityId: email.community_id, communityName, contactName: email.sender_name } });
+    } else {
+      const { draftReply } = require('../lib/email/draft_reply');
+      d = await draftReply({ email: input, classification: email.classification, communityId: email.community_id, communityName, contactName: email.sender_name, force: true, persona: email.persona || 'claire' });
+    }
+    d.disposition = d.careful ? 'careful' : 'normal'; d.confidence = '-';
+    d.diagnostic = { audience: fctx.audience, sender_first_name: fctx.senderFirstName, latest_text: fctx.latestText, settled_constraints: fctx.settled.map((c) => c.text), prompt: fctx.promptBlock };
+    d.focus_issues = d.focus_issues || [];
+  }
+  console.log(`PATH: ${which}`);
 
   console.log('WHAT THE DRAFTER SAW');
   console.log(`  audience: ${d.diagnostic.audience}   greeting name: ${d.diagnostic.sender_first_name || '(none)'}`);

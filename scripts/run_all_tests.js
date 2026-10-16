@@ -293,6 +293,7 @@ const CHECKS = [
   'tests/test_manager_phase1.js',
   'tests/test_amanda_decision_ready.js',
   'tests/test_amanda_reply_focus.js',
+  'tests/test_reply_focus_shared_paths.js',
   'tests/test_scheduled_agent_guardrails.js',
   'tests/test_ops_feed_phase1.js',
   'tests/test_amanda_request.js',

@@ -178,6 +178,15 @@ function loadDrafter(script) {
     const r = focus.checkReplyFocus('Kevin,\n\nMy recommendation to proceed meant continuing diligence on iTech, not signing the proposal. The binding proposal, terms and insurance certificate will be in place before anything is executed.', { latestText: latest, senderFirstName: 'Kevin' });
     assert.ok(r.issues.some((i) => i.code === 'concern_not_acknowledged'), JSON.stringify(r.issues));
   });
+  await t('Hugh\'s RFP request on another thread must be acted on in the reply to Kevin (related_request_ignored)', () => {
+    const rr = focus.relatedWorkRequests([FX.hugh_create_rfp], `${latest}\n${focus.quotedHistory(FX.kevin.body_full)}\nRe: Camera Proposals`);
+    assert.strictEqual(rr.length, 1);
+    assert.deepStrictEqual(rr[0].required.sort(), ['rfp', 'scrub']);
+    // The live re-draft (persona_reply path) that agreed with Kevin but never mentioned the RFP.
+    const liveRedraft = 'Good morning Kevin,\n\nI agree with the distinction you\'re making, and I want to be clear I wasn\'t recommending we proceed without those protections in place. What I meant by moving forward was starting that diligence with iTech promptly, not signing or paying before the binding final proposal, terms, and the COI naming the HOA as additional insured are in hand.\n\nI\'ll keep working those open items with iTech and bring the finalized contract package back to the Board for review before anything is signed.';
+    assert.ok(focus.checkReplyFocus(liveRedraft, { latestText: latest, senderFirstName: 'Kevin', relatedRequests: rr }).issues.some((i) => i.code === 'related_request_ignored'));
+    assert.ok(focus.checkReplyFocus(EXPECTED, { latestText: latest, senderFirstName: 'Kevin', relatedRequests: rr }).ok);
+  });
   await t('wrong name in the greeting is flagged', () => {
     const r = focus.checkReplyFocus('Hi Hugh,\n\nI agree.', { latestText: latest, senderFirstName: 'Kevin' });
     assert.ok(r.issues.some((i) => i.code === 'wrong_name'));
