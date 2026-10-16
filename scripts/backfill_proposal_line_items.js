@@ -35,7 +35,8 @@ async function plan(db, { community, proposal, limit = 25, extract, reprocess = 
   for (const p of data || []) {
     const ed = p.extracted_data || {};
     // Ordinary reruns reuse the approved stored version; only a changed file or --reprocess extracts again.
-    if (!reprocess && V.currentApproved(ed) && (!p.file_hash || p.file_hash === (V.currentApproved(ed).document_sha256 || p.file_hash))) { out.push({ id: p.id, action: 'skip', reason: `line items stored (approved v${V.currentApproved(ed).version})` }); continue; }
+    const usable = V.currentUsable(ed);
+    if (!reprocess && usable && (!p.file_hash || p.file_hash === (usable.document_sha256 || p.file_hash))) { out.push({ id: p.id, action: 'skip', reason: `line items stored (v${usable.version}, ${usable.status})` }); continue; }
     if (!p.file_path) { out.push({ id: p.id, action: 'skip', reason: 'no stored file' }); continue; }
     const { data: blob, error: de } = await db.storage.from('documents').download(p.file_path);
     if (de || !blob) { out.push({ id: p.id, action: 'error', reason: `download failed: ${de ? de.message : 'empty'}` }); continue; }
@@ -48,7 +49,7 @@ async function plan(db, { community, proposal, limit = 25, extract, reprocess = 
     const next = V.addVersion(ed, { items: r.items || [], document_sha256: sha, reason: reprocess ? reprocess.reason : need.reason === 'hash_changed' ? 'source file changed' : 'initial extraction', requested_by: reprocess ? reprocess.requested_by : 'backfill' });
     const newV = next.line_item_versions[next.line_item_versions.length - 1];
     const computed = (r.items || []).map((it) => ({ key: it.key, vendor: it.vendor_name, pages: (it.document || {}).pages, ...L.computeQuantities({ ...it, line_items_stored: true }) }));
-    out.push({ id: p.id, action: newV.status === 'approved' ? 'store' : 'store_for_review', why: need.reason, sha256: sha, items: r.items || [], extracted_data: next, version: newV.version, review_flag: newV.review_flag || null, differs: newV.differs_from_approved || [], computed, invalid: (r.diagnostic || {}).invalid || [] });
+    out.push({ id: p.id, action: newV.status === 'pending_approval' ? 'store' : 'store_for_review', status: newV.status, why: need.reason, sha256: sha, items: r.items || [], extracted_data: next, version: newV.version, review_flag: newV.review_flag || null, differs: newV.differs_from_approved || [], computed, invalid: (r.diagnostic || {}).invalid || [] });
   }
   return out;
 }

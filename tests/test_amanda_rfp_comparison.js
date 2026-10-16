@@ -141,11 +141,13 @@ const env = (vars, fn) => { const old = {}; for (const k of Object.keys(vars)) {
     assert.strictEqual(record.workflow.path, 'C');
   });
 
-  await t('an extraction that fails validation is reported in the trail, never silently compared', async () => {
-    const bad = { key: 'bad', vendor_name: '', document: { filename: 'x.pdf' }, pricing: {} };
+  await t('a proposal with missing fields is KEPT (repaired to explicit unknowns, with review notes), never dropped', async () => {
+    const bad = { key: 'bad', vendor_name: '', document: { filename: 'x.pdf' }, pricing: {}, document_date: 'Aug 19' };
     const r = C.buildComparisonRecord({ community: fx.community, project: fx.project, proposals: [...fx.proposals, bad], requirements: req, facts, today: fx.today });
-    assert.ok(!r.proposals.some((n) => n.key === 'bad'));
-    assert.ok(r.audit.some((a) => a.proposal_key === 'bad' && /failed validation/.test(a.note)));
+    const n = r.proposals.find((x) => x.key === 'bad');
+    assert.ok(n, 'kept in the comparison'); assert.strictEqual(n.vendor_name, 'Unidentified vendor'); assert.strictEqual(n.unpriced, true);
+    assert.ok(r.audit.some((a) => a.proposal_key === 'bad' && /Kept in the comparison with review notes: vendor name missing.*no price found: treated as unpriced.*document_date "Aug 19" unreadable/.test(a.note)));
+    assert.strictEqual(r.proposals.length, fx.proposals.length + 1);
   });
 
   const summary = C.renderBoardSummary(record, { greetingName: 'Hugh', link: 'https://my.bedrocktxai.com/?tab=vendor&rfp=00000000-0000-0000-0000-000000000000' });
@@ -432,18 +434,18 @@ const env = (vars, fn) => { const old = {}; for (const k of Object.keys(vars)) {
     const u = q.uncertain.find((x) => x.field === 'upfront_cents');
     assert.ok(u && /do not add up/.test(u.reason)); assert.deepStrictEqual(u.values.map((v) => [v.value, v.page]), [[4400000, '7'], [4461975, 7]]);
     const r = build([it]);
-    assert.ok(r.open_items.some((i) => i.topic === 'quantity: the subtotal' && /\$44,000\.00 per page 7; \$44,619\.75 per page 7, unconfirmed/.test(i.request)));
+    assert.ok(r.open_items.some((i) => i.topic === 'quantity: the subtotal' && /line items \$44,000\.00 \(page 7\); printed subtotal \$44,619\.75 \(page 7\), unconfirmed/.test(i.request)));
   });
 
   await t('a cover/narrative count that disagrees with the itemized table is uncertain, shown as "N per page X; M per page Y, unconfirmed"', async () => {
     const it = itemOf('itech-2026-a'); it.scope_statements.push({ category: 'camera_new', quantity: 1, page: 1, excerpt: 'cover: 15 new cameras' });
     const q = LI.computeQuantities(it);
     assert.ok(q.uncertain.some((x) => x.field === 'cameras_new' && /disagree/.test(x.reason)));
-    assert.strictEqual(LI.renderQuantity(q, 'cameras_new'), '14 per page 4; 15 per page 1-3, unconfirmed');
+    assert.match(LI.renderQuantity(q, 'cameras_new'), /^page 4 table: 14; page 1-3: 'iTech will Swap out 4 Cameras.*' \/ 'cover: 15 new cameras', unconfirmed$/, 'quotes the document; never a derived narrative total');
     const r = build([it]);
     assert.ok(r.open_items.some((i) => i.topic === 'quantity: new cameras'));
     const s = C.renderBoardSummary(r, { greetingName: 'Hugh' });
-    assert.match(s, /a camera count that is not yet confirmed \(new 14 per page 4; 15 per page 1-3, unconfirmed; reused 13\)/);
+    assert.match(s, /a camera count that is not yet confirmed \(new page 4 table: 14; page 1-3: '.*cover: 15 new cameras', unconfirmed; reused 13\)/);
     assert.ok(!/\b2[78] cameras\b/.test(s), 'no total stated while a component is unconfirmed');
   });
 
@@ -456,7 +458,7 @@ const env = (vars, fn) => { const old = {}; for (const k of Object.keys(vars)) {
 
   await t('source pages are carried through to the stored audit and the quantities record', async () => {
     const note = run.result.record.audit.find((a) => /^Quantities for iTech/.test(a.note)).note;
-    assert.match(note, /from stored line items: cameras 27 = new 14 \(p\. 3, 4\), reused 13 \(p\. 3\), licenses 20 \(p\. 3\); line items \$44,619\.75 vs printed subtotal \$44,619\.75: match/);
+    assert.match(note, /from approved stored line items: cameras 27 = new 14 \(p\. 3, 4\), reused 13 \(p\. 3\), licenses 20 \(p\. 3\); line items \$44,619\.75 vs printed subtotal \$44,619\.75: match/);
     const pv = run.result.record.quantities.find((x) => x.key === 'itech-2026-a').provenance;
     assert.ok(pv.licenses.every((p) => p.page === 3 && /20- DW Licenses/.test(p.excerpt)));
   });
@@ -489,7 +491,7 @@ const env = (vars, fn) => { const old = {}; for (const k of Object.keys(vars)) {
 
   console.log('\nLine-item versions: reuse, no re-extraction; versioned reprocessing');
   const V = require('../lib/vendors/line_item_versions');
-  const v1 = V.addVersion({}, { items: [itemOf('itech-2026-a')], document_sha256: 'sha-A', reason: 'initial extraction', requested_by: 'backfill', at: '2026-10-16T12:00:00Z' });
+  const v1 = V.approveVersion(V.addVersion({}, { items: [itemOf('itech-2026-a')], document_sha256: 'sha-A', reason: 'initial extraction', requested_by: 'backfill', at: '2026-10-16T12:00:00Z' }), 1, { approved_by: 'Ed', at: '2026-10-16T13:00:00Z' });
 
   await t('a rerun with the same file hash makes no new extraction (store, backfill and workflow paths)', async () => {
     assert.deepStrictEqual(V.needsExtraction(v1, 'sha-A'), { extract: false, reason: null });
@@ -498,7 +500,7 @@ const env = (vars, fn) => { const old = {}; for (const k of Object.keys(vars)) {
     let calls = 0;
     const db = { from() { const q = { select() { return q; }, order() { return q; }, limit() { return q; }, eq() { return q; }, then(r, j) { return Promise.resolve({ data: [{ id: 'vp1', file_path: 'x.pdf', file_hash: 'sha-A', extracted_data: v1 }], error: null }).then(r, j); } }; return q; }, storage: { from: () => ({ download: async () => { calls++; return { data: null, error: null }; } }) } };
     const plan = await B.plan(db, { extract: async () => { calls++; return { items: [] }; } });
-    assert.strictEqual(plan[0].action, 'skip'); assert.match(plan[0].reason, /approved v1/); assert.strictEqual(calls, 0, 'no download, no model call');
+    assert.strictEqual(plan[0].action, 'skip'); assert.match(plan[0].reason, /v1, approved/); assert.strictEqual(calls, 0, 'no download, no model call');
     const again = await DRY.fixtureRun(); assert.deepStrictEqual(again.extracted, ['Canyon Gate at Cinco Ranch Qoute 19538.pdf'], 'only the document not on file is extracted');
   });
 
@@ -532,10 +534,10 @@ const env = (vars, fn) => { const old = {}; for (const k of Object.keys(vars)) {
     const first = await DRY.fixtureRun({ previewCache: cache });
     assert.deepStrictEqual(first.extracted, ['Canyon Gate at Cinco Ranch Qoute 19538.pdf']);
     assert.ok(first.result.extraction_log.some((x) => x.source === 'fresh extraction' && x.cached_as_version === 1));
-    assert.ok(first.result.extraction_log.filter((x) => x.source === 'stored').length >= 2, 'documents on the record come from storage');
+    assert.ok(first.result.extraction_log.filter((x) => /^stored v1 \(approved\)/.test(x.source)).length >= 2, 'documents on the record come from storage');
     const second = await DRY.fixtureRun({ previewCache: cache });
     assert.deepStrictEqual(second.extracted, [], 'no model call on the second run');
-    assert.ok(second.result.extraction_log.some((x) => x.source === 'preview cache v1' && x.extracted === false));
+    assert.ok(second.result.extraction_log.some((x) => x.source === 'preview cache v1 (preview)' && x.extracted === false));
     assert.strictEqual(JSON.stringify(second.result.record.quantities), JSON.stringify(first.result.record.quantities), 'identical quantities');
     assert.strictEqual(second.result.summary, first.result.summary, 'identical summary');
     const bump = (r0) => ({ ...r0, items: (r0.items || []).map((it) => ({ ...it, line_items: [{ description: 'Outdoor Bullet Camera', category: 'camera_new', quantity: 6, page: 1, excerpt: '6 Outdoor Bullet Camera - 4MP' }] })) });
@@ -543,9 +545,123 @@ const env = (vars, fn) => { const old = {}; for (const k of Object.keys(vars)) {
     assert.ok(rp.extracted.length >= 1, 'reprocess calls the model');
     const entry = rp.result.extraction_log.find((x) => x.source === 'fresh (reprocess)');
     assert.ok(entry && entry.cached_as_version === 2 && entry.differs.some((d) => d.field === 'cameras_new'), JSON.stringify(entry));
-    assert.match(DRY.report(rp), /fresh \(reprocess\).*DIFFERS from the approved version: cameras_new 0 -> 6/);
+    assert.match(DRY.report(rp), /fresh \(reprocess\).*DIFFERS from the current version \(v1, preview\): cameras_new 0 -> 6/);
     const kept = cache.get(Object.keys(store)[0]);
-    assert.deepStrictEqual(kept.line_item_versions.map((v) => v.status), ['approved', 'pending_review'], 'v1 kept; v2 awaits review');
+    assert.deepStrictEqual(kept.line_item_versions.map((v) => v.status), ['preview', 'preview'], 'preview versions are never approved; v1 kept');
+  });
+
+  console.log('\nNo proposal ever disappears (fresh and cache paths)');
+  // The real live shapes: a multi-proposal packet, a single-proposal quote, and a document with line items.
+  const packetShape = ['itech-2024', 'envera-q19538-2-packet', 'netwatch-2026'].map((k) => itemOf(k));
+  const quoteShape = [itemOf('envera-q19538-2-standalone')];
+  const itechShape = [itemOf('itech-2026-a')];
+  const runFresh = async ({ cache = null, extract }) => {
+    const db = DRY.fakeDb({ ...fx.db_seed, ...(fx.context_seed || {}), vendor_proposals: [], bid_requests: [], library_documents: [] });
+    const files = [['packet.pdf', packetShape], ['quote 19538.pdf', quoteShape], ['itech sept.pdf', itechShape]].map(([n]) => ({ filename: n, buffer: Buffer.from(`bytes ${n}`), isPdf: true }));
+    const shapes = { 'packet.pdf': packetShape, 'quote 19538.pdf': quoteShape, 'itech sept.pdf': itechShape };
+    const ex = extract || (async (buf, meta) => ({ items: JSON.parse(JSON.stringify(shapes[meta.filename])).map((it) => ({ ...it, line_items_stored: undefined })), diagnostic: { returned_count: shapes[meta.filename].length, invalid: [] } }));
+    return W.prepareComparison({ supabase: db, communityId: fx.community.id, communityName: fx.community.name, email: { ...fx.board_email, id: 'em-1016' }, attachments: files, today: fx.today, mode: 'dry_run', factsDetailed: facts, extract: ex, mgmtId: 'mgmt', greetingName: 'Hugh', previewCache: cache });
+  };
+
+  await t('a packet (3 proposals), a single quote and an itemized proposal all reach the classification, fresh and from the preview cache', async () => {
+    const store = {}; const cache = { get: (sha) => store[sha] ? JSON.parse(store[sha]) : null, put: (sha, ed) => { store[sha] = JSON.stringify(ed); } };
+    const fresh = await runFresh({ cache });
+    const keysFresh = fresh.record.proposals.map((n) => n.key).sort();
+    assert.deepStrictEqual(keysFresh, ['envera-q19538-2-packet', 'envera-q19538-2-standalone', 'itech-2024', 'itech-2026-a', 'netwatch-2026']);
+    assert.deepStrictEqual(Object.values(store).map((x) => JSON.parse(x).line_item_versions[0].items.length).sort(), [1, 1, 3], 'every proposal cached, none empty');
+    const cached = await runFresh({ cache, extract: async () => { throw new Error('model must not be called on the cache path'); } });
+    assert.deepStrictEqual(cached.record.proposals.map((n) => n.key).sort(), keysFresh);
+    assert.match(cached.summary, /Envera is out/); assert.match(cached.summary, /Netwatch is out/);
+    assert.ok(cached.extraction_log.every((x) => /^preview cache v1 \(preview\)/.test(x.source)));
+  });
+
+  await t('a run fails loudly with the count when extraction loses proposals (truncated reply, or parsed fewer than returned)', async () => {
+    await assert.rejects(runFresh({ extract: async (buf, meta) => ({ items: meta.filename === 'packet.pdf' ? [packetShape[0]] : (meta.filename === 'quote 19538.pdf' ? quoteShape : itechShape), diagnostic: { returned_count: meta.filename === 'packet.pdf' ? 3 : 1, invalid: [], truncated: ['proposals pass hit max_tokens'] } }) }), /extraction dropped 2 of 3 proposal\(s\) in packet\.pdf \(proposals pass hit max_tokens\)/);
+    const X = require('../lib/vendors/proposal_extract');
+    const truncated = { messages: { create: async () => ({ stop_reason: 'max_tokens', content: [{ text: '{"proposals":[{"vendor_name":"iTech"},{"vendor_name":"Envera"},{"vendor_name":"Netwa' }] }) } };
+    const r = await X.extractProposals(Buffer.from('pdf'), { filename: 'packet.pdf' }, { anthropic: truncated });
+    assert.strictEqual(r.diagnostic.returned_count, 3); assert.strictEqual(r.items.length, 0);
+    assert.throws(() => W.assertNoneDropped('packet.pdf', r), /dropped 3 of 3 proposal\(s\) in packet\.pdf/);
+  });
+
+  await t('two-pass extraction: proposals first, then line items per proposal; a failed line-item pass keeps the proposal', async () => {
+    const X = require('../lib/vendors/proposal_extract');
+    let n = 0;
+    const client = { messages: { create: async ({ messages }) => { n++; const text = messages[0].content[1].text;
+      if (/Read ONLY the proposal from Envera/.test(text)) return { stop_reason: 'max_tokens', content: [{ text: '{"line_items":[{"desc' }] };
+      if (/Read ONLY the proposal from iTech/.test(text)) return { stop_reason: 'end_turn', content: [{ text: JSON.stringify({ line_items: itemOf('itech-2026-a').line_items, scope_statements: itemOf('itech-2026-a').scope_statements, printed_subtotal_cents: 4461975, printed_subtotal_page: 7 }) }] };
+      return { stop_reason: 'end_turn', content: [{ text: JSON.stringify({ proposals: [{ vendor_name: 'iTech Monitoring, Inc.', pages: '1-8', pricing: { upfront_cents: 4461975 } }, { vendor_name: 'Envera Systems', pages: '9-13', pricing: { upfront_cents: 6008753 } }] }) }] }; } } };
+    const r = await X.extractProposals(Buffer.from('pdf'), { filename: 'packet.pdf' }, { anthropic: client });
+    assert.strictEqual(n, 3, 'one proposals pass + one line-item pass per proposal');
+    assert.deepStrictEqual(r.items.map((i) => i.vendor_name), ['iTech Monitoring, Inc.', 'Envera Systems'], 'both kept');
+    assert.strictEqual(r.items[0].line_items.length, 23); assert.strictEqual(r.items[1].line_items, null);
+    assert.ok(r.diagnostic.truncated.some((x) => /Envera Systems hit max_tokens/.test(x)));
+    assert.match(X.LINES_RULE, /ONE statement PER LOCATION/);
+  });
+
+  await t('Spec 1: live-like shapes with no line items or no price fields all stay in the comparison, with the full Board reasoning, fresh and cached', async () => {
+    const strip = (it) => { const c = JSON.parse(JSON.stringify(it)); delete c.line_items; delete c.scope_statements; delete c.line_items_stored; return c; };
+    // As the live extraction returns them: Netwatch is design-only with NO pricing fields at all (no unpriced flag);
+    // Envera has proposal-level totals and monthly services but no line items; iTech 2024 has no line items.
+    const netwatchLive = { ...strip(itemOf('netwatch-2026')), pricing: {} };
+    const packetLive = [strip(itemOf('itech-2024')), strip(itemOf('envera-q19538-2-packet')), netwatchLive];
+    const quoteLive = [strip(itemOf('envera-q19538-2-standalone'))];
+    const shapes = { 'packet.pdf': packetLive, 'quote 19538.pdf': quoteLive, 'itech sept.pdf': [itemOf('itech-2026-a')] };
+    const ex = async (buf, meta) => ({ items: JSON.parse(JSON.stringify(shapes[meta.filename])), diagnostic: { returned_count: shapes[meta.filename].length, invalid: [] } });
+    const store = {}; const cache = { get: (sha) => store[sha] ? JSON.parse(store[sha]) : null, put: (sha, ed) => { store[sha] = JSON.stringify(ed); } };
+    for (const pass of ['fresh', 'cached']) {
+      const r = await runFresh({ cache, extract: pass === 'fresh' ? ex : async () => { throw new Error('no model call on the cache path'); } });
+      const by = Object.fromEntries(r.record.proposals.map((n) => [n.key, n]));
+      assert.deepStrictEqual(Object.keys(by).sort(), ['envera-q19538-2-packet', 'envera-q19538-2-standalone', 'itech-2024', 'itech-2026-a', 'netwatch-2026'], pass);
+      assert.strictEqual(by['itech-2026-a'].status, 'current'); assert.strictEqual(by['itech-2024'].status, 'historical');
+      assert.strictEqual(by['envera-q19538-2-packet'].status, 'expired'); assert.strictEqual(by['netwatch-2026'].status, 'current'); assert.strictEqual(by['netwatch-2026'].unpriced, true);
+      assert.strictEqual(by['envera-q19538-2-standalone'].status, 'duplicate'); assert.strictEqual(by['envera-q19538-2-standalone'].duplicate_of, 'envera-q19538-2-packet', 'duplicate relationship recorded');
+      assert.match(r.summary, /Envera is out: quote expired 2026-08-31 and built around monitoring the Board does not want/);
+      assert.match(r.summary, /Netwatch is out: no price provided and built around monitoring the Board does not want/);
+      assert.match(r.summary, /iTech's 2024 proposal is superseded/);
+      assert.match(r.summary, /Situation: 4 camera proposals from 3 vendors are on file/);
+      assert.ok(r.record.audit.some((a) => a.proposal_key === 'netwatch-2026' && /no price found: treated as unpriced/.test(a.note)), 'the repair is on the record');
+    }
+  });
+
+  await t('Spec 1 guard: a proposal leaving the comparison without a classified reason fails the run with the counts', async () => {
+    const r = build(JSON.parse(JSON.stringify(fx.proposals)));
+    assert.ok(r.proposals.every((n) => n.status && n.status_reason), 'every proposal carries a classified reason');
+    assert.ok(r.proposals.filter((n) => n.status === 'duplicate').every((n) => n.duplicate_of));
+    const src = fs.readFileSync(path.join(__dirname, '..', 'lib', 'vendors', 'rfp_workflow.js'), 'utf8');
+    assert.match(src, /comparison completeness check failed: \$\{fedIn\} proposal\(s\) discovered, \$\{classified\} carried into the comparison/);
+  });
+
+  await t('pluralization: "1 camera proposal from 1 vendor is on file"', async () => {
+    const r = build([itemOf('itech-2026-a')]);
+    assert.match(C.renderBoardSummary(r, { greetingName: 'Hugh' }), /Situation: 1 camera proposal from 1 vendor is on file/);
+    assert.match(run.result.summary, /Situation: 4 camera proposals from 3 vendors are on file/);
+  });
+
+  await t("the live cached iTech shape ('3 New Cameras at both A and B' recorded once) reconciles to the table: 27 cameras, certain, reconciliation in the audit", async () => {
+    const cachedItem = require('./fixtures/rfp-comparison/itech-2026-cached-v1.json').item;
+    const q = LI.computeQuantities({ ...cachedItem, line_items_stored: true });
+    assert.deepStrictEqual([q.values.cameras_new, q.values.cameras_reused, q.values.cameras_total, q.values.licenses], [14, 13, 27, 20]);
+    assert.deepStrictEqual(q.uncertain, []);
+    assert.match(q.reconciliations[0].note, /narrative '3 New Cameras at both the Basketball Pavilion and Guard Shack' \(page 3\) read as 3 at each location; reconciles to the itemized table \(14\)/);
+    const r = build([{ ...cachedItem, key: 'cached', line_items_stored: true }]);
+    assert.ok(r.audit.some((a) => /RECONCILED: narrative '3 New Cameras at both/.test(a.note)));
+    assert.ok(r.open_items.some((i) => i.topic === 'camera schedule and licensing'), 'the camera schedule request stays either way');
+    // Neither reading reconciles (table says 12): stays uncertain, quoting the source wording, never "11".
+    const odd = JSON.parse(JSON.stringify(cachedItem)); odd.line_items.find((l) => /Turret/.test(l.description)).quantity = 5;
+    const q2 = LI.computeQuantities({ ...odd, line_items_stored: true });
+    const shown = LI.renderQuantity(q2, 'cameras_new');
+    assert.match(shown, /^page 4 table: 12; page 3: 'iTech will Swap out 4 Cameras.*' \/ 'iTech will install 3 New Cameras at both the Basketball Pavilion and Guard Shack/);
+    assert.ok(!/\b11\b/.test(shown), 'no derived narrative total is presented as what the document said');
+  });
+
+  await t('a first stored extraction is pending approval, not approved; its counts are provisional until the owner approves', async () => {
+    const first = V.addVersion({}, { items: [itemOf('itech-2026-a')], document_sha256: 'sha-A', reason: 'initial extraction', requested_by: 'backfill' });
+    assert.strictEqual(first.line_item_versions[0].status, 'pending_approval'); assert.strictEqual(V.currentApproved(first), null);
+    assert.strictEqual(V.currentUsable(first).version, 1, 'readable (provisional) before approval');
+    const it = { ...itemOf('itech-2026-a'), line_items_status: 'pending_approval' };
+    assert.match(C.renderBoardSummary(build([it]), { greetingName: 'Hugh' }), /27 cameras \(13 reused, 14 new\) \(provisional: line items pending approval\)/);
+    assert.strictEqual(V.addVersion({}, { items: [it], document_sha256: 'x', reason: 'preview extraction', preview: true }).line_item_versions[0].status, 'preview');
   });
 
   await t('without community records the summary carries no "From ... records" line (nothing invented)', async () => {

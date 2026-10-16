@@ -1,0 +1,434 @@
+{
+  "_about": "Real live extraction of iTech_Video Proposal_Sept 2026.pdf as cached by the 2026-10-16 live dry run (preview cache v1). Kept verbatim as a regression fixture for the at-both narrative reading.",
+  "item": {
+    "vendor_name": "iTech Monitoring, Inc.",
+    "document_date": "2026-08-19",
+    "quote_number": null,
+    "revision": null,
+    "expires_on": null,
+    "budgetary": true,
+    "pricing": {
+      "upfront_cents": 4461975,
+      "tax_rate_pct": 7.25,
+      "tax_included": false,
+      "unpriced": false,
+      "recurring": [
+        {
+          "label": "Annual Maintenance Agreement & MyDW Health Monitoring System",
+          "monthly_cents": 44000,
+          "required": false,
+          "min_term_months": 12,
+          "auto_renews": true,
+          "taxable": null,
+          "provides": [
+            "cloud_access",
+            "health_alerts",
+            "maintenance",
+            "firmware_updates"
+          ]
+        }
+      ]
+    },
+    "line_items": [
+      {
+        "description": "2- 12Tb Custom Server w/DW Specturm",
+        "category": "recorder",
+        "quantity": 2,
+        "unit": "each",
+        "unit_price_cents": null,
+        "extended_cents": null,
+        "page": 3,
+        "excerpt": "2- 12Tb Custom Server w/DW Specturm",
+        "embedded_server": false,
+        "certainty": "certain",
+        "uncertain_reason": null
+      },
+      {
+        "description": "20- DW Licenses",
+        "category": "license",
+        "quantity": 20,
+        "unit": "each",
+        "unit_price_cents": null,
+        "extended_cents": null,
+        "page": 3,
+        "excerpt": "20- DW Licenses",
+        "embedded_server": false,
+        "certainty": "certain",
+        "uncertain_reason": null
+      },
+      {
+        "description": "7- 5MP IR Turret Camera",
+        "category": "camera_new",
+        "quantity": 7,
+        "unit": "each",
+        "unit_price_cents": null,
+        "extended_cents": null,
+        "page": 4,
+        "excerpt": "7- 5MP IR Turret Camera",
+        "embedded_server": false,
+        "certainty": "certain",
+        "uncertain_reason": null
+      },
+      {
+        "description": "2- 4K Bullet Wide Angle Lens Camera w/100' IR Range",
+        "category": "camera_new",
+        "quantity": 2,
+        "unit": "each",
+        "unit_price_cents": null,
+        "extended_cents": null,
+        "page": 4,
+        "excerpt": "2- 4K Bullet Wide Angle Lens Camera w/100' IR Range",
+        "embedded_server": false,
+        "certainty": "certain",
+        "uncertain_reason": null
+      },
+      {
+        "description": "2- 4k Bullet CaaS Bullet Camera w/Embeded Server and Varifocal Lens",
+        "category": "camera_new",
+        "quantity": 2,
+        "unit": "each",
+        "unit_price_cents": null,
+        "extended_cents": null,
+        "page": 4,
+        "excerpt": "2- 4k Bullet CaaS Bullet Camera w/Embeded Server and Varifocal Lens",
+        "embedded_server": true,
+        "certainty": "certain",
+        "uncertain_reason": null
+      },
+      {
+        "description": "2- 5MP LPR Bullet Camera w/80' IR Range",
+        "category": "camera_new",
+        "quantity": 2,
+        "unit": "each",
+        "unit_price_cents": null,
+        "extended_cents": null,
+        "page": 4,
+        "excerpt": "2- 5MP LPR Bullet Camera w/80' IR Range",
+        "embedded_server": false,
+        "certainty": "certain",
+        "uncertain_reason": null
+      },
+      {
+        "description": "1- 5MP Bullet Varifocal Lens Camera w/ 140' IR Range",
+        "category": "camera_new",
+        "quantity": 1,
+        "unit": "each",
+        "unit_price_cents": null,
+        "extended_cents": null,
+        "page": 4,
+        "excerpt": "1- 5MP Bullet Varifocal Lens Camera w/ 140' IR Range",
+        "embedded_server": false,
+        "certainty": "certain",
+        "uncertain_reason": null
+      },
+      {
+        "description": "7- DW Turret Back Boxes",
+        "category": "materials_labor",
+        "quantity": 7,
+        "unit": "each",
+        "unit_price_cents": null,
+        "extended_cents": null,
+        "page": 4,
+        "excerpt": "7- DW Turret Back Boxes",
+        "embedded_server": false,
+        "certainty": "certain",
+        "uncertain_reason": null
+      },
+      {
+        "description": "7- DW Bullet Back Boxes",
+        "category": "materials_labor",
+        "quantity": 7,
+        "unit": "each",
+        "unit_price_cents": null,
+        "extended_cents": null,
+        "page": 4,
+        "excerpt": "7- DW Bullet Back Boxes",
+        "embedded_server": false,
+        "certainty": "certain",
+        "uncertain_reason": null
+      },
+      {
+        "description": "1- DW Pole Mount Kit",
+        "category": "materials_labor",
+        "quantity": 1,
+        "unit": "each",
+        "unit_price_cents": null,
+        "extended_cents": null,
+        "page": 4,
+        "excerpt": "1- DW Pole Mount Kit",
+        "embedded_server": false,
+        "certainty": "certain",
+        "uncertain_reason": null
+      },
+      {
+        "description": "1- 1 Week Lift Rental",
+        "category": "other",
+        "quantity": 1,
+        "unit": "lot",
+        "unit_price_cents": null,
+        "extended_cents": null,
+        "page": 4,
+        "excerpt": "1- 1 Week Lift Rental",
+        "embedded_server": false,
+        "certainty": "certain",
+        "uncertain_reason": null
+      },
+      {
+        "description": "2- 1500V Backup Battery Mini Tower",
+        "category": "network",
+        "quantity": 2,
+        "unit": "each",
+        "unit_price_cents": null,
+        "extended_cents": null,
+        "page": 4,
+        "excerpt": "2- 1500V Backup Battery Mini Tower",
+        "embedded_server": false,
+        "certainty": "certain",
+        "uncertain_reason": null
+      },
+      {
+        "description": "1- 16Port PoE Ubiquiti Switch",
+        "category": "network",
+        "quantity": 1,
+        "unit": "each",
+        "unit_price_cents": null,
+        "extended_cents": null,
+        "page": 4,
+        "excerpt": "1- 16Port PoE Ubiquiti Switch",
+        "embedded_server": false,
+        "certainty": "certain",
+        "uncertain_reason": null
+      },
+      {
+        "description": "1- 24Port PoE Ubiquiti Switch",
+        "category": "network",
+        "quantity": 1,
+        "unit": "each",
+        "unit_price_cents": null,
+        "extended_cents": null,
+        "page": 4,
+        "excerpt": "1- 24Port PoE Ubiquiti Switch",
+        "embedded_server": false,
+        "certainty": "certain",
+        "uncertain_reason": null
+      },
+      {
+        "description": "2- 5Port PoE Hardened Switch",
+        "category": "network",
+        "quantity": 2,
+        "unit": "each",
+        "unit_price_cents": null,
+        "extended_cents": null,
+        "page": 4,
+        "excerpt": "2- 5Port PoE Hardened Switch",
+        "embedded_server": false,
+        "certainty": "certain",
+        "uncertain_reason": null
+      },
+      {
+        "description": "1- Outdoor Rated NEMA Enclosure",
+        "category": "materials_labor",
+        "quantity": 1,
+        "unit": "each",
+        "unit_price_cents": null,
+        "extended_cents": null,
+        "page": 4,
+        "excerpt": "1- Outdoor Rated NEMA Enclosure",
+        "embedded_server": false,
+        "certainty": "certain",
+        "uncertain_reason": null
+      },
+      {
+        "description": "4- Conduit Runs",
+        "category": "materials_labor",
+        "quantity": 4,
+        "unit": "each",
+        "unit_price_cents": null,
+        "extended_cents": null,
+        "page": 4,
+        "excerpt": "4- Conduit Runs",
+        "embedded_server": false,
+        "certainty": "certain",
+        "uncertain_reason": null
+      },
+      {
+        "description": "1- PM Pre-Installation Site Survey",
+        "category": "labor",
+        "quantity": 1,
+        "unit": "each",
+        "unit_price_cents": null,
+        "extended_cents": null,
+        "page": 4,
+        "excerpt": "1- PM Pre-Installation Site Survey",
+        "embedded_server": false,
+        "certainty": "certain",
+        "uncertain_reason": null
+      },
+      {
+        "description": "1- Point-to-Point Nano Stations",
+        "category": "network",
+        "quantity": 1,
+        "unit": "lot",
+        "unit_price_cents": null,
+        "extended_cents": null,
+        "page": 4,
+        "excerpt": "1- Point-to-Point Nano Stations",
+        "embedded_server": false,
+        "certainty": "uncertain",
+        "uncertain_reason": "Scope of work states a pair (2) will be installed, but line item lists quantity as 1"
+      },
+      {
+        "description": "8- Cat6 Cable Run",
+        "category": "network",
+        "quantity": 8,
+        "unit": "each",
+        "unit_price_cents": null,
+        "extended_cents": null,
+        "page": 4,
+        "excerpt": "8- Cat6 Cable Run",
+        "embedded_server": false,
+        "certainty": "certain",
+        "uncertain_reason": null
+      },
+      {
+        "description": "1- Installation",
+        "category": "labor",
+        "quantity": 1,
+        "unit": "lot",
+        "unit_price_cents": null,
+        "extended_cents": null,
+        "page": 4,
+        "excerpt": "1- Installation",
+        "embedded_server": false,
+        "certainty": "certain",
+        "uncertain_reason": null
+      },
+      {
+        "description": "1- Coordination with DW Spectrum for programming, testing, and setup",
+        "category": "labor",
+        "quantity": 1,
+        "unit": "lot",
+        "unit_price_cents": null,
+        "extended_cents": null,
+        "page": 4,
+        "excerpt": "1- Coordination with DW Spectrum for programming, testing, and setup",
+        "embedded_server": false,
+        "certainty": "certain",
+        "uncertain_reason": null
+      },
+      {
+        "description": "Material & Labor",
+        "category": "materials_labor",
+        "quantity": 1,
+        "unit": "lot",
+        "unit_price_cents": 4461975,
+        "extended_cents": 4461975,
+        "page": 7,
+        "excerpt": "Material & Labor $44,619.75 1 $44,619.75",
+        "embedded_server": false,
+        "certainty": "certain",
+        "uncertain_reason": null
+      }
+    ],
+    "scope_statements": [
+      {
+        "category": "camera_reused",
+        "quantity": 10,
+        "page": 3,
+        "excerpt": "iTech will reuse 10 Cameras at the Club House and 3 Cameras at the Guard Shack, which are indicated in Blue on the Camera Layout"
+      },
+      {
+        "category": "camera_reused",
+        "quantity": 3,
+        "page": 3,
+        "excerpt": "iTech will reuse 10 Cameras at the Club House and 3 Cameras at the Guard Shack, which are indicated in Blue on the Camera Layout"
+      },
+      {
+        "category": "camera_new",
+        "quantity": 4,
+        "page": 3,
+        "excerpt": "iTech will Swap out 4 Cameras at the Club House and 2 at the Guard Shack, which are indicated in Red on the Camera Layout"
+      },
+      {
+        "category": "camera_new",
+        "quantity": 2,
+        "page": 3,
+        "excerpt": "iTech will Swap out 4 Cameras at the Club House and 2 at the Guard Shack, which are indicated in Red on the Camera Layout"
+      },
+      {
+        "category": "camera_new",
+        "quantity": 3,
+        "page": 3,
+        "excerpt": "iTech will install 3 New Cameras at both the Basketball Pavilion and Guard Shack and 2 at the Back Entrance Gate, which is indicated in Pink on the Camera Layout"
+      },
+      {
+        "category": "camera_new",
+        "quantity": 2,
+        "page": 3,
+        "excerpt": "iTech will install 3 New Cameras at both the Basketball Pavilion and Guard Shack and 2 at the Back Entrance Gate"
+      },
+      {
+        "category": "license",
+        "quantity": 20,
+        "page": 3,
+        "excerpt": "20- DW Licenses"
+      }
+    ],
+    "printed_subtotal_cents": 4461975,
+    "printed_subtotal_page": 7,
+    "scope": {
+      "summary": "Surveillance system upgrade at Canyon Gate at Cinco Ranch including camera replacements and additions at the Club House, Guard Shack, Basketball Pavilion, and Back Entrance Gate, plus new NVR servers, switches, and network infrastructure.",
+      "locations": [
+        "Club House",
+        "Guard Shack",
+        "Basketball Pavilion",
+        "Back Entrance Gate"
+      ],
+      "storage": "2- 12Tb Custom Server w/DW Spectrum",
+      "retention_days": null,
+      "licenses": 20,
+      "embedded_server_cameras": 2
+    },
+    "model": {
+      "ownership": "association",
+      "monitoring": "optional",
+      "cloud_access": "with_plan"
+    },
+    "warranty": null,
+    "insurance": null,
+    "exclusions": [
+      "Acts of god, fire, floods, power surges, lightning etc.",
+      "Non maintenance issue's (device hit by forklift, camera pole hit by vehicle, door broken by someone or any other accidental acts by others etc)",
+      "Damaged devices by Theft, vandalism or other deliberate act.",
+      "Issues caused by other trades (during service or install), electrical building grounding etc"
+    ],
+    "assumptions": [
+      "This is a Budgetary bid that can be subject to change.",
+      "Upon Acceptance of this Proposal, iTech will have a PM conduct a Pre-Installation Site Survey to confirm no changes are needed to this project.",
+      "Client to provide access to the facilities Network for the Digital WatchDog Surveillance System.",
+      "We assume there is enough power available to power all necessary devices. Additional 110 power, if needed, not included.",
+      "We assume all surveillance wiring is run to the main headend location.",
+      "There are some Faults with the Current Surveillance System, and it will need troubleshooting and likely a change order for any unforeseen issues."
+    ],
+    "timing": null,
+    "change_order": "There are some Faults with the Current Surveillance System, and it will need troubleshooting and likely a change order for any unforeseen issues.",
+    "payment_terms": "50% Labor/50% Materials Upon Acceptance $22,309.87+Tax; 50% Labor/50% Materials Upon Completion $22,309.88+Tax",
+    "other_terms": [
+      "Annual Maintenance Agreement & MyDW Health Monitoring System = $440/month additional.",
+      "This agreement is effective upon completion of the project installation for 12 months and Automatically renews without 30 day notice from client.",
+      "Any credit card transactions over $1000 will be charged a 3% convenience fee",
+      "Service on site is covered during normal business hours 8am-5pm Monday-Friday. Up to 4 hours a month/2 trip fees included."
+    ],
+    "key": "ac51a7eb-1",
+    "document": {
+      "source_kind": "email_attachment",
+      "filename": "iTech_Video Proposal_Sept 2026.pdf",
+      "size_bytes": 922256,
+      "sha256": "ac51a7ebb06324b8221e5df8f02668856b391b167a37bac2cab82d54f499d917",
+      "received_at": "2026-10-16",
+      "message": "Camera Proposals",
+      "ref": null,
+      "pages": "1-8"
+    }
+  }
+}

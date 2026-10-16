@@ -78,6 +78,12 @@ function readOnly(client) {
 const bufFor = (name) => Buffer.from(`fixture bytes for ${name}`);
 const sha = (b) => crypto.createHash('sha256').update(b).digest('hex');
 
+/** A stored, owner-approved line-item version (fixture stand-in for Ed's approval). */
+function approvedFixture(items, sha) {
+  const V = require('../lib/vendors/line_item_versions');
+  return V.approveVersion(V.addVersion({}, { items, document_sha256: sha, reason: 'initial extraction', requested_by: 'fixture', at: '2026-09-17T21:00:00Z' }), 1, { approved_by: 'Ed (fixture)', at: '2026-09-17T22:00:00Z' });
+}
+
 /** The fixture replay through the real prepareComparison(). */
 async function fixtureRun({ mode = 'dry_run', previewCache = null, reprocess = null, transformExtract = null } = {}) {
   const fx = require(FIXTURE);
@@ -88,8 +94,8 @@ async function fixtureRun({ mode = 'dry_run', previewCache = null, reprocess = n
   const packetItems = ['itech-2024', 'envera-q19538-2-packet', 'netwatch-2026'].map((k) => byKey[k]);
   const seed = { ...fx.db_seed, ...(fx.context_seed || {}),
     vendor_proposals: [
-      { id: 'vp-itech-2026', service_category: 'security', file_hash: itechSha, extracted_data: { comparison_items: [byKey['itech-2026-a']] }, created_at: '2026-09-17T21:00:00Z' },
-      { id: 'vp-packet', service_category: 'security', file_hash: packetSha, extracted_data: { comparison_items: packetItems }, created_at: '2026-09-17T21:00:00Z' },
+      { id: 'vp-itech-2026', service_category: 'security', file_hash: itechSha, extracted_data: approvedFixture([byKey['itech-2026-a']], itechSha), created_at: '2026-09-17T21:00:00Z' },
+      { id: 'vp-packet', service_category: 'security', file_hash: packetSha, extracted_data: approvedFixture(packetItems, packetSha), created_at: '2026-09-17T21:00:00Z' },
     ],
     bid_requests: [], library_documents: [] };
   const db = fakeDb(seed);
@@ -111,9 +117,10 @@ function report({ result: r, facts, extracted, writes }) {
   L.push(`REQUIREMENTS (Board's words): ${r.record.requirements.notes.join('; ')}`);
   L.push(`DOCUMENTS: ${r.record.documents.map((d) => `${d.filename} [${d.origin}]`).join(' | ')}; extracted fresh: ${extracted.join(', ') || 'none (all already on file)'}`);
   L.push('LINE ITEMS SOURCE (per document):');
-  for (const x of r.extraction_log || []) L.push(`  ${x.file} [${x.sha256.slice(0, 12)}]: ${x.source}${x.cached_as_version ? ` (cached as v${x.cached_as_version})` : ''}${x.version ? ` (would be v${x.version})` : ''}${(x.differs || []).length ? `; DIFFERS from the approved version: ${x.differs.map((d) => `${d.field} ${d.approved} -> ${d.new}`).join(', ')}` : (x.extracted && (x.version || x.cached_as_version > 1) ? '; no difference from the approved version' : '')}`);
+  for (const x of r.extraction_log || []) L.push(`  ${x.file} [${x.sha256.slice(0, 12)}]: ${x.source}${x.cached_as_version ? ` (cached as v${x.cached_as_version})` : ''}${x.version ? ` (would be v${x.version})` : ''}${(x.differs || []).length ? `; DIFFERS from the current version${x.compared ? ` (v${x.compared.version}, ${x.compared.status})` : ''}: ${x.differs.map((d) => `${d.field} ${d.approved} -> ${d.new}`).join(', ')}` : (x.extracted && (x.version || x.cached_as_version > 1) ? '; no difference from the approved version' : '')}`);
+  if ((r.record.notes || []).length) { L.push('NOTES:'); for (const n of r.record.notes) L.push(`  ${n}`); }
   L.push('LINE ITEMS SOURCE (per proposal):');
-  for (const n of r.record.proposals.filter((x) => x.status !== 'duplicate')) L.push(`  ${n.vendor_name} ${n.document_date}: ${(r.record.quantities.find((q) => q.key === n.key) || {}).status === 'stored' ? 'stored on the record' : ((n.source || {}).source_kind === 'vendor_proposal' ? 'stored (no line items yet)' : 'not stored')}`);
+  for (const n of r.record.proposals.filter((x) => x.status !== 'duplicate')) { const qs = (r.record.quantities.find((q) => q.key === n.key) || {}).status; L.push(`  ${n.vendor_name} ${n.document_date}: ${{ stored: 'approved, stored on the record', pending_approval: 'stored, pending approval (provisional)', preview: 'preview cache (provisional, not approved)', not_yet_stored: 'fresh extraction, not stored (provisional)', none: 'no line items' }[qs] || qs}`); }
   L.push('\nCLASSIFICATION');
   for (const n of r.record.proposals) L.push(`  ${n.status.padEnd(10)} ${n.vendor_name} ${n.document_date || ''} (${(n.source || {}).filename}${(n.source || {}).pages ? ` pp.${n.source.pages}` : ''}) : ${n.status_reason}`);
   L.push(`\nNORMALIZED COSTS (${r.record.horizon_months}-month horizon)`);
