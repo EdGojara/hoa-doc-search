@@ -1011,5 +1011,7 @@
   },
   "decision_state_notes": {
     "management_action": "Issue RFP to iTech for a binding response; reopen to additional vendors only if iTech's response is materially different from its current proposal, cannot satisfy the requirements, or the Board requests it."
-  }
+  },
+  "purpose": "diligence",
+  "purpose_label": "Vendor diligence / scope normalization with the preferred vendor (iTech); not a competitive rebid at this stage."
 }

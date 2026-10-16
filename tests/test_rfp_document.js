@@ -101,6 +101,9 @@ check('the Board copy carries the exact decision-state wording and Board items, 
   assert.ok(/Confirm the final required insurance limits/.test(html), 'open B-04 still listed');
   assert.ok(html.includes('reopen to additional vendors only if'), 'management action note');
   assert.ok(/Envera and Netwatch remain available as prior market references/.test(html), 'B-03 decision text');
+  assert.ok(/Purpose:.*not a competitive rebid at this stage/.test(html), 'purpose line');
+  assert.ok(!/rebid|Purpose:/.test(renderRfpHtml(build(), { audience: 'vendor' })), 'purpose never in the vendor copy');
+  assert.strictEqual(build().purpose, 'diligence');
   assert.ok(!/Netwatch material|498a15b3/.test(html));
   assert.ok(!/—/.test(html) && !/\bproceed\b/i.test(html), 'em dash or "proceed" in the Board copy');
 });
