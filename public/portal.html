@@ -633,7 +633,8 @@
       <div class="user-name" id="userName">—</div>
       <div class="user-meta" id="userMeta">—</div>
     </div>
-    <button id="logoutBtn">Sign out</button>
+    <!-- No Sign out by design (Ed 2026-06-11): the 30-day device cookie IS the
+         session; a visible Sign out locks homeowners out by accident. -->
   </div>
 </header>
 
@@ -730,7 +731,6 @@
     <div>
       <div class="user-name" id="pickerUserName">—</div>
     </div>
-    <button id="pickerLogoutBtn">Sign out</button>
   </div>
 </header>
 <main>
@@ -854,7 +854,7 @@ const MODULES = [
     icon: '💬',
     section: 'home',
     cta: 'Open messages',
-    buildLink: (ctx) => `/portal-messages.html`,
+    buildLink: (ctx) => `/portal/messages`,
   },
 
   // ── Row 2: Make a request ─────────────────────────────────────────
@@ -1728,19 +1728,6 @@ function renderPortal(ctx) {
   // Footer
   $('footerHoa').textContent = `${ctx.community.hoa_legal_name || ctx.community.name} · administered by Bedrock Association Management`;
 
-  // Wire logout
-  $('logoutBtn').addEventListener('click', async () => {
-    if (ctx.demo) {
-      window.location.href = '/';
-      return;
-    }
-    // Clear stored property choice so the next login starts clean (multi-
-    // property users go back through the picker on next sign-in unless
-    // they re-pick the same property).
-    clearStoredPropertyId();
-    try { await fetch('/api/portal/logout', { method: 'POST', credentials: 'same-origin' }); }
-    finally { window.location.href = '/portal-login.html'; }
-  });
 
   // Auto-show first-login tutorial overlay if the user hasn't dismissed it.
   // tutorial_dismissed = true means "user has seen + dismissed the tutorial
@@ -1762,14 +1749,14 @@ async function checkChamberLive() {
     const b = j && j.broadcast;
     if (b && b.status === 'live') {
       el.style.display = '';
-      el.innerHTML = `<a href="/portal-chamber.html${qs}" style="display:flex; align-items:center; gap:14px; text-decoration:none; color:#fff; background:#dc2626; border-radius:12px; padding:14px 18px; box-shadow:0 2px 8px rgba(220,38,38,.25);">
+      el.innerHTML = `<a href="/portal/chamber${qs}" style="display:flex; align-items:center; gap:14px; text-decoration:none; color:#fff; background:#dc2626; border-radius:12px; padding:14px 18px; box-shadow:0 2px 8px rgba(220,38,38,.25);">
         <span style="display:inline-flex; align-items:center; gap:6px; font-weight:800; font-size:12px; letter-spacing:.04em;"><span style="width:8px;height:8px;border-radius:50%;background:#fff;"></span>LIVE</span>
         <span style="flex:1;"><strong style="font-size:15px;">${escapeHtml(b.title || 'Board Meeting')} is live now</strong><br><span style="opacity:.9; font-size:13px;">Tap to watch in the Chamber →</span></span>
       </a>`;
     } else if (b && b.status === 'scheduled' && b.scheduled_at) {
       const when = new Date(b.scheduled_at).toLocaleString(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
       el.style.display = '';
-      el.innerHTML = `<a href="/portal-chamber.html${qs}" style="display:flex; align-items:center; gap:12px; text-decoration:none; color:#1e40af; background:#eff6ff; border:1px solid #bfdbfe; border-radius:12px; padding:12px 16px;">
+      el.innerHTML = `<a href="/portal/chamber${qs}" style="display:flex; align-items:center; gap:12px; text-decoration:none; color:#1e40af; background:#eff6ff; border:1px solid #bfdbfe; border-radius:12px; padding:12px 16px;">
         <span style="font-size:18px;">🗓️</span><span><strong>Upcoming board meeting</strong> — ${escapeHtml(when)}. You can watch it live here.</span></a>`;
     } else {
       el.style.display = 'none'; el.innerHTML = '';
@@ -2017,15 +2004,6 @@ function renderPropertyPicker(ctx) {
     grid.appendChild(card);
   });
 
-  // Wire logout in the picker header
-  const logoutBtn = $('pickerLogoutBtn');
-  if (logoutBtn) {
-    logoutBtn.addEventListener('click', async () => {
-      clearStoredPropertyId();
-      try { await fetch('/api/portal/logout', { method: 'POST', credentials: 'same-origin' }); }
-      finally { window.location.href = '/portal-login.html'; }
-    });
-  }
 }
 
 // =============================================================================

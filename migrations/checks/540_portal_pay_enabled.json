@@ -1,0 +1,52 @@
+{
+  "migration": "540_portal_pay_enabled.sql",
+  "summary": "Adds communities.portal_pay_enabled (BOOLEAN NOT NULL DEFAULT FALSE): Ed's per-community switch for homeowner portal payments. Turned on for no community. No data changes.",
+  "requires": [
+    "527_reclassification_runs_and_vendor_line_rules.sql"
+  ],
+  "preflight": [
+    {
+      "name": "the column does not exist yet",
+      "sql": "SELECT count(*)::int FROM information_schema.columns WHERE table_name = 'communities' AND column_name = 'portal_pay_enabled'",
+      "expect": 0
+    }
+  ],
+  "expected_changes": [
+    "communities: column portal_pay_enabled (boolean, not null, default false) added.",
+    "Every community reads false. No other row changes."
+  ],
+  "objects": {
+    "added": [
+      "column:communities.portal_pay_enabled"
+    ],
+    "changed": [],
+    "removed": []
+  },
+  "row_changes": {
+    "communities": 0,
+    "journal_entries": 0,
+    "homeowner_transactions": 0
+  },
+  "protected": [
+    {
+      "table": "journal_entries",
+      "order_by": "id"
+    },
+    {
+      "table": "homeowner_transactions",
+      "order_by": "id"
+    }
+  ],
+  "verify": [
+    {
+      "name": "portal pay is on for no community",
+      "sql": "SELECT count(*)::int FROM communities WHERE portal_pay_enabled",
+      "expect": 0
+    },
+    {
+      "name": "the column defaults to false and is not null",
+      "sql": "SELECT count(*)::int FROM information_schema.columns WHERE table_name = 'communities' AND column_name = 'portal_pay_enabled' AND is_nullable = 'NO' AND column_default = 'false'",
+      "expect": 1
+    }
+  ]
+}
