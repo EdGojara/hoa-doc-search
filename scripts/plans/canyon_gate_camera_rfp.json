@@ -891,56 +891,56 @@
     ],
     "contract_package_note": "Required with every bid. A bid missing any item is incomplete.",
     "schedule": {
-      "recommended_response_deadline": "2026-11-06T17:00:00-06:00",
-      "recommended_response_deadline_display": "Friday, November 6, 2026 at 5:00 p.m. Central",
-      "basis": "About two weeks from issue, enough for a site walk and written questions, while leaving time for comparison, a Board award decision, counsel review and equipment lead time before a December 7 installation start. If issue slips past October 22, keep the deadline 14 days after issue and tell the Board the installation start may move.",
+      "recommended_response_deadline": "2026-11-02T17:00:00-06:00",
+      "recommended_response_deadline_display": "Monday, November 2, 2026 at 5:00 p.m. Central",
+      "basis": "Twelve calendar days from issue: a three-business-day site walk window, written questions the day after, answers within one business day, and four more working days to price a 27-camera, 4-location job from a fixed camera schedule and pricing form. Award, counsel review and signing by November 13 leave two to three weeks of equipment lead time before a December 7 installation start. If issue slips, keep the deadline 12 days after issue.",
       "timeline": [
         {
-          "milestone": "Board review of this draft RFP",
-          "date": "2026-10-21",
-          "note": "Proposed. The RFP is issued only after the Board approves the document and the bidder list.",
+          "milestone": "Ed and Board sign-off on this draft",
+          "date": "2026-10-20",
+          "note": "Target. The RFP is issued only after the Board approves the document and the bidder list.",
           "board_only": true
         },
         {
           "milestone": "RFP issued to bidders",
-          "date": "2026-10-22",
+          "date": "2026-10-21",
           "note": ""
         },
         {
           "milestone": "Site walk, by appointment (strongly recommended)",
-          "date": "2026-10-27",
-          "note": "Through October 29"
+          "date": "2026-10-22",
+          "note": "Through Monday, October 26"
         },
         {
           "milestone": "Written questions due",
-          "date": "2026-10-29",
+          "date": "2026-10-27",
           "note": "5:00 p.m. Central"
         },
         {
           "milestone": "Answers issued to all bidders",
-          "date": "2026-11-02",
+          "date": "2026-10-28",
           "note": ""
         },
         {
           "milestone": "Responses due",
-          "date": "2026-11-06",
+          "date": "2026-11-02",
           "note": "5:00 p.m. Central"
         },
         {
           "milestone": "Comparison and diligence complete",
-          "date": "2026-11-13",
+          "date": "2026-11-06",
           "note": "",
           "board_only": true
         },
         {
           "milestone": "Board award decision",
-          "date": "2026-11-17",
+          "date": "2026-11-10",
           "note": "Target",
           "board_only": true
         },
         {
           "milestone": "Counsel review and contract signing",
-          "date": "2026-11-20",
+          "date": "2026-11-13",
           "note": "Only after Board authorization",
           "board_only": true
         },
