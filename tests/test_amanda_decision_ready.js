@@ -98,7 +98,9 @@ function fakeDb(seed, failTables = []) {
     assert.ok(/boardDecisionFacts\(supabase, communityId, inboundText\)/.test(src), 'facts are retrieved before drafting');
     assert.ok(/BOARD DECISION FACTS \(retrieved from trustEd before drafting/.test(src), 'facts go into the prompt');
     assert.ok(/if \(audience === 'board'\) system \+= '\\n\\n' \+ decisionReady\.DECISION_READY_RULE/.test(src), 'rule on board drafts');
-    assert.ok(/checkDecisionReady\(out\);\s*if \(!dr\.ok\) \{ out = await ask\(decisionReady\.retryNote\(dr\.issues\)\)/.test(src), 'one corrective retry');
+    // Decision-ready and reply-focus share ONE corrective retry (lib/amanda/reply_focus.js).
+    assert.ok(/decisionReady\.checkDecisionReady\(txt\)/.test(src) && /decisionReady\.retryNote\(chk\.dr\.issues\)/.test(src), 'decision-ready check feeds the retry');
+    assert.strictEqual((src.match(/out = await ask\(notes\)/g) || []).length, 1, 'one corrective retry');
     assert.ok(!/Give 2 to 3 options with the tradeoffs/.test(src), 'the old options-first instruction is gone');
   });
 
