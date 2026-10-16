@@ -36353,7 +36353,7 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
     const th = 'style="text-align:left; padding:4px 6px; border-bottom:1px solid #cbd5e1; color:#475569;"';
     const td = 'style="padding:4px 6px; border-bottom:1px solid #eef2f7; vertical-align:top;"';
     const items = (aud) => (d.clarification_items || []).filter((c) => c.audience === aud);
-    const itemList = (aud, title) => items(aud).length ? `<div style="margin-top:6px;"><b>${title}</b><ol style="margin:4px 0 0 18px; padding:0;">${items(aud).map((c) => `<li>${escapeHtml(c.text)}</li>`).join('')}</ol></div>` : '';
+    const itemList = (aud, title) => items(aud).length ? `<div style="margin-top:6px;"><b>${title}</b><ol style="margin:4px 0 0 18px; padding:0;">${items(aud).map((c) => `<li>${c.status === 'decided' ? '<b>Decided:</b> ' : ''}${escapeHtml(c.text)}${c.status === 'decided' ? ` (${escapeHtml(c.decided_by || '')}, ${escapeHtml(c.decided_on || '')})` : ''}</li>`).join('')}</ol></div>` : '';
     return `
       <div style="border:1px solid #D4AF37; border-radius:8px; background:#fffdf5; padding:12px 14px;">
         <div style="display:flex; justify-content:space-between; gap:10px; flex-wrap:wrap; align-items:flex-start;">
@@ -36389,7 +36389,7 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
           <div style="font-size:12px; margin-top:4px;">Totals: ${((d.pricing_form || {}).totals || []).map((l) => `<b>${escapeHtml(l.label)}</b> = ${escapeHtml(l.formula)}`).join('; ')}</div>
         </details>
         <details style="margin-top:4px;" open><summary style="cursor:pointer; font-size:12.5px; font-weight:600;">Open items</summary>
-          <div style="font-size:12px;">${itemList('board', 'Board to confirm')}${itemList('management', 'Management (staff only, not in any copy)')}${itemList('all_bidders', 'Required from every bidder')}</div>
+          <div style="font-size:12px;">${itemList('board', 'Board items')}${itemList('management', 'Management (staff only, not in any copy)')}${itemList('all_bidders', 'Required from every bidder')}</div>
         </details>
 
         <div style="margin-top:10px; font-size:12.5px; font-weight:600; color:#1E2761;">Responses, compared on the same pricing form</div>

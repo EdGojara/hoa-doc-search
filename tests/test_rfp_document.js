@@ -97,7 +97,8 @@ check('management items and the decision state may name the baseline vendor; the
 check('the Board copy carries the exact decision-state wording and Board items, never management items', () => {
   const html = renderRfpHtml(build(), { audience: 'board' });
   for (const k of R.DECISION_STATE_KEYS) assert.ok(html.includes(plan.expected_decision_state[k].replace(/&/g, '&amp;')), k);
-  assert.ok(/Confirm coverage is limited/.test(html));
+  assert.ok(/Coverage: four locations only.*(Ed Gojara, Friday, October 16, 2026)/.test(html), 'decided B-01 rendered with attribution');
+  assert.ok(/Confirm the response deadline/.test(html), 'open B-03 still listed');
   assert.ok(!/Netwatch material|498a15b3/.test(html));
   assert.ok(!/—/.test(html) && !/\bproceed\b/i.test(html), 'em dash or "proceed" in the Board copy');
 });
