@@ -292,7 +292,8 @@
 
   function row(n) {
     var s = stateOf(n);
-    var sub = [n.community && n.community.name, n.requested_by ? 'requested by ' + n.requested_by : null, n.due ? 'due ' + fmtDate(n.due) + (n.overdue ? ' (overdue)' : '') : null, n.blocking === false ? 'not blocking' : null, n.horizon ? n.horizon.toUpperCase() : null, n.platform_kind, n.dev_status].filter(Boolean).join(' · ');
+    // A drafted email always says which community it is for (staff act on agent drafts portfolio-wide).
+    var sub = [(n.community && n.community.name) || (n.category === 'email_draft' ? 'No community' : null), n.requested_by ? 'requested by ' + n.requested_by : null, n.due ? 'due ' + fmtDate(n.due) + (n.overdue ? ' (overdue)' : '') : null, n.blocking === false ? 'not blocking' : null, n.horizon ? n.horizon.toUpperCase() : null, n.platform_kind, n.dev_status].filter(Boolean).join(' · ');
     return '<div class="mc-row' + (openKeys[n.key] ? ' is-open' : '') + '" data-key="' + esc(n.key) + '"><div class="mc-line" data-toggle="' + esc(n.key) + '">' +
       '<div><div class="mc-title">' + (n.kind === 'deliverable' ? icon('check', { size: 13, color: 'var(--tx-gold-ink)' }) + ' ' : '') + esc(n.title) + '</div><div class="mc-sub">' + esc(sub) + '</div></div>' +
       '<div class="mc-own">' + esc(n.owner || '—') + '</div><div>' + pill(n.status_label && n.kind === 'deliverable' ? s[0] : s[0], s[1]) + '</div>' +

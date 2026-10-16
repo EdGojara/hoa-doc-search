@@ -137,7 +137,7 @@ function dispBadge(d){
 function rowHtml(d){ return `<button class="d ${current&&current.id===d.id?'sel':''}" onclick="openDraft('${d.id}')">
     <div class="t">${esc(d.subject||'(no subject)')}</div>
     <div class="m"><span class="pill ${d.status}">${d.status}</span>${d.persona?`<span class="pill persona">${esc(d.persona)}</span>`:''}${dispBadge(d)} ${esc(d.to_name||d.to_email||'')} · ${fmtDate(d.created_at)}</div>
-    ${d.community_name?`<div class="m">${esc(d.community_name)}</div>`:''}
+    <div class="m">${d.community_name?esc(d.community_name):'<i>No community</i>'}</div>
   </button>`; }
 function renderList(){
   if(!drafts.length){ $('list').innerHTML='<div class="empty" style="padding:24px;">No drafts.</div>'; return; }
@@ -165,6 +165,7 @@ function renderView(){
   if(d.draft_kind) ctxBits.push(esc(d.draft_kind));
   if(d.status==='draft' && d.disposition) ctxBits.push((d.disposition==='auto_ok'?'✓ handled':'⚠ needs action')+(d.disposition_reason?': '+esc(d.disposition_reason):''));
   if(d.draft_reason) ctxBits.push(esc(d.draft_reason));
+  ctxBits.unshift(d.community_name ? 'Community: '+esc(d.community_name) : 'No community');
   $('view').innerHTML = `
     ${d.status==='sent'?`<div class="sentnote">Sent ${fmtDate(d.sent_at)}${d.sent_from?' from '+esc(d.sent_from):''}.</div>`:''}
     ${d.send_error?`<div class="errnote">Last send attempt failed: ${esc(d.send_error)}</div>`:''}

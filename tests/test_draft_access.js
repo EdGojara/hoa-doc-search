@@ -222,6 +222,9 @@ async function main() {
     const dis = await call('POST', `/api/email-drafts/${dB.id}/discard`, 'staffB', {});
     check('Staff B can discard their own draft; its task closes', dis.status === 200 && row(dB).status === 'discarded' && db.work_items.find((w) => w.id === t.id).status === 'dismissed');
     const sv = await call('POST', '/api/email-triage/compose/drafts', 'owner', { persona: 'claire', to: ['plain@x.test'], subject: 'Owned compose', body: 'b' });
+    const noComm = await call('POST', '/api/email-triage/compose/drafts', 'owner', { persona: 'claire', to: ['plain@x.test'], subject: 'No community draft', body: 'b' });
+    const tNo = db.work_items.find((w) => w.source_ref === `compose_draft:${noComm.body.draft_id}`);
+    check('a drafted-email task with no community says "No community"', tNo && /No community/.test(tNo.summary) && tNo.item_type === 'email_draft');
     check('a New Email draft records who started it', sv.status === 200 && row({ id: sv.body.draft_id }).owner_user_id === U.owner);
     check('the compose routes refuse staff (Communications is admin-only) and signed-out callers', (await call('GET', `/api/email-triage/compose/drafts/${sv.body.draft_id}`, 'staffA')).status === 403 && (await call('GET', `/api/email-triage/compose/drafts/${sv.body.draft_id}`, null)).status === 403);
     check('the same rule is applied inside the compose helpers (a staff caller is refused even if a route forgot)', await CD.saveComposeDraft({ draft_id: sv.body.draft_id, persona: 'claire', to: ['plain@x.test'], subject: 'x', body: 'y' }, { user: USERS.staffA }).then(() => false, (e) => e.status === 403));
