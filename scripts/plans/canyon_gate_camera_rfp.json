@@ -154,7 +154,7 @@
           "Recording on site is required, on equipment the Association owns, in addition to cloud storage."
         ],
         "items": [
-          "State the number and location of recorders, the usable storage, and the on-site retention it gives for all 27 cameras. Price the on-site storage for at least 30 days so bids are comparable.",
+          "State the number and location of recorders, the usable storage, and the on-site retention it gives for all 27 cameras.",
           "Provide a battery backup for each recorder; state the runtime.",
           "If any camera records on the camera itself, say which, and confirm its video is still viewable in the same software and stored in the cloud."
         ]
@@ -201,10 +201,10 @@
         "key": "retention",
         "title": "Retention",
         "body": [
-          "To make bids comparable, price 30 days of recording for all 27 cameras, on site and in the cloud."
+          "To keep bids comparable, price a common baseline of 30 days of recording for all 27 cameras, on site and in the cloud, and price 60 days as a separate alternate."
         ],
         "items": [
-          "State the days actually achieved on site and in the cloud, with the settings used (resolution, frame rate, continuous or motion recording)."
+          "State the retention you can actually achieve on site and in the cloud, with the settings used (resolution, frame rate, continuous or motion recording)."
         ]
       },
       {
@@ -323,7 +323,7 @@
           "Submit the complete contract you would ask the Association to sign: the final binding proposal and terms and conditions. The Association's counsel will review it before signing."
         ],
         "items": [
-          "State the payment schedule. The Association prefers a final payment due on acceptance.",
+          "State the payment schedule. Assume at least 10 percent of the contract price is held until the Association's written acceptance. The Association will confirm or remove this term at contract signing; it does not change the prices you bid.",
           "State any fees (for example card fees), limitation of liability, and termination terms.",
           "No automatic renewals of any recurring service without the Association's written renewal.",
           "A completed IRS Form W-9 is required before payment."
@@ -365,7 +365,7 @@
           "One-time charges: equipment; labor; cabling and conduit; network equipment; recorders and storage; software and licenses; freight; sales tax; permits; any other one-time charge, itemized.",
           "Every recurring charge listed separately, including cloud storage and cloud access, with its amount, term and renewal terms.",
           "Totals: base installed, first-year and five-year, as defined on the pricing form.",
-          "Alternates priced separately: replacement of any reused camera your system cannot support, a smaller cloud storage scope if you recommend one, and any optional support plan."
+          "Alternates priced separately: 60-day retention, replacement of any reused camera your system cannot support, a smaller cloud storage scope if you recommend one, and any optional support plan."
         ]
       }
     ],
@@ -668,7 +668,7 @@
       {
         "id": "R-07",
         "section": "servers_storage",
-        "requirement": "On-site recording on equipment the Association owns, priced for at least 30 days, with battery backup.",
+        "requirement": "On-site recording on equipment the Association owns, with battery backup.",
         "basis": "baseline"
       },
       {
@@ -692,13 +692,13 @@
       {
         "id": "R-11",
         "section": "cloud_access_vs_storage",
-        "requirement": "Cloud storage of recorded video from all 27 cameras for 30 days included in the base bid and priced as its own line.",
+        "requirement": "Cloud storage of recorded video from all 27 cameras included in the base bid and priced as its own line.",
         "basis": "board"
       },
       {
         "id": "R-12",
         "section": "retention",
-        "requirement": "Days achieved on site and in the cloud stated, with the recording settings.",
+        "requirement": "Storage priced for the common 30-day baseline on site and in the cloud, 60 days priced as an alternate, and achievable retention stated with the recording settings.",
         "basis": "management"
       },
       {
@@ -831,7 +831,7 @@
       {
         "id": "B-02",
         "audience": "board",
-        "text": "Confirm what cloud storage should cover. The RFP prices cloud storage of all 27 cameras for 30 days, plus cloud access, and lets bidders offer a smaller cloud scope as an alternate. None of the proposals on file priced off-site cloud recording, so this may be the largest open cost.",
+        "text": "Confirm what cloud storage should cover. The RFP prices cloud storage of all 27 cameras on the 30-day baseline, plus cloud access, and lets bidders offer a smaller cloud scope as an alternate. None of the proposals on file priced off-site cloud recording, so this may be the largest open cost.",
         "source": "Board President email, 2026-10-16; proposals on file"
       },
       {
@@ -845,6 +845,18 @@
         "audience": "board",
         "text": "Confirm the insurance limits (general liability 1,000,000 per occurrence and 2,000,000 aggregate).",
         "source": "Management"
+      },
+      {
+        "id": "B-05",
+        "audience": "board",
+        "text": "Confirm the 30-day retention baseline (with 60 days priced as an alternate). This is Amanda's recommended baseline for comparing bids, not a Board direction; it is pending Board confirmation.",
+        "source": "Management recommendation"
+      },
+      {
+        "id": "B-06",
+        "audience": "board",
+        "text": "Confirm or remove the 10 percent holdback until written acceptance. This is Amanda's recommended contract protection, not a Board direction or an existing Canyon Gate requirement. The RFP lets the Association confirm or remove it at contract signing without re-issuing.",
+        "source": "Management recommendation"
       },
       {
         "id": "M-01",
@@ -867,7 +879,7 @@
       {
         "id": "M-04",
         "audience": "management",
-        "text": "Conflict-of-interest check before bidders are selected: one competing design on file lists a business development contact with the same name as the person the baseline proposal is addressed to. Management to confirm whether a disclosure is needed. Not raised with the Board or any vendor yet.",
+        "text": "A contact name appearing in the Netwatch material appears to match the individual identified in the iTech proposal. Verify whether this is the same person and whether any relationship is relevant to the procurement.",
         "source": "Proposals on file"
       },
       {
