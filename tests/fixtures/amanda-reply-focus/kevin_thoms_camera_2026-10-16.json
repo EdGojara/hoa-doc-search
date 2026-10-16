@@ -108,5 +108,31 @@
   "persona": "amanda",
   "subject": "Re: Camera Proposals",
   "review_hint": "Completion confirmed — a brief thank-you is drafted. Send it to close the loop, or dismiss."
- }
+ },
+ "bad_hugh_rfp_draft_as_stored": {
+  "body": "Good afternoon President Durlam,\n\nI reviewed the iTech Monitoring proposal in full. Here are the numbers as submitted, scrubbed for an RFP comparison:\n\nScope: reuse 10 cameras at the Clubhouse and 3 at the Guard Shack, swap 4 Clubhouse and 2 Guard Shack cameras, add 3 new cameras each at the Basketball Pavilion and Guard Shack, 2 at the Back Entrance Gate, 2 new 12TB servers, UPS backup, PoE switches at Clubhouse and Guard Shack, point to point Nano Stations, conduit runs, and coordination with DW Spectrum for setup.\n\nCost: $44,619.75 material and labor, plus 7.25% sales tax, so roughly $47,854.69 total. Payment terms are 50 percent upon acceptance and 50 percent upon completion, each split evenly between labor and materials. There is also an optional Annual Maintenance Agreement and MyDW Health Monitoring at $440 per month, which auto renews annually unless the association gives 30 days notice to cancel.\n\nA few things worth flagging before this goes out as a baseline for an RFP:\n\n1. The proposal is explicitly a budgetary bid \"subject to change,\" with a pre-installation site survey still to come, and it calls out known faults in the current system that will likely trigger a change order. That means the final number could move once iTech or any other vendor is actually on site.\n\n2. The maintenance agreement's auto-renewal and 30 day cancellation terms should be called out clearly in the RFP so every bidder is quoting apples to apples on service terms, not just equipment.\n\nOn the RFP itself, I can put together a clean comparison document using this proposal's scope of work as the baseline, so other camera and monitoring vendors are bidding against the same project description. That is a straightforward drafting task on my end and I will get started on it.\n\nBefore I send it out to other vendors, I want to confirm with you:\n\n1. Should the RFP go out only to Zane's committee's preferred vendors, or do you want our office to pull a general list of licensed security/surveillance vendors for a wider bid pool.\n2. Do you want the maintenance agreement treated as a required line item in every bid, or optional so vendors can quote with and without it.\n\nOnce I hear back on those two points, I will finalize the RFP and circulate it. Given the project is north of $40,000 and will likely need board approval regardless of which vendor is chosen, I would also recommend this come back to the full board for a vote once bids are in, rather than being decided outside a meeting.\n\nLet me know if you would like me to proceed on that basis.\n\nBest,",
+  "status": "pending",
+  "careful": true,
+  "persona": "amanda",
+  "subject": "Re: Create RFP",
+  "confidence": "high",
+  "disposition": "auto_ok",
+  "review_hint": "Amanda escalation: 2 open violation(s) [courtesy_1] · AR owes $72.52 · aud:board · grounded · auto_ok/high",
+  "disposition_reason": "routine, grounded, in-bounds, verified sender"
+ },
+ "bid_requests": [
+  {
+   "id": "9857e2cc-766b-450a-815a-c574e7572643",
+   "community_id": "a0000000-0000-4000-8000-000000000003",
+   "title": "Security Camera System 2026 (Canyon Gate at Cinco Ranch)",
+   "status": "evaluating",
+   "service_category": "security",
+   "generated_document": null,
+   "rfp_file_path": null,
+   "bid_deadline": null,
+   "closed_at": null,
+   "created_at": "2026-10-16T11:23:19.420293+00:00"
+  }
+ ],
+ "live_hugh_dry_run_passing": "Hugh, I have scrubbed the iTech numbers and I am building the RFP now, scoped to purchase, installation, and cloud storage/access only, with no monitoring included per the Board's direction.\n\nOn the numbers: the proposal totals $44,619.75 plus 7.25% tax ($3,234.93), for a true total of $47,854.68, split 50/50 at acceptance and completion. That figure is hardware and installation only. The $440/month MyDW Health Monitoring and Annual Maintenance line is a separate add-on iTech quoted, not required to accept the base proposal, and it falls outside the Board's \"no monitoring\" instruction, so I am excluding it from the RFP baseline. One item needs a decision later, not now: the agreement as written auto-renews annually without 30 day notice from the client, which I'll flag as a required negotiated term in the RFP rather than something to accept as-is.\n\nI am using this iTech scope and pricing as the benchmark and building the RFP around the same specification (camera count, locations, server/storage, and cloud access) so competing bids are comparing apples to apples. I'll invite a short list of qualified camera vendors who serve this market, iTech included, and set a bid deadline that keeps us on track given the December install reality we already discussed. This does not reverse my October 16 recommendation to move on iTech's proposal; it runs the RFP in parallel per your request so the Board has competitive pricing before any contract decision.\n\nThe draft RFP comes back to you and the Board for review before anything goes out to vendors."
 }

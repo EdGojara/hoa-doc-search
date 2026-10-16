@@ -71,6 +71,7 @@ function readOnly(sb) {
 
   console.log('WHAT THE DRAFTER SAW');
   console.log(`  audience: ${d.diagnostic.audience}   greeting name: ${d.diagnostic.sender_first_name || '(none)'}`);
+  console.log(`  settled constraints: ${(d.diagnostic.settled_constraints || []).map((c) => `"${c}"`).join(' | ') || '(none)'}`);
   console.log(`  latest message:\n${d.diagnostic.latest_text.split('\n').map((l) => '    | ' + l).join('\n')}`);
   if (flag('prompt')) console.log(`\n  FULL PROMPT:\n${d.diagnostic.prompt}`);
 
@@ -82,6 +83,13 @@ function readOnly(sb) {
     const { verifyKevinReply } = require('../tests/fixtures/amanda-reply-focus/kevin_expectations');
     const v = verifyKevinReply(d.body);
     console.log('\nACCEPTANCE (Kevin Thoms regression):');
+    for (const r of v.results) console.log(`  ${r.ok ? 'ok  ' : 'FAIL'} ${r.name}`);
+    process.exitCode = v.ok && !d.focus_issues.length ? 0 : 1;
+  }
+  if (/^president@canyongateatcincoranch\.com$/i.test(email.sender_email) && /\bRFP\b/i.test(email.subject || '')) {
+    const { verifyHughReply } = require('../tests/fixtures/amanda-reply-focus/hugh_expectations');
+    const v = verifyHughReply(d.body);
+    console.log('\nACCEPTANCE (Hugh "Create RFP" regression):');
     for (const r of v.results) console.log(`  ${r.ok ? 'ok  ' : 'FAIL'} ${r.name}`);
     process.exitCode = v.ok && !d.focus_issues.length ? 0 : 1;
   }
