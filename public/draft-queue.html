@@ -117,7 +117,7 @@ function setTab(s){ tab=s; [...document.querySelectorAll('.tab')].forEach(t=>t.c
 
 async function loadList(){
   try{
-    const r = await fetch('/api/email-drafts?status='+tab); const j = await r.json();
+    const r = await af('/api/email-drafts?status='+tab); const j = await r.json();
     if(!r.ok) throw new Error(j.error||'load failed');
     if(j.migration_pending){ $('notReady').classList.remove('hide'); }
     drafts = j.drafts||[]; renderList();
@@ -137,7 +137,7 @@ function dispBadge(d){
 function rowHtml(d){ return `<button class="d ${current&&current.id===d.id?'sel':''}" onclick="openDraft('${d.id}')">
     <div class="t">${esc(d.subject||'(no subject)')}</div>
     <div class="m"><span class="pill ${d.status}">${d.status}</span>${d.persona?`<span class="pill persona">${esc(d.persona)}</span>`:''}${dispBadge(d)} ${esc(d.to_name||d.to_email||'')} · ${fmtDate(d.created_at)}</div>
-    ${d.community_name?`<div class="m">${esc(d.community_name)}</div>`:''}
+    <div class="m">${d.community_name?esc(d.community_name):'<i>No community</i>'}</div>
   </button>`; }
 function renderList(){
   if(!drafts.length){ $('list').innerHTML='<div class="empty" style="padding:24px;">No drafts.</div>'; return; }
@@ -150,7 +150,7 @@ function renderList(){
 
 async function openDraft(id){
   try{
-    const r = await fetch('/api/email-drafts/'+id); const j = await r.json();
+    const r = await af('/api/email-drafts/'+id); const j = await r.json();
     if(!r.ok) throw new Error(j.error||'not found');
     current = j.draft; renderList(); renderView();
   }catch(e){ toast(e.message,true); }
@@ -165,6 +165,7 @@ function renderView(){
   if(d.draft_kind) ctxBits.push(esc(d.draft_kind));
   if(d.status==='draft' && d.disposition) ctxBits.push((d.disposition==='auto_ok'?'✓ handled':'⚠ needs action')+(d.disposition_reason?': '+esc(d.disposition_reason):''));
   if(d.draft_reason) ctxBits.push(esc(d.draft_reason));
+  ctxBits.unshift(d.community_name ? 'Community: '+esc(d.community_name) : 'No community');
   $('view').innerHTML = `
     ${d.status==='sent'?`<div class="sentnote">Sent ${fmtDate(d.sent_at)}${d.sent_from?' from '+esc(d.sent_from):''}.</div>`:''}
     ${d.send_error?`<div class="errnote">Last send attempt failed: ${esc(d.send_error)}</div>`:''}
@@ -342,7 +343,7 @@ async function discardDraft(){
       af = async (u,o)=>{ o=o||{}; const h=Object.assign({},o.headers||{}); try{ const s=(await supa.auth.getSession()).data.session; if(s&&s.access_token) h.Authorization='Bearer '+s.access_token; }catch(_){} return fetch(u,Object.assign({},o,{headers:h})); };
     }
   }catch(_){ }
-  try{ const pr=await fetch('/api/email-drafts/personas'); const pj=await pr.json(); personas=pj.personas||[]; }catch(_){}
+  try{ const pr=await af('/api/email-drafts/personas'); const pj=await pr.json(); personas=pj.personas||[]; }catch(_){}
   await loadRoster();
   loadList();
 })();

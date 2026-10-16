@@ -1240,16 +1240,13 @@ async function loadStaff(){
 // so composing/forwarding to a board is one pick. Sourced from board_members.
 let boardGroups = [];
 async function loadBoardGroups(){
+  // Scoped server-side to communities Bedrock currently manages (never demo,
+  // prospect or ended ones such as Eaglewood). A failure leaves the picker
+  // without board lists; typing names still works.
   try {
-    const r = await af('/api/board-members'); const j = await r.json();
-    const byComm = {};
-    for (const m of (j.members||[])) {
-      if (!m.email) continue;
-      const g = (byComm[m.community_name] = byComm[m.community_name] || new Map());
-      const e = m.email.trim(); if (!g.has(e.toLowerCase())) g.set(e.toLowerCase(), { email:e, name:m.name||null, position:m.position||null });
-    }
-    boardGroups = Object.entries(byComm)
-      .map(([community, mm])=>{ const members=[...mm.values()]; return {community, members, emails:members.map(x=>x.email)}; })
+    const r = await af('/api/email-triage/compose/board-lists'); const j = await r.json();
+    if (!r.ok) throw new Error(j.detail || 'unavailable');
+    boardGroups = (j.lists||[]).map(g=>({ community:g.community, members:g.members, emails:g.members.map(x=>x.email) }))
       .sort((a,b)=>a.community.localeCompare(b.community));
   } catch(_) { boardGroups = []; }
 }

@@ -19,6 +19,7 @@
     "postinstall": "puppeteer browsers install chrome || true",
     "test:pagination": "node scripts/check_pagination.js",
     "test:compose": "node tests/test_compose_drafts.js",
+    "test:draft-access": "node tests/test_draft_access.js",
     "test:inline-scripts": "node scripts/check_inline_scripts.js",
     "test:credentials": "node scripts/check_credential_claims.js",
     "test:email-body": "node scripts/check_stored_email_body.js",

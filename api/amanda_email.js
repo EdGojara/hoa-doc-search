@@ -63,7 +63,7 @@ router.post('/draft', async (req, res) => {
   try {
     const d = await desk.draftAmandaEmail({ thought: b.thought, recipientName: b.recipient_name || null });
     if (d.degraded) return res.status(503).json({ ok: false, error: 'draft_failed', detail: 'Amanda could not draft that one. Nothing was staged.' });
-    const row = await desk.stageDraft(sb(), { to, cc: b.cc, toName: b.recipient_name, subject: d.subject, body: d.body, createdBy: u.email,
+    const row = await desk.stageDraft(sb(), { to, cc: b.cc, toName: b.recipient_name, subject: d.subject, body: d.body, createdBy: u.email, ownerUserId: (u.user && u.user.id) || null,
       reason: `Drafted from ${u.full_name || u.email}'s note; waiting for review.` });
     res.json({ ok: true, draft: { ...row, body_text: d.body } });
   } catch (e) {
@@ -104,7 +104,7 @@ router.post('/ask', async (req, res) => {
     const row = await desk.stageDraft(sb(), {
       to: out.to.map((p) => p.email), cc: out.cc.map((p) => p.email),
       toName: out.to.length === 1 ? out.to[0].name : null,
-      subject: out.draft.subject, body: out.draft.body, createdBy: u.email,
+      subject: out.draft.subject, body: out.draft.body, createdBy: u.email, ownerUserId: (u.user && u.user.id) || null,
       reason: `Asked by ${u.full_name || u.email}: "${text.slice(0, 300)}"`,
     });
     res.json({ ok: true, staged: true, ...base, draft: { ...row, body_text: out.draft.body }, reply: 'Prepared and waiting in Amanda’s outbox for review. Nothing was sent.' });
@@ -181,7 +181,7 @@ router.post('/inbox/:id/reply', async (req, res) => {
     }
     // Reply All by default (sender in To, everyone else in CC, never Amanda).
     const rcpt = inbox.replyRecipients(t, { mode: b.reply_mode === 'sender' ? 'sender' : 'all', extraCc: b.cc });
-    const row = await inbox.stageReply(sb(), { message: t.message, body: text, cc: rcpt.cc.join(', '), createdBy: u.email,
+    const row = await inbox.stageReply(sb(), { message: t.message, body: text, cc: rcpt.cc.join(', '), createdBy: u.email, ownerUserId: (u.user && u.user.id) || null,
       reason: (written ? `Reply written by ${u.full_name || u.email}` : `Reply drafted from ${u.full_name || u.email}'s note: "${thought.slice(0, 300)}"`)
         + ` (${rcpt.mode === 'all' ? 'reply all' : 'reply to sender only'}); waiting for review.` });
     res.json({ ok: true, staged: true, draft: row, reply_mode: rcpt.mode, threaded_reply: t.message.threaded_reply_possible,

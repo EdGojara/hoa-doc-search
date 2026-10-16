@@ -46,15 +46,8 @@ const db = {
   outbound_email_drafts: [], work_items: [], work_item_events: [],
 };
 const COLS532 = { outbound_email_drafts: ['compose_state', 'work_item_id', 'sent_email_message_id'], email_messages: ['outbound_draft_id'] };
-function parseOr(expr) {
-  return expr.split(',').map((part) => {
-    const m = part.match(/^([\w]+)\.(ilike|eq)\.(.*)$/); if (!m) throw new Error('bad or: ' + part);
-    const [, col, op, val] = m;
-    if (op === 'eq') return (r) => String(r[col]) === val;
-    const re = new RegExp('^' + val.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/%/g, '.*') + '$', 'i');
-    return (r) => r[col] != null && re.test(String(r[col]));
-  });
-}
+// PostgREST-faithful filter parsing (quoted values, LIKE escapes): tests/helpers.
+const PF = require('./helpers/postgrest_filter');
 function qb(table) {
   const st = { filters: [], op: 'select', patch: null, rows: null, single: false, maybe: false, select: '', limit: null, order: null };
   const rowsOf = () => (db[table] || []).filter((r) => st.filters.every((f) => f(r)));
@@ -63,9 +56,9 @@ function qb(table) {
     eq(k, v) { st.filters.push((r) => r[k] === v); return q; }, neq(k, v) { st.filters.push((r) => r[k] !== v); return q; },
     in(k, v) { st.filters.push((r) => v.includes(r[k])); return q; }, is(k, v) { st.filters.push((r) => (r[k] ?? null) === v); return q; },
     not(k, op, v) { st.filters.push((r) => !((r[k] ?? null) === v)); return q; },
-    ilike(k, v) { const re = new RegExp('^' + v.replace(/%/g, '.*') + '$', 'i'); st.filters.push((r) => re.test(String(r[k] || ''))); return q; },
+    ilike(k, v) { const re = PF.likeToRegex(v); st.filters.push((r) => re.test(String(r[k] || ''))); return q; },
     like(k, v) { const re = new RegExp('^' + v.replace(/%/g, '.*') + '$'); st.filters.push((r) => re.test(String(r[k] || ''))); return q; },
-    or(expr) { const fs = parseOr(expr); st.filters.push((r) => fs.some((f) => f(r))); return q; },
+    or(expr) { st.filters.push(PF.parseOr(expr)); return q; },
     order(k, o) { st.order = { k, asc: !(o && o.ascending === false) }; return q; }, limit(n) { st.limit = n; return q; }, range() { return q; },
     insert(row) { st.op = 'insert'; st.rows = Array.isArray(row) ? row : [row]; return q; },
     update(patch) { st.op = 'update'; st.patch = patch; return q; },
@@ -324,7 +317,7 @@ async function main() {
 
     console.log('helpers');
     check('normalizeRecipients de-dupes case-insensitively and reports bad entries', (() => { const r = CD.normalizeRecipients(['A@x.com', 'a@X.com', 'bad', { email: 'b@y.com', name: 'B' }]); return r.list.length === 2 && r.invalid[0] === 'bad'; })());
-    check('cleanQuery strips PostgREST syntax', RS.cleanQuery('a,b(c)*%d') === 'a b c d');
+    check('cleanQuery normalizes (filter safety is in lib/db/search_filter)', RS.cleanQuery('  a,b  (c)*%d ') === 'a,b (c) %d');
     check('attachment rules: PDF/Word/Excel/images only, 15 MB per file', CD.attachmentCheck('x.pdf', 10) === null && CD.attachmentCheck('x.docx', 10) === null && CD.attachmentCheck('x.xlsx', 10) === null && CD.attachmentCheck('x.png', 10) === null
       && /not a supported/.test(CD.attachmentCheck('x.zip', 10)) && /15 MB/.test(CD.attachmentCheck('x.pdf', 16 * 1024 * 1024)));
     check('no real email was sent: every send went to the in-memory fake', sent.every((m) => m && m.from));

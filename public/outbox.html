@@ -117,6 +117,7 @@ function draftCard(d){
   return `<div class="draft" id="d-${d.id}">
     <div class="subj">${esc(d.subject||'(no subject)')}</div>
     <div class="kv"><b>To</b> ${esc(d.to_name?d.to_name+' <'+d.to_email+'>':d.to_email||'')}</div>
+    <div class="kv"><b>Community</b> ${d.community_name?esc(d.community_name):'No community'}</div>
     ${cc}${att}${body}
     <div class="row">
       <button class="btn gold" onclick="sendDraft('${d.id}')">Send it</button>
