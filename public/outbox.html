@@ -112,7 +112,7 @@ async function loadPersona(){
 }
 function draftCard(d){
   const cc = d.cc ? `<div class="kv"><b>Cc</b> ${esc(d.cc)}</div>` : '';
-  const att = (Array.isArray(d.attachments)&&d.attachments.length) ? `<div class="att">📎 ${d.attachments.map(a=>esc(a.name||'attachment')).join(', ')} — attached when sent</div>` : '';
+  const att = (Array.isArray(d.attachments)&&d.attachments.length) ? `<div class="att">📎 ${d.attachments.map(a=>esc(a.name||'attachment')).join(', ')}. Attached when sent. <a href="/admin/draft-queue?draft=${encodeURIComponent(d.id)}">Review the files ↗</a></div>` : '';
   const body = d.body_text ? `<div class="bodyprev">${esc(d.body_text)}</div>` : '';
   return `<div class="draft" id="d-${d.id}">
     <div class="subj">${esc(d.subject||'(no subject)')}</div>
