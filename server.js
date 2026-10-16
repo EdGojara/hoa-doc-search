@@ -1535,7 +1535,7 @@ function _payPage(title, body) {
   return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title}</title><style>body{font-family:Arial,Helvetica,sans-serif;background:#f1f5f9;color:#0B1D34;display:flex;min-height:100vh;margin:0;align-items:center;justify-content:center;}.card{background:#fff;border:1px solid #e2e8f0;border-radius:14px;max-width:440px;width:92%;padding:28px;text-align:center;box-shadow:0 8px 30px rgba(15,23,42,.08);}h1{font-size:20px;margin:0 0 8px;}p{color:#475569;font-size:14px;line-height:1.5;margin:6px 0;}</style></head><body><div class="card">${body}</div></body></html>`;
 }
 app.get('/pay/thanks', (req, res) => {
-  res.send(_payPage('Thank you', `<h1>Thank you</h1><p>Your payment is processing. You will receive a receipt by email. It may take a few minutes to reflect on your account.</p>`));
+  res.send(_payPage('Thank you', `<h1>Thank you</h1><p>Your payment is processing. Card payments show on your account within a few minutes; bank (ACH) payments take a few business days to clear, and your balance updates when they do.</p>`));
 });
 app.get('/pay/:token', async (req, res) => {
   try {
@@ -1564,7 +1564,12 @@ app.get('/pay/:token', async (req, res) => {
     });
     if (r.ok && r.checkout_url) return res.redirect(302, r.checkout_url);
     if (r.error === 'nothing_due') return res.send(_payPage('Nothing due', `<h1>Your balance is $0</h1><p>There's nothing due right now. Thank you.</p>`));
-    if (r.error === 'payment_not_configured' || r.error === 'community_stripe_not_onboarded' || r.error === 'test_mode_sandbox_only') {
+    if (r.error === 'payment_processing') {
+      return res.send(_payPage('Payment processing', '<h1>A payment is already processing</h1><p>' + String(r.hint || 'A payment for this account is already processing.').replace(/[<>&]/g, '') + '</p>'));
+    }
+    // paymentsReadyFor() refusals (lib/payments/payment_readiness.js) read the same as "not set up yet".
+    if (['payment_not_configured', 'community_stripe_not_onboarded', 'test_mode_sandbox_only', 'online_payments_off', 'community_not_taking_payments',
+      'connected_account_charges_disabled', 'connected_account_payouts_disabled', 'connected_account_mode_mismatch', 'connected_account_unverified', 'community_not_found'].includes(r.error)) {
       return res.send(_payPage('Online payment coming soon', `<h1>Online payment isn't available yet</h1><p>This community hasn't finished setting up online payments. Please contact management to pay by check or ACH in the meantime.</p>`));
     }
     return res.status(r.status || 500).send(_payPage('Payment link', `<h1>We couldn't start your payment</h1><p>Please try again shortly, or contact management.</p>`));

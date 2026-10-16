@@ -2,6 +2,10 @@
 // Pure: fakes for Supabase, Stripe and the payment store. The SQL state machine the
 // fake store mirrors is rehearsed against Postgres in tests/sql/469_payment_rehearsal.mjs.
 // Run: node tests/test_payment_foundation.js
+// lib/community/lifecycle (the readiness gate's archived/financials rule) builds a
+// Supabase client on load; a placeholder keeps this file offline.
+process.env.SUPABASE_URL = process.env.SUPABASE_URL || 'http://127.0.0.1:9';
+process.env.SUPABASE_KEY = process.env.SUPABASE_KEY || 'offline-test';
 const assert = require('assert');
 const { stripeMode, requireTestMode } = require('../lib/payments/stripe_mode');
 const { authorizeHomeownerPayment } = require('../lib/payments/homeowner_checkout');
@@ -68,7 +72,9 @@ const P1 = 'prop-1', P2 = 'prop-2', C = 'comm-1', SELLER = 'ten-seller', BUYER =
 function world({ tenureId = SELLER, balance = 25000, trusted = '1004384184', sandbox = false, demo = sandbox } = {}) {
   return fakeSupabase({
     properties: [{ id: P1, community_id: C, street_address: sandbox ? 'DC-45-060' : '4707 Lakes of Pine Forest Ct', trusted_account_number: trusted, vantaca_account_id: '2013059', payment_sandbox: sandbox }],
-    communities: [{ id: C, name: demo ? 'Drama Creek Estates' : 'Lakes of Pine Forest', slug: demo ? 'drama-creek' : 'lopf', stripe_connected_account_id: 'acct_test_1', gl_cutover_date: '2026-08-01', is_demo: demo }],
+    communities: [{ id: C, name: demo ? 'Drama Creek Estates' : 'Lakes of Pine Forest', slug: demo ? 'drama-creek' : 'lopf', stripe_connected_account_id: 'acct_test_1', gl_cutover_date: '2026-08-01', is_demo: demo,
+      // Ready to take payments (migration 534): checkout re-verifies the account with Stripe.
+      management_status: 'active', financials_active: true, online_payments_enabled: true }],
     ownership_tenures: [{ id: tenureId, community_id: C, property_id: P1, kind: 'owner', end_date: null, start_date: '2026-08-27' }],
     property_ownerships: [{ tenure_id: tenureId, contact_id: 'contact-owner', is_primary: true, start_date: '2026-08-27' }],
     v_current_owner_balance: [{ tenure_id: tenureId, balance_cents: balance }],
@@ -79,6 +85,7 @@ function fakeStripe() {
   return {
     sessions,
     isConfigured: () => true,
+    async retrieveAccount() { return { ok: true, charges_enabled: true, payouts_enabled: true }; },
     async createCheckoutSession(opts) { sessions.push(opts); return { ok: true, session_id: `cs_test_${sessions.length}`, checkout_url: 'https://checkout.stripe.test/x' }; },
   };
 }

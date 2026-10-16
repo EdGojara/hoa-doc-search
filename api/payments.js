@@ -751,11 +751,72 @@ router.post('/connect/test-onboard', express.json(), async (req, res) => {
 });
 
 // ============================================================================
+// GET  /api/payments/connect/readiness?community_id=   (staff)
+// POST /api/payments/connect/settings  (admin)
+//   { community_id, online_payments_enabled?, payment_receipt_emails_enabled?,
+//     stripe_dispute_auto_reversal? }
+// The per-community payment switches (migration 534), all OFF by default. Turning
+// online payments on does not make a community payable by itself: checkout still
+// refuses until paymentsReadyFor() passes (lib/payments/payment_readiness.js).
+// The response always carries the live readiness so the person flipping the
+// switch sees what is still missing.
+// ============================================================================
+router.get('/connect/readiness', async (req, res) => {
+  try {
+    const communityId = String(req.query.community_id || '');
+    if (!communityId) return res.status(400).json({ error: 'community_id_required' });
+    const { paymentsReadyFor } = require('../lib/payments/payment_readiness');
+    const r = await paymentsReadyFor(communityId, { supabase, stripeLib, verify: true });
+    res.json({ ok: true, ready: r.ready, reason: r.reason, message: r.message, mode: r.mode, detail: r.detail || null });
+  } catch (err) {
+    console.error('[payments] readiness failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+const PAYMENT_SWITCHES = ['online_payments_enabled', 'payment_receipt_emails_enabled', 'stripe_dispute_auto_reversal'];
+router.post('/connect/settings', express.json({ limit: '4kb' }), async (req, res) => {
+  try {
+    const { resolveUserRole } = require('./users');
+    const ctx = await resolveUserRole(req);
+    if (!ctx.supabaseUserId || ctx.role !== 'admin') return res.status(403).json({ error: 'admin role required' });
+    const b = req.body || {};
+    if (!b.community_id) return res.status(400).json({ error: 'community_id_required' });
+    const patch = {};
+    for (const k of PAYMENT_SWITCHES) {
+      if (k in b) {
+        if (typeof b[k] !== 'boolean') return res.status(400).json({ error: k + '_must_be_boolean' });
+        patch[k] = b[k];
+      }
+    }
+    if (!Object.keys(patch).length) return res.status(400).json({ error: 'nothing_to_change', allowed: PAYMENT_SWITCHES });
+    const who = (ctx.user && (ctx.user.email || ctx.user.full_name)) || ctx.supabaseUserId;
+    if ('online_payments_enabled' in patch) {
+      patch.online_payments_changed_by = String(who).slice(0, 200);
+      patch.online_payments_changed_at = new Date().toISOString();
+    }
+    const { data, error } = await supabase.from('communities').update(patch).eq('id', b.community_id).select('id, name').maybeSingle();
+    if (error) throw error;
+    if (!data) return res.status(404).json({ error: 'community_not_found' });
+    console.log('[payments] switches for', data.name, 'set by', who, JSON.stringify(patch));
+    const { paymentsReadyFor } = require('../lib/payments/payment_readiness');
+    const r = await paymentsReadyFor(data.id, { supabase, stripeLib, verify: true });
+    res.json({ ok: true, community: data.name, changed: patch, ready: r.ready, reason: r.reason, message: r.message, mode: r.mode });
+  } catch (err) {
+    console.error('[payments] switch update failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// ============================================================================
 // POST /api/payments/webhook  (raw body required for signature verification)
-// Stripe sends events here. We handle:
-//   checkout.session.completed       → mark payments succeeded, confirm rental
-//   payment_intent.payment_failed    → mark payments failed
-//   charge.refunded                  → mark payments refunded
+// Two Stripe endpoints point here, each with its own signing secret
+// (lib/payments/webhook_auth.js). Event handling lives in
+// lib/payments/payment_lifecycle.js; the full handled list is HANDLED_EVENTS
+// there (checkout, payment_intent, charge refund/dispute, account.updated and
+// connected-account payout.paid / payout.failed / payout.canceled). Every event
+// is recorded in stripe_events; unknown or livemode-mismatched ones are recorded
+// as ignored.
 //
 // Stripe Connect: webhook events include `account` (the connected account id)
 // when the event originated from a connected account. We log it but use
@@ -794,11 +855,12 @@ router.post('/webhook',
       const { stripeMode } = require('../lib/payments/stripe_mode');
       const store = createPaymentStore({
         supabase,
+        stripe: stripeLib,
         legacy: {
           checkoutCompleted: handleCheckoutCompleted,
           paymentFailed: handlePaymentFailed,
           chargeRefunded: handleChargeRefunded,
-          accountUpdated: (acct) => handleAccountUpdated(acct, event.id),
+          accountUpdated: (acct) => handleAccountUpdated(acct, event.id, event.livemode),
         },
       });
       const out = await processWebhookEvent(event, { store, mode: stripeMode() });
@@ -881,9 +943,11 @@ async function handleChargeRefunded(charge, eventId) {
     .eq('processor_payment_id', piId);
 }
 
-async function handleAccountUpdated(account, eventId) {
+async function handleAccountUpdated(account, eventId, livemode) {
   // A connected account's status changed (e.g., onboarding completed, requirements due).
-  // Surface to communities table so admin UI can show the current state.
+  // Surface to communities table so admin UI can show the current state, and keep
+  // the cached charges/payouts/mode that paymentsReadyFor() reads for the portal
+  // (lib/payments/payment_readiness.js; checkout re-verifies with Stripe).
   const acctId = account.id;
   if (!acctId) return;
   const newStatus = account.charges_enabled
@@ -891,13 +955,22 @@ async function handleAccountUpdated(account, eventId) {
     : account.requirements?.disabled_reason
       ? 'restricted'
       : 'in_progress';
-  await supabase
-    .from('communities')
-    .update({
-      stripe_onboarding_status: newStatus,
-      stripe_onboarded_at: account.charges_enabled ? new Date().toISOString() : null,
-    })
-    .eq('stripe_connected_account_id', acctId);
+  const base = {
+    stripe_onboarding_status: newStatus,
+    stripe_onboarded_at: account.charges_enabled ? new Date().toISOString() : null,
+  };
+  const cache = {
+    stripe_charges_enabled: !!account.charges_enabled,
+    stripe_payouts_enabled: !!account.payouts_enabled,
+    stripe_account_livemode: typeof livemode === 'boolean' ? livemode : null,
+    stripe_account_checked_at: new Date().toISOString(),
+  };
+  let { error } = await supabase.from('communities').update({ ...base, ...cache }).eq('stripe_connected_account_id', acctId);
+  // Before migration 534 the cache columns do not exist; keep the status update working.
+  if (error && /stripe_charges_enabled|stripe_payouts_enabled|stripe_account_|schema cache|does not exist/i.test(error.message || '')) {
+    ({ error } = await supabase.from('communities').update(base).eq('stripe_connected_account_id', acctId));
+  }
+  if (error) throw new Error('account.updated not recorded: ' + error.message);
 }
 
 // ============================================================================

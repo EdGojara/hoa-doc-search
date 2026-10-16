@@ -1,0 +1,153 @@
+{
+  "migration": "534_stripe_payment_hardening.sql",
+  "summary": "Stripe assessment payment hardening: per-community online payment / receipt email / dispute auto-reversal switches (all OFF) and cached connected-account state on communities; one in-flight assessment checkout per lot and owner tenure; stripe_payouts and payment_receipts tables. No existing row changes.",
+  "requires": [
+    "527_reclassification_runs_and_vendor_line_rules.sql"
+  ],
+  "preflight": [
+    {
+      "name": "no lot/tenure has more than one in-flight assessment checkout",
+      "sql": "SELECT count(*)::int FROM (SELECT property_id, tenure_id FROM payments WHERE product_type = 'assessment_payment' AND fee_type = 'assessment' AND payment_group_id IS NOT NULL AND settlement_state IN ('awaiting_payment', 'processing') GROUP BY 1, 2 HAVING count(*) > 1) d",
+      "expect": 0
+    },
+    {
+      "name": "the switch column does not exist yet",
+      "sql": "SELECT count(*)::int FROM information_schema.columns WHERE table_name = 'communities' AND column_name = 'online_payments_enabled'",
+      "expect": 0
+    },
+    {
+      "name": "the payout and receipt tables do not exist yet",
+      "sql": "SELECT count(*)::int FROM information_schema.tables WHERE table_schema = 'public' AND table_name IN ('stripe_payouts', 'payment_receipts')",
+      "expect": 0
+    }
+  ],
+  "expected_changes": [
+    "communities: nine columns added (online_payments_enabled, payment_receipt_emails_enabled, stripe_dispute_auto_reversal default false; change audit and cached Stripe account state). No community is switched on.",
+    "payments: unique partial index uq_payments_assessment_in_flight (one awaiting/processing assessment checkout per lot + tenure).",
+    "stripe_payouts and payment_receipts created empty, service_role only.",
+    "No other row changes."
+  ],
+  "objects": {
+    "added": [
+      "column:communities.online_payments_changed_at",
+      "column:communities.online_payments_changed_by",
+      "column:communities.online_payments_enabled",
+      "column:communities.payment_receipt_emails_enabled",
+      "column:communities.stripe_account_checked_at",
+      "column:communities.stripe_account_livemode",
+      "column:communities.stripe_charges_enabled",
+      "column:communities.stripe_dispute_auto_reversal",
+      "column:communities.stripe_payouts_enabled",
+      "column:payment_receipts.amount_cents",
+      "column:payment_receipts.body_text",
+      "column:payment_receipts.community_id",
+      "column:payment_receipts.created_at",
+      "column:payment_receipts.id",
+      "column:payment_receipts.paid_on",
+      "column:payment_receipts.payment_id",
+      "column:payment_receipts.payment_method",
+      "column:payment_receipts.property_id",
+      "column:payment_receipts.receipt_number",
+      "column:payment_receipts.sent_at",
+      "column:payment_receipts.status",
+      "column:payment_receipts.status_note",
+      "column:payment_receipts.subject",
+      "column:payment_receipts.tenure_id",
+      "column:payment_receipts.to_email",
+      "column:payment_receipts.updated_at",
+      "column:stripe_payouts.amount_cents",
+      "column:stripe_payouts.arrival_date",
+      "column:stripe_payouts.community_id",
+      "column:stripe_payouts.connected_account_id",
+      "column:stripe_payouts.created_at",
+      "column:stripe_payouts.currency",
+      "column:stripe_payouts.failed_event_id",
+      "column:stripe_payouts.failure_code",
+      "column:stripe_payouts.failure_journal_entry_id",
+      "column:stripe_payouts.failure_message",
+      "column:stripe_payouts.journal_entry_id",
+      "column:stripe_payouts.livemode",
+      "column:stripe_payouts.paid_event_id",
+      "column:stripe_payouts.payout_id",
+      "column:stripe_payouts.payout_status",
+      "column:stripe_payouts.posting_note",
+      "column:stripe_payouts.posting_state",
+      "column:stripe_payouts.updated_at",
+      "constraint:payment_receipts.payment_receipts_amount_cents_check",
+      "constraint:payment_receipts.payment_receipts_community_id_fkey",
+      "constraint:payment_receipts.payment_receipts_payment_id_fkey",
+      "constraint:payment_receipts.payment_receipts_payment_id_key",
+      "constraint:payment_receipts.payment_receipts_pkey",
+      "constraint:payment_receipts.payment_receipts_property_id_fkey",
+      "constraint:payment_receipts.payment_receipts_status_check",
+      "constraint:payment_receipts.payment_receipts_tenure_id_fkey",
+      "constraint:stripe_payouts.stripe_payouts_amount_cents_check",
+      "constraint:stripe_payouts.stripe_payouts_community_id_fkey",
+      "constraint:stripe_payouts.stripe_payouts_failure_journal_entry_id_fkey",
+      "constraint:stripe_payouts.stripe_payouts_journal_entry_id_fkey",
+      "constraint:stripe_payouts.stripe_payouts_payout_status_check",
+      "constraint:stripe_payouts.stripe_payouts_pkey",
+      "constraint:stripe_payouts.stripe_payouts_posting_state_check",
+      "index:idx_payment_receipts_community",
+      "index:idx_stripe_payouts_community",
+      "index:idx_stripe_payouts_open",
+      "index:payment_receipts_payment_id_key",
+      "index:payment_receipts_pkey",
+      "index:stripe_payouts_pkey",
+      "index:uq_payments_assessment_in_flight",
+      "table:payment_receipts",
+      "table:stripe_payouts",
+      "trigger:payment_receipts.trg_payment_receipts_updated_at",
+      "trigger:stripe_payouts.trg_stripe_payouts_updated_at"
+    ],
+    "changed": [],
+    "removed": []
+  },
+  "row_changes": {
+    "communities": 0,
+    "payments": 0,
+    "journal_entries": 0,
+    "homeowner_transactions": 0
+  },
+  "protected": [
+    {
+      "table": "payments",
+      "order_by": "id"
+    },
+    {
+      "table": "journal_entries",
+      "order_by": "id"
+    },
+    {
+      "table": "homeowner_transactions",
+      "order_by": "id"
+    }
+  ],
+  "verify": [
+    {
+      "name": "no community has online payments switched on",
+      "sql": "SELECT count(*)::int FROM communities WHERE online_payments_enabled",
+      "expect": 0
+    },
+    {
+      "name": "no community emails receipts",
+      "sql": "SELECT count(*)::int FROM communities WHERE payment_receipt_emails_enabled",
+      "expect": 0
+    },
+    {
+      "name": "no community auto-reverses disputes",
+      "sql": "SELECT count(*)::int FROM communities WHERE stripe_dispute_auto_reversal",
+      "expect": 0
+    },
+    {
+      "name": "the in-flight index exists and is unique",
+      "sql": "SELECT count(*)::int FROM pg_indexes WHERE indexname = 'uq_payments_assessment_in_flight' AND indexdef LIKE 'CREATE UNIQUE INDEX%'",
+      "expect": 1
+    },
+    {
+      "name": "new tables are empty",
+      "sql": "SELECT ((SELECT count(*) FROM stripe_payouts) + (SELECT count(*) FROM payment_receipts))::int",
+      "expect": 0
+    }
+  ]
+}
