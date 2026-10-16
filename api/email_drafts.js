@@ -83,18 +83,23 @@ const fmtWhen = (d) => { try { return new Date(d).toLocaleString('en-US', { time
 // GET /api/email-drafts?status=draft&community_id=...
 router.get('/', async (req, res) => {
   try {
-    let q = supabase.from('outbound_email_drafts')
-      .select('id, community_id, community_name, persona, to_email, to_name, cc, subject, body_text, draft_kind, related_type, related_id, draft_reason, status, created_at, sent_at, send_error')
-      .order('created_at', { ascending: false }).limit(500);
-    const status = (req.query.status || 'draft').toString();
-    if (status !== 'all') q = q.eq('status', status);
-    if (req.query.community_id) q = q.eq('community_id', req.query.community_id);
-    // Per-teammate outbox: each AI team member sees only their own drafts, sent
-    // from their own surface, instead of everyone digging the shared queue.
-    // (Ed 2026-09-03.)
-    if (req.query.persona) q = q.eq('persona', req.query.persona.toString());
-    q = DA.scopeListQuery(q, req.user);
-    const { data, error } = await q;
+    // Fresh builder per attempt: supabase-js builders are mutable.
+    const build = () => {
+      let q = supabase.from('outbound_email_drafts')
+        .select('id, community_id, community_name, persona, to_email, to_name, cc, subject, body_text, draft_kind, related_type, related_id, draft_reason, status, created_at, sent_at, send_error')
+        .order('created_at', { ascending: false }).limit(500);
+      const status = (req.query.status || 'draft').toString();
+      if (status !== 'all') q = q.eq('status', status);
+      if (req.query.community_id) q = q.eq('community_id', req.query.community_id);
+      // Per-teammate outbox: each AI team member sees only their own drafts, sent
+      // from their own surface, instead of everyone digging the shared queue.
+      // (Ed 2026-09-03.)
+      if (req.query.persona) q = q.eq('persona', req.query.persona.toString());
+      return q;
+    };
+    // Before migration 533 there is no owner column: staff then see the autonomous drafts only.
+    let { data, error } = await DA.scopeListQuery(build(), req.user);
+    if (error && /owner_user_id/.test(error.message || '')) ({ data, error } = await DA.scopeListQuery(build(), req.user, { ownerColumn: false }));
     if (error) {
       if (_isMissingTable(error)) return res.json({ drafts: [], migration_pending: true });
       throw error;
@@ -116,10 +121,9 @@ router.get('/personas', (req, res) => {
 router.get('/counts', async (req, res) => {
   try {
     const status = (req.query.status || 'draft').toString();
-    let q = supabase.from('outbound_email_drafts').select('persona, status').limit(5000);
-    if (status !== 'all') q = q.eq('status', status);
-    q = DA.scopeListQuery(q, req.user);
-    const { data, error } = await q;
+    const build = () => { const q = supabase.from('outbound_email_drafts').select('persona, status').limit(5000); return status !== 'all' ? q.eq('status', status) : q; };
+    let { data, error } = await DA.scopeListQuery(build(), req.user);
+    if (error && /owner_user_id/.test(error.message || '')) ({ data, error } = await DA.scopeListQuery(build(), req.user, { ownerColumn: false }));
     if (error) { if (_isMissingTable(error)) return res.json({ counts: {}, migration_pending: true }); throw error; }
     const counts = {};
     for (const r of data || []) { const p = r.persona || 'unassigned'; counts[p] = (counts[p] || 0) + 1; }

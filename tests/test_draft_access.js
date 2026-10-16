@@ -50,10 +50,19 @@ const db = {
 };
 const dA = draft({ draft_kind: 'compose', persona: 'claire', owner_user_id: U.staffA, subject: 'Staff A draft' });
 const dB = draft({ draft_kind: 'compose', persona: 'amanda', owner_user_id: U.staffB, subject: 'Staff B draft' });
-const dAuto = draft({ subject: 'Amanda automation draft' });
-const dTessa = draft({ persona: 'tessa', draft_kind: 'reply', subject: 'Tessa private' });
+// Autonomous AI-agent drafts (no human starter), shaped like production's 38 open drafts.
+const dAnnie = draft({ persona: 'annie', draft_kind: 'acknowledgment', created_by: 'annie-auto', subject: 'Annie ACC acknowledgment' });
+const dAmanda = draft({ persona: 'amanda', draft_kind: 'reply', subject: 'Amanda reply' });
+const dEmma = draft({ persona: 'emma', draft_kind: 'outbound', subject: 'Emma vendor note' });
+const dKat = draft({ persona: 'kat', draft_kind: 'outbound', subject: 'Kat statement request' });
+const dAuto = draft({ persona: 'amanda', draft_kind: 'acknowledgment', subject: 'Amanda automation draft' });
 const dNoPersona = draft({ persona: null, draft_kind: 'reply', subject: 'No persona' });
-db.outbound_email_drafts.push(dA, dB, dAuto, dTessa, dNoPersona);
+// Ed-only, even though it has no human starter.
+const dTessa = draft({ persona: 'tessa', draft_kind: 'reply', subject: 'Tessa private' });
+// Human-started kinds saved before migration 533 stamped an owner: never "autonomous".
+const dLegacyCompose = draft({ draft_kind: 'compose', persona: 'claire', subject: 'Pre-533 New Email draft' });
+const dConsole = draft({ draft_kind: 'amanda_console', persona: 'amanda', created_by: 'b@bedrocktx.com', subject: 'Ask-Amanda draft' });
+db.outbound_email_drafts.push(dA, dB, dAnnie, dAmanda, dEmma, dKat, dAuto, dNoPersona, dTessa, dLegacyCompose, dConsole);
 
 function qb(table) {
   const st = { filters: [], op: 'select', single: false, maybe: false, select: '', limit: null, order: null, head: false };
@@ -65,7 +74,7 @@ function qb(table) {
     not(k, op, v) { st.filters.push((r) => !((r[k] ?? null) === v)); return q; },
     ilike(k, v) { const re = PF.likeToRegex(v); st.filters.push((r) => re.test(String(r[k] || ''))); return q; },
     like(k, v) { const re = PF.likeToRegex(v, ''); st.filters.push((r) => re.test(String(r[k] || ''))); return q; },
-    or(expr) { st.filters.push(PF.parseOr(expr)); return q; },
+    or(expr) { if (db.no533 && table === 'outbound_email_drafts' && /owner_user_id/.test(expr)) st.err = 'column outbound_email_drafts.owner_user_id does not exist'; st.filters.push(PF.parseOr(expr)); return q; },
     order(k, o) { st.order = st.order || { k, asc: !(o && o.ascending === false) }; return q; }, limit(n) { st.limit = n; return q; }, range() { return q; },
     gte() { return q; }, lt() { return q; },
     insert(row) { st.op = 'insert'; st.rows = Array.isArray(row) ? row : [row]; return q; },
@@ -73,8 +82,9 @@ function qb(table) {
     single() { st.single = true; return q; }, maybeSingle() { st.maybe = true; return q; },
     then(res, rej) { return Promise.resolve().then(run).then(res, rej); },
   };
-  const out = (rows) => { const c = rows.map((r) => { const o = { ...r }; if (table === 'property_ownerships' && /properties:property_id/.test(st.select)) o.properties = db.properties.find((p) => p.id === r.property_id) || null; return JSON.parse(JSON.stringify(o)); }); return { data: st.single || st.maybe ? (c[0] || null) : c, error: null }; };
+  const out = (rows) => { const c = rows.map((r) => { const o = { ...r }; if (db.no533 && table === 'outbound_email_drafts') delete o.owner_user_id; if (table === 'property_ownerships' && /properties:property_id/.test(st.select)) o.properties = db.properties.find((p) => p.id === r.property_id) || null; return JSON.parse(JSON.stringify(o)); }); return { data: st.single || st.maybe ? (c[0] || null) : c, error: null }; };
   function run() {
+    if (st.err) return { data: null, error: { code: '42703', message: st.err } };
     if (table === 'board_members' && db.failBoard) return { data: null, error: { message: 'relation "board_members" permission denied for schema public (SQLSTATE 42501)' } };
     if (st.op === 'insert') {
       const made = [];
@@ -161,26 +171,46 @@ async function main() {
       redraft: await call('POST', `/api/email-drafts/${dB.id}/redraft`, 'staffA', { notes: 'x', body_text: 'y' }),
       forward: await call('POST', `/api/email-drafts/${dB.id}/forward`, 'staffA', { to_email: 'a@bedrocktx.com' }),
     };
-    check('Staff A cannot open, edit, send, discard, redraft or forward Staff B\'s draft (clean 403 each)', Object.values(a).every((r) => r.status === 403 && r.body.error === 'draft_forbidden' && /drafts you started/.test(r.body.detail)), JSON.stringify(Object.fromEntries(Object.entries(a).map(([k, v]) => [k, v.status]))));
-    check('and nothing changed: Staff B\'s draft is untouched and nothing was sent', row(dB).subject === 'Staff B draft' && row(dB).status === 'draft' && sent.length === 0);
-    const listA = (await call('GET', '/api/email-drafts?status=draft', 'staffA')).body.drafts.map((d) => d.id);
-    check('Staff A\'s list shows only Staff A\'s drafts (filtered in the query)', listA.length === 1 && listA[0] === dA.id);
+    check('Staff A cannot open, edit, send, discard, redraft or forward Staff B’s draft (clean 403 each)', Object.values(a).every((r) => r.status === 403 && r.body.error === 'draft_forbidden' && /started by someone else/.test(r.body.detail)), JSON.stringify(Object.fromEntries(Object.entries(a).map(([k, v]) => [k, v.status]))));
+    check('and nothing changed: Staff B’s draft is untouched and nothing was sent', row(dB).subject === 'Staff B draft' && row(dB).status === 'draft' && sent.length === 0);
+    check('a human draft with no stamped owner (pre-533 New Email, Ask-Amanda desk) is not treated as autonomous', (await call('POST', `/api/email-drafts/${dLegacyCompose.id}/send`, 'staffA', {})).status === 403 && (await call('POST', `/api/email-drafts/${dConsole.id}/discard`, 'staffA', {})).status === 403 && sent.length === 0);
+    const listA = (await call('GET', '/api/email-drafts?status=draft', 'staffA')).body.drafts.map((d) => d.id).sort();
+    const expectA = [dA, dAnnie, dAmanda, dEmma, dKat, dAuto, dNoPersona].map((d) => d.id).sort();
+    check('Staff A’s list: own drafts plus autonomous agent drafts; never Staff B’s, Tessa’s or an unstamped human draft (filtered in the query)', JSON.stringify(listA) === JSON.stringify(expectA), String(listA.length));
     const countsA = (await call('GET', '/api/email-drafts/counts', 'staffA')).body.counts;
-    check('Staff A\'s counts cover only Staff A\'s drafts', JSON.stringify(countsA) === JSON.stringify({ claire: 1 }));
+    check('Staff A’s counts follow the same rule', JSON.stringify(countsA) === JSON.stringify({ claire: 1, annie: 1, amanda: 2, emma: 1, kat: 1, unassigned: 1 }), JSON.stringify(countsA));
     check('Staff A can open and edit their own draft', (await call('GET', `/api/email-drafts/${dA.id}`, 'staffA')).status === 200 && (await call('PUT', `/api/email-drafts/${dA.id}`, 'staffA', { subject: 'Staff A draft v2' })).status === 200 && row(dA).subject === 'Staff A draft v2');
-    check('Staff A cannot move their own draft into the owner\'s private (Tessa) outbox', (await call('PUT', `/api/email-drafts/${dA.id}`, 'staffA', { persona: 'tessa' })).status === 403 && row(dA).persona === 'claire');
+    check('Staff A cannot move their own draft into the owner’s private (Tessa) outbox', (await call('PUT', `/api/email-drafts/${dA.id}`, 'staffA', { persona: 'tessa' })).status === 403 && row(dA).persona === 'claire');
     const sA = await call('POST', `/api/email-drafts/${dA.id}/send`, 'staffA', { approved_by: 'Ed Gojara' });
     check('Staff A can send their own draft, once; the approver is the signed-in person, not a name the browser sent', sA.status === 200 && sent.length === 1 && row(dA).status === 'sent' && row(dA).approved_by === 'Staff A');
 
-    console.log('Draft Queue: agent drafts (Amanda / Claire) and admins');
-    check('a staff user cannot act on an automation draft (no human starter)', (await call('POST', `/api/email-drafts/${dAuto.id}/send`, 'staffB', {})).status === 403 && (await call('POST', `/api/email-drafts/${dAuto.id}/discard`, 'staffB', {})).status === 403 && row(dAuto).status === 'draft');
-    check('an admin can open and edit any staff or agent draft', (await call('GET', `/api/email-drafts/${dB.id}`, 'admin2')).status === 200 && (await call('PUT', `/api/email-drafts/${dAuto.id}`, 'admin2', { subject: 'Edited by admin' })).status === 200);
-    const listAdmin = (await call('GET', '/api/email-drafts?status=draft', 'admin2')).body.drafts.map((d) => d.id);
-    check('an admin sees every draft except the owner\'s private outbox; drafts with no persona are not lost', listAdmin.includes(dB.id) && listAdmin.includes(dAuto.id) && listAdmin.includes(dNoPersona.id) && !listAdmin.includes(dTessa.id));
-    check('the owner\'s private (Tessa) drafts: admin 403, owner 200', (await call('GET', `/api/email-drafts/${dTessa.id}`, 'admin2')).status === 403 && (await call('GET', `/api/email-drafts/${dTessa.id}`, 'owner')).status === 200
-      && (await call('GET', '/api/email-drafts?status=draft', 'owner')).body.drafts.some((d) => d.id === dTessa.id));
+    console.log('Draft Queue: autonomous AI-agent drafts');
+    for (const [who, d] of [['Annie', dAnnie], ['Amanda', dAmanda], ['Emma', dEmma], ['Kat', dKat]]) {
+      const n = sent.length;
+      const o = await call('GET', `/api/email-drafts/${d.id}`, 'staffB');
+      const e = await call('PUT', `/api/email-drafts/${d.id}`, 'staffB', { subject: d.subject + ' (reviewed)' });
+      const r = await call('POST', `/api/email-drafts/${d.id}/send`, 'staffB', {});
+      check(`a staff member can open, edit and send ${who}’s autonomous draft (once; approver = that staff member)`, o.status === 200 && e.status === 200 && r.status === 200 && sent.length === n + 1 && row(d).status === 'sent' && row(d).approved_by === 'Staff B', `${o.status}/${e.status}/${r.status}`);
+    }
+    check('a staff member can discard an autonomous agent draft', (await call('POST', `/api/email-drafts/${dNoPersona.id}/discard`, 'staffA', {})).status === 200 && row(dNoPersona).status === 'discarded');
+    check('an admin can open and edit any staff, agent or unstamped human draft', (await call('GET', `/api/email-drafts/${dB.id}`, 'admin2')).status === 200 && (await call('PUT', `/api/email-drafts/${dAuto.id}`, 'admin2', { subject: 'Edited by admin' })).status === 200 && (await call('GET', `/api/email-drafts/${dConsole.id}`, 'admin2')).status === 200);
+    const listAdmin = (await call('GET', '/api/email-drafts?status=all', 'admin2')).body.drafts.map((d) => d.id);
+    check('an admin sees every draft except the owner’s private outbox; drafts with no persona are not lost', listAdmin.includes(dB.id) && listAdmin.includes(dAuto.id) && listAdmin.includes(dNoPersona.id) && listAdmin.includes(dLegacyCompose.id) && !listAdmin.includes(dTessa.id));
+    const nT = sent.length;
+    const tStaff = [await call('GET', `/api/email-drafts/${dTessa.id}`, 'staffA'), await call('PUT', `/api/email-drafts/${dTessa.id}`, 'staffA', { subject: 'x' }), await call('POST', `/api/email-drafts/${dTessa.id}/send`, 'staffA', {}), await call('POST', `/api/email-drafts/${dTessa.id}/discard`, 'staffA', {})];
+    const tAdmin = [await call('GET', `/api/email-drafts/${dTessa.id}`, 'admin2'), await call('POST', `/api/email-drafts/${dTessa.id}/send`, 'admin2', {})];
+    check('a Tessa draft with no human starter is NOT staff-actionable: open, edit, send, discard all 403', tStaff.every((r) => r.status === 403) && row(dTessa).status === 'draft' && row(dTessa).subject === 'Tessa private' && sent.length === nT);
+    check('Tessa drafts stay Ed-only: another admin 403, Ed 200, and only Ed’s list shows them', tAdmin.every((r) => r.status === 403) && (await call('GET', `/api/email-drafts/${dTessa.id}`, 'owner')).status === 200
+      && (await call('GET', '/api/email-drafts?status=draft', 'owner')).body.drafts.some((d) => d.id === dTessa.id) && sent.length === nT);
     const sAuto = await call('POST', `/api/email-drafts/${dAuto.id}/send`, 'admin2', {});
-    check('an admin can send Amanda\'s automation draft (approver recorded as that admin)', sAuto.status === 200 && row(dAuto).status === 'sent' && row(dAuto).approved_by === 'Second Admin' && sent.length === 2);
+    check('an admin can send an autonomous agent draft (approver recorded as that admin)', sAuto.status === 200 && row(dAuto).status === 'sent' && row(dAuto).approved_by === 'Second Admin');
+
+    console.log('before migration 533 (no owner column)');
+    db.no533 = true;
+    const preRes = await call('GET', '/api/email-drafts?status=all', 'staffA');
+    const pre = (preRes.body.drafts || []).map((d) => d.id);
+    check('staff still see autonomous drafts (fallback filter) and never human-started or Tessa drafts', preRes.status === 200 && pre.includes(dAnnie.id) && !pre.includes(dB.id) && !pre.includes(dLegacyCompose.id) && !pre.includes(dTessa.id) && !pre.includes(dConsole.id), JSON.stringify(preRes.body).slice(0, 200));
+    db.no533 = false;
 
     console.log('compose drafts and their Mission Control tasks');
     const t = await CD.syncComposeTask(row(dB), 'Staff B');
@@ -226,7 +256,7 @@ async function main() {
     db.failBoard = false;
     check('a database error gives a friendly message, never the raw error', blErr.status === 500 && blErr.body.error === 'board_lists_unavailable' && !/permission|SQLSTATE|relation/i.test(JSON.stringify(blErr.body)));
 
-    check('no real email: every send went to the in-memory fake', sent.length === 2);
+    check('no real email: every send went to the in-memory fake', sent.length === 6 && sent.every((m) => m.from));
   } finally { await new Promise((r) => srv.close(r)); }
 }
 

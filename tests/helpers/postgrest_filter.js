@@ -47,6 +47,18 @@ function likeToRegex(pat, flags = 'i') {
 }
 
 function condition(part) {
+  // Groups: and(a,b,...) / or(a,b,...), nested.
+  const g = part.match(/^(and|or)\((.*)\)$/s);
+  if (g) {
+    const subs = splitTop(g[2]).map(condition);
+    return g[1] === 'and' ? (r) => subs.every((f) => f(r)) : (r) => subs.some((f) => f(r));
+  }
+  // col.in.(a,b) / col.not.in.(a,b)
+  const li = part.match(/^([a-z_][a-z0-9_]*)\.(not\.)?in\.\((.*)\)$/i);
+  if (li) {
+    const vals = splitTop(li[3]).map(unquote);
+    return li[2] ? (r) => r[li[1]] != null && !vals.includes(String(r[li[1]])) : (r) => r[li[1]] != null && vals.includes(String(r[li[1]]));
+  }
   const m = part.match(/^([a-z_][a-z0-9_]*)\.(ilike|like|eq|neq|is)\.(.*)$/i);
   if (!m) throw new Error('unsupported filter condition: ' + part);
   const [, col, op, raw] = m;
