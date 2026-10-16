@@ -175,6 +175,15 @@ async function t(name, fn) {
     assert.ok(d2.focus_issues.includes('money_mismatch'), d2.focus_issues.join(','));
   });
 
+  await t('typed sign-off removed on the general and re-draft paths (the branded signature is the only sign-off)', async () => {
+    SCRIPT = [`${HUGH_GOOD}\n\nBest,\nAmanda`];
+    const d = await draftReply({ email: hughEmail(), classification: 'homeowner_request', communityId: FX.hugh_create_rfp.community_id, communityName: 'Canyon Gate at Cinco Ranch', contactName: 'President HOA', force: true, persona: 'amanda' });
+    assert.ok(!/\n\s*(?:Best,\s*\n\s*)?Amanda\s*$/.test(d.body), d.body.slice(-80));
+    CALLS.length = 0; SCRIPT = [`${HUGH_GOOD}\n\nThanks,\nAmanda`];
+    const d2 = await draftPersonaReply({ persona: 'amanda', email: { ...FX.hugh_create_rfp }, context: { communityId: FX.hugh_create_rfp.community_id, communityName: 'Canyon Gate at Cinco Ranch', contactName: 'President HOA' } });
+    assert.ok(!/Amanda\s*$/.test(d2.body) && !/Thanks,\s*$/.test(d2.body), d2.body.slice(-80));
+  });
+
   await t('privacy: a homeowner (not Board) never gets other threads or "settled constraints" pulled in', async () => {
     SCRIPT = ['Hi Dana,\n\nThe pool opens at 9 AM on weekends this season, per the posted amenity schedule.'];
     const e = { direction: 'inbound', mailbox: FX.kevin.mailbox, sender_email: 'dana@gmail.com', sender_name: 'Dana Ruiz', subject: 'Pool hours', body_full: 'What time does the pool open on weekends?\n\nDana Ruiz', conversation_id: 'conv-dana', received_at: FX.kevin.received_at, community_id: FX.kevin.community_id };

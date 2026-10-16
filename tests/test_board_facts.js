@@ -159,6 +159,27 @@ const codes = (r) => [...new Set(r.issues.map((i) => i.code))].sort();
     assert.ok(!ok("I'll reach out to Envera for refreshed pricing."));
   });
 
+  await t('price as baseline: a vendor\'s dollar figure tied to the baseline / bidders is flagged; the scope-baseline wording passes', () => {
+    const base = "Hugh,\n\nI'm scrubbing the numbers and building the RFP now. I'll propose a bidder list for the Board to confirm. The draft RFP comes back to the Board for review before anything goes to vendors. ";
+    // The Hugh general live draft on 1d6f41a3.
+    const live = "I'm using iTech's $44,619.75 (plus the Envera figures from the earlier proposals for comparison) as the baseline so bidders are all pricing the same thing.";
+    assert.ok(codes(checkHugh(base + live)).includes('price_as_baseline'));
+    for (const bad of ['Each bidder will see the $44,619.75 so they can sharpen their pricing for bidders.', 'The $47,854.68 installed estimate will anchor the other bids.']) assert.ok(codes(checkHugh(base + bad)).includes('price_as_baseline'), bad);
+    assert.ok(!codes(checkHugh(base + "I'm using iTech's scope as the baseline so bidders are pricing the same project requirements.")).includes('price_as_baseline'));
+    assert.ok(!codes(checkHugh(base + 'The installed estimate on file is $47,854.68.')).includes('price_as_baseline'), 'a figure alone is fine');
+    assert.ok(!codes(checkHugh(base + "The $440/month plan falls outside the Board's no-monitoring instruction, so I am excluding it from the RFP baseline.")).includes('price_as_baseline'), 'excluding a price from the baseline is the opposite');
+    const note = focus.retryNote(checkHugh(base + live).issues, { latestText: hughLatest });
+    assert.ok(/scope as the baseline so bidders are pricing the same project requirements/.test(note));
+  });
+  await t('typed sign-off: "Amanda", "Best,\\nAmanda", "Thanks,\\nAmanda" are removed; a mid-sentence Amanda is untouched', () => {
+    const N = ['Amanda Albright'];
+    const body = 'Hugh,\n\nI am building the RFP now.';
+    for (const end of ['\n\nAmanda', '\n\nBest,\nAmanda', '\n\nThanks,\nAmanda', '\n\nThanks, Amanda', '\n\nBest regards,\nAmanda Albright', '\n\nBest,']) assert.strictEqual(focus.stripTypedSignoff(body + end, N), body, JSON.stringify(end));
+    const mid = 'Hugh,\n\nAmanda will bring the draft RFP to the Board.\n\nThanks for flagging this, it keeps the sequencing clear.';
+    assert.strictEqual(focus.stripTypedSignoff(mid, N), mid);
+    assert.strictEqual(focus.stripTypedSignoff('Hugh,\n\nBody.\n\nThanks, Kevin.', N), 'Hugh,\n\nBody.\n\nThanks, Kevin.', 'thanking the recipient by name is not a sign-off');
+  });
+
   // ------------------------------------------------ generalization: not Canyon Gate strings
   await t('another community, another vendor: the same rules from its own records', async () => {
     const bids = [{ id: 'b1', title: 'Pool Resurfacing 2027', status: 'evaluating', selected_proposal_id: null, structured_rfp: null, closed_at: null }];
