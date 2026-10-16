@@ -785,6 +785,52 @@ const env = (vars, fn) => { const old = {}; for (const k of Object.keys(vars)) {
     assert.deepStrictEqual(SAVE.planSave(savePlan(), itemsByDoc, { ...opts, snapshot: otherCommunity }).conflicts, [], 'another community\'s row with the same file is not this RFP');
   });
 
+  console.log('\nApproved Board exclusion statements (decision level, beside the facts)');
+  const NET_ST = 'Netwatch is not a viable current alternative because no executable price was provided and the design incorporates monitoring the Board has said it does not want.';
+  const ENV_ST = 'Envera is not recommended because the quote is expired and the package is built around substantial recurring monitoring/service costs the Board has said it does not want.';
+  // The live cache v1 Netwatch facts: ownership vendor, monitoring optional, wording without monitoring terms.
+  const netLive = { ...itemOf('netwatch-2026'), model: { ownership: 'vendor', monitoring: 'optional', cloud_access: null }, scope: { summary: 'Design site plan for Netwatch Cvedia Analytic Platform and Hanwha VMS installation across Guard House, Club House, and South Gate', retention_days: 30 } };
+  const itemsLive = { ...itemsByDoc, [SH.packet]: [itemOf('itech-2024'), netLive] };
+  const withStatements = () => { const pl = savePlan(); pl.proposals.find((p) => p.proposal_key === 'netwatch-2026').board_exclusion_statement = NET_ST; pl.proposals.find((p) => p.proposal_key === 'envera-q19538-2-standalone').board_exclusion_statement = ENV_ST; return pl; };
+
+  await t('on already-saved rows a new approved statement is planned as an UPDATE that appends it; extracted facts untouched; user id null', async () => {
+    const saved = SAVE.layerSaved(emptySnap, SAVE.planSave(savePlan(), itemsLive, { ...opts, snapshot: emptySnap }).inserts);
+    const r = SAVE.planSave(withStatements(), itemsLive, { ...opts, snapshot: saved });
+    assert.deepStrictEqual(r.conflicts, []); assert.deepStrictEqual(r.inserts, []);
+    assert.deepStrictEqual(r.updates.map((u) => u.ref).sort(), ['envera-q19538-2-standalone', 'netwatch-2026']);
+    assert.match(r.summary, /^0 insert\(s\) .*2 update\(s\) \(decision statements appended\)/);
+    const u = r.updates.find((x) => x.ref === 'netwatch-2026');
+    const before = saved.vendor_proposals.find((x) => x.id === u.id).extracted_data;
+    const after = u.patch.extracted_data;
+    assert.deepStrictEqual(after.decision_statements, [{ kind: 'board_exclusion_statement', text: NET_ST, approval: { channel: 'chat_instruction', approved_by_label: 'Ed Gojara (chat instruction 2026-10-16)', approved_by_user_id: null }, added_at: '2026-10-16T00:00:00-05:00' }]);
+    for (const k of ['line_item_versions', 'comparison_items', 'approved_line_item_version', 'classification', 'save_mode', 'source_documents']) assert.strictEqual(JSON.stringify(after[k]), JSON.stringify(before[k]), `${k} unchanged`);
+    assert.match(after.audit.slice(-1)[0].note, /Board exclusion statement added \(approved by Ed Gojara \(chat instruction 2026-10-16\) via chat_instruction\)/);
+    // A second run with the same statement is a no-op.
+    const again = SAVE.planSave(withStatements(), itemsLive, { ...opts, snapshot: SAVE.layerSaved(saved, [], r.updates) });
+    assert.strictEqual(again.summary, '0 inserts, 0 updates, already saved');
+    // Any other difference still stops.
+    const moved = SAVE.layerSaved(saved, [], r.updates); moved.vendor_proposals = moved.vendor_proposals.map((x) => (x.id === u.id ? { ...x, extracted_data: { ...x.extracted_data, save_mode: 'full' } } : x));
+    assert.ok(SAVE.planSave(withStatements(), itemsLive, { ...opts, snapshot: moved }).conflicts.some((c) => /was saved as full/.test(c)));
+    const B = require('../scripts/save_proposal_data');
+    assert.match(B.describe(r), /UPDATE vendor_proposals simulated-vp-\d+ \[netwatch-2026\]: append extracted_data\.decision_statements .*extracted facts unchanged/);
+  });
+
+  await t('the approved statement is used verbatim in the Board summary and RANKING, overriding the computed reasons (which stay internal)', async () => {
+    const saved = SAVE.layerSaved(emptySnap, SAVE.planSave(withStatements(), itemsLive, { ...opts, snapshot: emptySnap }).inserts);
+    const db = DRY.fakeDb({ ...fx.db_seed, ...(fx.context_seed || {}), vendor_proposals: saved.vendor_proposals.map((r) => ({ ...r, service_category: 'security', created_at: '2026-10-16T12:00:00Z' })), bid_requests: [], library_documents: [] });
+    const files = ['packet.pdf', 'quote 19538.pdf', 'itech sept.pdf'].map((n) => ({ filename: n, buffer: Buffer.from(`bytes ${n}`), isPdf: true }));
+    const r = await W.prepareComparison({ supabase: db, communityId: fx.community.id, communityName: fx.community.name, email: { ...fx.board_email, id: 'em-1016' }, attachments: files, today: fx.today, mode: 'dry_run', factsDetailed: facts, mgmtId: 'mgmt', greetingName: 'Hugh', extract: async () => { throw new Error('no model call'); } });
+    const nw = r.record.ranking.not_viable.find((x) => /Netwatch/.test(x.vendor_name));
+    assert.strictEqual(nw.statement, NET_ST);
+    assert.ok(nw.reasons.includes('the association would not own the equipment'), 'computed reasons kept for the internal analysis');
+    assert.ok(r.summary.includes(NET_ST)); assert.ok(r.summary.includes(ENV_ST));
+    assert.ok(!/Netwatch is out:|would not own the equipment/.test(r.summary), 'computed fallback never reaches the Board');
+    assert.match(DRY.report({ result: r, facts, extracted: [], writes: [] }), new RegExp(`not viable: Netwatch USA: ${NET_ST.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&')} \\[approved statement; computed \\(internal\\): `));
+    // Without a statement, the same unstable facts fall back to computed reasons (documented behaviour).
+    const r0 = C.buildComparisonRecord({ community: fx.community, project: fx.project, proposals: [itemOf('itech-2026-a'), netLive], requirements: req, facts, today: fx.today });
+    assert.ok(!r0.ranking.not_viable.find((x) => x.key === 'netwatch-2026').statement);
+  });
+
   await t("the exclusion sentences match Ed's wording exactly", async () => {
     assert.strictEqual(SAVE.exclusionSentence('Netwatch', ['no price provided', 'monitoring-oriented (built around a monitoring service the Board does not want)']), 'Netwatch is not a viable current alternative because no executable price was provided and the design incorporates monitoring the Board has said it does not want.');
     assert.strictEqual(SAVE.exclusionSentence('Envera', ['quote expired 2026-08-31', 'monitoring-heavy ($2,631.42/month in required monitoring services the Board does not want)']), 'Envera is not recommended because the quote is expired and the package is built around substantial recurring monitoring/service costs the Board has said it does not want.');

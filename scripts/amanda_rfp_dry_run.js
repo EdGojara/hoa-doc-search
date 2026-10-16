@@ -126,7 +126,7 @@ function report({ result: r, facts, extracted, writes }) {
   L.push(`\nNORMALIZED COSTS (${r.record.horizon_months}-month horizon)`);
   for (const n of r.record.proposals.filter((x) => !['duplicate'].includes(x.status))) L.push(`  ${n.vendor_name} ${n.document_date}: upfront ${C.money(n.upfront_cents)} + tax ${C.money(n.upfront_tax_cents)} = ${C.money(n.upfront_total_cents)}; monthly counted ${C.money(n.recurring_counted_monthly_cents)}; min commitment ${C.money(n.minimum_commitment_cents)}; TCO (recommended configuration) ${C.money(n.tco_cents)}${n.addon_monthly_cents ? `; optional add-on ${C.money(n.addon_monthly_cents)}/month, not recommended (TCO with it ${C.money(n.tco_with_addons_cents)})` : ''}`);
   L.push(`\nRANKING: ${r.record.ranking.ranked.map((x) => `${x.rank}. ${x.vendor_name} ${C.money(x.tco_cents)}`).join('; ') || 'none viable'}`);
-  for (const x of r.record.ranking.not_viable) L.push(`  not viable: ${x.vendor_name}: ${x.reasons.join('; ')}`);
+  for (const x of r.record.ranking.not_viable) L.push(x.statement ? `  not viable: ${x.vendor_name}: ${x.statement} [approved statement; computed (internal): ${x.reasons.join('; ')}]` : `  not viable: ${x.vendor_name}: ${x.reasons.join('; ')}`);
   L.push(`RECOMMENDATION: ${(r.record.recommendation || {}).vendor_name || 'none'}; funding ${JSON.stringify(r.record.ranking.funding && { source: r.record.ranking.funding.source, label: r.record.ranking.funding.label, basis: r.record.ranking.funding.basis })}`);
   L.push('\nCONFIDENCE LABELS');
   for (const f of facts.funds) { L.push(`  ${f.fund} ${C.money(f.balance_cents)}: ${f.label} (${f.reason})`); for (const a of f.accounts) L.push(`     ${a.account_number} ${a.account_name} ${C.money(a.balance_cents)}: ${a.label}`); }

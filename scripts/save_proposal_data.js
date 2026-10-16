@@ -74,6 +74,15 @@ async function apply(db, result) {
     if (i.table === 'bid_requests') bidId = data.id;
     written.push({ table: i.table, ref: i.ref, id: data.id });
   }
+  for (const u of result.updates || []) {
+    // Only if the row is still exactly what the dry run saw.
+    const { data: cur, error: ce } = await db.from('vendor_proposals').select('extracted_data').eq('id', u.id).maybeSingle();
+    if (ce || !cur) throw new Error(`STOPPED at update ${u.ref}: read failed (${ce ? ce.message : 'row not found'}). Already written: ${JSON.stringify(written)}`);
+    if (JSON.stringify(cur.extracted_data) !== JSON.stringify(u.expect_extracted_data)) throw new Error(`STOPPED at update ${u.ref}: vendor_proposals ${u.id} changed since the dry run. Already written: ${JSON.stringify(written)}`);
+    const { error } = await db.from('vendor_proposals').update(u.patch).eq('id', u.id);
+    if (error) throw new Error(`STOPPED at update ${u.ref}: ${error.message}. Already written: ${JSON.stringify(written)}`);
+    written.push({ table: 'vendor_proposals', ref: u.ref, id: u.id, op: 'update' });
+  }
   return written;
 }
 
@@ -90,6 +99,10 @@ function describe(result) {
     L.push(`   extracted_data: proposal_key ${ed.proposal_key}; version ${v.version} ${v.status}; approval ${JSON.stringify(v.approval)}; fields stored: ${Object.keys(it).sort().join(', ')}${Array.isArray(it.line_items) ? `; line_items ${it.line_items.length}` : '; no line items'}`);
     L.push(`   source_documents: ${JSON.stringify(ed.source_documents)}`);
     L.push(`   audit: ${ed.audit.map((a) => a.note).join(' | ')}`);
+  }
+  for (const u of result.planned_updates || []) {
+    const st = u.patch.extracted_data.decision_statements.slice(-1)[0];
+    L.push(`UPDATE vendor_proposals ${u.id} [${u.ref}]: append extracted_data.decision_statements ${JSON.stringify(st)}; append audit "${u.patch.extracted_data.audit.slice(-1)[0].note}"; extracted facts unchanged`);
   }
   for (const m of result.vendor_matches) L.push(`VENDOR ${m.ref} "${m.vendor_name}": vendor_id ${m.vendor_id || 'null'}; exact-name candidates (reported, not used): ${m.exact_name_candidates.map((v) => `${v.id} ${v.name}`).join('; ') || 'none'}`);
   return L.join('\n');
@@ -114,9 +127,9 @@ if (require.main === module) {
     await preflightColumns(readOnly(raw), result.planned_inserts);
     console.log(describe(result));
     if (args['simulate-saved']) {
-      const second = S.planSave(plan, items, { ...opts, snapshot: S.layerSaved(snapshot, result.inserts) });
+      const second = S.planSave(plan, items, { ...opts, snapshot: S.layerSaved(snapshot, result.inserts, result.updates) });
       console.log(`\nSIMULATED SECOND RUN (planned rows layered over the snapshot): ${second.summary}`);
-      if (second.planned_inserts.length || second.conflicts.length) { console.log(describe(second)); process.exit(1); }
+      if (second.planned_inserts.length || (second.planned_updates || []).length || second.conflicts.length) { console.log(describe(second)); process.exit(1); }
     }
     if (!args.apply) { console.log('\nDry run: nothing written. Re-run with --apply after review.'); return; }
     console.log(JSON.stringify(await apply(db, result), null, 2));
