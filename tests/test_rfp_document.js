@@ -14,6 +14,12 @@
 // =============================================================================
 
 const assert = require('assert');
+// Amanda's public address is owned by lib/email/graph_send.js (PR #220). Stub it so this
+// test does not depend on merge order, and so a missing setting can be exercised.
+const SEND_PATH = require.resolve('../lib/email/graph_send');
+const realSend = require(SEND_PATH);
+const setSend = (extra) => { require.cache[SEND_PATH].exports = { ...realSend, AMANDA_PUBLIC_EMAIL: undefined, AMANDA_PUBLIC_ADDRESS: undefined, ...extra }; };
+setSend({ AMANDA_PUBLIC_EMAIL: 'amanda@bedrocktx.com' });
 const R = require('../lib/vendors/rfp_document');
 const { renderRfpHtml } = require('../lib/vendors/rfp_document_render');
 const { planWrite } = require('../scripts/save_rfp_document');
@@ -138,6 +144,20 @@ check('a newly built RFP uses Amanda\'s public address from the setting and neve
   const other = R.buildRfpDocument(plan, { governingInstruction: governing, baselineLineItemVersion: 1, contactEmail: 'rfp@example.org' });
   assert.strictEqual(other.submission.submit_to_email, 'rfp@example.org');
   assert.ok(R.validateRfpDocument({ ...doc, submission: { ...doc.submission, submit_to_email: '{{contact_email}}' } }).errors.some((e) => /unfilled template placeholder/.test(e)));
+});
+
+check('the contact address comes only from graph_send: alias read-through, missing setting throws, no literal in rfp_document*.js', () => {
+  const fs = require('fs'); const path = require('path');
+  setSend({ AMANDA_PUBLIC_ADDRESS: 'alias@example.org' });
+  assert.strictEqual(R.rfpContactEmail(), 'alias@example.org');
+  setSend({});
+  assert.throws(() => R.rfpContactEmail(), /Amanda public email not configured/);
+  assert.throws(() => build(), /Amanda public email not configured/);
+  setSend({ AMANDA_PUBLIC_EMAIL: 'amanda@bedrocktx.com' });
+  for (const f of ['rfp_document.js', 'rfp_document_render.js']) {
+    const src = fs.readFileSync(path.join(__dirname, '..', 'lib', 'vendors', f), 'utf8');
+    assert.ok(!/@bedrocktx\.com/.test(src), `literal address in ${f}`);
+  }
 });
 
 check('a stored document (saved v3) renders unchanged: historical copies keep the address they were built with', () => {
