@@ -303,6 +303,7 @@ const CHECKS = [
   'tests/test_amanda_status_intent.js',
   'tests/test_team_portraits.js',
   'tests/test_graph_push.js',
+  'tests/test_amanda_public_address.js',
   'tests/test_reconciliation_ar_readiness.js',
   'tests/test_today_scope.js',
   'tests/test_data_readiness.js',

@@ -276,12 +276,13 @@ let genAttsByMsg = {};  // messageId -> [{name, size, ...}] files the agent gene
 let originalDraftByMsg = {};// messageId -> Claire's FIRST autonomous draft (the encode-Ed learning baseline vs what Ed actually sends)
 let verificationByMsg = {}; // messageId -> independent number-check result, so Send can warn if a flagged figure wasn't resolved
 const PNAME = { claire:'Claire', emma:'Emma Brooks', kat:'Kat Reed', annie:'Annie Reeves', miranda:'Miranda Pierce', amanda:'Amanda Albright', reese:'Reese Calloway', paige:'Paige Chandler', isabella:'Isabella Reyes', mei:'Mei Chen', priya:'Priya Sharma', general:'General inbox' };
-// Every sending persona's mailbox, matching lib/email/graph_send.js. A missing
+// Every sending persona's address AS RECIPIENTS SEE IT (Amanda: her public alias
+// amanda@, AMANDA_PUBLIC_ADDRESS in lib/email/graph_send.js; Ed 2026-10-16). A missing
 // entry silently fell back to claire@ — Amanda's contract review showed "sends
 // from claire@" though she has her own mailbox (Ed 2026-09-01).
 const PMAIL = {
   claire:'claire@bedrocktx.com', emma:'emma@bedrocktx.com', annie:'annie@bedrocktx.com',
-  miranda:'miranda@bedrocktx.com', amanda:'amandaalbright@bedrocktx.com',
+  miranda:'miranda@bedrocktx.com', amanda:'amanda@bedrocktx.com',
   kat:'kat@bedrocktx.com', paige:'paige@bedrocktx.com', reese:'reese@bedrocktx.com',
   isabella:'isabella@bedrocktx.com', mei:'mei@bedrocktx.com', priya:'priya@bedrocktx.com',
   tessa:'tessa@bedrocktx.com', darby:'darby@bedrocktx.com',
