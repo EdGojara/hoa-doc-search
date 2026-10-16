@@ -93,7 +93,7 @@
         ],
         "items": [
           "A site walk is strongly recommended. Your price must include conditions that a site walk would have shown (existing faults, power, cable paths); they will not be accepted later as change orders.",
-          "Send questions in writing by the question deadline. Answers go to every bidder.",
+          "Send questions in writing to amandaalbright@bedrocktx.com by the question deadline. Answers go to every bidder.",
           "Complete the pricing form as provided. Enter 0 for any line that does not apply.",
           "Answer every line of the compliance matrix with Comply, Exception or Not Applicable, and explain every Exception and Not Applicable.",
           "Include the full contract package listed in this RFP. A bid without it cannot be evaluated.",
@@ -885,7 +885,7 @@
       {
         "id": "M-05",
         "audience": "management",
-        "text": "Confirm the site address and submission inbox printed on the RFP before it is issued, and that responses will be filed to this RFP record.",
+        "text": "Confirm the site address printed on the RFP before it is issued.",
         "source": "Management"
       },
       {
@@ -899,6 +899,12 @@
         "audience": "management",
         "text": "Cloud scope evidence: the baseline proposal's only cloud feature is remote access bundled in its optional monthly maintenance and health plan; its recording is two on-site servers. The competing designs on file record on site (one states 30 days). No proposal on file prices off-site cloud recording.",
         "source": "Stored proposal facts"
+      },
+      {
+        "id": "M-08",
+        "audience": "management",
+        "text": "Temporary limitation, Canyon Gate only: emailed questions and bids arrive in Amanda's mailbox but are not yet automatically linked to this RFP record or parsed. Staff attach each bid to the RFP record by hand until automated response intake ships.",
+        "source": "Ed decision 2026-10-16"
       }
     ],
     "contract_package_note": "Required with every bid. A bid missing any item is incomplete.",
@@ -926,7 +932,7 @@
         {
           "milestone": "Written questions due",
           "date": "2026-10-27",
-          "note": "5:00 p.m. Central"
+          "note": "5:00 p.m. Central, to amandaalbright@bedrocktx.com"
         },
         {
           "milestone": "Answers issued to all bidders",
@@ -936,7 +942,7 @@
         {
           "milestone": "Responses due",
           "date": "2026-11-02",
-          "note": "5:00 p.m. Central"
+          "note": "5:00 p.m. Central, to amandaalbright@bedrocktx.com"
         },
         {
           "milestone": "Comparison and diligence complete",
@@ -969,8 +975,8 @@
       ]
     },
     "submission": {
-      "instructions": "Email the complete response (pricing form, compliance matrix, camera schedule and contract package) as PDF files by the response deadline. Use the subject line: Canyon Gate Security Camera RFP Response. Late responses may not be considered.",
-      "submit_to_email": "info@bedrocktx.com"
+      "instructions": "Email the complete response (pricing form, compliance matrix, camera schedule and contract package) as PDF files to amandaalbright@bedrocktx.com by the response deadline. Use the subject line: Canyon Gate Security Camera RFP Response. Late responses may not be considered.",
+      "submit_to_email": "amandaalbright@bedrocktx.com"
     }
   }
 }
