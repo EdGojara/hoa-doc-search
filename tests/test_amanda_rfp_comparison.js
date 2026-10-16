@@ -616,8 +616,8 @@ const env = (vars, fn) => { const old = {}; for (const k of Object.keys(vars)) {
       assert.strictEqual(by['itech-2026-a'].status, 'current'); assert.strictEqual(by['itech-2024'].status, 'historical');
       assert.strictEqual(by['envera-q19538-2-packet'].status, 'expired'); assert.strictEqual(by['netwatch-2026'].status, 'current'); assert.strictEqual(by['netwatch-2026'].unpriced, true);
       assert.strictEqual(by['envera-q19538-2-standalone'].status, 'duplicate'); assert.strictEqual(by['envera-q19538-2-standalone'].duplicate_of, 'envera-q19538-2-packet', 'duplicate relationship recorded');
-      assert.match(r.summary, /Envera is out: quote expired 2026-08-31 and built around monitoring the Board does not want/);
-      assert.match(r.summary, /Netwatch is out: no price provided and built around monitoring the Board does not want/);
+      assert.match(r.summary, /Envera is out: quote expired 2026-08-31 and monitoring-heavy \(\$2,631\.42\/month in required monitoring services the Board does not want\)/);
+      assert.match(r.summary, /Netwatch is out: no price provided and monitoring-oriented \(built around a monitoring service the Board does not want\)/);
       assert.match(r.summary, /iTech's 2024 proposal is superseded/);
       assert.match(r.summary, /Situation: 4 camera proposals from 3 vendors are on file/);
       assert.ok(r.record.audit.some((a) => a.proposal_key === 'netwatch-2026' && /no price found: treated as unpriced/.test(a.note)), 'the repair is on the record');
@@ -630,6 +630,48 @@ const env = (vars, fn) => { const old = {}; for (const k of Object.keys(vars)) {
     assert.ok(r.proposals.filter((n) => n.status === 'duplicate').every((n) => n.duplicate_of));
     const src = fs.readFileSync(path.join(__dirname, '..', 'lib', 'vendors', 'rfp_workflow.js'), 'utf8');
     assert.match(src, /comparison completeness check failed: \$\{fedIn\} proposal\(s\) discovered, \$\{classified\} carried into the comparison/);
+  });
+
+  await t('exclusion reasons are computed from stored facts in a fixed order, identical across runs whose model text differs', async () => {
+    // Run A vs run C on the live data: Netwatch's model attributes and wording differ; the facts do not.
+    const netA = { ...itemOf('netwatch-2026'), model: { ownership: null, monitoring: 'required', cloud_access: null } };
+    const netC = { ...itemOf('netwatch-2026'), model: { ownership: null, monitoring: null, cloud_access: 'included' }, scope: { ...itemOf('netwatch-2026').scope, summary: 'Netwatch to install Cvedia Analytic Platform for PVM monitoring and a Hanwha VMS with 30 days of footage retention' } };
+    const envA = { ...itemOf('envera-q19538-2-packet'), model: { ownership: null, monitoring: 'included', cloud_access: 'included' } };
+    const envC = { ...itemOf('envera-q19538-2-packet'), model: { ownership: null, monitoring: null, cloud_access: null } };
+    const reasons = (props) => build(props).ranking.not_viable.map((x) => [x.key, x.reasons]);
+    const a = reasons([itemOf('itech-2026-a'), itemOf('itech-2024'), envA, netA]);
+    const c = reasons([itemOf('itech-2026-a'), itemOf('itech-2024'), envC, netC]);
+    assert.deepStrictEqual(a, c);
+    assert.deepStrictEqual(a, [
+      ['envera-q19538-2-packet', ['quote expired 2026-08-31', 'monitoring-heavy ($2,631.42/month in required monitoring services the Board does not want)']],
+      ['netwatch-2026', ['no price provided', 'monitoring-oriented (built around a monitoring service the Board does not want)']],
+    ]);
+    // Ownership is added only when the stored attribute says the vendor owns the equipment.
+    const netOwn = { ...netA, model: { ...netA.model, ownership: 'vendor' } };
+    assert.deepStrictEqual(reasons([itemOf('itech-2026-a'), netOwn]).find((x) => x[0] === 'netwatch-2026')[1], ['no price provided', 'monitoring-oriented (built around a monitoring service the Board does not want)', 'the association would not own the equipment']);
+    // iTech's optional "Health Monitoring" plan and its company name never make it monitoring-oriented.
+    assert.strictEqual(C.monitoringEvidence(build([itemOf('itech-2026-a')]).proposals[0]).oriented, false);
+  });
+
+  await t('every column the RFP code selects from a migration-defined table exists in the migrations (static check)', async () => {
+    const migs = fs.readdirSync(path.join(__dirname, '..', 'migrations')).filter((f) => /\.sql$/.test(f)).map((f) => fs.readFileSync(path.join(__dirname, '..', 'migrations', f), 'utf8')).join('\n');
+    const columnsOf = (table) => {
+      const cols = new Set();
+      const create = migs.match(new RegExp(`CREATE TABLE IF NOT EXISTS ${table}\\s*\\(([\\s\\S]*?)\\n\\);`, 'i')) || migs.match(new RegExp(`CREATE TABLE ${table}\\s*\\(([\\s\\S]*?)\\n\\);`, 'i'));
+      if (!create) return null;
+      for (const line of create[1].split('\n')) { const m = line.match(/^\s+([a-z_][a-z0-9_]*)\s+[A-Za-z]/); if (m && !/^(constraint|primary|unique|check|foreign)$/i.test(m[1])) cols.add(m[1]); }
+      for (const m of migs.matchAll(new RegExp(`ALTER TABLE (?:IF EXISTS )?${table}[\\s\\S]*?;`, 'gi'))) for (const c of m[0].matchAll(/ADD COLUMN (?:IF NOT EXISTS )?([a-z_][a-z0-9_]*)/gi)) cols.add(c[1]);
+      return cols;
+    };
+    const src = ['lib/vendors/rfp_workflow.js', 'lib/vendors/community_context.js'].map((f) => fs.readFileSync(path.join(__dirname, '..', f), 'utf8')).join('\n');
+    let checked = 0;
+    for (const m of src.matchAll(/from\('([a-z_]+)'\)\.select\('([^']+)'\)/g)) {
+      const cols = columnsOf(m[1]); if (!cols) continue;   // table created outside the migrations folder
+      // Plain columns only; embedded relations such as vendors(name) are joins, not columns.
+      for (const c of m[2].replace(/[a-z_]+!?[a-z_]*\([^)]*\)/g, '').split(',').map((x) => x.trim()).filter((x) => /^[a-z_]+$/.test(x))) { assert.ok(cols.has(c), `${m[1]}.${c} is not defined in any migration`); checked++; }
+    }
+    assert.ok(checked >= 20, `checked ${checked} columns`);
+    assert.ok(columnsOf('library_documents').has('uploaded_at') && !columnsOf('library_documents').has('created_at'));
   });
 
   await t('pluralization: "1 camera proposal from 1 vendor is on file"', async () => {
