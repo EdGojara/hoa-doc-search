@@ -98,7 +98,8 @@ check('the Board copy carries the exact decision-state wording and Board items, 
   const html = renderRfpHtml(build(), { audience: 'board' });
   for (const k of R.DECISION_STATE_KEYS) assert.ok(html.includes(plan.expected_decision_state[k].replace(/&/g, '&amp;')), k);
   assert.ok(/Coverage: four locations only.*(Ed Gojara, Friday, October 16, 2026)/.test(html), 'decided B-01 rendered with attribution');
-  assert.ok(/Confirm the response deadline/.test(html), 'open B-03 still listed');
+  assert.ok(/Confirm the final required insurance limits/.test(html), 'open B-04 still listed');
+  assert.ok(html.includes('Issue RFP to iTech for a binding response; broaden only on Board request or an unsatisfactory response.'), 'management action note');
   assert.ok(!/Netwatch material|498a15b3/.test(html));
   assert.ok(!/—/.test(html) && !/\bproceed\b/i.test(html), 'em dash or "proceed" in the Board copy');
 });
@@ -109,6 +110,8 @@ check('"proceed" in any decision-state line is refused, and the wording must be 
   const v = R.validateRfpDocument(doc, { expectedDecisionState: plan.expected_decision_state });
   assert.ok(v.errors.some((e) => /uses "proceed"/.test(e)));
   assert.ok(v.errors.some((e) => /must read exactly "Build\/issue RFP and complete diligence"/.test(e)));
+  const q = clone(plan); q.decision_state_notes = { management_action: 'Proceed with iTech' };
+  assert.ok(R.validateRfpDocument(build(q)).errors.some((e) => /decision_state_notes.management_action uses "proceed"/.test(e)));
 });
 
 check('an em dash anywhere Board-facing is refused', () => {

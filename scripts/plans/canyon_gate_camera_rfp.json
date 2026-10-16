@@ -89,11 +89,11 @@
         "key": "instructions",
         "title": "Instructions to bidders",
         "body": [
-          "Canyon Gate at Cinco Ranch Owners Association, Inc. (the Association) requests proposals to replace and expand its common-area security camera system. Every bidder receives the same scope, camera schedule, pricing form and compliance matrix so the Board can compare responses on the same basis."
+          "Canyon Gate at Cinco Ranch Owners Association, Inc. (the Association) requests a proposal to replace and expand its common-area security camera system. The scope, camera schedule, pricing form and compliance matrix are standardized so the Board can evaluate the response on a consistent basis."
         ],
         "items": [
           "A site walk is strongly recommended, not mandatory. Walks meet at the Club House, 20422 Canyon Gate Blvd, Katy, TX 77450, by appointment; request one by email to amandaalbright@bedrocktx.com. Your price must include conditions reasonably discoverable from a site walk (for example existing faults, power and cable paths).",
-          "Send questions in writing to amandaalbright@bedrocktx.com by the question deadline, with the subject line: Canyon Gate Security Camera RFP - Question - [Company Name]. Answers go to every bidder.",
+          "Send questions in writing to amandaalbright@bedrocktx.com by the question deadline, with the subject line: Canyon Gate Security Camera RFP - Question - [Company Name]. Written answers will be provided by the answer date.",
           "Complete the pricing form as provided. Enter 0 for any line that does not apply.",
           "Answer every line of the compliance matrix with Comply, Exception or Not Applicable, and explain every Exception and Not Applicable.",
           "Include the full contract package listed in this RFP. Bids that are materially incomplete may be deemed non-responsive.",
@@ -163,7 +163,7 @@
         "key": "licensing",
         "title": "Licensing",
         "body": [
-          "Licensing must be clear, so the Board can compare bids."
+          "Licensing must be clear, so the Board can evaluate the bid."
         ],
         "items": [
           "State the number of software licenses included and which camera each covers. Explain any camera that is not separately licensed.",
@@ -359,7 +359,7 @@
         "key": "pricing",
         "title": "Pricing",
         "body": [
-          "Complete the pricing form. Every bidder prices the same lines so the Board can compare responses directly."
+          "Complete the pricing form. The pricing form is standardized so the Board can evaluate pricing line by line."
         ],
         "items": [
           "One-time charges: equipment; labor; cabling and conduit; network equipment; recorders and storage; software and licenses; freight; sales tax; permits; any other one-time charge, itemized.",
@@ -852,8 +852,11 @@
       {
         "id": "B-03",
         "audience": "board",
-        "text": "Confirm the response deadline and the list of companies to receive the RFP. No company has been contacted.",
-        "source": "Management"
+        "text": "Bidder list: the first round goes to iTech Monitoring, Inc. only, for a binding response on the standardized RFP. The bidder pool broadens only if the Board requests it or iTech's final response is unsatisfactory.",
+        "source": "Management",
+        "status": "decided",
+        "decided_by": "Ed Gojara",
+        "decided_on": "2026-10-16"
       },
       {
         "id": "B-04",
@@ -882,7 +885,7 @@
       {
         "id": "M-01",
         "audience": "management",
-        "text": "Baseline proposal: 27 cameras but 20 licenses. 2 cameras have their own built-in server, which leaves 5 unexplained. Covered by Q-01 for every bidder.",
+        "text": "Baseline proposal: 27 cameras but 20 licenses. 2 cameras have their own built-in server, which leaves 5 unexplained. Covered by Q-01.",
         "source": "Stored line items v1, page 3 and page 4"
       },
       {
@@ -894,13 +897,13 @@
       {
         "id": "M-03",
         "audience": "management",
-        "text": "Baseline proposal says 'a pair' of point-to-point stations on page 3 but itemizes quantity 1 on page 4. The RFP asks every bidder to list every device for the Pavilion link.",
+        "text": "Baseline proposal says 'a pair' of point-to-point stations on page 3 but itemizes quantity 1 on page 4. The RFP asks the bidder to list every device for the Pavilion link.",
         "source": "Stored line items v1, page 4"
       },
       {
         "id": "M-04",
         "audience": "management",
-        "text": "A contact name appearing in the Netwatch material appears to match the individual identified in the iTech proposal. Verify whether this is the same person and whether any relationship is relevant to the procurement.",
+        "text": "A contact name appearing in the Netwatch material appears to match the individual identified in the iTech proposal. Verify whether this is the same person and whether any relationship is relevant to the procurement. This matters more now that iTech is the only first-round recipient: verify before award.",
         "source": "Proposals on file"
       },
       {
@@ -956,14 +959,14 @@
           "note": "5:00 p.m. Central, to amandaalbright@bedrocktx.com"
         },
         {
-          "milestone": "Answers issued to all bidders",
+          "milestone": "Written answers provided",
           "date": "2026-10-28",
           "note": ""
         },
         {
           "milestone": "Responses due",
           "date": "2026-11-02",
-          "note": "5:00 p.m. Central, to amandaalbright@bedrocktx.com"
+          "note": "5:00 p.m. Central, to amandaalbright@bedrocktx.com. An earlier submission is welcome."
         },
         {
           "milestone": "Comparison and diligence complete",
@@ -996,8 +999,11 @@
       ]
     },
     "submission": {
-      "instructions": "Email the complete response (pricing form, compliance matrix, camera schedule and contract package) as PDF files to amandaalbright@bedrocktx.com by the response deadline, with the subject line: Canyon Gate Security Camera RFP - Bid Submission - [Company Name]. Late responses may not be considered.",
+      "instructions": "Email the complete response (pricing form, compliance matrix, camera schedule and contract package) as PDF files to amandaalbright@bedrocktx.com by the response deadline, with the subject line: Canyon Gate Security Camera RFP - Bid Submission - [Company Name]. An earlier submission is welcome. Late responses may not be considered.",
       "submit_to_email": "amandaalbright@bedrocktx.com"
     }
+  },
+  "decision_state_notes": {
+    "management_action": "Issue RFP to iTech for a binding response; broaden only on Board request or an unsatisfactory response."
   }
 }
