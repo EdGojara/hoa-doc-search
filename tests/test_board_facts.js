@@ -130,6 +130,14 @@ const codes = (r) => [...new Set(r.issues.map((i) => i.code))].sort();
     assert.ok(!c('Warranty terms remain to be confirmed.').includes('unverified_term'));
   });
 
+  await t('live-run phrasings: "a new multi-vendor bidding cycle" contradicts the RFP; "Nothing here is ready to sign yet" is not a readiness claim; "not on different pages" is defensive', () => {
+    const base = "Hugh,\n\nI am building the RFP now. I'll propose a bidder list for the Board to confirm, and the draft comes back to you for review before anything goes to vendors. ";
+    assert.ok(codes(checkHugh(base + "I'm treating this RFP as the fastest path forward, rather than opening a new multi-vendor bidding cycle, which would add weeks.")).includes('contradicts_rfp'));
+    assert.ok(!codes(checkHugh(base + 'Nothing here is ready to sign yet.')).includes('implies_execution_ready'));
+    assert.ok(codes(checkHugh(base + 'The Board is ready to sign once you agree.')).includes('implies_execution_ready'));
+    assert.ok(codes(checkKevin("Hi Kevin,\n\nI agree with the distinction you're making, and I don't think we're actually on different pages. When I said \"proceed,\" I meant continuing diligence, not signing.")).includes('defensive'));
+  });
+
   // ------------------------------------------------ generalization: not Canyon Gate strings
   await t('another community, another vendor: the same rules from its own records', async () => {
     const bids = [{ id: 'b1', title: 'Pool Resurfacing 2027', status: 'evaluating', selected_proposal_id: null, structured_rfp: null, closed_at: null }];
