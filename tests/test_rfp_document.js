@@ -125,6 +125,31 @@ check('an em dash anywhere Board-facing is refused', () => {
   assert.ok(validate(build(p)).errors.some((e) => /banned text/.test(e)));
 });
 
+check('a newly built RFP uses Amanda\'s public address from the setting and never the technical mailbox', () => {
+  const doc = build();
+  const json = JSON.stringify(doc);
+  assert.strictEqual(R.rfpContactEmail(), 'amanda@bedrocktx.com');
+  assert.strictEqual(doc.submission.submit_to_email, 'amanda@bedrocktx.com');
+  assert.ok(!/amandaalbright@/i.test(json), 'technical mailbox in a new document');
+  assert.ok(!/\{\{contact_email\}\}/.test(json), 'unfilled placeholder');
+  for (const audience of ['vendor', 'board']) assert.ok(!/amandaalbright@/i.test(renderRfpHtml(doc, { audience })), `${audience} copy`);
+  assert.ok(/Canyon Gate Security Camera RFP - Question - \[Company Name\]/.test(renderRfpHtml(doc, { audience: 'vendor' })));
+  // The setting is the single source: a different configured address flows through unchanged.
+  const other = R.buildRfpDocument(plan, { governingInstruction: governing, baselineLineItemVersion: 1, contactEmail: 'rfp@example.org' });
+  assert.strictEqual(other.submission.submit_to_email, 'rfp@example.org');
+  assert.ok(R.validateRfpDocument({ ...doc, submission: { ...doc.submission, submit_to_email: '{{contact_email}}' } }).errors.some((e) => /unfilled template placeholder/.test(e)));
+});
+
+check('a stored document (saved v3) renders unchanged: historical copies keep the address they were built with', () => {
+  const crypto = require('crypto');
+  const stored = require('./fixtures/rfp-document/stored-v3-structured_rfp.json');
+  assert.strictEqual(stored.content_sha256.slice(0, 8), '0adf4472');
+  const h = (a) => crypto.createHash('sha256').update(renderRfpHtml(stored, { audience: a })).digest('hex');
+  assert.strictEqual(h('vendor'), 'fb53d0d9fa798820bfd988320d83afd5512c31fd707452fbd3a75fea5e16d864');
+  assert.strictEqual(h('board'), 'e5fe37dfb2b24c9180fbaa75afbb2dbc9737706d8e8ed55183ffa6651d104e4c');
+  assert.ok(R.validateRfpDocument(stored).ok, 'the stored version still passes, so it can still be printed');
+});
+
 check('the content hash is stable across runs and ignores the audit trail and version', () => {
   const a = build(); const b = build();
   assert.strictEqual(a.content_sha256, b.content_sha256);

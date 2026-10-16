@@ -92,8 +92,8 @@
           "Canyon Gate at Cinco Ranch Owners Association, Inc. (the Association) requests a proposal to replace and expand its common-area security camera system. The scope, camera schedule, pricing form and compliance matrix are standardized so the Board can evaluate the response on a consistent basis."
         ],
         "items": [
-          "A site walk is strongly recommended, not mandatory. Walks meet at the Club House, 20422 Canyon Gate Blvd, Katy, TX 77450, by appointment; request one by email to amandaalbright@bedrocktx.com. Your price must include conditions reasonably discoverable from a site walk (for example existing faults, power and cable paths).",
-          "Send questions in writing to amandaalbright@bedrocktx.com by the question deadline, with the subject line: Canyon Gate Security Camera RFP - Question - [Company Name]. Written answers will be provided by the answer date.",
+          "A site walk is strongly recommended, not mandatory. Walks meet at the Club House, 20422 Canyon Gate Blvd, Katy, TX 77450, by appointment; request one by email to {{contact_email}}. Your price must include conditions reasonably discoverable from a site walk (for example existing faults, power and cable paths).",
+          "Send questions in writing to {{contact_email}} by the question deadline, with the subject line: Canyon Gate Security Camera RFP - Question - [Company Name]. Written answers will be provided by the answer date.",
           "Complete the pricing form as provided. Enter 0 for any line that does not apply.",
           "Answer every line of the compliance matrix with Comply, Exception or Not Applicable, and explain every Exception and Not Applicable.",
           "Include the full contract package listed in this RFP. Bids that are materially incomplete may be deemed non-responsive.",
@@ -906,7 +906,7 @@
       {
         "id": "M-05",
         "audience": "management",
-        "text": "Site walk meeting point set to the Club House, 20422 Canyon Gate Blvd, Katy, TX 77450 (called the Facility in a contract in trustEd; staff meetings are held there). Walks are scheduled by email to amandaalbright@bedrocktx.com.",
+        "text": "Site walk meeting point set to the Club House, 20422 Canyon Gate Blvd, Katy, TX 77450 (called the Facility in a contract in trustEd; staff meetings are held there). Walks are scheduled by email to {{contact_email}}.",
         "source": "Management"
       },
       {
@@ -959,7 +959,7 @@
         {
           "milestone": "Written questions due",
           "date": "2026-10-27",
-          "note": "5:00 p.m. Central, to amandaalbright@bedrocktx.com"
+          "note": "5:00 p.m. Central, to {{contact_email}}"
         },
         {
           "milestone": "Written answers provided",
@@ -969,7 +969,7 @@
         {
           "milestone": "Responses due",
           "date": "2026-11-02",
-          "note": "5:00 p.m. Central, to amandaalbright@bedrocktx.com. An earlier submission is welcome."
+          "note": "5:00 p.m. Central, to {{contact_email}}. An earlier submission is welcome."
         },
         {
           "milestone": "Comparison and diligence complete",
@@ -1003,8 +1003,8 @@
       "status_note": "Proposed dates. Final dates are set in the issue version of this RFP."
     },
     "submission": {
-      "instructions": "Email the complete response (pricing form, compliance matrix, camera schedule and contract package) as PDF files to amandaalbright@bedrocktx.com by the response deadline, with the subject line: Canyon Gate Security Camera RFP - Bid Submission - [Company Name]. An earlier submission is welcome. Late responses may not be considered.",
-      "submit_to_email": "amandaalbright@bedrocktx.com"
+      "instructions": "Email the complete response (pricing form, compliance matrix, camera schedule and contract package) as PDF files to {{contact_email}} by the response deadline, with the subject line: Canyon Gate Security Camera RFP - Bid Submission - [Company Name]. An earlier submission is welcome. Late responses may not be considered.",
+      "submit_to_email": "{{contact_email}}"
     }
   },
   "decision_state_notes": {
