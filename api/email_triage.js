@@ -2223,28 +2223,70 @@ function parseAddrs(v) {
   return String(v || '').split(/[,;]/).map((s) => s.trim()).filter((s) => EMAIL_RE.test(s));
 }
 
-router.post('/compose', express.json(), async (req, res) => {
+// The persona keys /compose can send as (each has a branded builder below).
+// isabella / mei / priya used to fall back to Claire's mailbox and signature even
+// though the window offered them; they now send as themselves (shared builder).
+const COMPOSE_SEND_PERSONAS = ['emma', 'annie', 'miranda', 'paige', 'kat', 'amanda', 'reese', 'isabella', 'mei', 'priya'];
+function composePersona(p) { const k = String(p || '').toLowerCase(); return COMPOSE_SEND_PERSONAS.includes(k) ? k : 'claire'; }
+
+// Resolve and scope-check the compose window's community. Returns
+// { id, name } or { error } (a community outside the staff user's scope is refused).
+async function composeCommunity(body) {
+  const { accessibleCommunities } = require('../lib/email/recipient_search');
+  const id = body && body.community_id ? String(body.community_id) : null;
+  if (!id) return { id: null, name: (body && body.community_name) ? String(body.community_name).trim() : '' };
+  const c = (await accessibleCommunities()).find((x) => x.id === id);
+  if (!c) return { error: 'That community is not one you can send for.' };
+  return { id: c.id, name: c.name };
+}
+
+router.post('/compose', express.json({ limit: '256kb' }), async (req, res) => {
+  const CD = require('../lib/email/compose_drafts');
+  let claimedDraftId = null;
   try {
     const admin = await requireAdmin(req, res);
     if (!admin) return; // 403 already sent
-    const { to, cc, subject, body: _rawBody, community_name, persona } = req.body || {};
+    const { subject, body: _rawBody, persona } = req.body || {};
     let body = String(_rawBody == null ? '' : _rawBody);
-    const P = ['emma', 'annie', 'miranda', 'paige', 'kat', 'amanda'].includes(String(persona || '').toLowerCase()) ? String(persona).toLowerCase() : 'claire';
+    const P = composePersona(persona);
     const asEmma = P === 'emma';
-    const toList = parseAddrs(to);
-    const ccList = parseAddrs(cc);
+    // Recipients exactly as chosen: an entry that is not an address stops the send
+    // (silently dropping it would send to a different set than the one approved).
+    const toN = CD.normalizeRecipients((req.body || {}).to);
+    const ccN = CD.normalizeRecipients((req.body || {}).cc, { exclude: toN.list.map((r) => r.email) });
+    if (toN.invalid.length || ccN.invalid.length) return res.status(400).json({ error: 'invalid_recipient', detail: `Not a valid email address: ${[...toN.invalid, ...ccN.invalid].join(', ')}` });
+    const toList = toN.list.map((r) => r.email);
+    const ccList = ccN.list.map((r) => r.email);
     if (toList.length === 0) return res.status(400).json({ error: 'to_required', detail: 'Enter at least one valid recipient email.' });
     if (!body.trim()) return res.status(400).json({ error: 'body_required' });
+    const comm = await composeCommunity(req.body || {});
+    if (comm.error) return res.status(400).json({ error: 'community_out_of_scope', detail: comm.error });
+    const community_name = comm.name;
+    if (!graphSend.isConfigured()) return res.status(400).json({ error: 'claire_not_connected', detail: 'AI-team email send is not wired yet — the Azure app (Mail.Send) + GRAPH_TENANT_ID / GRAPH_CLIENT_ID / GRAPH_CLIENT_SECRET must be set.' });
+
+    // A compose draft is sent exactly once. Save what is on screen to the draft,
+    // then claim it (draft -> send_requested, compare-and-set) BEFORE Graph is
+    // called: a double-click or a second tab gets 409, never a second email.
+    let draft = null;
+    const draftId = (req.body || {}).draft_id || null;
+    if (draftId) {
+      await CD.saveComposeDraft({ ...req.body, draft_id: draftId, persona: P, community_id: comm.id, community_name: comm.name }, { actor: admin.full_name || admin.email });
+      draft = await CD.claimForSend(draftId);
+      if (!draft) {
+        const cur = await CD.getDraft(draftId);
+        return res.status(409).json({ error: 'draft_not_sendable', detail: cur && cur.status === 'sent' ? 'This email was already sent.' : cur && cur.status === 'send_requested' ? 'This email is already being sent. Check the Sent folder before trying again.' : 'This draft is no longer open.' });
+      }
+      claimedDraftId = draft.id;
+    }
     // Proofread the operator's copy (spelling/typos only) before sending; leaves
     // any forwarded/quoted history untouched. Fail-safe. (Ed 2026-07-26.)
     try { const { proofreadEmailBody } = require('../lib/email/proofread'); body = (await proofreadEmailBody(body)).text; } catch (_) {}
-    if (!graphSend.isConfigured()) return res.status(400).json({ error: 'claire_not_connected', detail: 'AI-team email send is not wired yet — the Azure app (Mail.Send) + GRAPH_TENANT_ID / GRAPH_CLIENT_ID / GRAPH_CLIENT_SECRET must be set.' });
 
     const subj = (subject && String(subject).trim()) ? String(subject).trim() : '(no subject)';
 
     // Homeowner linkage only makes sense for Claire (front office). Emma's
     // recipients are vendors, so we don't file her mail onto a homeowner record.
-    let resolved_contact_id = null, resolved_property_id = null, community_id = null, commName = community_name || '';
+    let resolved_contact_id = null, resolved_property_id = null, community_id = comm.id || null, commName = community_name || '';
     if (!asEmma) {
       // Place this on the right homeowner for the record (best-effort, keyed on
       // the FIRST recipient — the primary addressee).
@@ -2253,11 +2295,12 @@ router.post('/compose', express.json(), async (req, res) => {
         if (c && c[0]) {
           resolved_contact_id = c[0].id;
           const { data: o } = await supabase.from('property_ownerships').select('property_id, properties(community_id, communities:community_id(name))').eq('contact_id', resolved_contact_id).is('end_date', null).limit(1);
-          if (o && o[0]) { resolved_property_id = o[0].property_id; if (o[0].properties) { community_id = o[0].properties.community_id; if (!commName && o[0].properties.communities) commName = o[0].properties.communities.name; } }
+          if (o && o[0]) { resolved_property_id = o[0].property_id; if (o[0].properties) { community_id = community_id || o[0].properties.community_id; if (!commName && o[0].properties.communities) commName = o[0].properties.communities.name; } }
         }
       } catch (_) { /* non-fatal — send anyway, just less linkage */ }
     }
 
+    const sourceEmailId = (req.body || {}).source_email_id || (draft && draft.compose_state && draft.compose_state.source_email_id) || null;
     // If this compose is answering something, it is a reply and carries the
     // thread. /compose accepts source_email_id, so it is not always a fresh
     // message, and the version of this that skipped quoting here would have
@@ -2273,7 +2316,7 @@ router.post('/compose', express.json(), async (req, res) => {
     // below; it just no longer double-quotes. (Ed 2026-09-10.)
     const _bodyHasForward = /-----\s*Forwarded message\s*-----/i.test(body);
     try {
-      const _srcId = (req.body || {}).source_email_id;
+      const _srcId = sourceEmailId;
       if (_srcId && !_bodyHasForward) {
         const { data: _src, error: _srcErr } = await supabase.from('email_messages')
           .select('sender_name, sender_email, subject, received_at, body_full, body_preview')
@@ -2317,6 +2360,11 @@ router.post('/compose', express.json(), async (req, res) => {
       const { buildReeseEmail } = require('../lib/email/reese_signature');
       ({ html, attachments } = buildReeseEmail(String(body).trim(), commName, quoted));
       fromMailbox = graphSend.REESE_MAILBOX; senderLabel = 'Reese Calloway (Bedrock AI)'; personaName = 'Reese';
+    } else if (['isabella', 'mei', 'priya'].includes(P)) {
+      const { buildPersonaEmail } = require('../lib/email/persona_signature');
+      ({ html, attachments } = buildPersonaEmail(P, String(body).trim(), commName, quoted));
+      fromMailbox = graphSend.personaMailbox(P); personaName = P.charAt(0).toUpperCase() + P.slice(1);
+      senderLabel = `${require('../lib/team/roster').get(P).name} (Bedrock AI)`;
     } else {
       const { buildClaireEmail } = require('../lib/email/claire_signature');
       ({ html, attachments } = buildClaireEmail(String(body).trim(), commName, quoted));
@@ -2329,7 +2377,7 @@ router.post('/compose', express.json(), async (req, res) => {
     // conversation, plus the live message if still fetchable. (Ed 2026-08-01.)
     let reattached = 0;
     try {
-      const srcId = (req.body || {}).source_email_id;
+      const srcId = sourceEmailId;
       if (srcId) {
         const { data: src } = await supabase.from('email_messages').select('id, conversation_id, graph_id, mailbox, has_attachments').eq('id', srcId).maybeSingle();
         if (src) {
@@ -2370,22 +2418,60 @@ router.post('/compose', express.json(), async (req, res) => {
       }
     } catch (e) { console.warn('[email_triage] compose re-attach skipped:', e.message); }
 
-    await graphSend.sendAs({ from: fromMailbox, to: toList, cc: ccList, subject: subj, html, attachments });
+    // Files attached in the compose window (stored with the draft). All or
+    // nothing: one unreadable file stops the send with its name, never a send
+    // that quietly leaves it off.
+    let draftFiles = 0;
+    if (draft) {
+      const files = await CD.loadAttachmentsForSend(draft.attachments);
+      if (files.length) { attachments = [...(attachments || []), ...files]; draftFiles = files.length; }
+    }
+
+    let sent;
+    try {
+      sent = await graphSend.sendAs({ from: fromMailbox, to: toList, cc: ccList, subject: subj, html, attachments, communityId: community_id });
+    } catch (e) {
+      if (claimedDraftId) { await CD.releaseClaim(claimedDraftId, e.userMessage || e.message); claimedDraftId = null; }
+      console.error('[email_triage] compose send failed:', e.message);
+      return res.status(502).json({ error: 'send_failed', detail: `${e.userMessage || 'The email could not be sent.'} Nothing went out; the draft is kept.` });
+    }
+    // sendAs RETURNS (does not throw) when the outbound guard suppresses a send.
+    if (sent && sent.suppressed) {
+      if (claimedDraftId) { await CD.releaseClaim(claimedDraftId, `blocked: ${sent.reason || 'outbound guard'}`); claimedDraftId = null; }
+      return res.status(409).json({ error: 'send_blocked', detail: `This send was blocked (${sent.reason || 'outbound guard'}). Nothing went out; the draft is kept.` });
+    }
+    claimedDraftId = null;   // it went out: from here on, never release the claim back to 'draft'
 
     const allRecipients = [...toList, ...ccList];
-    await supabase.from('email_messages').insert({
+    const logRow = {
       mailbox: fromMailbox, direction: 'outbound', sender_email: fromMailbox,
       sender_name: senderLabel, recipients: allRecipients, subject: subj, body_preview: String(body).trim().slice(0, 2000),
       body_full: String(body).trim(),
       classification: 'outbound_reply', classification_confidence: 'high', persona: P, ai_summary: `${personaName} emailed ${allRecipients.join(', ')} (composed by ${admin.full_name || admin.email})`,
       community_id, resolved_contact_id, resolved_property_id, resolution_confidence: resolved_contact_id ? 'high' : 'low',
       triage_status: 'handled', record_ownership: 'association_record', reviewed_by: admin.full_name || admin.email || 'admin', reviewed_at: new Date().toISOString(),
-    });
+      ...(draft ? { outbound_draft_id: draft.id } : {}),
+    };
+    let logged = await supabase.from('email_messages').insert(logRow).select('id').maybeSingle();
+    if (logged.error && draft && CD.isMissingColumn(logged.error)) {
+      const { outbound_draft_id: _o, ...base } = logRow;
+      logged = await supabase.from('email_messages').insert(base).select('id').maybeSingle();
+    }
+    if (logged.error) console.error('[email_triage] compose SENT but not logged', JSON.stringify({ draft_id: draft && draft.id, error: logged.error.message }));
+    const emailMessageId = (logged.data && logged.data.id) || null;
 
-    res.json({ sent: true, to: toList, cc: ccList, from: fromMailbox, persona: personaName.toLowerCase(), linked_to_homeowner: !!resolved_contact_id, attached_files: reattached });
+    let task = null;
+    if (draft) {
+      await CD.markSent(draft.id, { from: fromMailbox, approvedBy: admin.full_name || admin.email || 'admin', emailMessageId });
+      task = await CD.resolveComposeTask(draft, { outcome: 'sent', emailMessageId, actor: admin.full_name || admin.email || 'admin' });
+    }
+
+    res.json({ sent: true, to: toList, cc: ccList, from: fromMailbox, persona: personaName.toLowerCase(), linked_to_homeowner: !!resolved_contact_id,
+      attached_files: reattached + draftFiles, draft_id: draft ? draft.id : null, email_message_id: emailMessageId, task_closed: !!(task && task.closed) });
   } catch (err) {
+    if (claimedDraftId) await CD.releaseClaim(claimedDraftId, err.detail || err.message);
     console.error('[email_triage] compose failed:', err.message);
-    res.status(500).json({ error: safeErrorMessage(err) });
+    res.status(err.status || 500).json({ error: err.code || safeErrorMessage(err), detail: err.status ? err.detail : undefined });
   }
 });
 
@@ -2397,7 +2483,7 @@ router.post('/compose-draft', express.json(), async (req, res) => {
     const admin = await requireAdmin(req, res);
     if (!admin) return; // 403 already sent
     const { intent, to, community_name, persona } = req.body || {};
-    const draftPersona = ['emma', 'annie', 'miranda', 'paige'].includes(String(persona || '').toLowerCase()) ? String(persona).toLowerCase() : 'claire';
+    const draftPersona = ['emma', 'annie', 'miranda', 'paige', 'amanda'].includes(String(persona || '').toLowerCase()) ? String(persona).toLowerCase() : 'claire';
     if (!intent || !String(intent).trim()) return res.status(400).json({ error: 'intent_required', detail: 'Tell the AI what you want the email to say.' });
 
     // Light recipient context so the draft can greet by name / fit the community.
@@ -2422,6 +2508,136 @@ router.post('/compose-draft', express.json(), async (req, res) => {
     res.json({ ok: true, subject: draft.subject, body: draft.body });
   } catch (err) {
     console.error('[email_triage] compose-draft failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// ---- New Email: recipients, drafts, attachments (Ed 2026-10-16) -------------
+// Admin-gated like the rest of this router. Saving a draft puts it on the
+// sending agent's Mission Control list (lib/email/compose_drafts.js); nothing
+// here sends email. The send is POST /compose with draft_id.
+
+// GET /compose/recipients?q=&community_id= — To/Cc autocomplete.
+router.get('/compose/recipients', async (req, res) => {
+  try {
+    const { searchRecipients } = require('../lib/email/recipient_search');
+    const out = await searchRecipients({ q: req.query.q, communityId: req.query.community_id || null, limit: 20 });
+    res.json(out);
+  } catch (err) {
+    console.error('[email_triage] recipient search failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// GET /compose/communities — the Community picker: communities this user can
+// send for (not demo, not ended), alphabetical.
+router.get('/compose/communities', async (req, res) => {
+  try {
+    const { accessibleCommunities } = require('../lib/email/recipient_search');
+    const rows = await accessibleCommunities();
+    res.json({ communities: rows.map((c) => ({ id: c.id, name: c.name })).sort((a, b) => a.name.localeCompare(b.name)) });
+  } catch (err) {
+    console.error('[email_triage] compose communities failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// GET /compose/drafts?persona= — open (unsent) compose drafts.
+router.get('/compose/drafts', async (req, res) => {
+  try {
+    const CD = require('../lib/email/compose_drafts');
+    const persona = req.query.persona ? String(req.query.persona).toLowerCase() : null;
+    const rows = await CD.listOpenDrafts({ persona });
+    res.json({ drafts: rows.map((d) => ({ ...d, agent: CD.agentName(d.persona), attachment_count: (d.attachments || []).length, attachments: undefined })) });
+  } catch (err) {
+    console.error('[email_triage] compose drafts list failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// GET /compose/drafts/:id — everything needed to reopen the window as it was.
+router.get('/compose/drafts/:id', async (req, res) => {
+  try {
+    const CD = require('../lib/email/compose_drafts');
+    const d = await CD.getDraft(req.params.id);
+    if (!d) return res.status(404).json({ error: 'not_found', detail: 'That draft was not found.' });
+    const { to, cc } = CD.chipsFromDraft(d);
+    const st = d.compose_state || {};
+    res.json({ draft: { id: d.id, status: d.status, persona: d.persona, agent: CD.agentName(d.persona), to, cc, subject: d.subject || '', body: d.body_text || '',
+      community_id: d.community_id, community_name: d.community_name, intent: st.intent || '', source_email_id: st.source_email_id || null, ai_drafted: !!d.ai_drafted,
+      attachments: (d.attachments || []).map((a) => ({ name: a.name, storage_path: a.storage_path, mime: a.mime, size: a.size })),
+      send_error: d.send_error || null, sent_at: d.sent_at || null, work_item_id: d.work_item_id || null, updated_at: d.updated_at } });
+  } catch (err) {
+    console.error('[email_triage] compose draft get failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// POST /compose/drafts — create (no draft_id) or update (draft_id) the draft,
+// and keep its agent task in step. Body: { draft_id?, persona, to:[chips], cc:[chips],
+// subject, body, community_id, intent, ai_drafted, source_email_id }.
+router.post('/compose/drafts', express.json({ limit: '256kb' }), async (req, res) => {
+  try {
+    const CD = require('../lib/email/compose_drafts');
+    const comm = await composeCommunity(req.body || {});
+    if (comm.error) return res.status(400).json({ error: 'community_out_of_scope', detail: comm.error });
+    const P = composePersona((req.body || {}).persona);
+    const { draft, task } = await CD.saveComposeDraft({ ...(req.body || {}), persona: P, community_id: comm.id, community_name: comm.name || null },
+      { actor: req.admin.full_name || req.admin.email || 'admin', fromMailbox: graphSend.personaMailbox(P) });
+    res.json({ ok: true, draft_id: draft.id, saved_at: draft.updated_at, agent: CD.agentName(P), task });
+  } catch (err) {
+    if (err.status) return res.status(err.status).json({ error: err.code, detail: err.detail });
+    console.error('[email_triage] compose draft save failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err), detail: 'The draft could not be saved. Your text is still on screen; try again.' });
+  }
+});
+
+// POST /compose/drafts/:id/attachments — one file per call (multipart "file").
+// Stored in the documents bucket with the draft; refused types/sizes say why.
+router.post('/compose/drafts/:id/attachments', (req, res, next) => {
+  attachUpload.single('file')(req, res, (e) => {
+    if (!e) return next();
+    const detail = e.code === 'LIMIT_FILE_SIZE' ? 'That file is larger than 15 MB, too big to email.' : 'The file could not be read. Try again.';
+    return res.status(400).json({ error: 'attachment_refused', detail });
+  });
+}, async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'no_file', detail: 'No file received.' });
+    const CD = require('../lib/email/compose_drafts');
+    const out = await CD.addAttachment(req.params.id, req.file);
+    const d = await CD.getDraft(req.params.id);
+    if (d) await CD.syncComposeTask(d, req.admin.full_name || req.admin.email || 'admin');   // task summary lists the files
+    res.json({ ok: true, ...out });
+  } catch (err) {
+    if (err.status) return res.status(err.status).json({ error: err.code, detail: err.detail });
+    console.error('[email_triage] compose attachment failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err), detail: 'The file was not attached. Try again.' });
+  }
+});
+
+// DELETE /compose/drafts/:id/attachments  { storage_path }
+router.delete('/compose/drafts/:id/attachments', express.json(), async (req, res) => {
+  try {
+    const CD = require('../lib/email/compose_drafts');
+    const out = await CD.removeAttachment(req.params.id, String((req.body || {}).storage_path || ''));
+    const d = await CD.getDraft(req.params.id);
+    if (d) await CD.syncComposeTask(d, req.admin.full_name || req.admin.email || 'admin');
+    res.json({ ok: true, ...out });
+  } catch (err) {
+    if (err.status) return res.status(err.status).json({ error: err.code, detail: err.detail });
+    console.error('[email_triage] compose attachment remove failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// POST /compose/drafts/:id/discard — the explicit "throw this away"; closes the task.
+router.post('/compose/drafts/:id/discard', express.json(), async (req, res) => {
+  try {
+    const CD = require('../lib/email/compose_drafts');
+    res.json({ ok: true, ...(await CD.discardDraft(req.params.id, req.admin.full_name || req.admin.email || 'admin')) });
+  } catch (err) {
+    if (err.status) return res.status(err.status).json({ error: err.code, detail: err.detail });
+    console.error('[email_triage] compose discard failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
   }
 });
