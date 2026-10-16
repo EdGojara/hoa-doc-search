@@ -145,7 +145,15 @@ async function liveRun(args) {
   if (error || !c) throw new Error(`community ${cid} not found: ${error ? error.message : 'no row'}`);
   const gm = require('../lib/email/graph_attachments');
   const text = args.mailbox && args['graph-id'] ? await gm.fetchMessageText(args.mailbox, args['graph-id']).catch(() => '') : '';
-  const email = { subject: args.subject || 'proposals', body: typeof text === 'string' ? text : (text && text.body) || '' };
+  // The stored copy of the message being answered: its ids exclude it (and its thread copies) from
+  // the community context, so the analysis never cites the message it is answering.
+  let stored = null;
+  if (args['graph-id']) {
+    const { data: m, error: me } = await db.from('email_messages').select('id, graph_id, internet_message_id, conversation_id, subject, body_full, body_preview, received_at, sender_email').eq('graph_id', args['graph-id']).limit(1);
+    if (me) console.warn('stored message lookup failed:', me.message); else stored = (m || [])[0] || null;
+  }
+  const bodyText = typeof text === 'string' ? text : (text && text.body) || '';
+  const email = { ...(stored || {}), graph_id: args['graph-id'] || (stored && stored.graph_id) || null, subject: args.subject || (stored && stored.subject) || 'proposals', body: bodyText || (stored && (stored.body_full || stored.body_preview)) || '' };
   const facts = await D.boardDecisionFactsDetailed(db, cid, email.body);
   const r = await W.prepareComparison({ supabase: db, communityId: cid, communityName: c.name, email, mailbox: args.mailbox, graphId: args['graph-id'], mode: 'dry_run', factsDetailed: facts });
   if (!r.is_matter) return `Not a comparison matter: ${JSON.stringify(r.detection)}`;

@@ -1,5 +1,5 @@
 {
-  "_about": "Canyon Gate at Cinco Ranch security-camera proposals, as received. Every proposal field below was transcribed from the real documents (no invented figures): the 9/17/2026 and 10/15/2026 board emails (attachments named exactly as received), the July 2026 board packet 'Security Camera Proposals.pdf' (OneDrive, sha256 below), and the standalone Envera quote Q-19538-2. db_seed is a FIXTURE SNAPSHOT of Canyon Gate's books state as recorded in trustEd on 2026-10-12 (balances rounded from the reconciliation workpapers; no month closed; operating 5313/3170 and Edward Jones not reconciled for Aug/Sep). It is not a live read.",
+  "_about": "Canyon Gate at Cinco Ranch security-camera proposals, as received. Every proposal field below was transcribed from the real documents (no invented figures): the 9/17/2026 and 10/15/2026 board emails (attachments named exactly as received), the July 2026 board packet 'Security Camera Proposals.pdf' (OneDrive, sha256 below), and the standalone Envera quote Q-19538-2. db_seed matches the live read-only dry run of 2026-10-16 (operating $41,104.86 and reserve $948,452.23, both provisional; no month closed; operating 5313/3170 and Edward Jones not reconciled). It is not a live read.",
   "community": {
     "id": "a0000000-0000-4000-8000-000000000003",
     "name": "Canyon Gate at Cinco Ranch"
@@ -248,7 +248,7 @@
       "expires_on": "2026-08-31",
       "pricing": {
         "upfront_cents": 6008753,
-        "tax_rate_pct": 7.25,
+        "tax_rate_pct": null,
         "tax_included": false,
         "recurring": [
           {
@@ -257,7 +257,7 @@
             "required": true,
             "min_term_months": 60,
             "auto_renews": false,
-            "taxable": true,
+            "taxable": null,
             "provides": [
               "active_monitoring",
               "maintenance",
@@ -291,7 +291,8 @@
       "payment_terms": "50% of installation + two months of services at signing; 40% within 5 days of start; 10% within 5 days of completion",
       "other_terms": [
         "Minimum 60-month agreement for monthly services",
-        "Sales tax added to monthly charges"
+        "Local sales tax may be added to One-Time Total",
+        "Sales tax will be added to Monthly Investment"
       ]
     },
     {
@@ -309,7 +310,7 @@
       "expires_on": "2026-08-31",
       "pricing": {
         "upfront_cents": 6008753,
-        "tax_rate_pct": 7.25,
+        "tax_rate_pct": null,
         "tax_included": false,
         "recurring": [
           {
@@ -317,7 +318,7 @@
             "monthly_cents": 245354,
             "required": true,
             "min_term_months": 60,
-            "taxable": true,
+            "taxable": null,
             "provides": [
               "active_monitoring",
               "maintenance",
@@ -330,7 +331,12 @@
         "ownership": null,
         "monitoring": "included",
         "cloud_access": "included"
-      }
+      },
+      "other_terms": [
+        "Minimum 60-month agreement for monthly services",
+        "Local sales tax may be added to One-Time Total",
+        "Sales tax will be added to Monthly Investment"
+      ]
     },
     {
       "key": "netwatch-2026",
@@ -429,7 +435,7 @@
     "v_trial_balance": [
       {
         "account_number": "1000",
-        "total_debits_cents": 11627077,
+        "total_debits_cents": 4010460,
         "total_credits_cents": 0
       },
       {
@@ -551,13 +557,15 @@
       "itech-2026-a": {
         "upfront_total_cents": 4785468,
         "recurring_counted_monthly_cents": 44000,
-        "tco_cents": 7425468
+        "tco_cents": 7425468,
+        "tax_basis": "stated"
       },
       "envera-q19538-2-packet": {
         "upfront_total_cents": 6444388,
         "recurring_counted_monthly_cents": 263142,
         "tco_cents": 22232908,
-        "minimum_commitment_cents": 22232908
+        "minimum_commitment_cents": 22232908,
+        "tax_basis": "estimated"
       }
     },
     "not_viable": [
@@ -609,8 +617,14 @@
         "A-Beautiful Pools",
         "Pool closing",
         "Gate Operators",
-        "Camera Proposals"
+        "Camera Proposals",
+        "United Protective - Contract",
+        "tax-exempt"
       ]
+    },
+    "cash_totals": {
+      "Operating": 4110486,
+      "Reserve": 94845223
     }
   },
   "_context_about": "context_seed: snapshot of Canyon Gate records in trustEd as documented in the 2026-10-10..12 accounting and budget workpapers (UPS contract 96321a51 and Gate Sentry contract 506222f2 with their annualized amounts; Texas Access Works slide-gate, Star Protection, Alert 360 and A-Beautiful Pools bills; the open guard-services project; the 2024 audit reserve components Gates and Gate Operators; the 9/17/2026 board email thread). Not a live read.",
@@ -725,7 +739,10 @@
         "sender_email": "president@canyongateatcincoranch.com",
         "sender_name": "Hugh Durlam",
         "received_at": "2026-10-16T00:51:08Z",
-        "direction": "inbound"
+        "direction": "inbound",
+        "graph_id": "AAMk-1016",
+        "conversation_id": "conv-camera",
+        "internet_message_id": "<LV2PR18MB98836885@outlook.com>"
       },
       {
         "id": "em-0917a",
@@ -752,6 +769,35 @@
         "sender_email": "resident@example.com",
         "sender_name": "Resident",
         "received_at": "2026-10-01T15:00:00Z",
+        "direction": "inbound"
+      },
+      {
+        "id": "em-1016-reply",
+        "graph_id": "AAMk-1016r",
+        "conversation_id": "conv-camera",
+        "subject": "RE: Camera Proposals",
+        "body_preview": "Thanks Hugh, reviewing the camera proposals now.",
+        "sender_email": "treasurer@canyongateatcincoranch.com",
+        "sender_name": "Treasurer",
+        "received_at": "2026-10-16T02:10:00Z",
+        "direction": "inbound"
+      },
+      {
+        "id": "em-ups-0922",
+        "subject": "United Protective - Contract - For Review",
+        "body_preview": "Attached is the security contract for review, with the COI and our tax-exempt status letter.",
+        "sender_email": "contracts@unitedprotective.com",
+        "sender_name": "United Protective Services",
+        "received_at": "2026-09-22T15:00:00Z",
+        "direction": "inbound"
+      },
+      {
+        "id": "em-ups-0924",
+        "subject": "RE: United Protective - Contract - For Review",
+        "body_preview": "Updated certificate of insurance and tax exemption attached.",
+        "sender_email": "contracts@unitedprotective.com",
+        "sender_name": "United Protective Services",
+        "received_at": "2026-09-24T15:00:00Z",
         "direction": "inbound"
       }
     ],

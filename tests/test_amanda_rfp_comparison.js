@@ -106,7 +106,7 @@ const env = (vars, fn) => { const old = {}; for (const k of Object.keys(vars)) {
   });
 
   await t('normalized costs match the documents within tolerance (tax, plan, 60-month TCO, minimum commitment)', async () => {
-    for (const [k, exp] of Object.entries(fx.expected.costs)) for (const [field, v] of Object.entries(exp)) near(byKey[k][field], v, fx.expected.tolerance_cents, `${k}.${field}`);
+    for (const [k, exp] of Object.entries(fx.expected.costs)) for (const [field, v] of Object.entries(exp)) { if (typeof v === 'number') near(byKey[k][field], v, fx.expected.tolerance_cents, `${k}.${field}`); else assert.strictEqual(byKey[k][field], v, `${k}.${field}`); }
     assert.strictEqual(byKey['itech-2026-a'].recurring[0].counted, true, 'optional plan counted: it is the only way to get the cloud access the Board asked for');
     assert.match(byKey['itech-2026-a'].recurring[0].counted_reason, /cloud access/);
     assert.strictEqual(byKey['itech-2026-a'].ownership, 'association');
@@ -199,7 +199,7 @@ const env = (vars, fn) => { const old = {}; for (const k of Object.keys(vars)) {
     const used = run.result.record.review.by_proposal['itech-2026-a'].community_context_used;
     for (const src of fx.expected.review.context_sources) assert.ok(used.some((u) => u.source === src), src);
     assert.ok(used.every((u) => /^trustEd:/.test(u.source)));
-    assert.match(run.result.summary, /From Canyon Gate records: .*Security Services has about \$11,610\/yr left after the United Protective and Gate Sentry contracts.*no camera contract is on file.*reserve study has no camera component.*leaning toward iTech/);
+    assert.match(run.result.summary, /From Canyon Gate records: on an annual run-rate basis, Security Services \(\$235,000\/yr\) less the United Protective and Gate Sentry contracts leaves about \$11,610\/yr, enough for the plan's \$5,280\/yr \(this is not the amount remaining in this year's budget\).*no camera contract is on file.*reserve study has no camera component.*leaning toward iTech/);
     const budget = run.result.record.review.by_proposal['itech-2026-a'].strengths.find((x) => x.source === 'trustEd:vendor_contracts' && x.lens === 'financial');
     assert.ok(budget, 'the budget-line finding rests on trustEd contracts, not the proposal');
   });
@@ -210,6 +210,34 @@ const env = (vars, fn) => { const old = {}; for (const k of Object.keys(vars)) {
     const CC = require('../lib/vendors/community_context');
     const poolOnly = await CC.gatherCommunityContext(fakeDb({ email_messages: [{ id: 'p', subject: 'Pool closing', body_preview: 'pool hours', received_at: '2026-10-01' }], ap_invoices: [{ total_cents: 1000, invoice_date: '2026-09-01', status: 'paid', vendors: { name: 'A-Beautiful Pools' } }], vendor_projects: [{ title: 'Pool resurfacing', category: 'pool', stage: 'approved' }] }), { communityId: 'x', category: 'security', proposalVendors: ['iTech Monitoring, Inc.'], today: '2026-10-16' });
     assert.ok(!JSON.stringify(poolOnly.findings).match(/pool/i), 'nothing about the pool for a camera decision');
+  });
+
+  await t('sales tax is never assumed to be $0: unstated tax is estimated from the community\'s stated rate, or shown as not stated and flagged', async () => {
+    const env = byKey['envera-q19538-2-packet'];
+    assert.strictEqual(env.tax_basis, 'estimated'); assert.strictEqual(env.tax_rate_pct, 7.25, 'the rate iTech states for Canyon Gate');
+    assert.strictEqual(env.recurring[0].tax_basis, 'estimated', '"Sales tax will be added to Monthly Investment" makes the monthly charge taxable');
+    assert.match(summary, /about \$222,329 over 5 years with estimated tax/);
+    const lone = { ...fx.proposals.find((p) => p.key === 'envera-q19538-2-packet'), key: 'lone', expires_on: null };
+    const r = C.buildComparisonRecord({ community: fx.community, project: fx.project, proposals: [lone], requirements: {}, facts: null, today: fx.today });
+    const n = r.proposals[0];
+    assert.strictEqual(n.tax_basis, 'not_stated'); assert.strictEqual(n.upfront_tax_cents, null, 'unknown, not $0');
+    assert.match(n.tax_note, /does not state sales tax/);
+    assert.ok(r.open_items.some((i) => i.topic === 'sales tax'), 'flagged for the vendor');
+  });
+
+  await t('the message being answered (any id, or a later copy in its thread) and unrelated security emails are never cited', async () => {
+    const prior = run.result.record.community_context.filter((c) => c.kind === 'prior_communication');
+    assert.ok(prior.length >= 1 && prior.every((c) => c.text.startsWith('2026-09-17')), prior.map((c) => c.text.slice(0, 40)).join(' | '));
+    assert.ok(!/October 16, 2026/.test(run.result.summary));
+    const CC = require('../lib/vendors/community_context');
+    const byGraph = await CC.gatherCommunityContext(fakeDb({ email_messages: fx.context_seed.email_messages }), { communityId: 'x', category: 'security', proposalVendors: ['iTech Monitoring, Inc.'], today: fx.today, currentMessage: { graph_id: 'AAMk-1016', conversation_id: 'conv-camera', subject: 'Camera Proposals', received_at: '2026-10-16T00:51:08Z' } });
+    const texts = byGraph.findings.map((f) => f.text).join(' | ');
+    assert.ok(!/Camera Proposals/.test(texts), 'excluded by graph id and its thread reply');
+    assert.ok(!/United Protective - Contract|tax-exempt/i.test(texts), 'the guard contract emails do not bear on the camera decision');
+  });
+
+  await t('fixture books match the live read-only run (operating $41,104.86, reserve $948,452.23, both provisional)', async () => {
+    for (const [fund, cents] of Object.entries(fx.expected.cash_totals)) assert.strictEqual(facts.funds.find((x) => x.fund === fund).balance_cents, cents, fund);
   });
 
   await t('without community records the summary carries no "From ... records" line (nothing invented)', async () => {

@@ -18,3 +18,9 @@ Each fixture JSON has:
 Adding a case: drop a new JSON next to this one with the same keys, then add a loop
 over the directory in the test if more than one fixture exists. Never invent a figure:
 every number must trace to a page of a real document.
+
+## Canyon Gate cameras: provenance
+
+- Proposals: transcribed from the 9/17/2026 and 10/15/2026 board emails and the July 2026 packet. Envera's tax is stored as the quote prints it, with no rate, exactly as the live extraction returned it.
+- Books (`db_seed`): match the live read-only dry run of 2026-10-16: operating $41,104.86 and reserve $948,452.23, both provisional, no month closed.
+- Community context (`context_seed`): a snapshot of the documented Canyon Gate records (contracts, bills, project, reserve components, the 9/17 thread). It also includes must-omit cases: the message being answered and its thread reply, the United Protective "Contract - For Review" emails, and pool items.
