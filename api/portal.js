@@ -1763,14 +1763,15 @@ router.get('/me', async (req, res) => {
       community_slug: p.communities?.slug || '',
     }));
 
-    // Portal "Pay now" gate: the SAME decision /pay/checkout enforces
-    // (lib/portal/pay_gate.js). Fail closed: a lookup error hides the button.
-    let payGate = { enabled: false };
+    // Portal "Pay now" + "payment processing": the SAME readiness decision the
+    // server checkout refuses on (lib/payments/payment_readiness.js, via
+    // lib/portal/pay_gate.js). Fails closed: any error hides Pay.
+    let payState = { payments_enabled: false, message: null, pending: null };
     try {
-      const { portalPayGateForCommunityId } = require('../lib/portal/pay_gate');
-      payGate = await portalPayGateForCommunityId(supabase, community.id);
+      const { portalPayState } = require('../lib/portal/pay_gate');
+      payState = await portalPayState(supabase, { communityId: community.id, propertyId: prop.id });
     } catch (e) {
-      console.warn('[portal /me] pay gate failed:', e.message);
+      console.warn('[portal /me] pay state failed:', e.message);
     }
 
     // In manager mode, show the actual homeowner's name in the portal
@@ -1821,13 +1822,17 @@ router.get('/me', async (req, res) => {
         is_demo: community.is_demo === true,
         // Can this community actually ACCEPT an online payment right now?
         // The homeowner-facing "Pay now" button gates on this, and it is the
-        // same evaluation /pay/checkout refuses on (lib/portal/pay_gate.js):
-        // the per-community portal_pay_enabled switch (off by default), active
-        // financials, Stripe charges + payouts enabled, and the account in the
-        // server key's mode (live in production). It used to be "an account id
-        // exists", which offered Pay for communities whose ledger was not
-        // converted. Boolean only; the account id never goes to the browser.
-        payments_enabled: payGate.enabled === true,
+        // same decision the server checkout refuses on
+        // (lib/payments/payment_readiness.js): online_payments_enabled (off by
+        // default, Ed turns it on per community), active financials, Stripe
+        // charges + payouts enabled, account in the server key's mode. It used
+        // to be "an account id exists", which offered Pay for communities whose
+        // ledger was not converted. Boolean only; no account id to the browser.
+        payments_enabled: payState.payments_enabled === true,
+        // A submitted payment still settling (ACH takes days). The balance does
+        // not drop until it settles, so the portal says "Payment processing"
+        // and does not invite a second payment. { amount_cents, since, method, label } | null
+        payment_pending: payState.pending || null,
       },
       balance,
       compliance,
@@ -4351,12 +4356,11 @@ router.post('/pay/checkout', express.json({ limit: '4kb' }), async (req, res) =>
     const { data: prop, error: pErr } = await supabase.from('properties').select('community_id').eq('id', auth.propertyId).maybeSingle();
     if (pErr) throw pErr;
     if (!prop) return res.status(404).json({ error: 'no_property' });
-    // Same gate as the Pay button (/me payments_enabled), re-asked of Stripe
-    // fresh: switch on, financials active, charges + payouts enabled, live
-    // mode in production. Any failure refuses before a session is created.
-    const { portalPayGateForCommunityId } = require('../lib/portal/pay_gate');
-    const gate = await portalPayGateForCommunityId(supabase, prop.community_id, { fresh: true });
-    if (!gate.enabled) return res.status(409).json({ error: gate.code || 'community_not_taking_payments', detail: gate.reason });
+    // Same gate as the Pay button (/me payments_enabled). Refuse before
+    // creating anything; the checkout then re-verifies the account with Stripe.
+    const { portalCheckoutGate } = require('../lib/portal/pay_gate');
+    const gate = await portalCheckoutGate(supabase, prop.community_id);
+    if (!gate.ready) return res.status(409).json({ error: gate.reason || 'community_not_taking_payments', hint: gate.message });
 
     const origin = process.env.APP_BASE_URL || `${req.protocol}://${req.get('host')}`;
     const { createAssessmentCheckout } = require('./payments');
@@ -4369,7 +4373,7 @@ router.post('/pay/checkout', express.json({ limit: '4kb' }), async (req, res) =>
       payer: { email: resolved.user.email, name: resolved.user.full_name },
       portal_user_id: resolved.user.id,
     });
-    if (!r.ok) return res.status(r.status || 500).json({ error: r.error, hint: r.hint });
+    if (!r.ok) return res.status(r.status || 500).json({ error: r.error, hint: r.hint, pending_amount_cents: r.pending_amount_cents });
     res.json({ ok: true, checkout_url: r.checkout_url, amount_cents: r.amount_cents, convenience_fee_cents: r.convenience_fee_cents, method: r.method });
   } catch (err) {
     console.error('[portal] pay checkout failed:', err.message);

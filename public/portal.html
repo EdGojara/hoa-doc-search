@@ -652,6 +652,7 @@
       <span class="value" id="balanceValue">—</span>
       <span class="sub" id="balanceAsOf">—</span>
       <button id="payNowBtn" onclick="openPayModal()" style="display:none; margin-top:8px; align-self:flex-start; background:#D4AF37; color:#0B1D34; border:none; border-radius:8px; padding:7px 16px; font-weight:700; font-size:13px; cursor:pointer;">Pay now</button>
+      <span class="sub" id="payPendingNote" style="display:none; margin-top:6px;"></span>
       <!-- Autopay state, on the card. Somebody with a standing authorisation
            should be able to see what it will take and when without opening
            anything — that uncertainty is the whole reason people will not turn
@@ -1617,11 +1618,27 @@ function renderPortal(ctx) {
   // /api/payments/assessment/create-checkout — after the homeowner has already
   // picked ACH-or-card and committed. Balance still displays either way.
   window._payCtx.payments_enabled = !!(ctx.community && ctx.community.payments_enabled);
+  // A payment already submitted and still settling (ACH takes days). The
+  // balance does not drop until it settles, so say so and do not invite a
+  // second payment. The server refuses one anyway (409 payment_processing).
+  const pending = (ctx.community && ctx.community.payment_pending) || null;
+  const pendingNote = $('payPendingNote');
+  if (pendingNote) {
+    if (pending && pending.amount_cents > 0) {
+      const amt = '$' + (pending.amount_cents / 100).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      const since = pending.since ? new Date(pending.since).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '';
+      pendingNote.textContent = `${pending.label || 'Payment processing'} ${amt}${since ? ' · submitted ' + since : ''}. Your balance updates when it clears.`;
+      pendingNote.style.display = 'block';
+    } else {
+      pendingNote.style.display = 'none';
+    }
+  }
   const payBtn = $('payNowBtn');
   if (payBtn) {
     const canPay = window._payCtx.amount_cents > 0
       && window._payCtx.property_id
-      && window._payCtx.payments_enabled;
+      && window._payCtx.payments_enabled
+      && !(pending && pending.amount_cents > 0);
     payBtn.style.display = canPay ? 'inline-block' : 'none';
   }
 
