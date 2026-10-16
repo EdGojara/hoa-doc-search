@@ -1,0 +1,1016 @@
+{
+  "_comment": "Canyon Gate security camera RFP content (Ed 2026-10-16). Written to bid_requests.structured_rfp by scripts/save_rfp_document.js, dry run by default. Vendor-neutral: no baseline vendor, brand or price. Camera counts are cross-checked against the baseline proposal's STORED, approved line items before anything is written.",
+  "bid_request_id": "9857e2cc-766b-450a-815a-c574e7572643",
+  "community_id": "a0000000-0000-4000-8000-000000000003",
+  "template": "security_cameras",
+  "baseline": {
+    "proposal_id": "573a733e-344f-4025-9d00-72a80943f020",
+    "document_sha256": "ac51a7ebb06324b8221e5df8f02668856b391b167a37bac2cab82d54f499d917",
+    "pages": "3-4",
+    "note": "Scope reference only, converted to vendor-neutral language. The baseline proposal's pricing, vendor and product names are not disclosed in the RFP."
+  },
+  "governing_instruction": {
+    "email_message_id": "ad9a18d5-5eb3-40bd-abd4-8b36ac505e1c",
+    "expect_sender": "president@canyongateatcincoranch.com",
+    "expect_subject": "Create RFP",
+    "expect_text": "scrub the numbers on this proposal and create an RFP",
+    "from_role": "Board President",
+    "summary": "The Board President asked management to remove the pricing from the current camera proposal and turn it into an RFP quickly."
+  },
+  "forbidden_terms": [
+    "iTech",
+    "iTech Monitoring",
+    "Digital Watchdog",
+    "Digital WatchDog",
+    "DW",
+    "MyDW",
+    "Spectrum",
+    "Ubiquiti",
+    "NanoStation",
+    "Nano Station",
+    "CaaS",
+    "Envera",
+    "Netwatch",
+    "Hanwha",
+    "Cvedia",
+    "Wave Sync",
+    "Starlink"
+  ],
+  "expected_decision_state": {
+    "vendor_direction": "iTech currently preferred",
+    "management_action": "Build/issue RFP and complete diligence",
+    "contract_readiness": "Not ready to sign",
+    "board_authorization": "Final award not yet requested",
+    "execution_status": "Not authorized"
+  },
+  "document": {
+    "title": "Request for Proposals: Security Camera System Replacement and Expansion",
+    "community": "Canyon Gate at Cinco Ranch",
+    "association_legal_name": "Canyon Gate at Cinco Ranch Owners Association, Inc.",
+    "issuer": "Bedrock Association Management, on behalf of the Association",
+    "project": {
+      "service_category": "security",
+      "summary": "The Association is replacing and expanding its common-area security camera system at four locations: the Club House, the Guard Shack, the Basketball Pavilion and the Back Entrance Gate. The system covers 27 cameras: 13 existing cameras to be reused, 6 to be replaced and 8 new. The Association will purchase the hardware, have it professionally installed, and have cloud storage and cloud access. The Association does not want any monitoring. Several cameras are down, so installation timing matters."
+    },
+    "board_requirements": [
+      {
+        "key": "purchase",
+        "text": "Purchase the hardware (the Association owns it).",
+        "source": "Board President email \"Camera Proposals\", 2026-10-16"
+      },
+      {
+        "key": "installation",
+        "text": "Professional installation.",
+        "source": "Board President email \"Camera Proposals\", 2026-10-16"
+      },
+      {
+        "key": "cloud",
+        "text": "Cloud storage and cloud access.",
+        "source": "Board President email \"Camera Proposals\", 2026-10-16"
+      },
+      {
+        "key": "no_monitoring",
+        "text": "No monitoring.",
+        "source": "Board President email \"Camera Proposals\", 2026-10-16"
+      },
+      {
+        "key": "urgency",
+        "text": "Act quickly: many cameras are down; installation expected no earlier than December.",
+        "source": "Board President email \"Camera Proposals\", 2026-10-16"
+      },
+      {
+        "key": "contract",
+        "text": "Before moving forward: a fully executed final binding proposal, terms and conditions, and a certificate of insurance naming the HOA as additional insured.",
+        "source": "Treasurer email \"Re: Camera Proposals\", 2026-10-16"
+      }
+    ],
+    "sections": [
+      {
+        "key": "instructions",
+        "title": "Instructions to bidders",
+        "body": [
+          "Canyon Gate at Cinco Ranch Owners Association, Inc. (the Association) requests a proposal to replace and expand its common-area security camera system. The scope, camera schedule, pricing form and compliance matrix are standardized so the Board can evaluate the response on a consistent basis."
+        ],
+        "items": [
+          "A site walk is strongly recommended, not mandatory. Walks meet at the Club House, 20422 Canyon Gate Blvd, Katy, TX 77450, by appointment; request one by email to {{contact_email}}. Your price must include conditions reasonably discoverable from a site walk (for example existing faults, power and cable paths).",
+          "Send questions in writing to {{contact_email}} by the question deadline, with the subject line: Canyon Gate Security Camera RFP - Question - [Company Name]. Written answers will be provided by the answer date.",
+          "Complete the pricing form as provided. Enter 0 for any line that does not apply.",
+          "Answer every line of the compliance matrix with Comply, Exception or Not Applicable, and explain every Exception and Not Applicable.",
+          "Include the full contract package listed in this RFP. Bids that are materially incomplete may be deemed non-responsive.",
+          "Pricing must remain valid for at least 45 days after the response deadline.",
+          "Submitting a bid does not create a contract. No work is authorized until the Association signs a written contract."
+        ]
+      },
+      {
+        "key": "scope_of_work",
+        "title": "Scope of work",
+        "body": [
+          "Furnish, install, configure, test and hand over a complete, working camera system for the 27 camera positions in the camera schedule, with on-site recording, cloud storage and cloud access. No monitoring."
+        ],
+        "items": [
+          "Pre-installation site survey to confirm positions, mounting, cable paths, power and recorder locations before equipment is ordered.",
+          "Reuse the 13 existing cameras in the schedule, replace 6 and install 8 new.",
+          "Replace the existing recorder with new recording equipment.",
+          "All mounts, enclosures, switches, links, cabling, conduit, battery backup and lift equipment needed.",
+          "Aim and focus every camera, including re-aiming existing cameras where a better view is available.",
+          "Hand over administrator credentials, as-built documentation and user training."
+        ]
+      },
+      {
+        "key": "camera_schedule",
+        "title": "Camera-by-camera schedule",
+        "body": [
+          "The schedule lists every camera position by location, whether the camera is reused, replaced or new, what it must cover, and the camera type needed. You may propose an equivalent type; say what and why. Return the schedule with the make and model you propose for each position. The bid must cover all 27 positions."
+        ],
+        "items": []
+      },
+      {
+        "key": "camera_disposition",
+        "title": "Reused, replacement and new cameras",
+        "body": [
+          "Reused (13): 10 at the Club House and 3 at the Guard Shack. Replacement (6): 4 at the Club House and 2 at the Guard Shack. New (8): 3 at the Guard Shack, 3 at the Basketball Pavilion and 2 at the Back Entrance Gate."
+        ],
+        "items": [
+          "No manufacturer is required.",
+          "State whether your recording system supports each of the 13 reused cameras. If it cannot support one, price its replacement as a separate alternate line; do not drop the position.",
+          "Some existing cameras have faults. Price any repair or replacement needed for the reused cameras to work."
+        ]
+      },
+      {
+        "key": "equipment_specifications",
+        "title": "Equipment specifications",
+        "body": [
+          "For each new and replacement camera, state the make, model, resolution, night-vision range and outdoor rating."
+        ],
+        "items": [
+          "The license plate cameras at the Guard Shack must capture a legible plate for vehicles in the gate lanes, day and night. State whether plate search software is included and whether it has a recurring charge.",
+          "All equipment new, with the manufacturer warranty registered to the Association."
+        ]
+      },
+      {
+        "key": "servers_storage",
+        "title": "Servers and storage",
+        "body": [
+          "Recording on site is required, on equipment the Association owns, in addition to cloud storage."
+        ],
+        "items": [
+          "State the number and location of recorders, the usable storage, and the on-site retention it gives for all 27 cameras.",
+          "Provide a battery backup for each recorder; state the runtime.",
+          "If any camera records on the camera itself, say which, and confirm its video is still viewable in the same software and stored in the cloud."
+        ]
+      },
+      {
+        "key": "licensing",
+        "title": "Licensing",
+        "body": [
+          "Licensing must be clear, so the Board can evaluate the bid."
+        ],
+        "items": [
+          "State the number of software licenses included and which camera each covers. Explain any camera that is not separately licensed.",
+          "Any license with a subscription or annual renewal is a recurring charge and goes on the pricing form.",
+          "State the price to license an added camera later."
+        ]
+      },
+      {
+        "key": "remote_access",
+        "title": "Remote access",
+        "body": [
+          "Authorized Association users must be able to view live and recorded video, and save clips, remotely from a computer and a mobile app."
+        ],
+        "items": [
+          "Remote access must not require opening ports on the Association's network (no port forwarding).",
+          "State how many user accounts are included."
+        ]
+      },
+      {
+        "key": "cloud_access_vs_storage",
+        "title": "Cloud access and cloud storage",
+        "body": [
+          "The Association asked for cloud storage and cloud access. Both are part of the base bid. They are different services, so price them as separate lines. Cloud access means authorized users reach live and recorded video through a secure online service or app. Cloud storage means recorded video is also kept off site, in the cloud."
+        ],
+        "items": [
+          "Base bid: cloud access for Association users, and cloud storage of recorded video from all 27 cameras for 30 days. State the resolution and frame rate kept in the cloud.",
+          "Cloud access and cloud storage are not monitoring. If either has a recurring fee, list it on the pricing form as a required recurring charge; it is counted in the first-year and five-year totals.",
+          "State the internet upload speed cloud storage needs at each location, and whether you expect the Association's current internet service to be enough. Internet service is not part of the bid.",
+          "If you recommend a smaller cloud storage scope to lower cost or bandwidth (for example selected cameras, fewer days, or event clips only), price it as a separate alternate and explain the trade-off.",
+          "A design with on-site storage only, or cloud storage only, is an Exception: mark it in the compliance matrix and explain.",
+          "For each cloud service, state where the video is hosted, who can access it, what happens to the video and to remote viewing if the service is cancelled, and whether on-site recording continues without it."
+        ]
+      },
+      {
+        "key": "retention",
+        "title": "Retention",
+        "body": [
+          "To keep bids comparable, price a common baseline of 30 days of recording for all 27 cameras, on site and in the cloud, and price 60 days as a separate alternate."
+        ],
+        "items": [
+          "State the retention you can actually achieve on site and in the cloud, with the settings used (resolution, frame rate, continuous or motion recording)."
+        ]
+      },
+      {
+        "key": "monitoring",
+        "title": "No monitoring",
+        "body": [
+          "The Association does not want any monitoring. The base bid must not include live or remote video monitoring, guard or patrol services, alarm response or dispatch, or any monitoring fee."
+        ],
+        "items": [
+          "Automatic system-health emails sent to the Association (for example a camera offline) are acceptable; state whether they are included and whether they cost anything.",
+          "If you believe a required function can only be delivered through a recurring service, identify the exact function, explain why it cannot be provided separately, price it separately, and give a non-monitoring alternative.",
+          "Declining any optional service must not reduce the warranty or stop the system from recording, playing back, storing to the cloud or providing remote access."
+        ]
+      },
+      {
+        "key": "cabling_network",
+        "title": "Cabling, conduit and network",
+        "body": [
+          "Include every pathway needed to connect each camera."
+        ],
+        "items": [
+          "Cabling for every new and replacement camera, with the number of runs.",
+          "Conduit where needed, including the Basketball Pavilion and the Back Entrance Gate; state the runs and any trenching or boring.",
+          "Basketball Pavilion: state how it connects (wireless link or wired path), with every device needed.",
+          "Back Entrance Gate: state how those cameras connect or record.",
+          "Network switches with enough ports and power for all cameras.",
+          "State how the camera system is kept separate from other Association networks."
+        ]
+      },
+      {
+        "key": "power",
+        "title": "Power assumptions",
+        "body": [
+          "Do not assume power is available."
+        ],
+        "items": [
+          "List every location that needs new power and either include it or price it as a separate line. A general exclusion for additional power is not acceptable."
+        ]
+      },
+      {
+        "key": "change_orders",
+        "title": "Change-order controls",
+        "body": [
+          "The bid is a fixed price for the full scope."
+        ],
+        "items": [
+          "Change orders only for conditions that were not reasonably discoverable before bidding, or for scope the Association adds.",
+          "No change-order work starts without the Association's written approval of scope and price.",
+          "State unit prices now: an added camera installed, an added cable run, an added license, and the hourly labor rate."
+        ]
+      },
+      {
+        "key": "warranty",
+        "title": "Warranties",
+        "body": [
+          "Warranty terms must be stated and must not depend on buying a maintenance or monitoring plan."
+        ],
+        "items": [
+          "Parts and labor warranty on the installation of at least 1 year from acceptance.",
+          "State the manufacturer warranty for cameras, recorders and switches, and your response time for warranty repairs.",
+          "State whether any of the 13 reused cameras are warranted."
+        ]
+      },
+      {
+        "key": "support_maintenance",
+        "title": "Optional support and maintenance",
+        "body": [
+          "Any support or maintenance plan is optional and priced separately."
+        ],
+        "items": [
+          "State what it includes, its price, term and cancellation notice.",
+          "No automatic renewal without the Association's written renewal."
+        ]
+      },
+      {
+        "key": "ownership",
+        "title": "Ownership of equipment, data and administrator credentials",
+        "body": [
+          "The Association owns the system and everything it records."
+        ],
+        "items": [
+          "Title to all equipment passes to the Association on payment. Nothing is leased or provided as a service, other than the cloud services listed on the pricing form.",
+          "The Association retains ownership of all recorded video and data. The bidder and any cloud provider receive only the rights to process it that are needed to deliver the contracted services, with no other use and no sale, and must delete or return it on termination as the Association directs.",
+          "At acceptance, hand over the administrator credentials for every device and account, and all licenses registered to the Association.",
+          "If the Association later ends any service with the bidder, the system must keep recording on site and remain usable."
+        ]
+      },
+      {
+        "key": "cybersecurity_privacy",
+        "title": "Cybersecurity and privacy",
+        "body": [
+          "The system must be handed over in a secure state."
+        ],
+        "items": [
+          "Change every default password and update firmware before acceptance.",
+          "Bidder access to the system only with the Association's approval.",
+          "No camera may view into a private home or back yard."
+        ]
+      },
+      {
+        "key": "insurance",
+        "title": "Insurance and licensing",
+        "body": [
+          "Include a current certificate of insurance with the bid."
+        ],
+        "items": [
+          "Confirm that you can name Canyon Gate at Cinco Ranch Owners Association, Inc. as additional insured.",
+          "State the limits you carry for general liability, workers' compensation and any other coverage. The Association will confirm the final required limits before award.",
+          "Provide your Texas Private Security Bureau license number."
+        ]
+      },
+      {
+        "key": "contract_terms",
+        "title": "Contract terms",
+        "body": [
+          "Submit the complete contract you would ask the Association to sign: the final binding proposal and terms and conditions. The Association's counsel will review it before signing."
+        ],
+        "items": [
+          "State the payment schedule. At least 10 percent of the contract price is held until the Association's written acceptance.",
+          "State any fees (for example card fees), limitation of liability, and termination terms.",
+          "No automatic renewals of any recurring service without the Association's written renewal.",
+          "A completed IRS Form W-9 is required before payment."
+        ]
+      },
+      {
+        "key": "installation_schedule",
+        "title": "Installation schedule",
+        "body": [
+          "Several cameras are down, so timing is a deciding factor."
+        ],
+        "items": [
+          "State the earliest start date after signing, equipment lead times, and working days to complete.",
+          "The Association's target is to start on or before December 7, 2026 and finish by December 18, 2026. If you can start earlier, say so.",
+          "Keep the gate operating during Guard Shack work, and keep working cameras recording until each is cut over where possible."
+        ]
+      },
+      {
+        "key": "testing_acceptance",
+        "title": "Testing and acceptance",
+        "body": [
+          "The system is accepted only after a test with the Association's representative and written acceptance."
+        ],
+        "items": [
+          "Every camera: live view, playback, night view and aim.",
+          "License plate cameras: legible plates in the gate lanes, day and night.",
+          "Remote access from off site, and cloud storage confirmed for every camera.",
+          "As-built camera list, credentials and user training delivered.",
+          "Punch-list items corrected before final payment."
+        ]
+      },
+      {
+        "key": "pricing",
+        "title": "Pricing",
+        "body": [
+          "Complete the pricing form. The pricing form is standardized so the Board can evaluate pricing line by line."
+        ],
+        "items": [
+          "One-time charges: equipment; labor; cabling and conduit; network equipment; recorders and storage; software and licenses; freight; sales tax; permits; any other one-time charge, itemized.",
+          "Every recurring charge listed separately, including cloud storage and cloud access, with its amount, term and renewal terms.",
+          "Totals: base installed, first-year and five-year, as defined on the pricing form.",
+          "Alternates priced separately: 60-day retention, replacement of any reused camera your system cannot support, a smaller cloud storage scope if you recommend one, and any optional support plan."
+        ]
+      }
+    ],
+    "camera_schedule": [
+      {
+        "id": "CH-01",
+        "location": "Club House",
+        "disposition": "reused",
+        "function": "Existing view, confirm at site walk",
+        "minimum_spec": "Existing camera; confirm it works and is supported",
+        "notes": "",
+        "source_page": 3
+      },
+      {
+        "id": "CH-02",
+        "location": "Club House",
+        "disposition": "reused",
+        "function": "Existing view, confirm at site walk",
+        "minimum_spec": "Existing camera; confirm it works and is supported",
+        "notes": "",
+        "source_page": 3
+      },
+      {
+        "id": "CH-03",
+        "location": "Club House",
+        "disposition": "reused",
+        "function": "Existing view, confirm at site walk",
+        "minimum_spec": "Existing camera; confirm it works and is supported",
+        "notes": "",
+        "source_page": 3
+      },
+      {
+        "id": "CH-04",
+        "location": "Club House",
+        "disposition": "reused",
+        "function": "Existing view, confirm at site walk",
+        "minimum_spec": "Existing camera; confirm it works and is supported",
+        "notes": "",
+        "source_page": 3
+      },
+      {
+        "id": "CH-05",
+        "location": "Club House",
+        "disposition": "reused",
+        "function": "Existing view, confirm at site walk",
+        "minimum_spec": "Existing camera; confirm it works and is supported",
+        "notes": "",
+        "source_page": 3
+      },
+      {
+        "id": "CH-06",
+        "location": "Club House",
+        "disposition": "reused",
+        "function": "Existing view, confirm at site walk",
+        "minimum_spec": "Existing camera; confirm it works and is supported",
+        "notes": "",
+        "source_page": 3
+      },
+      {
+        "id": "CH-07",
+        "location": "Club House",
+        "disposition": "reused",
+        "function": "Existing view, confirm at site walk",
+        "minimum_spec": "Existing camera; confirm it works and is supported",
+        "notes": "",
+        "source_page": 3
+      },
+      {
+        "id": "CH-08",
+        "location": "Club House",
+        "disposition": "reused",
+        "function": "Existing view, confirm at site walk",
+        "minimum_spec": "Existing camera; confirm it works and is supported",
+        "notes": "",
+        "source_page": 3
+      },
+      {
+        "id": "CH-09",
+        "location": "Club House",
+        "disposition": "reused",
+        "function": "Existing view, to be re-aimed for a better view",
+        "minimum_spec": "Existing camera; confirm it works and is supported",
+        "notes": "Two of the ten reused Club House cameras are to be re-aimed; identify which at the site walk.",
+        "source_page": 3
+      },
+      {
+        "id": "CH-10",
+        "location": "Club House",
+        "disposition": "reused",
+        "function": "Existing view, to be re-aimed for a better view",
+        "minimum_spec": "Existing camera; confirm it works and is supported",
+        "notes": "Two of the ten reused Club House cameras are to be re-aimed; identify which at the site walk.",
+        "source_page": 3
+      },
+      {
+        "id": "CH-11",
+        "location": "Club House",
+        "disposition": "replacement",
+        "mounting": "Exterior, front of Club House",
+        "function": "Wide-angle view of the front parking lot",
+        "minimum_spec": "4K wide-angle exterior camera with night vision",
+        "notes": "",
+        "source_page": 3
+      },
+      {
+        "id": "CH-12",
+        "location": "Club House",
+        "disposition": "replacement",
+        "mounting": "Exterior, front of Club House",
+        "function": "Wide-angle view of the front parking lot",
+        "minimum_spec": "4K wide-angle exterior camera with night vision",
+        "notes": "",
+        "source_page": 3
+      },
+      {
+        "id": "CH-13",
+        "location": "Club House",
+        "disposition": "replacement",
+        "mounting": "Interior, gym",
+        "function": "Gym interior",
+        "minimum_spec": "Indoor turret or dome camera",
+        "notes": "",
+        "source_page": 3
+      },
+      {
+        "id": "CH-14",
+        "location": "Club House",
+        "disposition": "replacement",
+        "mounting": "Exterior, back of Club House",
+        "function": "Playground, viewed from the back of the Club House",
+        "minimum_spec": "Exterior turret camera with night vision",
+        "notes": "",
+        "source_page": 3
+      },
+      {
+        "id": "GS-01",
+        "location": "Guard Shack",
+        "disposition": "reused",
+        "function": "Existing view, confirm at site walk",
+        "minimum_spec": "Existing camera; confirm it works and is supported",
+        "notes": "",
+        "source_page": 3
+      },
+      {
+        "id": "GS-02",
+        "location": "Guard Shack",
+        "disposition": "reused",
+        "function": "Existing view, confirm at site walk",
+        "minimum_spec": "Existing camera; confirm it works and is supported",
+        "notes": "",
+        "source_page": 3
+      },
+      {
+        "id": "GS-03",
+        "location": "Guard Shack",
+        "disposition": "reused",
+        "function": "Existing view, confirm at site walk",
+        "minimum_spec": "Existing camera; confirm it works and is supported",
+        "notes": "",
+        "source_page": 3
+      },
+      {
+        "id": "GS-04",
+        "location": "Guard Shack",
+        "disposition": "replacement",
+        "mounting": "Exterior, gate lanes",
+        "function": "License plate capture, gate lane",
+        "minimum_spec": "License plate camera, varifocal, night vision",
+        "notes": "",
+        "source_page": 3
+      },
+      {
+        "id": "GS-05",
+        "location": "Guard Shack",
+        "disposition": "replacement",
+        "mounting": "Exterior, gate lanes",
+        "function": "License plate capture, gate lane",
+        "minimum_spec": "License plate camera, varifocal, night vision",
+        "notes": "",
+        "source_page": 3
+      },
+      {
+        "id": "GS-06",
+        "location": "Guard Shack",
+        "disposition": "new",
+        "mounting": "Exterior",
+        "function": "Gate area coverage; final aim at site walk",
+        "minimum_spec": "Exterior turret camera with night vision",
+        "notes": "",
+        "source_page": 3
+      },
+      {
+        "id": "GS-07",
+        "location": "Guard Shack",
+        "disposition": "new",
+        "mounting": "Exterior",
+        "function": "Gate area coverage; final aim at site walk",
+        "minimum_spec": "Exterior turret camera with night vision",
+        "notes": "",
+        "source_page": 3
+      },
+      {
+        "id": "GS-08",
+        "location": "Guard Shack",
+        "disposition": "new",
+        "mounting": "Exterior",
+        "function": "Entrance sign",
+        "minimum_spec": "Varifocal exterior camera with long-range night vision",
+        "notes": "",
+        "source_page": 3
+      },
+      {
+        "id": "BP-01",
+        "location": "Basketball Pavilion",
+        "disposition": "new",
+        "mounting": "Exterior, pavilion structure",
+        "function": "Pavilion coverage; final aim at site walk",
+        "minimum_spec": "Exterior turret camera with night vision",
+        "notes": "Connected through the Pavilion link (see Cabling, conduit and network).",
+        "source_page": 3
+      },
+      {
+        "id": "BP-02",
+        "location": "Basketball Pavilion",
+        "disposition": "new",
+        "mounting": "Exterior, pavilion structure",
+        "function": "Pavilion coverage; final aim at site walk",
+        "minimum_spec": "Exterior turret camera with night vision",
+        "notes": "Connected through the Pavilion link (see Cabling, conduit and network).",
+        "source_page": 3
+      },
+      {
+        "id": "BP-03",
+        "location": "Basketball Pavilion",
+        "disposition": "new",
+        "mounting": "Exterior, pavilion structure",
+        "function": "Pavilion coverage; final aim at site walk",
+        "minimum_spec": "Exterior turret camera with night vision",
+        "notes": "Connected through the Pavilion link (see Cabling, conduit and network).",
+        "source_page": 3
+      },
+      {
+        "id": "BG-01",
+        "location": "Back Entrance Gate",
+        "disposition": "new",
+        "mounting": "Exterior, pole or structure at the gate",
+        "function": "Back Entrance Gate vehicle and pedestrian coverage",
+        "minimum_spec": "4K varifocal exterior camera with night vision",
+        "notes": "",
+        "source_page": 3
+      },
+      {
+        "id": "BG-02",
+        "location": "Back Entrance Gate",
+        "disposition": "new",
+        "mounting": "Exterior, pole or structure at the gate",
+        "function": "Back Entrance Gate vehicle and pedestrian coverage",
+        "minimum_spec": "4K varifocal exterior camera with night vision",
+        "notes": "",
+        "source_page": 3
+      }
+    ],
+    "compliance_matrix": [
+      {
+        "id": "R-01",
+        "section": "scope_of_work",
+        "requirement": "Bid covers all 27 camera positions, complete and working.",
+        "basis": "baseline"
+      },
+      {
+        "id": "R-02",
+        "section": "scope_of_work",
+        "requirement": "Pre-installation site survey included before equipment is ordered.",
+        "basis": "baseline"
+      },
+      {
+        "id": "R-03",
+        "section": "camera_disposition",
+        "requirement": "Support for each of the 13 reused cameras stated; any unsupported camera priced as a replacement alternate.",
+        "basis": "baseline"
+      },
+      {
+        "id": "R-04",
+        "section": "camera_disposition",
+        "requirement": "Repairs needed for the reused cameras to work are included in the price.",
+        "basis": "baseline"
+      },
+      {
+        "id": "R-05",
+        "section": "equipment_specifications",
+        "requirement": "Make and model stated for every new and replacement camera.",
+        "basis": "management"
+      },
+      {
+        "id": "R-06",
+        "section": "equipment_specifications",
+        "requirement": "License plate cameras capture legible plates in the gate lanes, day and night.",
+        "basis": "baseline"
+      },
+      {
+        "id": "R-07",
+        "section": "servers_storage",
+        "requirement": "On-site recording on equipment the Association owns, with battery backup.",
+        "basis": "baseline"
+      },
+      {
+        "id": "R-08",
+        "section": "licensing",
+        "requirement": "License count stated with the camera each covers; any unlicensed camera explained.",
+        "basis": "baseline"
+      },
+      {
+        "id": "R-09",
+        "section": "remote_access",
+        "requirement": "Live and recorded video and clip saving available remotely on computer and mobile, without port forwarding.",
+        "basis": "board"
+      },
+      {
+        "id": "R-10",
+        "section": "cloud_access_vs_storage",
+        "requirement": "Cloud access included in the base bid and priced as its own line.",
+        "basis": "board"
+      },
+      {
+        "id": "R-11",
+        "section": "cloud_access_vs_storage",
+        "requirement": "Cloud storage of recorded video from all 27 cameras included in the base bid and priced as its own line.",
+        "basis": "board",
+        "basis_label": "Board requirement; scope decided (Ed, 2026-10-16)"
+      },
+      {
+        "id": "R-12",
+        "section": "retention",
+        "requirement": "Storage priced for the common 30-day baseline on site and in the cloud, 60 days priced as an alternate, and achievable retention stated with the recording settings.",
+        "basis": "board",
+        "basis_label": "Board decision (Ed, 2026-10-16)"
+      },
+      {
+        "id": "R-13",
+        "section": "monitoring",
+        "requirement": "No monitoring and no monitoring fee in the base bid.",
+        "basis": "board"
+      },
+      {
+        "id": "R-14",
+        "section": "monitoring",
+        "requirement": "Any recurring service claimed as required: exact function, why it cannot be provided separately, separate price, and a non-monitoring alternative.",
+        "basis": "board"
+      },
+      {
+        "id": "R-15",
+        "section": "cabling_network",
+        "requirement": "All cabling, conduit, links and switches needed are included and described.",
+        "basis": "baseline"
+      },
+      {
+        "id": "R-16",
+        "section": "power",
+        "requirement": "Every new power need listed and included or priced; no general power exclusion.",
+        "basis": "baseline"
+      },
+      {
+        "id": "R-17",
+        "section": "change_orders",
+        "requirement": "Fixed price; change orders only for conditions not reasonably discoverable before bidding or for added scope, with written approval first; unit prices stated.",
+        "basis": "baseline"
+      },
+      {
+        "id": "R-18",
+        "section": "warranty",
+        "requirement": "At least 1-year parts and labor warranty from acceptance, not tied to any service plan.",
+        "basis": "management"
+      },
+      {
+        "id": "R-19",
+        "section": "support_maintenance",
+        "requirement": "Any support plan optional, priced separately, no automatic renewal.",
+        "basis": "baseline"
+      },
+      {
+        "id": "R-20",
+        "section": "ownership",
+        "requirement": "Association retains ownership of all equipment and data; bidder and cloud provider processing limited to the contracted services, no other use or sale, deletion or return on termination; administrator credentials and licenses handed over at acceptance.",
+        "basis": "board"
+      },
+      {
+        "id": "R-21",
+        "section": "cybersecurity_privacy",
+        "requirement": "Default passwords changed, firmware updated, no views into private homes or yards.",
+        "basis": "management"
+      },
+      {
+        "id": "R-22",
+        "section": "insurance",
+        "requirement": "Current certificate of insurance, plus confirmation that the Association can be named as additional insured before award; limits carried stated; Texas Private Security Bureau license provided.",
+        "basis": "board"
+      },
+      {
+        "id": "R-23",
+        "section": "contract_terms",
+        "requirement": "Final binding proposal and complete terms and conditions submitted with the bid.",
+        "basis": "board"
+      },
+      {
+        "id": "R-24",
+        "section": "installation_schedule",
+        "requirement": "Earliest start, lead times and duration stated.",
+        "basis": "board"
+      },
+      {
+        "id": "R-25",
+        "section": "testing_acceptance",
+        "requirement": "Acceptance test, credentials, as-built list and training before final payment.",
+        "basis": "management"
+      },
+      {
+        "id": "R-26",
+        "section": "contract_terms",
+        "requirement": "At least 10 percent of the contract price held until the Association's written acceptance.",
+        "basis": "board",
+        "basis_label": "Board decision (Ed, 2026-10-16)"
+      }
+    ],
+    "pricing_form": {
+      "rules": [
+        "Enter every amount in US dollars. Enter 0 for a line that does not apply.",
+        "Sales tax is its own line.",
+        "Base installed total equals the sum of all one-time lines, including sales tax.",
+        "First-year total equals the base installed total plus 12 months of every required recurring charge, including cloud storage and cloud access.",
+        "Five-year total equals the base installed total plus 60 months of every required recurring charge, including cloud storage and cloud access.",
+        "Optional recurring charges and alternates are listed separately and are not included in the three totals.",
+        "Monitoring is not in the base bid. A recurring charge that includes monitoring is never counted in the totals."
+      ]
+    },
+    "clarification_items": [
+      {
+        "id": "Q-01",
+        "audience": "all_bidders",
+        "text": "State the number of software licenses included, which camera each covers, and explain any camera not separately licensed.",
+        "source": "Required on every response"
+      },
+      {
+        "id": "Q-02",
+        "audience": "all_bidders",
+        "text": "State whether your system supports each of the 13 existing cameras to be reused.",
+        "source": "Required on every response"
+      },
+      {
+        "id": "Q-03",
+        "audience": "all_bidders",
+        "text": "List every location needing new power and whether it is included.",
+        "source": "Required on every response"
+      },
+      {
+        "id": "Q-04",
+        "audience": "all_bidders",
+        "text": "State the cloud storage provided (cameras, days, resolution), the upload speed it needs, and every recurring charge for cloud storage and cloud access.",
+        "source": "Required on every response"
+      },
+      {
+        "id": "Q-05",
+        "audience": "all_bidders",
+        "text": "State the earliest installation start date, equipment lead times and working days to complete.",
+        "source": "Required on every response"
+      },
+      {
+        "id": "B-01",
+        "audience": "board",
+        "text": "Coverage: four locations only (Club House, Guard Shack, Basketball Pavilion, Back Entrance Gate; 27 positions). No other sites and no alternates for other locations.",
+        "source": "Comparison of the proposals on file",
+        "status": "decided",
+        "decided_by": "Ed Gojara",
+        "decided_on": "2026-10-16"
+      },
+      {
+        "id": "B-02",
+        "audience": "board",
+        "text": "Cloud storage: the base bid includes cloud storage of all 27 cameras at the 30-day baseline, plus cloud access. A smaller cloud scope only as a priced alternate.",
+        "source": "Board President email, 2026-10-16; proposals on file",
+        "status": "decided",
+        "decided_by": "Ed Gojara",
+        "decided_on": "2026-10-16"
+      },
+      {
+        "id": "B-03",
+        "audience": "board",
+        "text": "Management recommendation: obtain a complete binding proposal from iTech first; broaden only if the Board requests it or on the defined triggers (iTech's final response is materially different from its current proposal, or cannot satisfy the requirements). Pending Board confirmation of scope and distribution. Envera and Netwatch remain prior market references.",
+        "source": "Management recommendation"
+      },
+      {
+        "id": "B-04",
+        "audience": "board",
+        "text": "Confirm the final required insurance limits before award. Recommended minimums: general liability 1,000,000 per occurrence and 2,000,000 aggregate, and workers' compensation as required by law. The vendor copy asks bidders to state their limits and does not make these pass/fail.",
+        "source": "Management"
+      },
+      {
+        "id": "B-05",
+        "audience": "board",
+        "text": "Retention: 30-day common baseline, 60 days as a priced alternate, and achievable retention stated by each bidder.",
+        "source": "Management recommendation",
+        "status": "decided",
+        "decided_by": "Ed Gojara",
+        "decided_on": "2026-10-16"
+      },
+      {
+        "id": "B-06",
+        "audience": "board",
+        "text": "Holdback: at least 10 percent of the contract price is held until the Association's written acceptance, as a firm contract term.",
+        "source": "Management recommendation",
+        "status": "decided",
+        "decided_by": "Ed Gojara",
+        "decided_on": "2026-10-16"
+      },
+      {
+        "id": "M-01",
+        "audience": "management",
+        "text": "Baseline proposal: 27 cameras but 20 licenses. 2 cameras have their own built-in server, which leaves 5 unexplained. Covered by Q-01.",
+        "source": "Stored line items v1, page 3 and page 4"
+      },
+      {
+        "id": "M-02",
+        "audience": "management",
+        "text": "Baseline proposal page 3 says '2 of the Cameras at the GS and the 3 at the CH will be 5MP Turret Cameras' in the paragraph about new cameras. The itemized table (7 turrets) reconciles only if the 3 are the Basketball Pavilion cameras. The RFP schedule treats them as Pavilion turrets.",
+        "source": "Baseline proposal page 3 and page 4"
+      },
+      {
+        "id": "M-03",
+        "audience": "management",
+        "text": "Baseline proposal says 'a pair' of point-to-point stations on page 3 but itemizes quantity 1 on page 4. The RFP asks the bidder to list every device for the Pavilion link.",
+        "source": "Stored line items v1, page 4"
+      },
+      {
+        "id": "M-04",
+        "audience": "management",
+        "text": "A contact name appearing in the Netwatch material appears to match the individual identified in the iTech proposal. Verify whether this is the same person and whether any relationship is relevant to the procurement. This matters more now that iTech is the only first-round recipient: verify before award.",
+        "source": "Proposals on file"
+      },
+      {
+        "id": "M-05",
+        "audience": "management",
+        "text": "Site walk meeting point set to the Club House, 20422 Canyon Gate Blvd, Katy, TX 77450 (called the Facility in a contract in trustEd; staff meetings are held there). Walks are scheduled by email to {{contact_email}}.",
+        "source": "Management"
+      },
+      {
+        "id": "M-06",
+        "audience": "management",
+        "text": "Existing vendor record 498a15b3 (ITECH MONITORING INC.) is deliberately not linked to this RFP. Do not create or link vendor records until a response is received.",
+        "source": "Vendor master"
+      },
+      {
+        "id": "M-07",
+        "audience": "management",
+        "text": "Cloud scope evidence: the baseline proposal's only cloud feature is remote access bundled in its optional monthly maintenance and health plan; its recording is two on-site servers. The competing designs on file record on site (one states 30 days). No proposal on file prices off-site cloud recording.",
+        "source": "Stored proposal facts"
+      },
+      {
+        "id": "M-08",
+        "audience": "management",
+        "text": "Temporary limitation, Canyon Gate only: emailed questions and bids arrive in Amanda's mailbox but are not yet automatically linked to this RFP record or parsed. Staff attach each bid to the RFP record by hand until automated response intake ships.",
+        "source": "Ed decision 2026-10-16"
+      },
+      {
+        "id": "M-09",
+        "audience": "management",
+        "text": "Reopen check: when iTech's binding response arrives, compare it with its August 19, 2026 proposal (stored line items v1, base 44,619.75 before tax) on scope, camera counts, licenses, pricing and terms, and flag material differences. Reopen triggers: materially different from its current proposal, cannot satisfy the requirements, or a Board request. Envera and Netwatch remain prior market references only.",
+        "source": "Ed decision 2026-10-16"
+      }
+    ],
+    "contract_package_note": "Required with every bid. Bids that are materially incomplete may be deemed non-responsive.",
+    "schedule": {
+      "recommended_response_deadline": "2026-11-02T17:00:00-06:00",
+      "recommended_response_deadline_display": "Monday, November 2, 2026 at 5:00 p.m. Central",
+      "basis": "Twelve calendar days from issue: a three-business-day site walk window, written questions the day after, answers within one business day, and four more working days to price a 27-camera, 4-location job from a fixed camera schedule and pricing form. Award, counsel review and signing by November 13 leave two to three weeks of equipment lead time before a December 7 installation start. If issue slips, keep the deadline 12 days after issue.",
+      "timeline": [
+        {
+          "milestone": "Ed and Board sign-off on this draft",
+          "date": "2026-10-20",
+          "note": "Target. The RFP is issued only after the Board approves the document and the bidder list.",
+          "board_only": true
+        },
+        {
+          "milestone": "RFP issued to bidders",
+          "date": "2026-10-21",
+          "note": ""
+        },
+        {
+          "milestone": "Site walk, by appointment (strongly recommended)",
+          "date": "2026-10-22",
+          "note": "Through Monday, October 26; meet at the Club House, 20422 Canyon Gate Blvd, Katy, TX 77450"
+        },
+        {
+          "milestone": "Written questions due",
+          "date": "2026-10-27",
+          "note": "5:00 p.m. Central, to {{contact_email}}"
+        },
+        {
+          "milestone": "Written answers provided",
+          "date": "2026-10-28",
+          "note": ""
+        },
+        {
+          "milestone": "Responses due",
+          "date": "2026-11-02",
+          "note": "5:00 p.m. Central, to {{contact_email}}. An earlier submission is welcome."
+        },
+        {
+          "milestone": "Comparison and diligence complete",
+          "date": "2026-11-06",
+          "note": "",
+          "board_only": true
+        },
+        {
+          "milestone": "Board award decision",
+          "date": "2026-11-10",
+          "note": "Target",
+          "board_only": true
+        },
+        {
+          "milestone": "Counsel review and contract signing",
+          "date": "2026-11-13",
+          "note": "Only after Board authorization",
+          "board_only": true
+        },
+        {
+          "milestone": "Installation start",
+          "date": "2026-12-07",
+          "note": "On or before"
+        },
+        {
+          "milestone": "Substantial completion",
+          "date": "2026-12-18",
+          "note": "Target"
+        }
+      ],
+      "status_note": "Proposed dates. Final dates are set in the issue version of this RFP."
+    },
+    "submission": {
+      "instructions": "Email the complete response (pricing form, compliance matrix, camera schedule and contract package) as PDF files to {{contact_email}} by the response deadline, with the subject line: Canyon Gate Security Camera RFP - Bid Submission - [Company Name]. An earlier submission is welcome. Late responses may not be considered.",
+      "submit_to_email": "{{contact_email}}"
+    }
+  },
+  "decision_state_notes": {
+    "management_action": "Recommended: obtain a complete binding proposal from iTech first, after Board approval of scope and distribution; reopen to additional vendors only if iTech's response is materially different from its current proposal, cannot satisfy the requirements, or the Board requests it."
+  },
+  "purpose": "diligence",
+  "purpose_label": "Vendor diligence / scope normalization with the preferred vendor (iTech); not a competitive rebid at this stage.",
+  "review_note": "Draft for Board review. The Board has not yet instructed issuance to any vendor."
+}

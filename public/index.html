@@ -36301,6 +36301,8 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
         </div>
       </div>
 
+      ${(rfp.structured_rfp && rfp.structured_rfp.schema === 'trusted.rfp.v2') ? '<div id="rfpDocPanel" style="margin-bottom:14px;"><div style="color:#94a3b8; font-style:italic; padding:10px;">Loading RFP document…</div></div>' : ''}
+
       ${filtered.length === 0
         ? `<div style="padding:30px; text-align:center; color:#94a3b8; font-style:italic; background:#fff; border:1px dashed #e2e8f0; border-radius:8px;">${total === 0 ? 'No bids uploaded yet. Drop a PDF above to extract structured data.' : 'No bids match this filter.'}</div>`
         : rfpRenderBidsTable(filtered)}
@@ -36308,6 +36310,94 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
       ${rfpRenderBenchmarkPanel()}
       ${decision_log.length > 0 ? rfpRenderDecisionLog(decision_log) : ''}
     `;
+    if (rfp.structured_rfp && rfp.structured_rfp.schema === 'trusted.rfp.v2') rfpLoadDocumentPanel(rfp.id);
+  }
+
+  // ---- Structured RFP document (lib/vendors/rfp_document.js) --------------------
+  // Draft / issued RFP on this record: decision state, scope, camera schedule,
+  // compliance matrix, pricing form, open items, and the apples-to-apples comparison
+  // of returned responses. Read-only here; printing goes through the server renderer.
+  async function rfpLoadDocumentPanel(rfpId) {
+    const el = document.getElementById('rfpDocPanel');
+    if (!el) return;
+    try {
+      const r = await window._authFetch(`/api/vendors/rfps/${rfpId}/document`);
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      // Only swap the placeholder once the replacement is in hand.
+      el.innerHTML = rfpRenderDocumentPanel(j);
+    } catch (e) {
+      el.innerHTML = '<div style="padding:10px; color:#991b1b;">Could not load the RFP document: ' + escapeHtml(e.message) + '</div>';
+    }
+  }
+
+  async function rfpOpenDocumentCopy(audience) {
+    const w = window.open('', '_blank');
+    try {
+      const r = await window._authFetch(`/api/vendors/rfps/${_rfpActiveRfpId}/document?format=html&audience=${audience}`);
+      if (!r.ok) { const j = await r.json().catch(() => ({})); throw new Error(j.error || `HTTP ${r.status}`); }
+      const blob = new Blob([await r.text()], { type: 'text/html' });
+      const url = URL.createObjectURL(blob);
+      if (w) w.location = url; else window.location.href = url;
+    } catch (e) { if (w) w.close(); alert('Could not open the RFP copy: ' + e.message); }
+  }
+
+  function rfpRenderDocumentPanel(data) {
+    const d = data.document || {};
+    const v = data.validation || { ok: false, errors: [] };
+    const cmp = (data.comparison && data.comparison.rows) || [];
+    const usd = (c) => c == null ? 'not stated' : '$' + (Number(c) / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const t = d.camera_totals || {};
+    const statusLabel = { draft_for_review: 'Draft for review, not issued', board_approved_to_issue: 'Board approved to issue, not yet issued', issued: 'Issued', closed: 'Closed' }[d.document_status] || d.document_status;
+    const dsLabels = { vendor_direction: 'Vendor direction', management_action: 'Management action', contract_readiness: 'Contract readiness', board_authorization: 'Board authorization', execution_status: 'Execution status' };
+    const th = 'style="text-align:left; padding:4px 6px; border-bottom:1px solid #cbd5e1; color:#475569;"';
+    const td = 'style="padding:4px 6px; border-bottom:1px solid #eef2f7; vertical-align:top;"';
+    const items = (aud) => (d.clarification_items || []).filter((c) => c.audience === aud);
+    const itemList = (aud, title) => items(aud).length ? `<div style="margin-top:6px;"><b>${title}</b><ol style="margin:4px 0 0 18px; padding:0;">${items(aud).map((c) => `<li>${c.status === 'decided' ? '<b>Decided:</b> ' : ''}${escapeHtml(c.text)}${c.status === 'decided' ? ` (${escapeHtml(c.decided_by || '')}, ${escapeHtml(c.decided_on || '')})` : ''}</li>`).join('')}</ol></div>` : '';
+    return `
+      <div style="border:1px solid #D4AF37; border-radius:8px; background:#fffdf5; padding:12px 14px;">
+        <div style="display:flex; justify-content:space-between; gap:10px; flex-wrap:wrap; align-items:flex-start;">
+          <div>
+            <div style="font-size:14.5px; font-weight:700; color:#1E2761;">📄 RFP document: ${escapeHtml(d.title || '')}</div>
+            <div style="font-size:12px; color:#6B7280; margin-top:2px;">${escapeHtml(statusLabel)} · v${escapeHtml(d.version)} · responses due ${escapeHtml((d.schedule && d.schedule.recommended_response_deadline_display) || 'not set')}</div>
+          </div>
+          <div style="display:flex; gap:6px; flex-wrap:wrap;">
+            <button class="secondary-btn" style="font-size:12.5px; padding:6px 10px;" onclick="rfpOpenDocumentCopy('vendor')" title="What every bidder receives: no decision state, no baseline vendor, no price">Vendor copy</button>
+            <button class="secondary-btn" style="font-size:12.5px; padding:6px 10px;" onclick="rfpOpenDocumentCopy('board')" title="Vendor copy plus the Board review cover">Board copy</button>
+          </div>
+        </div>
+        ${v.ok ? '<div style="font-size:12px; color:#15803d; margin-top:6px;">✓ Passes the RFP checks: every required section, the pricing form and compliance matrix, and no baseline vendor or price in the vendor copy.</div>'
+               : `<div style="font-size:12px; color:#991b1b; margin-top:6px;"><b>Fails the RFP checks; printing is blocked:</b><ul style="margin:4px 0 0 18px;">${(v.errors || []).map((e) => `<li>${escapeHtml(e)}</li>`).join('')}</ul></div>`}
+        <table style="width:100%; border-collapse:collapse; font-size:12.5px; margin-top:8px;">
+          ${Object.keys(dsLabels).map((k) => `<tr><td ${td}><span style="color:#475569;">${dsLabels[k]}</span></td><td ${td}><b>${escapeHtml((d.decision_state || {})[k] || '')}</b>${(d.decision_state_notes || {})[k] ? `<br><span style="color:#475569;">${escapeHtml(d.decision_state_notes[k])}</span>` : ''}</td></tr>`).join('')}
+        </table>
+        ${d.governing_instruction ? `<div style="font-size:12px; color:#475569; margin-top:6px;">Instruction: ${escapeHtml(d.governing_instruction.summary || '')} (${escapeHtml(d.governing_instruction.from_role || '')}, email "${escapeHtml(d.governing_instruction.subject || '')}")</div>` : ''}
+        <div style="font-size:12.5px; margin-top:6px;">Cameras: <b>${t.total || 0}</b> (${t.reused || 0} reused, ${t.replacement || 0} replacement, ${t.new || 0} new) · ${(d.sections || []).length} sections · ${(d.compliance_matrix || []).length} compliance requirements · ${(d.contract_package || []).length} contract documents required</div>
+
+        <details style="margin-top:8px;"><summary style="cursor:pointer; font-size:12.5px; font-weight:600;">Camera schedule</summary>
+          <table style="width:100%; border-collapse:collapse; font-size:12px; margin-top:4px;"><tr><th ${th}>ID</th><th ${th}>Location</th><th ${th}>Type</th><th ${th}>Coverage</th><th ${th}>Minimum spec</th></tr>
+          ${(d.camera_schedule || []).map((c) => `<tr><td ${td}>${escapeHtml(c.id)}</td><td ${td}>${escapeHtml(c.location)}</td><td ${td}>${escapeHtml(c.disposition)}</td><td ${td}>${escapeHtml(c.function)}</td><td ${td}>${escapeHtml(c.minimum_spec)}</td></tr>`).join('')}</table>
+        </details>
+        <details style="margin-top:4px;"><summary style="cursor:pointer; font-size:12.5px; font-weight:600;">Sections</summary>
+          <ol style="margin:4px 0 0 18px; font-size:12px;">${(d.sections || []).map((s) => `<li>${escapeHtml(s.title)}</li>`).join('')}</ol>
+        </details>
+        <details style="margin-top:4px;"><summary style="cursor:pointer; font-size:12.5px; font-weight:600;">Compliance matrix</summary>
+          <table style="width:100%; border-collapse:collapse; font-size:12px; margin-top:4px;">${(d.compliance_matrix || []).map((r) => `<tr><td ${td}>${escapeHtml(r.id)}</td><td ${td}>${escapeHtml(r.requirement)}</td></tr>`).join('')}</table>
+        </details>
+        <details style="margin-top:4px;"><summary style="cursor:pointer; font-size:12.5px; font-weight:600;">Pricing form</summary>
+          <div style="font-size:12px; margin-top:4px;">One-time: ${((d.pricing_form || {}).one_time || []).map((l) => escapeHtml(l.label)).join('; ')}</div>
+          <div style="font-size:12px; margin-top:4px;">Totals: ${((d.pricing_form || {}).totals || []).map((l) => `<b>${escapeHtml(l.label)}</b> = ${escapeHtml(l.formula)}`).join('; ')}</div>
+        </details>
+        <details style="margin-top:4px;" open><summary style="cursor:pointer; font-size:12.5px; font-weight:600;">Open items</summary>
+          <div style="font-size:12px;">${itemList('board', 'Board items')}${itemList('management', 'Management (staff only, not in any copy)')}${itemList('all_bidders', 'Required from every bidder')}</div>
+        </details>
+
+        <div style="margin-top:10px; font-size:12.5px; font-weight:600; color:#1E2761;">Responses, compared on the same pricing form</div>
+        ${cmp.length === 0
+          ? `<div style="font-size:12px; color:#94a3b8; font-style:italic; padding:6px 0;">No responses yet.${d.document_status === 'issued' ? '' : ' The RFP has not been issued.'}</div>`
+          : `<table style="width:100%; border-collapse:collapse; font-size:12px; margin-top:4px;"><tr><th ${th}>Bidder</th><th ${th}>Base installed</th><th ${th}>First year</th><th ${th}>Five year</th><th ${th}>Required / mo</th><th ${th}>Optional / mo</th><th ${th}>Compliance</th><th ${th}>Missing / issues</th></tr>
+            ${cmp.map((x) => `<tr><td ${td}><b>${escapeHtml(x.bidder || '')}</b>${x.answers_current_version ? '' : '<br><span style="color:#92400e;">answered an older version</span>'}</td><td ${td}>${usd(x.totals.base_installed_cents)}</td><td ${td}>${usd(x.totals.first_year_cents)}</td><td ${td}>${usd(x.totals.five_year_cents)}</td><td ${td}>${usd(x.totals.required_monthly_cents)}</td><td ${td}>${usd(x.totals.optional_monthly_cents)}</td><td ${td}>${x.compliance.comply} comply · ${x.compliance.exception} exception · ${x.compliance.not_applicable} n/a · ${x.compliance.unanswered} unanswered</td><td ${td}>${escapeHtml([...x.contract_package_missing.map((m) => 'missing: ' + m), ...x.pricing_issues, ...x.schedule_issues].join('; ') || 'complete')}</td></tr>`).join('')}</table>`}
+      </div>`;
   }
 
   function rfpRenderBidsTable(bids) {
