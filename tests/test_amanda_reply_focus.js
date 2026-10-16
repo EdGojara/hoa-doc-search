@@ -40,7 +40,7 @@ const HUGH_EXPECTED = `Hugh,
 
 I'm scrubbing the iTech numbers and building the RFP now, in trustEd on the Security Camera System 2026 record. iTech's updated 2026 proposal is the baseline scope, written vendor-neutral so every bidder prices the same requirements.
 
-The governing scope is the Board's direction: purchase and own the hardware, professional installation, and cloud storage/access, with no monitoring. Bidders will price any maintenance plan separately as optional, never in the base. iTech's figures normalize to $44,619.75 plus 7.25% tax, about $47,854.69, with the open items (not-to-exceed price after the site survey, retention, warranty, insurance certificate) written in as bid requirements.
+The governing scope is the Board's direction: purchase and own the hardware, professional installation, and cloud storage/access, with no monitoring. Bidders will price any maintenance plan separately as optional, never in the base. iTech's figures normalize to $44,619.75 plus 7.25% tax ($3,234.93), an installed estimate of $47,854.68, with the open items (not-to-exceed price after the site survey, retention, warranty, insurance certificate) written in as bid requirements.
 
 I'll propose a bidder list for the Board to confirm, and I'll bring the draft RFP back to you and the Board for review before anything goes to vendors.`;
 
@@ -76,6 +76,7 @@ const STORE = () => fakeSupabase({
   board_members: FX.board_members,
   email_messages: [FX.hugh_request, FX.amanda_recommendation, FX.hugh_create_rfp],   // Kevin's own row is not inserted yet (ingest)
   bid_requests: FX.bid_requests,
+  vendor_proposals: FX.vendor_proposals,
   playbook: [], amanda_guidance: [], learned_guidance: [],
 });
 

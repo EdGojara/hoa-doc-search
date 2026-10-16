@@ -30,6 +30,7 @@ const TABLES = {
   board_members: FX.board_members,
   email_messages: [FX.hugh_request, FX.amanda_recommendation, FX.hugh_create_rfp],
   bid_requests: FX.bid_requests,
+  vendor_proposals: FX.vendor_proposals,
 };
 function fakeClient() {
   return {
