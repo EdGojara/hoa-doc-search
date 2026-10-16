@@ -342,6 +342,14 @@ function loadDrafter(script) {
     assert.ok(ok('Those are conditions I intend to have in hand before any signature or payment goes out.'));
     assert.ok(!ok('Thank you for getting Camera Proposals set up.'));
   });
+  await t('Hugh criterion "does not refuse or replace the RFP": a correct negation passes, a real refusal fails', () => {
+    const ok = (s) => verifyHughReply(s).results.find((r) => r.name === 'does not refuse or replace the requested RFP').ok;
+    // The Hugh general live draft on c8cf88ab: not a refusal.
+    assert.ok(ok("The RFP is how we move fast without locking in prematurely, and I'm not sending anything to vendors or treating iTech's number as final until the Board has reviewed the finished RFP and confirmed who it goes to."));
+    assert.ok(!ok("I'm not going to build a new RFP; iTech is the only option."));
+    assert.ok(!ok("I'm not building a fresh RFP. I recommend the Board instead formally approve the iTech proposal."));
+    assert.ok(!ok("I'm building it now rather than opening a full new bid cycle."));
+  });
   await t('re-ask detection needs a decision about a settled topic, not just a shared word', () => {
     const fine = focus.checkReplyFocus('Hugh,\n\nI am preparing the RFP now. When would you like installation to start, given December availability? It comes back to you for review before anything goes to vendors.', { latestText: hughLatest, senderFirstName: 'Hugh', constraints: hughConstraints });
     assert.ok(!fine.issues.some((i) => i.code === 'reasks_settled'), JSON.stringify(fine.issues));

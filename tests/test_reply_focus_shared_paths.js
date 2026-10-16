@@ -158,6 +158,18 @@ async function t(name, fn) {
     assert.strictEqual(d.careful, true);
   });
 
+  await t('draft_reply dollar hint uses the structured facts: exact figures on file are not flagged, a wrong figure is', async () => {
+    const exact = `Hugh,\n\nI am scrubbing the numbers and building the RFP now. iTech's proposal is $44,619.75 plus sales tax of $3,234.93, an installed estimate of $47,854.68, paid $22,309.87 on acceptance and $22,309.88 on completion; the optional plan is $440 per month. I'll propose a bidder list for the Board to confirm, and the draft RFP comes back to you and the Board for review before anything goes to vendors.`;
+    SCRIPT = [exact];
+    const d = await draftReply({ email: hughEmail(), classification: 'homeowner_request', communityId: FX.hugh_create_rfp.community_id, communityName: 'Canyon Gate at Cinco Ranch', contactName: 'President HOA', force: true, persona: 'amanda' });
+    assert.ok(!(d.warnings || []).some((w) => /dollar amount/.test(w)), JSON.stringify(d.warnings));
+    SCRIPT = [exact.replace('$47,854.68', '$47,854.69'), exact.replace('$47,854.68', '$47,854.69')];
+    CALLS.length = 0;
+    const d2 = await draftReply({ email: hughEmail(), classification: 'homeowner_request', communityId: FX.hugh_create_rfp.community_id, communityName: 'Canyon Gate at Cinco Ranch', contactName: 'President HOA', force: true, persona: 'amanda' });
+    assert.ok((d2.warnings || []).some((w) => /dollar amount/.test(w) && /\$47,854\.69/.test(w)), JSON.stringify(d2.warnings));
+    assert.ok(d2.focus_issues.includes('money_mismatch'), d2.focus_issues.join(','));
+  });
+
   await t('privacy: a homeowner (not Board) never gets other threads or "settled constraints" pulled in', async () => {
     SCRIPT = ['Hi Dana,\n\nThe pool opens at 9 AM on weekends this season, per the posted amenity schedule.'];
     const e = { direction: 'inbound', mailbox: FX.kevin.mailbox, sender_email: 'dana@gmail.com', sender_name: 'Dana Ruiz', subject: 'Pool hours', body_full: 'What time does the pool open on weekends?\n\nDana Ruiz', conversation_id: 'conv-dana', received_at: FX.kevin.received_at, community_id: FX.kevin.community_id };
