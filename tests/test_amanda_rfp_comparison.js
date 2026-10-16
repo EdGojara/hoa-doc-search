@@ -229,7 +229,7 @@ const env = (vars, fn) => { const old = {}; for (const k of Object.keys(vars)) {
     const env = byKey['envera-q19538-2-packet'];
     assert.strictEqual(env.tax_basis, 'estimated'); assert.strictEqual(env.tax_rate_pct, 7.25, 'the rate iTech states for Canyon Gate');
     assert.strictEqual(env.recurring[0].tax_basis, 'estimated', '"Sales tax will be added to Monthly Investment" makes the monthly charge taxable');
-    assert.match(summary, /about \$222,329 over 5 years with estimated tax/);
+    assert.strictEqual(env.tco_cents, 22232908, 'the estimated-tax total is on the record (internal analysis), not in the Board sentence');
     const lone = { ...fx.proposals.find((p) => p.key === 'envera-q19538-2-packet'), key: 'lone', expires_on: null };
     const r = C.buildComparisonRecord({ community: fx.community, project: fx.project, proposals: [lone], requirements: {}, facts: null, today: fx.today });
     const n = r.proposals[0];
@@ -571,7 +571,7 @@ const env = (vars, fn) => { const old = {}; for (const k of Object.keys(vars)) {
     assert.deepStrictEqual(Object.values(store).map((x) => JSON.parse(x).line_item_versions[0].items.length).sort(), [1, 1, 3], 'every proposal cached, none empty');
     const cached = await runFresh({ cache, extract: async () => { throw new Error('model must not be called on the cache path'); } });
     assert.deepStrictEqual(cached.record.proposals.map((n) => n.key).sort(), keysFresh);
-    assert.match(cached.summary, /Envera is out/); assert.match(cached.summary, /Netwatch is out/);
+    assert.ok(cached.summary.includes("Envera is not recommended because the quote is expired and the package is built around substantial recurring monitoring/service costs the Board has said it does not want.")); assert.ok(cached.summary.includes("Netwatch is not a viable current alternative because no executable price was provided and the design incorporates monitoring the Board has said it does not want."));
     assert.ok(cached.extraction_log.every((x) => /^preview cache v1 \(preview\)/.test(x.source)));
   });
 
@@ -616,8 +616,8 @@ const env = (vars, fn) => { const old = {}; for (const k of Object.keys(vars)) {
       assert.strictEqual(by['itech-2026-a'].status, 'current'); assert.strictEqual(by['itech-2024'].status, 'historical');
       assert.strictEqual(by['envera-q19538-2-packet'].status, 'expired'); assert.strictEqual(by['netwatch-2026'].status, 'current'); assert.strictEqual(by['netwatch-2026'].unpriced, true);
       assert.strictEqual(by['envera-q19538-2-standalone'].status, 'duplicate'); assert.strictEqual(by['envera-q19538-2-standalone'].duplicate_of, 'envera-q19538-2-packet', 'duplicate relationship recorded');
-      assert.match(r.summary, /Envera is out: quote expired 2026-08-31 and monitoring-heavy \(\$2,631\.42\/month in required monitoring services the Board does not want\)/);
-      assert.match(r.summary, /Netwatch is out: no price provided and monitoring-oriented \(built around a monitoring service the Board does not want\)/);
+      assert.ok(r.summary.includes("Envera is not recommended because the quote is expired and the package is built around substantial recurring monitoring/service costs the Board has said it does not want."), 'Envera sentence');
+      assert.ok(r.summary.includes("Netwatch is not a viable current alternative because no executable price was provided and the design incorporates monitoring the Board has said it does not want."), 'Netwatch sentence');
       assert.match(r.summary, /iTech's 2024 proposal is superseded/);
       assert.match(r.summary, /Situation: 4 camera proposals from 3 vendors are on file/);
       assert.ok(r.record.audit.some((a) => a.proposal_key === 'netwatch-2026' && /no price found: treated as unpriced/.test(a.note)), 'the repair is on the record');
@@ -672,6 +672,132 @@ const env = (vars, fn) => { const old = {}; for (const k of Object.keys(vars)) {
     }
     assert.ok(checked >= 20, `checked ${checked} columns`);
     assert.ok(columnsOf('library_documents').has('uploaded_at') && !columnsOf('library_documents').has('created_at'));
+  });
+
+  console.log('\nOne-time save with selective confidence (option (a): create; idempotent)');
+  const SAVE = require('../lib/vendors/proposal_save');
+  const crypto = require('crypto');
+  const shaOf = (name) => crypto.createHash('sha256').update(Buffer.from(`bytes ${name}`)).digest('hex');
+  const SH = { itech: shaOf('itech sept.pdf'), packet: shaOf('packet.pdf'), quote: shaOf('quote 19538.pdf') };
+  const savePlan = () => ({
+    community_id: fx.community.id, community_name: fx.community.name, storage_mode: 'create',
+    bid_request: { title: 'Security Camera System 2026 (Canyon Gate at Cinco Ranch)', service_category: 'security' }, requirements: req,
+    approval: { channel: 'chat_instruction', approved_by_label: 'Ed Gojara (chat instruction 2026-10-16)', approved_by_user_id: null, approved_at: '2026-10-16T00:00:00-05:00' },
+    proposals: [
+      { document_sha256: SH.itech, proposal_key: 'itech-2026-a', mode: 'full', sources: [{ kind: 'email_attachment', mailbox: 'amandaalbright@bedrocktx.com', message_graph_id: 'g-0917', attachment_name: 'iTech_Video Proposal_Sept 2026.pdf', sha256: SH.itech }] },
+      { document_sha256: SH.packet, proposal_key: 'itech-2024', mode: 'historical_minimal', replaced_by_key: 'itech-2026-a' },
+      { document_sha256: SH.quote, proposal_key: 'envera-q19538-2-standalone', mode: 'proposal_facts_only', duplicates: [{ document_sha256: SH.packet, proposal_key: 'envera-q19538-2-packet', pages: '10-14' }] },
+      { document_sha256: SH.packet, proposal_key: 'netwatch-2026', mode: 'proposal_facts_only' },
+    ] });
+  const envFull = { ...itemOf('envera-q19538-2-packet'), key: 'envera-q19538-2-standalone', document: { ...itemOf('envera-q19538-2-standalone').document } };
+  const itemsByDoc = { [SH.itech]: [itemOf('itech-2026-a')], [SH.packet]: [itemOf('itech-2024'), itemOf('netwatch-2026')], [SH.quote]: [envFull] };
+  const emptySnap = { bid_requests: [], vendor_proposals: [], vendors: [{ id: 'v-itech', name: 'iTech Monitoring, Inc.', is_active: true }, { id: 'v-other', name: 'iTech Monitoring Services of Texas', is_active: true }], library_documents: [{ id: 'lib-packet', title: 'Security Camera Proposals.pdf', file_hash: SH.packet }] };
+  const opts = { mgmtId: 'mgmt', communityName: fx.community.name, today: fx.today, at: '2026-10-16T12:00:00Z' };
+  const planned = SAVE.planSave(savePlan(), itemsByDoc, { ...opts, snapshot: emptySnap });
+  const insertOf = (ref) => planned.inserts.find((r) => r.ref === ref).row;
+  const storedOf = (ref) => insertOf(ref).extracted_data;
+
+  await t('dry-run shape: 1 bid_request (evaluating) + 4 canonical vendor_proposals, 0 vendors, duplicates as references', async () => {
+    assert.deepStrictEqual(planned.conflicts, []);
+    assert.deepStrictEqual(planned.inserts.map((r) => [r.table, r.ref]), [['bid_requests', 'bid_request'], ['vendor_proposals', 'itech-2026-a'], ['vendor_proposals', 'itech-2024'], ['vendor_proposals', 'envera-q19538-2-standalone'], ['vendor_proposals', 'netwatch-2026']]);
+    assert.strictEqual(planned.inserts[0].row.status, 'evaluating'); assert.strictEqual(planned.inserts[0].row.title, 'Security Camera System 2026 (Canyon Gate at Cinco Ranch)');
+    assert.match(planned.summary, /^5 insert\(s\) \(1 bid_requests, 4 vendor_proposals\), 0 updates, 0 vendors, 0 uploads, 0 rfp_decision_log$/);
+    assert.deepStrictEqual(planned.inserts.filter((r) => r.table === 'vendor_proposals').map((r) => [r.ref, r.row.extracted_data.save_mode, r.row.outcome]), [['itech-2026-a', 'full', 'pending'], ['itech-2024', 'historical_minimal', 'pending'], ['envera-q19538-2-standalone', 'proposal_facts_only', 'expired'], ['netwatch-2026', 'proposal_facts_only', 'pending']]);
+    assert.ok(storedOf('envera-q19538-2-standalone').source_documents.some((s) => s.kind === 'duplicate_copy' && s.proposal_key === 'envera-q19538-2-packet' && s.role === 'duplicate'), 'the packet copy of Envera is a reference, not a row');
+    assert.ok(planned.inserts.every((r) => r.table !== 'vendors' && !('file_path' in r.row && r.row.file_path)), 'no vendors, no uploads');
+    assert.ok(storedOf('netwatch-2026').source_documents.some((s) => s.kind === 'library_document' && s.library_document_id === 'lib-packet'), 'existing library document linked by hash');
+    assert.ok(storedOf('itech-2026-a').source_documents.some((s) => s.kind === 'email_attachment' && s.message_graph_id === 'g-0917'));
+    assert.ok(storedOf('itech-2026-a').audit.some((a) => a.action === 'approve'), 'audit in the record (no rfp_decision_log)');
+  });
+
+  await t('each save mode stores exactly its fields (full / proposal_facts_only / historical_minimal)', async () => {
+    const it = (ref) => storedOf(ref).line_item_versions[0].items[0];
+    assert.ok(it('itech-2026-a').line_items.length === 23 && it('itech-2026-a').scope_statements.length === 3 && it('itech-2026-a').printed_subtotal_cents === 4461975, 'full keeps reconciled line items');
+    assert.deepStrictEqual(Object.keys(it('netwatch-2026')).sort(), ['budgetary', 'document', 'document_date', 'expires_on', 'key', 'model', 'other_terms', 'payment_terms', 'pricing', 'quote_number', 'revision', 'save_mode', 'scope', 'timing', 'vendor_name', 'warranty']);
+    assert.deepStrictEqual(Object.keys(it('netwatch-2026').scope).sort(), ['retention_days', 'summary'], 'facts-only: no site list, no counts');
+    for (const ref of ['netwatch-2026', 'envera-q19538-2-standalone']) { assert.strictEqual(it(ref).line_items, undefined); assert.ok(!/cameras_(total|new|reused)|licenses/.test(JSON.stringify(it(ref))), `${ref}: no counts stored as facts`); }
+    assert.strictEqual(it('netwatch-2026').pricing.unpriced, true);
+    assert.deepStrictEqual(it('envera-q19538-2-standalone').pricing.recurring.map((r) => r.monthly_cents), [245354], 'recurring charges kept');
+    assert.deepStrictEqual(Object.keys(it('itech-2024')).sort(), ['document', 'document_date', 'key', 'pricing', 'replaced_by', 'save_mode', 'vendor_name']);
+    assert.strictEqual(it('itech-2024').replaced_by, 'itech-2026-a');
+    assert.throws(() => SAVE.planSave({ ...savePlan(), proposals: [{ ...savePlan().proposals[0], mode: undefined }] }, itemsByDoc, { ...opts, snapshot: emptySnap }), /mode must be one of/, 'a mode is never inferred');
+  });
+
+  await t('a chat-instruction approval is recorded as such and never as an authenticated approver', async () => {
+    const v = storedOf('itech-2026-a').line_item_versions[0];
+    assert.strictEqual(v.status, 'approved');
+    assert.deepStrictEqual(v.approval, { channel: 'chat_instruction', approved_by_label: 'Ed Gojara (chat instruction 2026-10-16)', approved_by_user_id: null });
+    assert.ok(!('approved_by' in v), 'no authenticated approver field');
+    assert.throws(() => V.approveVersion(V.addVersion({}, { items: [], document_sha256: 'x', reason: 'r' }), 1, { approval_channel: 'chat_instruction', approved_by_label: 'Ed', approved_by_user_id: 'u-123' }), /not an authenticated approval/);
+    assert.throws(() => SAVE.validatePlan({ ...savePlan(), approval: { ...savePlan().approval, approved_by_user_id: 'u-123' } }), /must be null for a chat instruction/);
+  });
+
+  await t('vendors: never created; an exact-name match is reported but not used; a similar name never matches', async () => {
+    const m = planned.vendor_matches.find((x) => x.ref === 'itech-2026-a');
+    assert.strictEqual(m.vendor_id, null); assert.deepStrictEqual(m.exact_name_candidates, [{ id: 'v-itech', name: 'iTech Monitoring, Inc.' }], '"iTech Monitoring Services of Texas" is not an exact match');
+    assert.ok(planned.inserts.filter((r) => r.table === 'vendor_proposals').every((r) => r.row.vendor_id === null));
+    const withId = SAVE.planSave({ ...savePlan(), proposals: savePlan().proposals.map((p, i) => (i === 0 ? { ...p, vendor_id: 'v-itech' } : p)) }, itemsByDoc, { ...opts, snapshot: emptySnap });
+    assert.strictEqual(withId.inserts.find((r) => r.ref === 'itech-2026-a').row.vendor_id, 'v-itech', 'only an explicit existing id is used');
+  });
+
+  await t('idempotent: the simulated second run over the planned rows is "0 inserts, 0 updates, already saved"', async () => {
+    const after = SAVE.layerSaved(emptySnap, planned.inserts);
+    const second = SAVE.planSave(savePlan(), itemsByDoc, { ...opts, snapshot: after });
+    assert.strictEqual(second.summary, '0 inserts, 0 updates, already saved');
+    assert.deepStrictEqual(second.inserts, []); assert.deepStrictEqual(second.conflicts, []);
+    assert.strictEqual(second.noops.length, 5);
+  });
+
+  await t('partial or inconsistent prior state stops with a conflict and ids; nothing is written', async () => {
+    const after = SAVE.layerSaved(emptySnap, planned.inserts);
+    const partial = { ...after, vendor_proposals: after.vendor_proposals.slice(0, 2) };
+    const r1 = SAVE.planSave(savePlan(), itemsByDoc, { ...opts, snapshot: partial });
+    assert.deepStrictEqual(r1.inserts, []); assert.match(r1.summary, /^CONFLICT/);
+    assert.ok(r1.conflicts.some((c) => /bid_request simulated-bid-request exists with 2 of 4 planned proposals \(partial save\)/.test(c)));
+    const otherBid = { ...after, vendor_proposals: after.vendor_proposals.map((r, i) => (i === 0 ? { ...r, bid_request_id: 'some-other-rfp' } : r)) };
+    assert.ok(SAVE.planSave(savePlan(), itemsByDoc, { ...opts, snapshot: otherBid }).conflicts.some((c) => /simulated-vp-1 \(itech-2026-a\) is attached to bid_request some-other-rfp/.test(c)));
+    const otherMode = { ...after, vendor_proposals: after.vendor_proposals.map((r, i) => (i === 0 ? { ...r, extracted_data: { ...r.extracted_data, save_mode: 'proposal_facts_only' } } : r)) };
+    assert.ok(SAVE.planSave(savePlan(), itemsByDoc, { ...opts, snapshot: otherMode }).conflicts.some((c) => /was saved as proposal_facts_only, the plan says full/.test(c)));
+    const stray = { ...emptySnap, vendor_proposals: [{ id: 'vp-legacy', community_id: fx.community.id, file_hash: SH.itech, extracted_data: {} }] };
+    assert.ok(SAVE.planSave(savePlan(), itemsByDoc, { ...opts, snapshot: stray }).conflicts.some((c) => /vp-legacy has the same source file/.test(c)));
+    const B = require('../scripts/save_proposal_data');
+    await assert.rejects(B.apply({ from() { throw new Error('must not write'); } }, r1), /refusing to write/);
+  });
+
+  await t('name-only similarity never matches an existing proposal: a same-vendor row from another file is ignored', async () => {
+    const lookalike = { ...emptySnap, vendor_proposals: [{ id: 'vp-old-itech', community_id: fx.community.id, file_hash: 'f'.repeat(64), vendor_name_raw: 'iTech Monitoring, Inc.', extracted_data: { proposal_key: 'itech-2026-a', save_mode: 'full' } }] };
+    const r = SAVE.planSave(savePlan(), itemsByDoc, { ...opts, snapshot: lookalike });
+    assert.deepStrictEqual(r.conflicts, []); assert.strictEqual(r.inserts.filter((x) => x.table === 'vendor_proposals').length, 4);
+    const otherCommunity = { ...emptySnap, vendor_proposals: [{ id: 'vp-wv', community_id: 'waterview', file_hash: SH.itech, extracted_data: { proposal_key: 'itech-2026-a', save_mode: 'full' } }] };
+    assert.deepStrictEqual(SAVE.planSave(savePlan(), itemsByDoc, { ...opts, snapshot: otherCommunity }).conflicts, [], 'another community\'s row with the same file is not this RFP');
+  });
+
+  await t("the exclusion sentences match Ed's wording exactly", async () => {
+    assert.strictEqual(SAVE.exclusionSentence('Netwatch', ['no price provided', 'monitoring-oriented (built around a monitoring service the Board does not want)']), 'Netwatch is not a viable current alternative because no executable price was provided and the design incorporates monitoring the Board has said it does not want.');
+    assert.strictEqual(SAVE.exclusionSentence('Envera', ['quote expired 2026-08-31', 'monitoring-heavy ($2,631.42/month in required monitoring services the Board does not want)']), 'Envera is not recommended because the quote is expired and the package is built around substantial recurring monitoring/service costs the Board has said it does not want.');
+    assert.strictEqual(SAVE.exclusionSentence('X', ['quote expired 2026-08-31']), null, 'only when the stored facts support the full sentence');
+  });
+
+  await t('no site list from an unapproved or excluded vendor reaches the Board summary (internal note only, provisional)', async () => {
+    assert.ok(!/does not cover/i.test(run.result.summary));
+    assert.ok(!/Rec Center|Resident Exit|Tranquility Park|South Gate/.test(run.result.summary));
+    const rv = run.result.record.review.by_proposal['itech-2026-a'];
+    assert.ok(rv.weaknesses_risks.some((w) => /^Provisional \(from unapproved extracted site lists/.test(w.text) && w.severity === 'minor' && !w.brief));
+  });
+
+  await t('reruns after the save read the approved stored data: no model call, no provisional counts for facts-only proposals', async () => {
+    const after = SAVE.layerSaved(emptySnap, planned.inserts);
+    const db = DRY.fakeDb({ ...fx.db_seed, ...(fx.context_seed || {}), vendor_proposals: after.vendor_proposals.map((r) => ({ ...r, service_category: 'security', created_at: '2026-10-16T12:00:00Z' })), bid_requests: [], library_documents: [] });
+    const files = ['packet.pdf', 'quote 19538.pdf', 'itech sept.pdf'].map((n) => ({ filename: n, buffer: Buffer.from(`bytes ${n}`), isPdf: true }));
+    const r = await W.prepareComparison({ supabase: db, communityId: fx.community.id, communityName: fx.community.name, email: { ...fx.board_email, id: 'em-1016' }, attachments: files, today: fx.today, mode: 'dry_run', factsDetailed: facts, mgmtId: 'mgmt', greetingName: 'Hugh', extract: async () => { throw new Error('model must not be called after the save'); } });
+    assert.ok(r.extraction_log.every((x) => /^stored v1 \(approved\)/.test(x.source) && x.extracted === false), JSON.stringify(r.extraction_log));
+    const st = Object.fromEntries(r.record.proposals.filter((n) => n.status !== 'duplicate').map((n) => [n.vendor_name + ' ' + n.document_date, n.status]));
+    assert.deepStrictEqual(st, { 'iTech Monitoring, Inc. 2026-08-19': 'current', 'iTech Monitoring, Inc. 2024-03-28': 'historical', 'Envera Systems 2026-06-05': 'expired', 'Netwatch USA 2026-07-09': 'current' });
+    assert.ok(!/provisional:/.test(r.summary), 'no provisional labels in the Board summary');
+    assert.deepStrictEqual([...r.summary.matchAll(/\b(\d+) cameras\b/g)].map((m) => m[1]), ['27', '27'], 'only iTech\'s stored, approved count');
+    assert.ok(r.summary.includes('Envera is not recommended because the quote is expired'));
+    assert.ok(r.summary.includes('Netwatch is not a viable current alternative because no executable price was provided'));
+    assert.match(r.summary, /iTech's 2024 proposal is superseded/);
   });
 
   await t('pluralization: "1 camera proposal from 1 vendor is on file"', async () => {
