@@ -56,7 +56,7 @@ console.log('lookup');
   check('every homeowner checkout (portal Pay, pay link) is refused server-side unless payments are allowed', ck.includes("return { ok: false, status: 403, error: 'online_payments_not_enabled'")
     && ck.indexOf("error: 'online_payments_not_enabled'") < ck.indexOf('const amount = testAmountCents'));
   check('only the demo payment-sandbox lot skips the association gate', ck.includes('if (identity.property.payment_sandbox !== true) {'));
-  check('the pay link shows "not available yet" for the refusal', src('server.js').includes("r.error === 'online_payments_not_enabled'"));
+  check('the pay link shows "not available yet" for the refusal', /'online_payments_not_enabled'\]\.includes\(r\.error\)|r\.error === 'online_payments_not_enabled'/.test(src('server.js')));
   check('the portal hides the balance stat when the server hides the balance', src('public/portal.html').includes("balVal.closest('.stat').style.display = bal.status === 'hidden' ? 'none' : '';"));
 
   console.log(`\nportal financials fail-closed: ${pass} passed, ${fail} failed`);
