@@ -92,7 +92,7 @@
       { "key": "servers_storage", "title": "Servers and storage", "body": [
         "Recording is on site, on servers the Association owns."
       ], "items": [
-        "Provide recording servers or network video recorders at the head-end location or locations the bidder proposes (the baseline design uses one at the Club House and one at the Guard Shack). State the number of servers, usable storage after redundancy, drive type, and redundancy (RAID or equivalent).",
+        "Provide recording servers or network video recorders at the head-end location or locations the bidder proposes (for example, one at the Club House and one at the Guard Shack). State the number of servers, usable storage after redundancy, drive type, and redundancy (RAID or equivalent).",
         "Size storage to meet the retention requirement in this RFP for all 27 cameras at the recording settings stated in the bid.",
         "Provide a battery backup unit (UPS) for each server and each network head-end, sized for orderly shutdown or at least 15 minutes of runtime; state the runtime.",
         "Cameras with on-board recording, if proposed for any position, must still be viewable and searchable from the main video management software. State how footage is retrieved and how long it is retained on the camera.",
