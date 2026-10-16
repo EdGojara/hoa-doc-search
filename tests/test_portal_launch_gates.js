@@ -3,9 +3,10 @@
 // ----------------------------------------------------------------------------
 // 2026-10-16 pre-launch review. Each check pins one fix so it cannot quietly
 // revert before Monday's controlled launch:
-//   - Pay shows only when Ed's per-community switch is on AND Stripe is truly
-//     ready (charges + payouts, live in production) AND financials are active;
-//     the button and the server checkout read the SAME decision.
+//   - Pay shows only when lib/payments/payment_readiness.js says ready (Ed's
+//     per-community switch, financials, Stripe charges + payouts, mode match);
+//     the button and the server checkout read the SAME decision, the portal
+//     fails closed, and a payment still settling shows as "processing".
 //   - Portal cookies are never signed with STAFF_PASSWORD in production.
 //   - Board property detail returns only what the drawer renders (no owner
 //     email, no raw view row) and Board views are audit-logged.
@@ -21,70 +22,74 @@ const path = require('path');
 
 let pass = 0; let fail = 0;
 const check = (name, fn) => { try { fn(); pass++; console.log('  ✓ ' + name); } catch (e) { fail++; console.log('  ✗ ' + name + '\n      ' + e.message); } };
+const asyncChecks = [];
+const acheck = (name, fn) => asyncChecks.push([name, fn]);
 const ROOT = path.join(__dirname, '..');
 const read = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8');
 
 // ---- Pay gate ---------------------------------------------------------------
-const { evaluatePayGate, serverKeyMode } = require('../lib/portal/pay_gate');
-const READY = {
-  community: { id: 'c1', name: 'Quail Ridge', portal_pay_enabled: true, stripe_connected_account_id: 'acct_1' },
-  lifecycle: { allowed: true },
-  stripe: { ok: true, charges_enabled: true, payouts_enabled: true },
-  keyMode: 'live',
-  isProduction: true,
-};
-const gate = (over) => evaluatePayGate({ ...READY, ...over });
-
-check('pay: every condition met → enabled', () => assert.strictEqual(gate({}).enabled, true));
-check('pay: switch off (the default) → no Pay, even with Stripe fully ready', () => {
-  const r = gate({ community: { ...READY.community, portal_pay_enabled: false } });
-  assert.strictEqual(r.enabled, false); assert.strictEqual(r.code, 'pay_not_enabled');
-  assert.strictEqual(gate({ community: { ...READY.community, portal_pay_enabled: undefined } }).enabled, false,
-    'a missing column (migration 540 not applied) must read as off');
-});
-check('pay: Waterview shape (account exists, switch off) → no Pay', () => {
-  assert.strictEqual(gate({ community: { id: 'wv', name: 'Waterview', stripe_connected_account_id: 'acct_wv', portal_pay_enabled: false } }).enabled, false);
-});
-check('pay: financials switched off → no Pay', () => {
-  const r = gate({ lifecycle: { allowed: false, reason: 'Online payments are switched off for X.' } });
-  assert.strictEqual(r.enabled, false); assert.strictEqual(r.code, 'community_not_taking_payments');
-});
-check('pay: no connected account → no Pay', () => {
-  assert.strictEqual(gate({ community: { ...READY.community, stripe_connected_account_id: null } }).code, 'stripe_not_onboarded');
-});
-check('pay: charges enabled but payouts not → no Pay', () => {
-  assert.strictEqual(gate({ stripe: { ok: true, charges_enabled: true, payouts_enabled: false } }).code, 'stripe_onboarding_incomplete');
-});
-check('pay: account not retrievable with this key (other mode / deleted) → no Pay', () => {
-  assert.strictEqual(gate({ stripe: { ok: false, error: 'No such account' } }).code, 'stripe_account_unavailable');
-});
-check('pay: production with a TEST key → no Pay', () => {
-  assert.strictEqual(gate({ keyMode: 'test' }).code, 'stripe_not_live');
-  assert.strictEqual(gate({ keyMode: 'test', isProduction: false }).enabled, true, 'local/staging may use test mode');
-  assert.strictEqual(gate({ keyMode: null }).code, 'stripe_not_configured');
-});
-check('pay: key mode read from the key prefix', () => {
-  assert.strictEqual(serverKeyMode('sk_live_abc'), 'live');
-  assert.strictEqual(serverKeyMode('rk_live_abc'), 'live');
-  assert.strictEqual(serverKeyMode('sk_test_abc'), 'test');
-  assert.strictEqual(serverKeyMode(''), null);
-});
-
+// The decision is lib/payments/payment_readiness.js (Stripe hardening PR); the
+// portal only adapts it. These pin the adapter: it fails CLOSED when readiness
+// is absent or throws, and passes the decision and the pending payment through.
+const payGate = require('../lib/portal/pay_gate');
 const portalSrc = read('api/portal.js');
 const portalHtml = read('public/portal.html');
-check('pay: the button and the checkout read the same gate', () => {
-  assert.ok(/payments_enabled: payGate\.enabled === true/.test(portalSrc), '/me payments_enabled must come from the pay gate');
+
+acheck('pay: readiness module absent → no Pay, checkout refused', async () => {
+  payGate._setReadinessForTest(null);
+  const st = await payGate.portalPayState({}, { communityId: 'c', propertyId: 'p' });
+  assert.strictEqual(st.payments_enabled, false); assert.strictEqual(st.pending, null);
+  assert.strictEqual((await payGate.portalCheckoutGate({}, 'c')).ready, false);
+});
+acheck('pay: readiness throws → no Pay (fails closed)', async () => {
+  const boom = async () => { throw new Error('db down'); };
+  payGate._setReadinessForTest({ portalPaymentState: boom, paymentsReadyFor: boom });
+  assert.strictEqual((await payGate.portalPayState({}, { communityId: 'c', propertyId: 'p' })).payments_enabled, false);
+  assert.strictEqual((await payGate.portalCheckoutGate({}, 'c')).ready, false);
+});
+acheck('pay: switch off (Waterview shape) → no Pay; reason passes through', async () => {
+  const msg = 'Online payment is not turned on for this community yet.';
+  payGate._setReadinessForTest({
+    portalPaymentState: async () => ({ payments_enabled: false, message: msg, pending: null }),
+    paymentsReadyFor: async () => ({ ready: false, reason: 'online_payments_off', message: msg }),
+  });
+  assert.strictEqual((await payGate.portalPayState({}, { communityId: 'c', propertyId: 'p' })).payments_enabled, false);
+  const g = await payGate.portalCheckoutGate({}, 'c');
+  assert.strictEqual(g.ready, false); assert.strictEqual(g.reason, 'online_payments_off'); assert.strictEqual(g.message, msg);
+});
+acheck('pay: ready + a processing payment → enabled, pending passed through', async () => {
+  const pending = { amount_cents: 64500, since: '2026-10-16T12:00:00Z', method: 'us_bank_account', label: 'Payment processing' };
+  let asked = null;
+  payGate._setReadinessForTest({
+    portalPaymentState: async (_sb, args) => { asked = args; return { payments_enabled: true, message: null, pending }; },
+    paymentsReadyFor: async () => ({ ready: true, reason: null, message: null }),
+  });
+  const st = await payGate.portalPayState({}, { communityId: 'c', propertyId: 'p' });
+  assert.strictEqual(st.payments_enabled, true); assert.deepStrictEqual(st.pending, pending);
+  assert.deepStrictEqual(asked, { communityId: 'c', propertyId: 'p', tenureId: null });
+  assert.strictEqual((await payGate.portalCheckoutGate({}, 'c')).ready, true);
+  payGate._setReadinessForTest(undefined);
+});
+
+check('pay: the button and the checkout read the same readiness decision', () => {
+  assert.ok(/payments_enabled: payState\.payments_enabled === true/.test(portalSrc), '/me payments_enabled must come from payment_readiness');
+  assert.ok(/payment_pending: payState\.pending \|\| null/.test(portalSrc));
   assert.ok(!/payments_enabled: !!community\.stripe_connected_account_id/.test(portalSrc), 'an account id alone must not enable Pay');
   const checkout = portalSrc.slice(portalSrc.indexOf("router.post('/pay/checkout'"), portalSrc.indexOf("router.post('/autopay/begin'"));
-  assert.ok(/portalPayGateForCommunityId\(supabase, prop\.community_id, \{ fresh: true \}\)/.test(checkout), 'checkout must re-check the gate fresh');
-  assert.ok(checkout.indexOf('portalPayGateForCommunityId') < checkout.indexOf('createAssessmentCheckout('), 'refuse before creating a session');
+  assert.ok(/portalCheckoutGate\(supabase, prop\.community_id\)/.test(checkout));
+  assert.ok(checkout.indexOf('portalCheckoutGate') < checkout.indexOf('createAssessmentCheckout('), 'refuse before creating a session');
+  assert.ok(/pending_amount_cents: r\.pending_amount_cents/.test(checkout), 'the payment_processing refusal keeps its amount');
   assert.ok(/window\._payCtx\.payments_enabled = !!\(ctx\.community && ctx\.community\.payments_enabled\)/.test(portalHtml));
 });
-check('pay: migration 540 defaults the switch OFF and turns it on for nobody', () => {
-  const mig = read('migrations/540_portal_pay_enabled.sql');
-  assert.ok(/portal_pay_enabled BOOLEAN NOT NULL DEFAULT FALSE/.test(mig));
-  assert.ok(!/UPDATE\s+communities/i.test(mig), 'no migration may enable portal pay');
+check('pay: the portal hides Pay and says "processing" while a payment settles', () => {
+  assert.ok(/id="payPendingNote"/.test(portalHtml));
+  assert.ok(/&& !\(pending && pending\.amount_cents > 0\)/.test(portalHtml));
 });
+check('pay: one per-community switch (online_payments_enabled), no second flag', () => {
+  assert.ok(!fs.existsSync(path.join(ROOT, 'migrations', '540_portal_pay_enabled.sql')));
+  assert.ok(!/portal_pay_enabled/.test(portalSrc + read('lib/portal/pay_gate.js')));
+});
+
 
 // ---- Portal cookie secret ---------------------------------------------------
 const { resolvePortalSecret } = require('../api/portal');
@@ -151,5 +156,10 @@ check('portal: no visible Sign out button (Ed 2026-06-11)', () => {
   assert.ok(!/logoutBtn/.test(portalHtml));
 });
 
-console.log(`\nportal_launch_gates: ${pass} passed, ${fail} failed`);
-process.exit(fail ? 1 : 0);
+(async () => {
+  for (const [name, fn] of asyncChecks) {
+    try { await fn(); pass++; console.log('  ✓ ' + name); } catch (e) { fail++; console.log('  ✗ ' + name + '\n      ' + e.message); }
+  }
+  console.log(`\nportal_launch_gates: ${pass} passed, ${fail} failed`);
+  process.exit(fail ? 1 : 0);
+})();
