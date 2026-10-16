@@ -1,0 +1,49 @@
+{
+  "migration": "533_outbound_draft_owner.sql",
+  "summary": "Draft ownership for server-side authorization: outbound_email_drafts.owner_user_id (the person who started the draft, FK user_profiles). Existing rows stay NULL (admin-only). Additive only: no row is changed and nothing is sent.",
+  "requires": [
+    "532_compose_drafts_agent_tasks.sql"
+  ],
+  "preflight": [
+    {
+      "name": "outbound_email_drafts does not have owner_user_id yet",
+      "sql": "SELECT count(*)::int FROM information_schema.columns WHERE table_name = 'outbound_email_drafts' AND column_name = 'owner_user_id'",
+      "expect": 0
+    }
+  ],
+  "expected_changes": [
+    "outbound_email_drafts: new nullable column owner_user_id with an FK to user_profiles (ON DELETE SET NULL).",
+    "One partial index.",
+    "No row changes."
+  ],
+  "objects": {
+    "added": [
+      "column:outbound_email_drafts.owner_user_id",
+      "constraint:outbound_email_drafts.outbound_email_drafts_owner_user_fkey",
+      "index:idx_outbound_drafts_owner_open"
+    ],
+    "changed": [],
+    "removed": []
+  },
+  "row_changes": {
+    "outbound_email_drafts": 0
+  },
+  "protected": [
+    {
+      "table": "outbound_email_drafts",
+      "order_by": "id"
+    }
+  ],
+  "verify": [
+    {
+      "name": "owner column exists",
+      "sql": "SELECT count(*)::int FROM information_schema.columns WHERE table_name = 'outbound_email_drafts' AND column_name = 'owner_user_id'",
+      "expect": 1
+    },
+    {
+      "name": "owner FK exists",
+      "sql": "SELECT count(*)::int FROM pg_constraint WHERE conname = 'outbound_email_drafts_owner_user_fkey'",
+      "expect": 1
+    }
+  ]
+}

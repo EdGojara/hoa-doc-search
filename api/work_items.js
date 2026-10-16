@@ -157,6 +157,9 @@ router.patch('/:id', express.json({ limit: '32kb' }), async (req, res) => {
     if (ce) throw ce;
     if (!cur) return res.status(404).json({ error: 'not_found' });
     if (!visibleTo(u)(cur)) return res.status(403).json({ error: 'admin_only' });
+    // A drafted-email task follows its draft's owner rule (lib/email/draft_access).
+    const ta = await require('../lib/email/compose_drafts').taskAccess(u, cur.source_ref);
+    if (ta && !ta.allowed) return res.status(ta.status).json({ error: ta.error, detail: ta.detail });
     const allowed = ['status', 'assigned_to', 'urgency', 'item_type', 'title', 'summary', 'notes', 'sla_due_at', 'completed_at', 'community_id'];
     const patch = {};
     for (const k of allowed) if (k in (req.body || {})) patch[k] = req.body[k];

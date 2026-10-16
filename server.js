@@ -10480,10 +10480,11 @@ app.get('/api/board-members', async (req, res) => {
     }
     if (req.query.active_only !== '0') q = q.eq('is_active', true);
     const { data, error } = await q;
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) { console.error('[board-members] list failed:', error.message); return res.status(500).json({ error: safeErrorMessage(error) }); }
     res.json({ members: data || [] });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error('[board-members] list failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
   }
 });
 

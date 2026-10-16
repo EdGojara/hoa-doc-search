@@ -117,7 +117,7 @@ function setTab(s){ tab=s; [...document.querySelectorAll('.tab')].forEach(t=>t.c
 
 async function loadList(){
   try{
-    const r = await fetch('/api/email-drafts?status='+tab); const j = await r.json();
+    const r = await af('/api/email-drafts?status='+tab); const j = await r.json();
     if(!r.ok) throw new Error(j.error||'load failed');
     if(j.migration_pending){ $('notReady').classList.remove('hide'); }
     drafts = j.drafts||[]; renderList();
@@ -150,7 +150,7 @@ function renderList(){
 
 async function openDraft(id){
   try{
-    const r = await fetch('/api/email-drafts/'+id); const j = await r.json();
+    const r = await af('/api/email-drafts/'+id); const j = await r.json();
     if(!r.ok) throw new Error(j.error||'not found');
     current = j.draft; renderList(); renderView();
   }catch(e){ toast(e.message,true); }
@@ -342,7 +342,7 @@ async function discardDraft(){
       af = async (u,o)=>{ o=o||{}; const h=Object.assign({},o.headers||{}); try{ const s=(await supa.auth.getSession()).data.session; if(s&&s.access_token) h.Authorization='Bearer '+s.access_token; }catch(_){} return fetch(u,Object.assign({},o,{headers:h})); };
     }
   }catch(_){ }
-  try{ const pr=await fetch('/api/email-drafts/personas'); const pj=await pr.json(); personas=pj.personas||[]; }catch(_){}
+  try{ const pr=await af('/api/email-drafts/personas'); const pj=await pr.json(); personas=pj.personas||[]; }catch(_){}
   await loadRoster();
   loadList();
 })();

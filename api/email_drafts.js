@@ -26,6 +26,32 @@ const { buildTessaEmail } = require('../lib/email/tessa_signature');
 
 const router = express.Router();
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
+const { getAuthedUser } = require('./_require_admin');
+const DA = require('../lib/email/draft_access');
+
+// AUTHORIZATION (Ed 2026-10-16). This router used to trust the global staff
+// cookie alone, so any staffer could read, edit, send or discard ANY draft. Now
+// every route needs a signed-in user, and every action on one draft (read, edit,
+// approve/send, discard, redraft, forward) goes through the SAME rule in
+// lib/email/draft_access.js: admins act on all drafts (owner-only personas such
+// as Tessa: the owner only); staff act only on drafts they started
+// (owner_user_id). Lists are filtered in the query the same way.
+router.use(async (req, res, next) => {
+  const u = await getAuthedUser(req);
+  if (!u) return res.status(403).json({ error: 'sign_in_required', detail: 'Sign in to work with drafts.' });
+  req.user = u;
+  next();
+});
+const DRAFT_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+// Load one draft and authorize the action. Sends 403/404 and returns null when refused.
+async function loadForAction(req, res, action) {
+  if (!DRAFT_ID_RE.test(String(req.params.id || ''))) { res.status(404).json({ error: 'not_found' }); return null; }
+  const { data, error } = await supabase.from('outbound_email_drafts').select('*').eq('id', req.params.id).maybeSingle();
+  if (error) { if (_isMissingTable(error)) { res.status(404).json({ error: 'not_found' }); return null; } throw error; }
+  if (!DA.guard(req, res, req.user, data, action)) return null;
+  return data;
+}
+const actorName = (u) => (u && (u.full_name || u.email)) || 'staff';
 
 function safe(err) { return require('./_safe_error').safeErrorMessage ? require('./_safe_error').safeErrorMessage(err) : 'Something went wrong'; }
 function _isMissingTable(err) {
@@ -67,6 +93,7 @@ router.get('/', async (req, res) => {
     // from their own surface, instead of everyone digging the shared queue.
     // (Ed 2026-09-03.)
     if (req.query.persona) q = q.eq('persona', req.query.persona.toString());
+    q = DA.scopeListQuery(q, req.user);
     const { data, error } = await q;
     if (error) {
       if (_isMissingTable(error)) return res.json({ drafts: [], migration_pending: true });
@@ -91,6 +118,7 @@ router.get('/counts', async (req, res) => {
     const status = (req.query.status || 'draft').toString();
     let q = supabase.from('outbound_email_drafts').select('persona, status').limit(5000);
     if (status !== 'all') q = q.eq('status', status);
+    q = DA.scopeListQuery(q, req.user);
     const { data, error } = await q;
     if (error) { if (_isMissingTable(error)) return res.json({ counts: {}, migration_pending: true }); throw error; }
     const counts = {};
@@ -105,9 +133,8 @@ router.get('/counts', async (req, res) => {
 // GET /api/email-drafts/:id
 router.get('/:id', async (req, res) => {
   try {
-    const { data, error } = await supabase.from('outbound_email_drafts').select('*').eq('id', req.params.id).maybeSingle();
-    if (error) { if (_isMissingTable(error)) return res.status(404).json({ error: 'not_found' }); throw error; }
-    if (!data) return res.status(404).json({ error: 'not_found' });
+    const data = await loadForAction(req, res, 'open');
+    if (!data) return;
     res.json({ draft: data });
   } catch (err) {
     console.error('[email_drafts] get failed:', err.message);
@@ -126,6 +153,9 @@ router.put('/:id', async (req, res) => {
       return res.status(400).json({ error: 'unknown sender' });
     }
     if (!Object.keys(patch).length) return res.status(400).json({ error: 'no_fields' });
+    const cur = await loadForAction(req, res, 'edit');
+    if (!cur) return;
+    if (patch.persona && !DA.canUsePersona(req.user, patch.persona)) return res.status(403).json({ error: 'draft_forbidden', detail: 'Only the owner can move a draft into that outbox.' });
     const { data, error } = await supabase.from('outbound_email_drafts')
       .update(patch).eq('id', req.params.id).eq('status', 'draft').select('id').maybeSingle();
     if (error) throw error;
@@ -206,9 +236,10 @@ async function logSentDraftToTimeline(d, from, subject) {
 
 router.post('/:id/send', async (req, res) => {
   try {
-    const { data: d, error } = await supabase.from('outbound_email_drafts').select('*').eq('id', req.params.id).maybeSingle();
-    if (error) throw error;
-    if (!d) return res.status(404).json({ error: 'not_found' });
+    const d = await loadForAction(req, res, 'send');
+    if (!d) return;
+    // The approver is the signed-in person, never a name the browser supplies.
+    req.body = { ...(req.body || {}), approved_by: actorName(req.user) };
     // Amanda's automatic-reply RECEIPTS live in this table (migration 490) but are not drafts
     // to send: the receipt state machine owns that send, and a person replies from
     // Communications, where the receipt guard checks her Sent Items first. (Issue #29.)
@@ -376,9 +407,8 @@ router.post('/:id/redraft', async (req, res) => {
     const notes = String(req.body && req.body.notes || '').trim();
     const currentBody = String(req.body && req.body.body_text || '').trim();
     if (!notes) return res.status(400).json({ error: 'add a note describing what to change' });
-    const { data: d, error } = await supabase.from('outbound_email_drafts').select('persona, community_name, to_name').eq('id', req.params.id).maybeSingle();
-    if (error) throw error;
-    if (!d) return res.status(404).json({ error: 'not_found' });
+    const d = await loadForAction(req, res, 'redraft');
+    if (!d) return;
     const { revisePersonaDraft } = require('../lib/email/compose_draft');
     const out = await revisePersonaDraft({
       persona: d.persona, currentBody, notes,
@@ -405,9 +435,8 @@ router.post('/:id/forward', async (req, res) => {
     // the company to an arbitrary outside address from here.
     if (!/@bedrocktx(ai)?\.com$/i.test(to_email)) return res.status(400).json({ error: 'forward is for the internal team only (@bedrocktx.com)' });
 
-    const { data: d, error } = await supabase.from('outbound_email_drafts').select('*').eq('id', req.params.id).maybeSingle();
-    if (error) throw error;
-    if (!d) return res.status(404).json({ error: 'not_found' });
+    const d = await loadForAction(req, res, 'forward');
+    if (!d) return;
     if (!graphSend.isConfigured()) return res.status(400).json({ error: 'email not connected (Graph credentials missing)' });
 
     // The homeowner's inbound messages, oldest first — the chain the teammate
@@ -477,12 +506,13 @@ router.post('/:id/forward', async (req, res) => {
 // POST /api/email-drafts/:id/discard
 router.post('/:id/discard', async (req, res) => {
   try {
+    if (!(await loadForAction(req, res, 'discard'))) return;
     const { data, error } = await supabase.from('outbound_email_drafts')
       .update({ status: 'discarded' }).eq('id', req.params.id).eq('status', 'draft').select('id, draft_kind').maybeSingle();
     if (error) throw error;
     if (!data) return res.status(409).json({ error: 'not_discardable' });
     const CD = require('../lib/email/compose_drafts');
-    const task = data.draft_kind === CD.COMPOSE_KIND ? await CD.resolveComposeTask({ id: data.id }, { outcome: 'discarded', actor: (req.body && req.body.approved_by) || 'staff' }) : null;
+    const task = data.draft_kind === CD.COMPOSE_KIND ? await CD.resolveComposeTask({ id: data.id }, { outcome: 'discarded', actor: actorName(req.user) }) : null;
     res.json({ ok: true, task_closed: task ? !!task.closed : undefined });
   } catch (err) {
     console.error('[email_drafts] discard failed:', err.message);

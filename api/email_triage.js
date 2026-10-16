@@ -18,6 +18,9 @@ const express = require('express');
 const multer = require('multer');
 const { createClient } = require('@supabase/supabase-js');
 const { safeErrorMessage } = require('./_safe_error');
+// Every typed search goes through this (escaped + quoted for PostgREST); see the file header.
+const SF = require('../lib/db/search_filter');
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const { draftReply } = require('../lib/email/draft_reply');
 const { suggestReplyTo, replyAllCc, isValidEmail, normEmail } = require('../lib/email/reply_recipient');
 // The message's real To / Cc / Reply-To from Graph (ingest keeps only part of it).
@@ -310,7 +313,7 @@ router.get('/', async (req, res) => {
     if (direction) query = query.eq('direction', String(direction));
     if (!owner) query = query.neq('persona', 'tessa');
     if (community_id) query = query.eq('community_id', community_id);
-    if (q) query = query.or(`subject.ilike.%${q}%,sender_email.ilike.%${q}%,ai_summary.ilike.%${q}%`);
+    if (q && SF.normalizeQuery(q)) query = query.or(SF.orIlike(['subject', 'sender_email', 'ai_summary'], q));
     const { data, error } = await query;
     if (error) throw error;
     res.json({ messages: await withCapabilities(data) });
@@ -569,8 +572,9 @@ router.get('/docs', async (req, res) => {
     let query = supabase.from('library_documents')
       .select('id, title, category, file_name_original, community_id')
       .not('file_path', 'is', null).order('uploaded_at', { ascending: false }).limit(20);
+    if (communityId && !UUID_RE.test(String(communityId))) return res.status(400).json({ error: 'community_id_invalid' });
     if (communityId) query = query.or(`community_id.eq.${communityId},community_id.is.null`);
-    if (q) query = query.or(`title.ilike.%${q}%,file_name_original.ilike.%${q}%,category.ilike.%${q}%`);
+    if (q && SF.normalizeQuery(q)) query = query.or(SF.orIlike(['title', 'file_name_original', 'category'], q));
     const { data } = await query;
     res.json({ docs: (data || []).map((d) => ({ id: d.id, title: d.title || d.file_name_original || '(untitled)', category: d.category })) });
   } catch (err) { console.error('[email_triage] docs failed:', err.message); res.status(500).json({ error: safeErrorMessage(err) }); }
@@ -1960,8 +1964,8 @@ router.post('/:id/add-to-payables', express.json(), async (req, res) => {
     if (!vendorId) {
       const name = ex.vendor_name || m.sender_name || '';
       if (name) {
-        let { data: v } = await supabase.from('vendors').select('id').eq('community_id', m.community_id).ilike('name', `%${name}%`).limit(1);
-        if (!v || !v.length) ({ data: v } = await supabase.from('vendors').select('id').ilike('name', `%${name}%`).limit(1));
+        let { data: v } = await supabase.from('vendors').select('id').eq('community_id', m.community_id).ilike('name', SF.containsPattern(name)).limit(1);
+        if (!v || !v.length) ({ data: v } = await supabase.from('vendors').select('id').ilike('name', SF.containsPattern(name)).limit(1));
         vendorId = v && v.length ? v[0].id : null;
       }
     }
@@ -2270,7 +2274,7 @@ router.post('/compose', express.json({ limit: '256kb' }), async (req, res) => {
     let draft = null;
     const draftId = (req.body || {}).draft_id || null;
     if (draftId) {
-      await CD.saveComposeDraft({ ...req.body, draft_id: draftId, persona: P, community_id: comm.id, community_name: comm.name }, { actor: admin.full_name || admin.email });
+      await CD.saveComposeDraft({ ...req.body, draft_id: draftId, persona: P, community_id: comm.id, community_name: comm.name }, { actor: admin.full_name || admin.email, user: admin });
       draft = await CD.claimForSend(draftId);
       if (!draft) {
         const cur = await CD.getDraft(draftId);
@@ -2291,7 +2295,7 @@ router.post('/compose', express.json({ limit: '256kb' }), async (req, res) => {
       // Place this on the right homeowner for the record (best-effort, keyed on
       // the FIRST recipient — the primary addressee).
       try {
-        const { data: c } = await supabase.from('contacts').select('id').or(`primary_email.ilike.${toList[0]},secondary_email.ilike.${toList[0]}`).limit(1);
+        const { data: c } = await supabase.from('contacts').select('id').or(SF.orIlikeExact(['primary_email', 'secondary_email'], toList[0])).limit(1);
         if (c && c[0]) {
           resolved_contact_id = c[0].id;
           const { data: o } = await supabase.from('property_ownerships').select('property_id, properties(community_id, communities:community_id(name))').eq('contact_id', resolved_contact_id).is('end_date', null).limit(1);
@@ -2491,7 +2495,7 @@ router.post('/compose-draft', express.json(), async (req, res) => {
     let recipientName = null, commName = community_name || '';
     if (firstTo) {
       try {
-        const { data: c } = await supabase.from('contacts').select('full_name, id').or(`primary_email.ilike.${firstTo},secondary_email.ilike.${firstTo}`).limit(1);
+        const { data: c } = await supabase.from('contacts').select('full_name, id').or(SF.orIlikeExact(['primary_email', 'secondary_email'], firstTo)).limit(1);
         if (c && c[0]) {
           recipientName = c[0].full_name || null;
           if (!commName) {
@@ -2516,6 +2520,16 @@ router.post('/compose-draft', express.json(), async (req, res) => {
 // Admin-gated like the rest of this router. Saving a draft puts it on the
 // sending agent's Mission Control list (lib/email/compose_drafts.js); nothing
 // here sends email. The send is POST /compose with draft_id.
+
+// Every action on one compose draft goes through lib/email/draft_access (the
+// same rule as /api/email-drafts). This router is admin-gated today, so it
+// passes for admins; the check is what keeps it right when staff get access.
+async function composeDraftFor(req, res, action) {
+  const CD = require('../lib/email/compose_drafts');
+  const d = await CD.getDraft(req.params.id);
+  if (!require('../lib/email/draft_access').guard(req, res, req.admin, d, action)) return null;
+  return d;
+}
 
 // GET /compose/recipients?q=&community_id= — To/Cc autocomplete.
 router.get('/compose/recipients', async (req, res) => {
@@ -2542,12 +2556,24 @@ router.get('/compose/communities', async (req, res) => {
   }
 });
 
+// GET /compose/board-lists — the "+ add a board list" picker. Currently managed
+// communities only (never demo, prospect or ended); errors are generic to the UI.
+router.get('/compose/board-lists', async (req, res) => {
+  try {
+    const { boardLists } = require('../lib/email/recipient_search');
+    res.json({ lists: await boardLists() });
+  } catch (err) {
+    console.error('[email_triage] board lists failed:', err.message);
+    res.status(500).json({ error: 'board_lists_unavailable', detail: 'Board lists could not load. You can still type names or addresses.' });
+  }
+});
+
 // GET /compose/drafts?persona= — open (unsent) compose drafts.
 router.get('/compose/drafts', async (req, res) => {
   try {
     const CD = require('../lib/email/compose_drafts');
     const persona = req.query.persona ? String(req.query.persona).toLowerCase() : null;
-    const rows = await CD.listOpenDrafts({ persona });
+    const rows = await CD.listOpenDrafts({ persona, user: req.admin });
     res.json({ drafts: rows.map((d) => ({ ...d, agent: CD.agentName(d.persona), attachment_count: (d.attachments || []).length, attachments: undefined })) });
   } catch (err) {
     console.error('[email_triage] compose drafts list failed:', err.message);
@@ -2559,8 +2585,8 @@ router.get('/compose/drafts', async (req, res) => {
 router.get('/compose/drafts/:id', async (req, res) => {
   try {
     const CD = require('../lib/email/compose_drafts');
-    const d = await CD.getDraft(req.params.id);
-    if (!d) return res.status(404).json({ error: 'not_found', detail: 'That draft was not found.' });
+    const d = await composeDraftFor(req, res, 'open');
+    if (!d) return;
     const { to, cc } = CD.chipsFromDraft(d);
     const st = d.compose_state || {};
     res.json({ draft: { id: d.id, status: d.status, persona: d.persona, agent: CD.agentName(d.persona), to, cc, subject: d.subject || '', body: d.body_text || '',
@@ -2583,7 +2609,7 @@ router.post('/compose/drafts', express.json({ limit: '256kb' }), async (req, res
     if (comm.error) return res.status(400).json({ error: 'community_out_of_scope', detail: comm.error });
     const P = composePersona((req.body || {}).persona);
     const { draft, task } = await CD.saveComposeDraft({ ...(req.body || {}), persona: P, community_id: comm.id, community_name: comm.name || null },
-      { actor: req.admin.full_name || req.admin.email || 'admin', fromMailbox: graphSend.personaMailbox(P) });
+      { actor: req.admin.full_name || req.admin.email || 'admin', fromMailbox: graphSend.personaMailbox(P), user: req.admin });
     res.json({ ok: true, draft_id: draft.id, saved_at: draft.updated_at, agent: CD.agentName(P), task });
   } catch (err) {
     if (err.status) return res.status(err.status).json({ error: err.code, detail: err.detail });
@@ -2604,6 +2630,7 @@ router.post('/compose/drafts/:id/attachments', (req, res, next) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'no_file', detail: 'No file received.' });
     const CD = require('../lib/email/compose_drafts');
+    if (!(await composeDraftFor(req, res, 'attach files to'))) return;
     const out = await CD.addAttachment(req.params.id, req.file);
     const d = await CD.getDraft(req.params.id);
     if (d) await CD.syncComposeTask(d, req.admin.full_name || req.admin.email || 'admin');   // task summary lists the files
@@ -2619,6 +2646,7 @@ router.post('/compose/drafts/:id/attachments', (req, res, next) => {
 router.delete('/compose/drafts/:id/attachments', express.json(), async (req, res) => {
   try {
     const CD = require('../lib/email/compose_drafts');
+    if (!(await composeDraftFor(req, res, 'remove files from'))) return;
     const out = await CD.removeAttachment(req.params.id, String((req.body || {}).storage_path || ''));
     const d = await CD.getDraft(req.params.id);
     if (d) await CD.syncComposeTask(d, req.admin.full_name || req.admin.email || 'admin');
@@ -2634,6 +2662,7 @@ router.delete('/compose/drafts/:id/attachments', express.json(), async (req, res
 router.post('/compose/drafts/:id/discard', express.json(), async (req, res) => {
   try {
     const CD = require('../lib/email/compose_drafts');
+    if (!(await composeDraftFor(req, res, 'discard'))) return;
     res.json({ ok: true, ...(await CD.discardDraft(req.params.id, req.admin.full_name || req.admin.email || 'admin')) });
   } catch (err) {
     if (err.status) return res.status(err.status).json({ error: err.code, detail: err.detail });
@@ -2781,11 +2810,11 @@ router.get('/unattributed', async (req, res) => {
 // GET /contact-search?q= — homeowner picker. Matches name / email / address.
 router.get('/contact-search', async (req, res) => {
   try {
-    const q = String(req.query.q || '').trim();
+    const q = SF.normalizeQuery(req.query.q);
     if (q.length < 2) return res.json({ items: [] });
-    const like = `%${q}%`;
-    const { data: byName } = await supabase.from('contacts')
-      .select('id, full_name, primary_email').or(`full_name.ilike.${like},primary_email.ilike.${like},secondary_email.ilike.${like}`).limit(12);
+    const { data: byName, error: nameErr } = await supabase.from('contacts')
+      .select('id, full_name, primary_email').or(SF.orIlike(['full_name', 'primary_email', 'secondary_email'], q)).limit(12);
+    if (nameErr) throw new Error(nameErr.message);
     const ids = (byName || []).map((c) => c.id);
     // Attach each contact's active property + community for disambiguation.
     const propByContact = {};
