@@ -1,0 +1,135 @@
+{
+  "migration": "536_conversion_execute_establishment.sql",
+  "summary": "EXECUTE learns the 535 conversion records: identity-safe establishment (conversion_source_identities, unique source system + account; the ownership guard allows exactly a legacy-owner record and a lot's first owner tenure inside onboarding_execute), the adjustment audit chain (conversion_adjustment_applications), 'suspense_balance' reconciling items, and onboarding_execute = the 501 body plus the 536 blocks (objects digest / fingerprint / identity preconditions, adjustment entries, legacy records, initial ownership, isolation checks, audit chain, write counts). Changes no existing row.",
+  "requires": [
+    "535_conversion_primitives.sql",
+    "501_conversion_builder_coverage.sql",
+    "504_opening_ap_payment_clearances.sql",
+    "456_ownership_tenures.sql",
+    "459_ownership_transfer_single_path.sql"
+  ],
+  "preflight": [
+    {
+      "name": "no onboarding batch is mid-execute (onboarding_execute is replaced)",
+      "sql": "SELECT count(*)::int FROM conversion_batches WHERE onboarding_stage = 'execute' AND status <> 'posted'",
+      "expect": 0
+    },
+    {
+      "name": "every existing tenure origin is one 536 still allows",
+      "sql": "SELECT count(*)::int FROM ownership_tenures WHERE origin NOT IN ('backfill_current','backfill_historical','backfill_legacy','transfer','conversion')",
+      "expect": 0
+    },
+    {
+      "name": "conversion_source_identities does not exist yet",
+      "sql": "SELECT count(*)::int FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'conversion_source_identities'",
+      "expect": 0
+    }
+  ],
+  "expected_changes": [
+    "No row in any existing table changes."
+  ],
+  "objects": {
+    "added": [
+      "column:conversion_adjustment_applications.adjustment_id",
+      "column:conversion_adjustment_applications.after_balances",
+      "column:conversion_adjustment_applications.batch_id",
+      "column:conversion_adjustment_applications.before_balances",
+      "column:conversion_adjustment_applications.community_id",
+      "column:conversion_adjustment_applications.created_at",
+      "column:conversion_adjustment_applications.effect",
+      "column:conversion_adjustment_applications.execution_id",
+      "column:conversion_adjustment_applications.fingerprint",
+      "column:conversion_adjustment_applications.gl_after_execute",
+      "column:conversion_adjustment_applications.id",
+      "column:conversion_adjustment_applications.journal_entry_id",
+      "column:conversion_adjustment_applications.journal_entry_reference",
+      "column:conversion_adjustment_applications.lines",
+      "column:conversion_source_identities.batch_id",
+      "column:conversion_source_identities.community_id",
+      "column:conversion_source_identities.created_at",
+      "column:conversion_source_identities.detail",
+      "column:conversion_source_identities.execution_id",
+      "column:conversion_source_identities.external_id",
+      "column:conversion_source_identities.external_id_kind",
+      "column:conversion_source_identities.id",
+      "column:conversion_source_identities.property_id",
+      "column:conversion_source_identities.source_system",
+      "column:conversion_source_identities.tenure_id",
+      "constraint:conversion_adjustment_applications.conversion_adjustment_applicatio_execution_id_adjustment_id_key",
+      "constraint:conversion_adjustment_applications.conversion_adjustment_applications_adjustment_id_fkey",
+      "constraint:conversion_adjustment_applications.conversion_adjustment_applications_batch_id_fkey",
+      "constraint:conversion_adjustment_applications.conversion_adjustment_applications_community_id_fkey",
+      "constraint:conversion_adjustment_applications.conversion_adjustment_applications_effect_check",
+      "constraint:conversion_adjustment_applications.conversion_adjustment_applications_fingerprint_check",
+      "constraint:conversion_adjustment_applications.conversion_adjustment_applications_journal_entry_id_fkey",
+      "constraint:conversion_adjustment_applications.conversion_adjustment_applications_pkey",
+      "constraint:conversion_source_identities.conversion_source_identities_batch_id_fkey",
+      "constraint:conversion_source_identities.conversion_source_identities_community_id_fkey",
+      "constraint:conversion_source_identities.conversion_source_identities_external_id_check",
+      "constraint:conversion_source_identities.conversion_source_identities_external_id_kind_check",
+      "constraint:conversion_source_identities.conversion_source_identities_pkey",
+      "constraint:conversion_source_identities.conversion_source_identities_property_id_fkey",
+      "constraint:conversion_source_identities.conversion_source_identities_source_system_check",
+      "constraint:conversion_source_identities.conversion_source_identities_tenure_id_fkey",
+      "constraint:conversion_source_identities.uq_conversion_source_identity",
+      "function:onboarding_execute_capabilities",
+      "index:conversion_adjustment_applicatio_execution_id_adjustment_id_key",
+      "index:conversion_adjustment_applications_pkey",
+      "index:conversion_source_identities_pkey",
+      "index:uq_conversion_source_identity",
+      "table:conversion_adjustment_applications",
+      "table:conversion_source_identities",
+      "trigger:conversion_adjustment_applications.trg_conversion_adjustment_applications_append_only",
+      "trigger:conversion_source_identities.trg_conversion_source_identities_append_only"
+    ],
+    "changed": [
+      "constraint:conversion_reconciling_items.conversion_reconciling_items_kind_check",
+      "constraint:onboarding_execution_writes.onboarding_execution_writes_table_name_check",
+      "constraint:onboarding_execution_writes.onboarding_execution_writes_write_kind_check",
+      "constraint:ownership_tenures.ownership_tenures_origin_check",
+      "function:onboarding_execute",
+      "function:ownership_tenures_transfer_only"
+    ],
+    "removed": []
+  },
+  "row_changes": {
+    "conversion_batches": 0,
+    "ownership_tenures": 0,
+    "conversion_reconciling_items": 0,
+    "journal_entries": 0
+  },
+  "protected": [
+    {
+      "table": "conversion_batches",
+      "order_by": "id"
+    },
+    {
+      "table": "ownership_tenures",
+      "order_by": "id"
+    },
+    {
+      "table": "journal_entries",
+      "order_by": "id"
+    },
+    {
+      "table": "homeowner_transactions",
+      "order_by": "id"
+    },
+    {
+      "table": "conversion_reconciling_items",
+      "order_by": "id"
+    }
+  ],
+  "verify": [
+    {
+      "name": "the establishment / audit tables exist",
+      "sql": "SELECT count(*)::int FROM information_schema.tables WHERE table_schema = 'public' AND table_name IN ('conversion_source_identities','conversion_adjustment_applications')",
+      "expect": 2
+    },
+    {
+      "name": "onboarding_execute carries the 536 blocks",
+      "sql": "SELECT count(*)::int FROM pg_proc WHERE proname = 'onboarding_execute' AND prosrc LIKE '%conversion_objects_digest%' AND prosrc LIKE '%onboarding_establish%' AND prosrc LIKE '%conversion_adjustment_applications%'",
+      "expect": 1
+    }
+  ]
+}

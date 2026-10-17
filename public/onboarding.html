@@ -79,6 +79,7 @@
     <div id="head" class="card"></div>
     <div id="operator"></div>
     <div id="preflight"></div>
+    <div id="convobjects"></div>
     <div id="decisions"><div id="advance"></div></div>
     <h2>What Trusted found</h2>
     <div id="snapshot" class="tablewrap"></div>
@@ -218,9 +219,13 @@ function evidenceText(it) {
   if (e.partner_reference || e.partner_journal_entry) parts.push('void partner ' + (e.partner_reference || e.partner_journal_entry));
   if (e.source_module) parts.push('from ' + e.source_module + (e.records ? ' (' + e.records + ' records)' : ''));
   if (e.statuses) parts.push(e.statuses.join(', '));
+  if (e.source_match) parts.push('source line ' + e.source_match.date + ' ' + money(e.source_match.amount_cents) + ' acct ' + e.source_match.account_code + (e.source_description ? ' "' + e.source_description + '"' : '') + (e.day_difference != null ? ' (' + e.day_difference + ' day(s) apart)' : ''));
+  if (e.twin_event) parts.push('duplicate of ' + e.twin_event);
+  if (e.decision && e.decision.recorded && e.decision.recorded.via === 'policy') parts.push('timing policy: recorded on the cutover date (' + (e.decision.recorded.basis ? 'entered ' + e.decision.recorded.basis.entered_in_trusted + ', dated ' + e.decision.recorded.basis.document_date : '') + ')');
   if (e.note) parts.push(e.note);
   return parts.join(' · ');
 }
+const RESOLUTION_TEXT = { already_in_source: 'already in the source', duplicate_candidate: 'duplicate of another Trusted entry', timing: 'timing (approved policy)', retain: 'kept (after the cutoff)', out_of_scope: 'out of scope', owner_decided: 'your decision', needs_owner: 'needs your decision' };
 const settled = (v) => !!(v && v.batch && v.batch.stage === 'complete' && v.latest_by_stage && v.latest_by_stage.post_proof && v.latest_by_stage.post_proof.status === 'PASS');
 async function loadBridge(batchId, v) {
   let b;
@@ -232,7 +237,7 @@ async function loadBridge(batchId, v) {
   const group = (k) => items.filter((it) => it.classification === k);
   const issues = items.filter((it) => (it.structural_issues || []).length);
   const table = (rows) => lineTable(rows, [{ h: 'Date', f: (it) => esc(it.event_date || '') }, { h: 'What', f: (it) => esc(label(it.kind)) }, { h: 'Amount', num: true, f: (it) => money(it.amount_cents) },
-    { h: 'Why', f: (it) => '<span class="mono">' + esc(it.method) + '</span> <span class="muted">(' + esc(it.confidence) + ')</span><div class="muted" style="font-size:12px">' + esc(evidenceText(it)) + '</div>' },
+    { h: 'Why', f: (it) => ((it.evidence || {}).resolution ? '<span class="pill ' + ((it.evidence || {}).resolution === 'needs_owner' ? 'BLOCKED' : 'COMPLETED') + '">' + esc(RESOLUTION_TEXT[(it.evidence || {}).resolution] || (it.evidence || {}).resolution) + '</span> ' : '') + '<span class="mono">' + esc(it.method) + '</span> <span class="muted">(' + esc(it.confidence) + ')</span><div class="muted" style="font-size:12px">' + esc(evidenceText(it)) + '</div>' },
     { h: 'Records', f: (it) => '<span class="muted">' + (it.records || []).length + '</span>' }, { h: 'Issues', f: (it) => esc((it.structural_issues || []).join('; ')) }]);
   $('bridge').innerHTML = '<h2>Activity bridge (Trusted activity vs the cutoff position; nothing changed)</h2>'
     + (fresh && fresh.fresh === false && !settled(v) ? '<div class="banner bad"><b>Trusted activity has changed since this bridge was run.</b> Re-run the bridge before relying on it.</div>' : '')
@@ -252,7 +257,8 @@ function renderOperator(v) {
   const missing = asks.filter((a) => a.type === 'missing_source');
   const unknown = asks.filter((a) => a.type === 'unrecognized_format');
   const decisions = asks.filter((a) => a.type === 'decision');
-  const others = asks.filter((a) => a.type !== 'missing_source' && a.type !== 'unrecognized_format' && a.type !== 'decision');
+  const toApprove = asks.filter((a) => a.type === 'approve_adjustment' || a.type === 'approve_policy');
+  const others = asks.filter((a) => a.type !== 'missing_source' && a.type !== 'unrecognized_format' && a.type !== 'decision' && a.type !== 'approve_adjustment' && a.type !== 'approve_policy');
   const runnable = v.derived && v.derived.runner_available;
   let html = '<div class="card" style="border-left:4px solid var(--gold)"><div style="font-weight:800;color:var(--navy)">Onboarding operator</div>';
   if (!asks.length && runnable) html += '<div class="muted">Nothing needed from you right now.</div>';
@@ -269,6 +275,7 @@ function renderOperator(v) {
         + q.choices.map((c) => '<label style="display:block;font-weight:400;margin:4px 0"><input type="radio" name="q' + i + '" value="' + esc(c.key) + '"' + (owner ? '' : ' disabled') + '> ' + esc(c.label) + (q.recommended === c.key ? ' <span class="pill PASS">Recommended</span>' : '') + '</label>').join('') + '</div>').join('')
       + (owner ? '<button id="opAnswer">Record my decisions</button> <span class="muted" style="font-size:12px">Saved as your decisions, with your name and the time; nothing is posted.</span>' : '<div class="muted">The owner answers these.</div>') + '</div>';
   }
+  if (toApprove.length) html += '<div style="margin-top:8px"><b>' + toApprove.length + ' conversion ' + (toApprove.length === 1 ? 'item waits' : 'items wait') + ' for your approval</b> <span class="muted">(adjustments and policies, below: each shows its lines, evidence and fingerprint)</span></div>';
   if (others.length) html += '<div style="margin-top:8px"><b>Needs your decision:</b><ul>' + others.map((a) => '<li>' + esc(a.text || a.control) + (a.difference_cents ? ' (' + money(a.difference_cents) + ')' : '') + '</li>').join('') + '</ul><span class="muted">Details, evidence and the waive / advance controls are below.</span></div>';
   const made = op.decisions || [];
   if (made.length) html += '<details style="margin-top:8px" id="op_decisions"><summary>Your decisions (' + made.length + ')</summary><ul style="font-size:13px">' + made.map((d) => '<li><b>' + esc(d.choice_label) + '</b><div class="muted" style="font-size:12px">' + esc(d.question) + ' · ' + esc(d.actor_id) + ', ' + esc(String(d.decided_at).slice(0, 16).replace('T', ' ')) + (d.reason ? ' · ' + esc(d.reason) : '') + '</div></li>').join('') + '</ul></details>';
@@ -336,12 +343,55 @@ async function loadPreflight(v) {
   };
 }
 
+// ---- Conversion adjustments, policies and bridge exceptions (migration 535). Proposals come from
+// staff or the operator; ONLY the signed-in owner approves or rejects, and only the exact fingerprint
+// shown here (the server sets the in-app channel; the database refuses any other fingerprint).
+const POLICY_TEXT = { cutoff_authority: 'Source period (book of record through the cutoff)', legacy_owner_routing: 'Prior-owner balances', suspense_treatment: 'Suspense balance', timing_treatment: 'Late-entered bills (timing)', preserve_source_coding: 'Keep the source coding', carried_balance: 'Carried balance (explains a control)' };
+async function loadConversionObjects(v) {
+  const el = $('convobjects'); el.innerHTML = '';
+  let o;
+  try { o = await api('/api/onboarding/batches/' + encodeURIComponent(v.batch.id) + '/conversion-objects'); }
+  catch (e) { el.innerHTML = '<div class="banner warn">' + esc(e.message) + '</div>'; return; }
+  const owner = v.viewer_is_owner === true;
+  const open = ['intake', 'normalize', 'source_controls', 'snapshot', 'activity_bridge', 'preflight'].includes(v.batch.stage);
+  const who = (x) => x.status === 'approved' ? 'approved by ' + esc(x.approved_by_label || x.approved_by_user_id) + ', ' + esc(String(x.approved_at || '').slice(0, 16).replace('T', ' ')) + ' (in the app)'
+    : x.status === 'proposed' ? 'proposed by ' + esc(x.proposed_by) + (x.instruction_source ? ' · instruction: ' + esc(x.instruction_source) : '') : esc(x.status) + (x.decision_note ? ': ' + esc(x.decision_note) : '');
+  const buttons = (type, x) => owner && open && x.status === 'proposed' ? '<div><button data-dec="approved" data-type="' + type + '" data-id="' + esc(x.id) + '" data-fp="' + esc(x.fingerprint) + '">Approve</button> <button class="secondary" data-dec="rejected" data-type="' + type + '" data-id="' + esc(x.id) + '" data-fp="' + esc(x.fingerprint) + '">Reject</button></div>' : '';
+  const adjRows = (o.adjustments || []).filter((a) => a.status !== 'superseded');
+  const polRows = (o.policies || []).filter((p) => p.status !== 'superseded');
+  if (!adjRows.length && !polRows.length && !(o.exceptions || []).length) return;
+  let html = '<h2>Conversion adjustments and policies</h2>';
+  if (adjRows.length) html += '<div class="card"><div style="font-weight:800;color:var(--navy)">Adjustments (balanced transformations of the source position)</div>'
+    + lineTable(adjRows, [{ h: '#', f: (a) => esc(a.adjustment_no) }, { h: 'What', f: (a) => esc(label(a.kind)) + '<div class="muted" style="font-size:12px">' + (a.effect === 'opening' ? 'in the opening entry' : 'its own entry at the cutoff, after the opening') + (a.allow_sign_change ? '; may change an account\'s sign' : '') + '</div>' },
+      { h: 'Lines', f: (a) => (a.lines || []).map((l) => esc(l.account) + ' ' + (Number(l.amount_cents) > 0 ? 'Dr ' + money(l.amount_cents) : 'Cr ' + money(-Number(l.amount_cents)))).join('<br>') },
+      { h: 'Why and evidence', f: (a) => esc(a.reason) + '<div class="muted" style="font-size:12px">' + esc((a.evidence || {}).description || '') + ' · ' + esc((a.evidence || {}).locator || '') + ((a.resolves || []).length ? ' · resolves ' + esc(a.resolves.map((r) => r.control).join(', ')) : '') + '</div>' },
+      { h: 'Status', f: (a) => '<span class="pill ' + (a.status === 'approved' ? 'PASS' : a.status === 'proposed' ? 'BLOCKED' : 'FAIL') + '">' + esc(a.status) + '</span><div class="muted" style="font-size:12px">' + who(a) + '</div><div class="mono" style="font-size:11px" title="' + esc(a.fingerprint) + '">' + esc(String(a.fingerprint).slice(0, 16)) + '…</div>' + buttons('adjustment', a) }]) + '</div>';
+  if (polRows.length) html += '<div class="card"><div style="font-weight:800;color:var(--navy)">Policies (approved instructions; no journal lines)</div>'
+    + lineTable(polRows, [{ h: 'Policy', f: (p) => esc(POLICY_TEXT[p.policy_kind] || p.policy_kind) + (p.policy_key ? ' <span class="mono">' + esc(p.policy_key) + '</span>' : '') },
+      { h: 'Instruction', f: (p) => '<span class="mono" style="font-size:12px">' + esc(JSON.stringify(p.value)) + '</span><div class="muted" style="font-size:12px">' + esc(p.reason) + '</div>' },
+      { h: 'Status', f: (p) => '<span class="pill ' + (p.status === 'approved' ? 'PASS' : p.status === 'proposed' ? 'BLOCKED' : 'FAIL') + '">' + esc(p.status) + '</span><div class="muted" style="font-size:12px">' + who(p) + '</div><div class="mono" style="font-size:11px" title="' + esc(p.fingerprint) + '">' + esc(String(p.fingerprint).slice(0, 16)) + '…</div>' + buttons('policy', p) }]) + '</div>';
+  const ex = o.exceptions || [];
+  if (ex.length) html += '<details class="card"><summary>Activity-bridge exceptions on the current bridge (' + ex.filter((x) => x.status === 'open').length + ' open, ' + ex.filter((x) => x.status !== 'open').length + ' resolved by a rule or policy)</summary>'
+    + lineTable(ex, [{ h: 'Resolution', f: (x) => '<span class="pill ' + (x.status === 'open' ? 'BLOCKED' : 'COMPLETED') + '">' + esc(RESOLUTION_TEXT[x.resolution] || x.resolution) + '</span>' }, { h: 'Amount', num: true, f: (x) => money(x.amount_cents) },
+      { h: 'Rule and evidence', f: (x) => '<span class="mono">' + esc(x.method) + '</span> <span class="muted">(' + esc(x.confidence) + ')</span><div class="muted" style="font-size:12px">' + esc(evidenceText({ evidence: x.evidence || {} })) + '</div>' }]) + '</details>';
+  if ((o.events || []).length) html += '<details class="card"><summary>Approval trail (' + o.events.length + ')</summary>' + lineTable(o.events, [{ h: 'When', f: (e) => esc(String(e.created_at).slice(0, 19).replace('T', ' ')) }, { h: 'What', f: (e) => esc(e.object_type) + ' ' + esc(e.event) }, { h: 'Who', f: (e) => esc(e.actor_label || e.actor_id) + ' <span class="muted">(' + esc(e.actor_kind) + (e.channel ? ', ' + esc(e.channel) : '') + ')</span>' }, { h: 'Fingerprint', f: (e) => '<span class="mono" style="font-size:11px">' + esc(String(e.fingerprint || '').slice(0, 16)) + '</span>' }]) + '</details>';
+  el.innerHTML = html;
+  el.querySelectorAll('button[data-dec]').forEach((b) => { b.onclick = () => {
+    const dec = b.getAttribute('data-dec'); const fp = b.getAttribute('data-fp');
+    let note = null;
+    if (dec === 'rejected') { note = prompt('Why are you rejecting it? (at least 10 characters)'); if (note === null) return; }
+    else if (!confirm('Approve this exact ' + b.getAttribute('data-type') + '?\n\nFingerprint ' + fp + '\n\nRecorded under your name; nothing is posted until the conversion is executed.')) return;
+    act(() => api('/api/onboarding/batches/' + encodeURIComponent(v.batch.id) + '/conversion-objects/' + b.getAttribute('data-type') + '/' + encodeURIComponent(b.getAttribute('data-id')) + '/decision', json({ decision: dec, fingerprint: fp, note })), dec === 'approved' ? 'Approved. The operator re-runs what depends on it.' : 'Rejected.');
+  }; });
+}
+
 async function loadDetail(id) {
   $('listView').hidden = true; $('detailView').hidden = false;
   const v = await api('/api/onboarding/batches/' + encodeURIComponent(id));
   renderDetail(v);
   renderOperator(v);
   await loadPreflight(v);
+  await loadConversionObjects(v);
   if (v.latest_by_stage && v.latest_by_stage.snapshot) await loadSnapshot(id); else $('snapshot').innerHTML = '';
   if (v.latest_by_stage && v.latest_by_stage.activity_bridge) await loadBridge(id, v); else $('bridge').innerHTML = '';
 }

@@ -17,7 +17,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { createRequire } from 'module';
-import { onboardingWorld, COMM } from './onboarding_world.mjs';
+import { normalizeFacts, onboardingWorld, COMM } from './onboarding_world.mjs';
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 let PGlite;
 try { ({ PGlite } = await import(process.env.PGLITE_MODULE || '@electric-sql/pglite')); }
@@ -42,7 +42,7 @@ async function toPdf(text) {
 }
 function memoryStorage() { const m = new Map(); return { m, async putOnce(p, b) { if (!m.has(p)) m.set(p, Buffer.from(b)); }, async get(p) { return Buffer.from(m.get(p)); } }; }
 
-const world = await onboardingWorld(PGlite, { through: 486 });
+const world = await onboardingWorld(PGlite, { through: 486, primitives: true });   // 535: the service persists / reads source facts
 const tje = (id, d, mod, amt, extra = {}) => ({ id, posting_date: d, source_module: mod, status: 'posted', total_debits_cents: amt, total_credits_cents: amt, description: '', ...extra });
 const trustedReader = async () => ({ trusted: { journal_entries: [tje('t-legacy', '2026-02-01', 'vantaca_import', 61000), tje('t-ach', '2026-03-05', 'payment_intake', 15000, { description: 'AP payment ach' })], journal_entry_lines: [], ap_invoices: [], ap_payments: [], ar_charges: [], ar_payments: [], payments: [], homeowner_transactions: [] }, accountNumber: () => null, accountOfProperty: () => null });
 const storage = memoryStorage();
@@ -88,7 +88,7 @@ check('DB: a direct system stage_advanced event on the BLOCKED bridge is refused
 // a separate batch walked to preflight with PASS results: system may not advance into execute
 const B2 = await world.rpc('onboarding_create_batch', { p_community: COMM, p_batch_code: 'CONV-EX-EXEC', p_as_of: '2026-03-31', p_source_system: 'vantaca', p_actor_kind: 'human', p_actor_id: 'ed' });
 const ctl = [{ code: 'ok', label: 'ok', status: 'PASS' }];
-for (const s of ['intake', 'normalize', 'source_controls']) { const c = await world.rpc('onboarding_record_completion', { p_batch: B2, p_stage: s, p_status: 'PASS', p_open: [], p_controls: ctl, p_summary: {}, p_actor_kind: 'system', p_actor_id: 'op' }); await world.rpc('onboarding_auto_advance', { p_batch: B2, p_completion: c, p_actor_id: 'op' }); }
+for (const s of ['intake', 'normalize', 'source_controls']) { const c = await world.rpc('onboarding_record_completion', { p_batch: B2, p_stage: s, p_status: 'PASS', p_open: [], p_controls: ctl, p_summary: s === 'normalize' ? await normalizeFacts(world.rpc, B2) : {}, p_actor_kind: 'system', p_actor_id: 'op' }); await world.rpc('onboarding_auto_advance', { p_batch: B2, p_completion: c, p_actor_id: 'op' }); }
 const sn = await world.rpc('onboarding_record_snapshot', { p_batch: B2, p_status: 'PASS', p_open: [], p_controls: ctl, p_summary: {}, p_lines: [], p_snapshot_sha256: 'a'.repeat(64), p_actor_kind: 'system', p_actor_id: 'op' });
 await world.rpc('onboarding_auto_advance', { p_batch: B2, p_completion: sn, p_actor_id: 'op' });
 const br = await world.rpc('onboarding_record_bridge', { p_batch: B2, p_status: 'PASS', p_open: [], p_controls: ctl, p_summary: { snapshot_completion_id: sn }, p_items: [], p_bridge_sha256: 'b'.repeat(64), p_trusted_fingerprint: 'c'.repeat(64), p_actor_kind: 'system', p_actor_id: 'op' });
@@ -106,7 +106,7 @@ check('metrics: each waiver is a judgment, the owner advance of a waived result 
 
 // 3c. The database accepts the evidence-settled classifications (line identity; the period question).
 const B6 = await world.rpc('onboarding_create_batch', { p_community: COMM, p_batch_code: 'CONV-EX-EVIDENCE', p_as_of: '2026-03-31', p_source_system: 'vantaca', p_actor_kind: 'human', p_actor_id: 'ed' });
-for (const s of ['intake', 'normalize', 'source_controls']) { const c = await world.rpc('onboarding_record_completion', { p_batch: B6, p_stage: s, p_status: 'PASS', p_open: [], p_controls: ctl, p_summary: {}, p_actor_kind: 'system', p_actor_id: 'op' }); await world.rpc('onboarding_auto_advance', { p_batch: B6, p_completion: c, p_actor_id: 'op' }); }
+for (const s of ['intake', 'normalize', 'source_controls']) { const c = await world.rpc('onboarding_record_completion', { p_batch: B6, p_stage: s, p_status: 'PASS', p_open: [], p_controls: ctl, p_summary: s === 'normalize' ? await normalizeFacts(world.rpc, B6) : {}, p_actor_kind: 'system', p_actor_id: 'op' }); await world.rpc('onboarding_auto_advance', { p_batch: B6, p_completion: c, p_actor_id: 'op' }); }
 const sn6 = await world.rpc('onboarding_record_snapshot', { p_batch: B6, p_status: 'PASS', p_open: [], p_controls: ctl, p_summary: {}, p_lines: [], p_snapshot_sha256: 'd'.repeat(64), p_actor_kind: 'system', p_actor_id: 'op' });
 await world.rpc('onboarding_auto_advance', { p_batch: B6, p_completion: sn6, p_actor_id: 'op' });
 const item = (n, cls, method, evidence) => ({ item_no: n, event_key: `je:x${n}`, kind: 'system', classification: cls, method, confidence: 'high', event_date: '2026-01-01', amount_cents: 218833, evidence, structural_issues: [], records: [`journal_entries:x${n}`], batch_code: 'CONV-EX-EVIDENCE', cutoff_date: '2026-03-31' });

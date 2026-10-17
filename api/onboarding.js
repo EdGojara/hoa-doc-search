@@ -25,6 +25,12 @@
 //   POST /batches/:id/approve          approve the exact current preflight: { completion_id, preflight_sha256 } (OWNER)
 //   POST /batches/:id/execute          execute the approved preflight: { completion_id, preflight_sha256 } (OWNER)
 //   GET  /batches/:id/execution        execution records (committed / failed attempts; read-only)
+//   GET  /batches/:id/conversion-objects   adjustments, policies, bridge exceptions, audit trail (535; read-only)
+//   POST /batches/:id/adjustments      propose a conversion adjustment (admin; never approves)
+//   POST /batches/:id/policies         propose a conversion policy (admin; never approves)
+//   POST /batches/:id/conversion-objects/:type/:oid/decision
+//                                      approve / reject exactly the fingerprint shown (OWNER, signed in;
+//                                      the database records channel in_app and the owner's user id)
 //
 // The actor is ALWAYS built here from the authenticated user; any actor /
 // actor_kind / role in a request body is ignored. Admin = role admin; owner =
@@ -200,6 +206,27 @@ function buildRouter({ service, auth, listCommunities }) {
   router.post('/batches/:id/execute', express.json({ limit: '64kb' }), async (req, res) => {
     try { const o = await owner(req, res); if (!o) return; const b = req.body || {}; res.json({ execution: await service.execute(o, req.params.id, { completion_id: b.completion_id, preflight_sha256: b.preflight_sha256 }) }); }
     catch (e) { fail(res, e, 'execute'); }
+  });
+
+  // ---- 535: conversion adjustments / policies (proposed by staff or the operator, decided by the owner)
+  router.get('/batches/:id/conversion-objects', async (req, res) => {
+    try { if (!(await admin(req, res))) return; res.json(await service.listObjects(req.params.id)); }
+    catch (e) { fail(res, e, 'conversion objects'); }
+  });
+  router.post('/batches/:id/adjustments', express.json({ limit: '64kb' }), async (req, res) => {
+    try { const a = await admin(req, res); if (!a) return; res.json(await service.proposeAdjustment(a, req.params.id, req.body || {})); }
+    catch (e) { fail(res, e, 'propose adjustment'); }
+  });
+  router.post('/batches/:id/policies', express.json({ limit: '64kb' }), async (req, res) => {
+    try { const a = await admin(req, res); if (!a) return; res.json(await service.proposePolicy(a, req.params.id, req.body || {})); }
+    catch (e) { fail(res, e, 'propose policy'); }
+  });
+  router.post('/batches/:id/conversion-objects/:type/:oid/decision', express.json({ limit: '16kb' }), async (req, res) => {
+    // The owner from the authenticated session; the request body names only the decision and the
+    // fingerprint the owner saw. channel 'in_app' is set HERE, never taken from the body.
+    try { const o = await owner(req, res); if (!o) return; const b = req.body || {};
+      res.json(await service.decideObject(o, req.params.id, { object_type: req.params.type, id: req.params.oid, decision: b.decision, fingerprint: b.fingerprint, note: b.note || null, channel: 'in_app' })); }
+    catch (e) { fail(res, e, 'decide conversion object'); }
   });
 
   router.get('/batches/:id/execution', async (req, res) => {
