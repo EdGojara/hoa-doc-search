@@ -64,6 +64,8 @@
       <a href="/admin/upcoming" style="background:#fff;color:var(--navy);border:1px solid var(--line);padding:10px 16px;border-radius:9px;font-size:14px;font-weight:700;cursor:pointer;white-space:nowrap;text-decoration:none;display:inline-flex;align-items:center;gap:6px;">&#128197; Upcoming</a>
       <button id="pullBtn" onclick="pullNow()" style="background:#fff;color:var(--navy);border:1px solid var(--line);padding:10px 16px;border-radius:9px;font-size:14px;font-weight:700;cursor:pointer;white-space:nowrap;">&#128260; Pull inbox</button>
       <button onclick="loadUnattributed()" title="Homeowner emails not yet linked to a 360 — assign each so the whole thread lands on the right homeowner" style="background:#fff;color:var(--navy);border:1px solid var(--line);padding:10px 16px;border-radius:9px;font-size:14px;font-weight:700;cursor:pointer;white-space:nowrap;">&#128279; Unattributed<span id="unattribCount" style="display:none;background:var(--gold);color:var(--navy);border-radius:10px;padding:0 7px;font-size:12px;margin-left:5px;"></span></button>
+      <span style="position:relative;"><button id="ncDraftsBtn" onclick="ncToggleDrafts()" title="Emails drafted in New Email that have not been sent" style="display:none;background:#fff;color:var(--navy);border:1px solid var(--line);padding:10px 16px;border-radius:9px;font-size:14px;font-weight:700;cursor:pointer;white-space:nowrap;align-items:center;gap:6px;">&#128221; Unsent drafts <span id="ncDraftsCount" style="background:var(--gold);color:var(--navy);border-radius:10px;padding:0 7px;font-size:12px;">0</span></button>
+        <div id="ncDraftsList" style="display:none;position:absolute;right:0;top:100%;margin-top:4px;width:min(420px,90vw);max-height:360px;overflow:auto;background:#fff;border:1px solid var(--line);border-radius:10px;box-shadow:0 10px 30px rgba(11,29,52,.15);z-index:50;"></div></span>
       <button onclick="openCompose()" style="background:var(--gold);color:var(--navy);border:none;padding:10px 18px;border-radius:9px;font-size:14px;font-weight:700;cursor:pointer;white-space:nowrap;">&#9993;&#65039; New email</button>
     </div>
   </div>
@@ -1243,10 +1245,11 @@ async function loadBoardGroups(){
     const byComm = {};
     for (const m of (j.members||[])) {
       if (!m.email) continue;
-      (byComm[m.community_name] = byComm[m.community_name] || []).push(m.email.trim());
+      const g = (byComm[m.community_name] = byComm[m.community_name] || new Map());
+      const e = m.email.trim(); if (!g.has(e.toLowerCase())) g.set(e.toLowerCase(), { email:e, name:m.name||null, position:m.position||null });
     }
     boardGroups = Object.entries(byComm)
-      .map(([community, emails])=>({community, emails:[...new Set(emails)]}))
+      .map(([community, mm])=>{ const members=[...mm.values()]; return {community, members, emails:members.map(x=>x.email)}; })
       .sort((a,b)=>a.community.localeCompare(b.community));
   } catch(_) { boardGroups = []; }
 }
@@ -1357,7 +1360,13 @@ window.pullNow = async function(){
   finally{ btn.disabled=false; btn.innerHTML=o; }
 };
 
-// ---- New email (compose as Claire) — same endpoints as the main-app tab ----
+// ---- New email (compose as an AI teammate) ----------------------------------
+// The window saves itself as a DRAFT as you work (POST /compose/drafts), and the
+// draft is a task on the sending agent's Mission Control list until it is sent
+// or discarded. Closing the window never loses it: reopen from "Unsent drafts"
+// or from the task (?compose_draft=<id>). Attachments are stored with the draft.
+// To/Cc are recipient chips with autocomplete over trustEd's contacts; the
+// "+ add a board list, staff, everyone, or an AI agent" picker adds chips too.
 const COMPOSE_PERSONAS = {
   claire:  {name:'Claire',            first:'Claire',  mail:'claire@bedrocktx.com'},
   emma:    {name:'Emma Brooks',       first:'Emma',    mail:'emma@bedrocktx.com'},
@@ -1376,22 +1385,135 @@ const COMPOSE_PERSONAS = {
 // 2026-07-26: a forward went out with "(see below)" but no history below.)
 let forwardHistory = '';
 const FWD_MARKER = '----- Forwarded message -----';
+const NC_EMAIL_RE = /^[^@\s,;()<>"'`]+@[^@\s,;()<>"'`]+\.[^@\s,;()<>"'`]+$/;
+const NC_ACCEPT = '.pdf,.doc,.docx,.xls,.xlsx,.csv,.png,.jpg,.jpeg,.gif,.webp,.heic,.heif,.bmp,.tif,.tiff';
+const escA = s => esc(s).replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+// One compose window's state. draftId is null until there is something to save.
+const NC = { draftId:null, to:[], cc:[], attachments:[], aiDrafted:false, status:'draft', saveTimer:null, saving:null, pendingSave:false, opening:false, sug:{nmTo:[],nmCc:[]}, sugIdx:{nmTo:-1,nmCc:-1}, searchTimer:{}, communities:[] };
 function ncP(){ return document.getElementById('nmPersona').value || 'claire'; }
+function ncWho(){ return (COMPOSE_PERSONAS[ncP()]||COMPOSE_PERSONAS.claire).first; }
+function ncStatus(msg, color){ const st=document.getElementById('nmStatus'); st.style.color=color||'#5a7390'; st.textContent=msg||''; }
+function ncSaveNote(msg, color){ const el=document.getElementById('nmSaveNote'); if(el){ el.style.color=color||'var(--muted)'; el.textContent=msg||''; } }
 window.ncPersonaChange = function(){
   const p = COMPOSE_PERSONAS[ncP()] || COMPOSE_PERSONAS.claire;
   document.getElementById('nmHeaderTitle').innerHTML = '✉️ New email from '+esc(p.first);
   document.getElementById('nmFromHint').innerHTML = 'Sends from <strong>'+esc(p.mail)+'</strong> with the Bedrock logo + honest-AI signature.';
-  document.getElementById('nmDraftLabel').innerHTML = '✍️ Have '+esc(p.first)+' write it <span style="font-weight:400; color:var(--muted);">— tell '+esc(p.first)+' the gist, she drafts it, you edit below</span>';
+  document.getElementById('nmDraftLabel').innerHTML = '✍️ Have '+esc(p.first)+' write it <span style="font-weight:400; color:var(--muted);">tell '+esc(p.first)+' the gist, she drafts it, you edit below</span>';
   document.getElementById('nmSendBtn').textContent = 'Send as '+esc(p.first);
+  document.getElementById('nmBody').placeholder = 'Write the message, or use “Have '+p.first+' write it” above. Signature + logo are added automatically.';
+  ncTouch();
 };
-// Populate the To/Cc quick-add pickers: Everyone (all staff), each staff member,
-// and the AI-agent mailboxes. Free-text stays for external addresses.
+async function ncLoadCommunities(){
+  if(!NC.communities.length){
+    try{ const r=await af('/api/email-triage/compose/communities'); const j=await r.json(); NC.communities=j.communities||[]; }catch(_){ NC.communities=[]; }
+  }
+  const sel=document.getElementById('nmCommunity'); const cur=sel.value;
+  sel.innerHTML='<option value="">(none, search everyone)</option>'+NC.communities.map(c=>`<option value="${escA(c.id)}">${esc(c.name)}</option>`).join('');
+  sel.value=cur; return NC.communities;
+}
+function ncCommunityName(){ const sel=document.getElementById('nmCommunity'); const c=NC.communities.find(x=>x.id===sel.value); return c?c.name:''; }
+
+// ---- recipient chips -----------------------------------------------------------
+function ncList(fieldId){ return fieldId==='nmCc' ? NC.cc : NC.to; }
+function ncAllEmails(){ return [...NC.to, ...NC.cc].map(r=>r.email.toLowerCase()); }
+function ncRenderChips(fieldId){
+  const wrap=document.getElementById(fieldId+'Chips');
+  wrap.innerHTML = ncList(fieldId).map((r,i)=>`<span class="nc-chip" title="${escA([r.email, r.role, r.community_name].filter(Boolean).join(' · '))}">${esc(r.name||r.email)}${r.name?` <span class="nc-chip-mail">${esc(r.email)}</span>`:''}<a href="#" aria-label="Remove ${escA(r.name||r.email)}" onclick="event.preventDefault();ncRemoveChip('${fieldId}',${i})">×</a></span>`).join('');
+}
+// Add recipients to To or Cc. One address appears once across To and Cc.
+function ncAddChips(fieldId, items){
+  const have=new Set(ncAllEmails()); const list=ncList(fieldId); let added=0, dup=0;
+  for(const it of items||[]){
+    const email=String(it.email||'').trim(); if(!NC_EMAIL_RE.test(email)) continue;
+    if(have.has(email.toLowerCase())){ dup++; continue; }
+    have.add(email.toLowerCase()); list.push({ email, name:it.name||null, role:it.role||null, community_name:it.community_name||null, source:it.source||'manual' }); added++;
+  }
+  ncRenderChips(fieldId);
+  if(dup && !added) ncStatus((dup===1?'That address is':'Those addresses are')+' already on this email.');
+  if(added) ncTouch();
+  return added;
+}
+window.ncRemoveChip = function(fieldId, i){ ncList(fieldId).splice(i,1); ncRenderChips(fieldId); ncTouch(); document.getElementById(fieldId+'Input').focus(); };
+// Typed text becomes chips when it is a valid address; anything else stays in the
+// box, flagged, so a bad address is never silently dropped.
+function ncCommitTyped(fieldId){
+  const inp=document.getElementById(fieldId+'Input'); const parts=inp.value.split(/[,;\s]+/).map(s=>s.trim()).filter(Boolean);
+  if(!parts.length){ inp.style.borderColor=''; return true; }
+  const good=parts.filter(p=>NC_EMAIL_RE.test(p)), bad=parts.filter(p=>!NC_EMAIL_RE.test(p));
+  if(good.length) ncAddChips(fieldId, good.map(email=>({email, source:'manual'})));
+  inp.value=bad.join(' ');
+  if(bad.length){ inp.style.borderColor='#b91c1c'; ncStatus('Not an email address: '+bad.join(', ')+'. Pick a name from the list or type a full address.','#b91c1c'); return false; }
+  inp.style.borderColor=''; return true;
+}
+function ncHideSug(fieldId){ const b=document.getElementById(fieldId+'Sug'); if(b){ b.style.display='none'; b.innerHTML=''; } NC.sug[fieldId]=[]; NC.sugIdx[fieldId]=-1; }
+function ncRenderSug(fieldId, results, note){
+  const box=document.getElementById(fieldId+'Sug'); NC.sug[fieldId]=results; NC.sugIdx[fieldId]=results.length?0:-1;
+  if(!results.length && !note){ ncHideSug(fieldId); return; }
+  box.innerHTML = results.map((r,i)=>`<div class="nc-sug${i===0?' on':''}" role="option" data-i="${i}" onmousedown="event.preventDefault();ncPickSug('${fieldId}',${i})">
+      <div class="nc-sug-name">${esc(r.kind==='list'?r.label:(r.name||r.email))}</div>
+      <div class="nc-sug-meta">${esc(r.kind==='list'?(r.emails.length+' addresses'):r.email)}${r.role?' · '+esc(r.role):''}${r.community_name?' · '+esc(r.community_name):''}</div></div>`).join('')
+    + (note?`<div class="nc-sug-note">${esc(note)}</div>`:'');
+  box.style.display='block';
+}
+function ncSearch(fieldId){
+  clearTimeout(NC.searchTimer[fieldId]);
+  const q=document.getElementById(fieldId+'Input').value.trim();
+  if(q.length<2){ ncHideSug(fieldId); return; }
+  NC.searchTimer[fieldId]=setTimeout(async()=>{
+    try{
+      const cid=document.getElementById('nmCommunity').value;
+      const r=await af('/api/email-triage/compose/recipients?q='+encodeURIComponent(q)+(cid?'&community_id='+encodeURIComponent(cid):''));
+      const j=await r.json();
+      if(document.getElementById(fieldId+'Input').value.trim()!==q) return;   // stale answer
+      if(!r.ok){ ncRenderSug(fieldId, [], 'Search is unavailable. You can still type a full email address.'); return; }
+      const have=new Set(ncAllEmails());
+      const res=(j.results||[]).filter(x=>x.kind==='list' || !have.has(String(x.email).toLowerCase()));
+      const note=(j.problems&&j.problems.length?'Some contact sources did not answer ('+j.problems.join(', ')+').':'') || (!res.length?(NC_EMAIL_RE.test(q)?'Press Enter to add '+q+'.':'No matches. Type a full email address to add someone new.'):'');
+      ncRenderSug(fieldId, res, note);
+    }catch(_){ ncRenderSug(fieldId, [], 'Search is unavailable. You can still type a full email address.'); }
+  }, 180);
+}
+window.ncPickSug = function(fieldId, i){
+  const r=NC.sug[fieldId][i]; if(!r) return;
+  if(r.kind==='list') ncAddChips(fieldId, r.emails.map(email=>({email, role:r.label, community_name:r.community_name, source:'list'})));
+  else ncAddChips(fieldId, [r]);
+  const inp=document.getElementById(fieldId+'Input'); inp.value=''; inp.style.borderColor=''; ncHideSug(fieldId); inp.focus();
+};
+function ncKey(e, fieldId){
+  const box=NC.sug[fieldId]||[]; const inp=e.target;
+  if(e.key==='ArrowDown'||e.key==='ArrowUp'){
+    if(!box.length) return; e.preventDefault();
+    NC.sugIdx[fieldId]=(NC.sugIdx[fieldId]+(e.key==='ArrowDown'?1:-1)+box.length)%box.length;
+    document.querySelectorAll('#'+fieldId+'Sug .nc-sug').forEach((el,k)=>el.classList.toggle('on',k===NC.sugIdx[fieldId]));
+  } else if(e.key==='Enter'||e.key==='Tab'||e.key===','||e.key===';'){
+    if(e.key==='Tab' && !inp.value.trim()) return;
+    if(box.length && NC.sugIdx[fieldId]>=0 && !NC_EMAIL_RE.test(inp.value.trim())){ e.preventDefault(); ncPickSug(fieldId, NC.sugIdx[fieldId]); return; }
+    if(inp.value.trim()){ e.preventDefault(); ncCommitTyped(fieldId); ncHideSug(fieldId); }
+  } else if(e.key==='Escape'){ ncHideSug(fieldId); }
+  else if(e.key==='Backspace' && !inp.value){ const l=ncList(fieldId); if(l.length){ l.pop(); ncRenderChips(fieldId); ncTouch(); } }
+}
+// Leaving the box keeps any complete address as a chip and leaves the rest as
+// typed (no warning while someone is still choosing); Enter and Send flag it.
+function ncBlur(fieldId){ setTimeout(()=>{
+  if(document.activeElement===document.getElementById(fieldId+'Input')) return;
+  ncHideSug(fieldId);
+  const inp=document.getElementById(fieldId+'Input'); const parts=inp.value.split(/[,;\s]+/).filter(Boolean);
+  if(parts.length && parts.every(p=>NC_EMAIL_RE.test(p))) ncCommitTyped(fieldId);
+},150); }
+function ncPaste(e, fieldId){
+  const t=(e.clipboardData||window.clipboardData).getData('text')||''; if(!/[,;\s]/.test(t.trim())) return;
+  e.preventDefault(); const inp=document.getElementById(fieldId+'Input'); inp.value=(inp.value+' '+t).trim(); ncCommitTyped(fieldId);
+}
+
+// The quick-add picker: Everyone (all staff), each community's board list, each
+// staff member, and the AI agents. It adds chips through the same path as
+// autocomplete, so the two never disagree or double-add.
 async function ncFillPickers(){
   if(!staffCache.length){ try{ await loadStaff(); }catch(_){} }
   if(!boardGroups.length){ try{ await loadBoardGroups(); }catch(_){} }
-  const staffOpts = staffCache.map(u=>`<option value="${esc(u.email)}">${esc(u.full_name||u.email)}${u.role?' ('+esc(u.role)+')':''}</option>`).join('');
-  const agentOpts = Object.values(COMPOSE_PERSONAS).map(p=>`<option value="${esc(p.mail)}">${esc(p.name)}</option>`).join('');
-  const boardOpts = boardGroups.map(g=>`<option value="${esc(g.emails.join(', '))}">🏛️ ${esc(g.community)} — Board (${g.emails.length})</option>`).join('');
+  const staffOpts = staffCache.map(u=>`<option value="staff:${escA(u.email)}">${esc(u.full_name||u.email)}${u.role?' ('+esc(u.role)+')':''}</option>`).join('');
+  const agentOpts = Object.keys(COMPOSE_PERSONAS).map(k=>`<option value="agent:${k}">${esc(COMPOSE_PERSONAS[k].name)}</option>`).join('');
+  const boardOpts = boardGroups.map((g,i)=>`<option value="board:${i}">🏛️ ${esc(g.community)} Board (${g.members.length})</option>`).join('');
   const html = `<option value="">+ add a board list, staff, everyone, or an AI agent…</option>`
     + `<option value="__all_staff__">👥 Everyone (all staff)</option>`
     + (boardOpts?`<optgroup label="Board distribution lists">${boardOpts}</optgroup>`:'')
@@ -1400,69 +1522,227 @@ async function ncFillPickers(){
   const tp=document.getElementById('nmToPick'), cp=document.getElementById('nmCcPick');
   if(tp) tp.innerHTML=html; if(cp) cp.innerHTML=html;
 }
-// Append the picked address(es) to the To/Cc field, de-duped. Keeps whatever the
-// operator already typed (external emails included).
 function ncAddRecip(fieldId, sel){
-  const v=sel.value; sel.value='';
-  if(!v) return;
-  const field=document.getElementById(fieldId); if(!field) return;
-  const toAdd = v==='__all_staff__' ? staffCache.map(u=>u.email).filter(Boolean)
-    : v.split(/[;,]/).map(x=>x.trim()).filter(Boolean); // a board-list option is a joined string
+  const v=sel.value; sel.value=''; if(!v) return;
+  let items=[];
+  if(v==='__all_staff__') items=staffCache.filter(u=>u.email).map(u=>({email:u.email, name:u.full_name||null, role:'Staff', source:'list'}));
+  else if(v.startsWith('board:')){ const g=boardGroups[+v.slice(6)]; if(g) items=g.members.map(m=>({email:m.email, name:m.name||null, role:'Board'+(m.position?' '+m.position:''), community_name:g.community, source:'board'})); }
+  else if(v.startsWith('staff:')){ const u=staffCache.find(x=>x.email===v.slice(6)); items=[{email:v.slice(6), name:u&&u.full_name||null, role:'Staff', source:'staff'}]; }
+  else if(v.startsWith('agent:')){ const p=COMPOSE_PERSONAS[v.slice(6)]; if(p) items=[{email:p.mail, name:p.name, role:'AI team', source:'agent'}]; }
+  ncAddChips(fieldId, items);
+}
 
-  const existing = field.value.split(/[,;]/).map(x=>x.trim()).filter(Boolean);
-  for(const a of toAdd){ if(!existing.some(e=>e.toLowerCase()===a.toLowerCase())) existing.push(a); }
-  field.value = existing.join(', ');
+// ---- attachments ---------------------------------------------------------------
+function ncRenderAtts(){
+  const w=document.getElementById('nmAttList');
+  w.innerHTML = NC.attachments.map((a,i)=>`<span class="nc-att${a.failed?' bad':''}">📎 ${esc(a.name)}${a.size?` <span class="nc-chip-mail">${Math.max(1,Math.round(a.size/1024))} KB</span>`:''}${a.uploading?' <span class="nc-chip-mail">uploading…</span>':''}${a.failed?` <span>${esc(a.failed)}</span>`:''}${a.uploading?'':`<a href="#" aria-label="Remove ${escA(a.name)}" onclick="event.preventDefault();ncRemoveAtt(${i})">×</a>`}</span>`).join('');
+}
+window.ncPickFiles = function(){ document.getElementById('nmFile').click(); };
+window.ncFiles = async function(fileList){
+  const files=[...(fileList||[])]; if(!files.length) return;
+  const id = await ncEnsureDraft();
+  if(!id){ ncStatus('Could not save the draft, so nothing was attached. Try again.','#b91c1c'); return; }
+  for(const f of files){
+    const ext=String(f.name).toLowerCase().split('.').pop();
+    if(!NC_ACCEPT.split(',').includes('.'+ext)){ NC.attachments.push({ name:f.name, failed:'not a PDF, Word, Excel or image file. Not attached.' }); ncRenderAtts(); continue; }
+    if(f.size>15*1024*1024){ NC.attachments.push({ name:f.name, failed:'larger than 15 MB. Not attached.' }); ncRenderAtts(); continue; }
+    const row={ name:f.name, size:f.size, uploading:true };
+    NC.attachments.push(row); ncRenderAtts();
+    try{
+      const fd=new FormData(); fd.append('file', f);
+      const r=await af('/api/email-triage/compose/drafts/'+id+'/attachments',{method:'POST', body:fd});
+      const j=await r.json().catch(()=>({}));
+      if(!r.ok||!j.ok){ row.uploading=false; row.failed=(j.detail||j.error||'upload failed')+' Not attached.'; }
+      else { const i=NC.attachments.indexOf(row); NC.attachments[i]=j.attachment; }
+    }catch(e){ row.uploading=false; row.failed='upload failed ('+(e.message||'network')+'). Not attached.'; }
+    ncRenderAtts();
+  }
+  if(NC.attachments.some(a=>a.failed)) ncStatus('A file was not attached. It is marked in red; remove it and try again.','#b91c1c');
+  else ncSaveNote('Draft saved · on '+ncWho()+'’s to-do list');
+};
+window.ncRemoveAtt = async function(i){
+  const a=NC.attachments[i]; if(!a) return;
+  if(!a.storage_path){ NC.attachments.splice(i,1); ncRenderAtts(); return; }
+  try{
+    const r=await af('/api/email-triage/compose/drafts/'+NC.draftId+'/attachments',{method:'DELETE',headers:{'Content-Type':'application/json'},body:JSON.stringify({storage_path:a.storage_path})});
+    const j=await r.json().catch(()=>({}));
+    if(!r.ok){ ncStatus('Could not remove '+a.name+': '+(j.detail||j.error||'error'),'#b91c1c'); return; }
+    NC.attachments = NC.attachments.filter(x=>x.storage_path!==a.storage_path);
+    ncRenderAtts();
+  }catch(e){ ncStatus('Could not remove '+a.name+'.','#b91c1c'); }
+};
+function ncDragOver(e){ if(!_hasFiles(e)) return; e.preventDefault(); document.getElementById('nmAttRow').classList.add('dragging'); }
+function ncDragLeave(e){ const b=document.getElementById('nmAttRow'); if(!b.contains(e.relatedTarget)) b.classList.remove('dragging'); }
+function ncDrop(e){ if(!_hasFiles(e)) return; e.preventDefault(); document.getElementById('nmAttRow').classList.remove('dragging'); ncFiles(e.dataTransfer.files); }
+
+// ---- draft save (autosave) -----------------------------------------------------
+function ncPayload(){
+  return { draft_id:NC.draftId, persona:ncP(), to:NC.to, cc:NC.cc,
+    subject:document.getElementById('nmSubject').value, body:document.getElementById('nmBody').value,
+    community_id:document.getElementById('nmCommunity').value||null, intent:document.getElementById('nmIntent').value,
+    ai_drafted:NC.aiDrafted, source_email_id:window._composeSourceId||null };
+}
+function ncHasContent(p){ return !!(p.to.length||p.cc.length||String(p.subject).trim()||String(p.body).trim()||String(p.intent).trim()); }
+function ncTouch(){
+  if(NC.opening || NC.status!=='draft') return;
+  clearTimeout(NC.saveTimer); NC.saveTimer=setTimeout(()=>ncSave(), 1200);
+  if(NC.draftId) ncSaveNote('Saving…');
+}
+// Serialized: one save in flight; a change during it queues one more.
+// opts.force saves even an empty window (a file is content).
+async function ncSave(opts){
+  clearTimeout(NC.saveTimer); NC.saveTimer=null;
+  if(NC.saving){ NC.pendingSave=true; return NC.saving; }
+  const p=ncPayload(); if(!NC.draftId && !ncHasContent(p) && !(opts&&opts.force)) return null;
+  NC.saving=(async()=>{
+    try{
+      const r=await af('/api/email-triage/compose/drafts',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...p, for_attachment:!!(opts&&opts.force)})});
+      const j=await r.json().catch(()=>({}));
+      if(!r.ok||!j.ok){ ncSaveNote('Not saved: '+(j.detail||j.error||('HTTP '+r.status)),'#b91c1c'); return null; }
+      NC.draftId=j.draft_id;
+      if(j.task && j.task.error) ncSaveNote(j.task.error,'#b91c1c');
+      else ncSaveNote('Draft saved · on '+(j.agent||ncWho())+'’s to-do list');
+      document.getElementById('nmDiscard').style.display='inline';
+      return NC.draftId;
+    }catch(e){ ncSaveNote('Not saved (network). Your text is still here.','#b91c1c'); return null; }
+    finally{ NC.saving=null; if(NC.pendingSave){ NC.pendingSave=false; ncSave(); } }
+  })();
+  return NC.saving;
+}
+// The draft id, saving first if anything is pending (an upload needs a draft).
+async function ncEnsureDraft(){
+  if(NC.saving) await NC.saving;
+  if(NC.draftId && !NC.saveTimer) return NC.draftId;
+  const id=await ncSave({force:true});
+  return id || NC.draftId;
+}
+
+// ---- open / close / reopen -----------------------------------------------------
+function ncReset(){
+  clearTimeout(NC.saveTimer); NC.saveTimer=null;
+  Object.assign(NC, { draftId:null, to:[], cc:[], attachments:[], aiDrafted:false, status:'draft', pendingSave:false });
+  forwardHistory=''; window._composeSourceId=null;
+  ['nmToInput','nmCcInput','nmSubject','nmIntent','nmBody'].forEach(id=>{ const el=document.getElementById(id); el.value=''; el.style.borderColor=''; });
+  document.getElementById('nmCommunity').value='';
+  ncRenderChips('nmTo'); ncRenderChips('nmCc'); ncRenderAtts(); ncStatus(''); ncSaveNote('');
+  const sb=document.getElementById('nmSendBtn'); sb.disabled=false; document.getElementById('nmDiscard').style.display='none';
 }
 window.openCompose = function(){
-  forwardHistory='';
-  window._composeSourceId = null;  // fresh compose has no source to re-attach from
-  document.getElementById('nmStatus').textContent='';
-  ['nmTo','nmCc','nmSubject','nmCommunity','nmIntent','nmBody'].forEach(id=>document.getElementById(id).value='');
+  NC.opening=true; ncReset();
   document.getElementById('nmPersona').value='claire'; ncPersonaChange();
-  ncFillPickers();
+  ncFillPickers(); ncLoadCommunities();
   document.getElementById('composeModal').style.display='flex';
-  setTimeout(()=>document.getElementById('nmTo').focus(),30);
+  NC.opening=false;
+  setTimeout(()=>document.getElementById('nmToInput').focus(),30);
 };
-window.closeCompose = function(){ document.getElementById('composeModal').style.display='none'; };
+window.openComposeDraft = async function(id){
+  try{
+    const r=await af('/api/email-triage/compose/drafts/'+encodeURIComponent(id)); const j=await r.json();
+    if(!r.ok||!j.draft){ alert(j.detail||'That draft could not be opened.'); return; }
+    const d=j.draft; NC.opening=true; ncReset();
+    await ncLoadCommunities(); ncFillPickers();
+    document.getElementById('nmPersona').value=COMPOSE_PERSONAS[d.persona]?d.persona:'claire'; ncPersonaChange();
+    NC.draftId=d.id; NC.status=d.status; NC.to=d.to||[]; NC.cc=d.cc||[]; NC.attachments=d.attachments||[]; NC.aiDrafted=!!d.ai_drafted;
+    window._composeSourceId=d.source_email_id||null;
+    document.getElementById('nmSubject').value=d.subject||''; document.getElementById('nmBody').value=d.body||''; document.getElementById('nmIntent').value=d.intent||'';
+    const sel=document.getElementById('nmCommunity'); sel.value=d.community_id||'';
+    ncRenderChips('nmTo'); ncRenderChips('nmCc'); ncRenderAtts();
+    document.getElementById('composeModal').style.display='flex';
+    NC.opening=false;
+    if(d.community_id && sel.value!==d.community_id) ncStatus('This draft is for '+(d.community_name||'a community')+', which is no longer in your list. Pick a community before sending.','#b91c1c');
+    if(d.status==='sent'){ ncStatus('This email was already sent'+(d.sent_at?' on '+new Date(d.sent_at).toLocaleString():'')+'.','#166534'); document.getElementById('nmSendBtn').disabled=true; }
+    else if(d.status==='send_requested'){ ncStatus('A send was started for this draft and not confirmed. Check '+ncWho()+'’s Sent folder before doing anything else.','#b91c1c'); document.getElementById('nmSendBtn').disabled=true; }
+    else if(d.status!=='draft'){ ncStatus('This draft was discarded.','#5a7390'); document.getElementById('nmSendBtn').disabled=true; }
+    else { document.getElementById('nmDiscard').style.display='inline'; ncSaveNote('Draft saved · on '+(d.agent||ncWho())+'’s to-do list'); if(d.send_error) ncStatus('Last send attempt did not go out: '+d.send_error,'#b91c1c'); }
+  }catch(e){ NC.opening=false; alert('That draft could not be opened.'); }
+};
+// Close (✕ or Cancel): never loses work. Anything typed is saved first and stays
+// on the agent's to-do list; an empty window just closes.
+window.closeCompose = async function(){
+  if(NC.status==='draft'){
+    ncCommitTyped('nmTo'); ncCommitTyped('nmCc');
+    if(NC.draftId || ncHasContent(ncPayload())){
+      const id=await ncSave();
+      if(!id && !NC.draftId){ if(!confirm('This draft could not be saved. Close anyway and lose it?')) return; }
+      else if(!id){ if(!confirm('Your latest edits could not be saved (the earlier version is kept). Close anyway?')) return; }
+      else ncToast('Draft kept on '+ncWho()+'’s to-do list. Reopen it from Unsent drafts.');
+    }
+  }
+  document.getElementById('composeModal').style.display='none';
+  loadComposeDrafts();
+};
+window.ncDiscard = async function(){
+  if(!NC.draftId){ document.getElementById('composeModal').style.display='none'; return; }
+  if(!confirm('Discard this draft? It comes off '+ncWho()+'’s to-do list and will not be sent.')) return;
+  try{
+    clearTimeout(NC.saveTimer); NC.saveTimer=null;
+    const r=await af('/api/email-triage/compose/drafts/'+NC.draftId+'/discard',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+    const j=await r.json().catch(()=>({}));
+    if(!r.ok){ ncStatus('Could not discard: '+(j.detail||j.error||'error'),'#b91c1c'); return; }
+    NC.status='discarded'; document.getElementById('composeModal').style.display='none'; ncToast('Draft discarded.'); loadComposeDrafts();
+  }catch(e){ ncStatus('Could not discard (network).','#b91c1c'); }
+};
+function ncToast(msg){ const t=document.getElementById('pullStatus'); if(t){ t.style.color='#166534'; t.textContent=msg; } }
+async function loadComposeDrafts(){
+  const btn=document.getElementById('ncDraftsBtn'); if(!btn) return;
+  try{
+    const r=await af('/api/email-triage/compose/drafts'); const j=await r.json(); const ds=j.drafts||[];
+    btn.style.display=ds.length?'inline-flex':'none'; document.getElementById('ncDraftsCount').textContent=ds.length;
+    document.getElementById('ncDraftsList').innerHTML = ds.map(d=>`<a href="#" onclick="event.preventDefault();document.getElementById('ncDraftsList').style.display='none';openComposeDraft('${escA(d.id)}')" class="nc-dl"><b>${esc(d.subject||'(no subject)')}</b><span>${esc(d.agent)} · to ${esc(d.to_name||d.to_email||'(no recipient yet)')}${d.community_name?' · '+esc(d.community_name):''}${d.attachment_count?' · 📎 '+d.attachment_count:''} · ${esc(new Date(d.updated_at).toLocaleString())}</span></a>`).join('');
+  }catch(_){ btn.style.display='none'; }
+}
+window.ncToggleDrafts = function(){ const l=document.getElementById('ncDraftsList'); l.style.display=l.style.display==='block'?'none':'block'; };
+
 window.ncDraft = async function(){
   const intent=document.getElementById('nmIntent').value.trim();
-  const to=document.getElementById('nmTo').value.trim();
-  const community_name=document.getElementById('nmCommunity').value.trim();
-  const st=document.getElementById('nmStatus'); const btn=document.getElementById('nmDraftBtn');
-  const who=(COMPOSE_PERSONAS[ncP()]||COMPOSE_PERSONAS.claire).first;
-  if(!intent){ st.style.color='#b91c1c'; st.textContent='Tell '+who+' what you want the email to say.'; return; }
-  btn.disabled=true; const o=btn.textContent; btn.textContent='Writing…'; st.style.color='#5a7390'; st.textContent=who+' is drafting…';
+  const to=NC.to.map(r=>r.email).join(', ');
+  const community_name=ncCommunityName();
+  const btn=document.getElementById('nmDraftBtn'); const who=ncWho();
+  if(!intent){ ncStatus('Tell '+who+' what you want the email to say.','#b91c1c'); return; }
+  btn.disabled=true; const o=btn.textContent; btn.textContent='Writing…'; ncStatus(who+' is drafting…');
   try{
     const r=await af('/api/email-triage/compose-draft',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({intent,to,community_name,persona:ncP()})});
     const j=await r.json();
-    if(!r.ok||!j.ok){ st.style.color='#b91c1c'; st.textContent=j.detail||j.error||'Could not draft.'; return; }
+    if(!r.ok||!j.ok){ ncStatus(j.detail||j.error||'Could not draft.','#b91c1c'); return; }
     if(j.subject && !document.getElementById('nmSubject').value.trim()) document.getElementById('nmSubject').value=j.subject;
     // Put the cover note on top; re-attach the forwarded history below so a
     // redraft never wipes it.
     document.getElementById('nmBody').value = (j.body||'') + (forwardHistory ? `\n\n${forwardHistory}` : '');
-    st.style.color='#166534'; st.textContent='✓ '+who+' drafted it'+(forwardHistory?' — the forwarded conversation is kept below.':'.')+' Edit anything, then send.';
-  }catch(e){ st.style.color='#b91c1c'; st.textContent='Draft failed: '+(e.message||'network'); }
+    NC.aiDrafted=true; ncSave();
+    ncStatus('✓ '+who+' drafted it'+(forwardHistory?'. The forwarded conversation is kept below.':'.')+' It is saved as a draft on '+who+'’s to-do list. Edit anything, then send.','#166534');
+  }catch(e){ ncStatus('Draft failed: '+(e.message||'network'),'#b91c1c'); }
   finally{ btn.disabled=false; btn.textContent=o; }
 };
 window.ncSend = async function(){
-  const to=document.getElementById('nmTo').value.trim(), cc=document.getElementById('nmCc').value.trim();
-  const subject=document.getElementById('nmSubject').value.trim(), community_name=document.getElementById('nmCommunity').value.trim();
+  if(!ncCommitTyped('nmTo') || !ncCommitTyped('nmCc')) return;
   let body=document.getElementById('nmBody').value.trim();
   // Guarantee the forwarded history is included even if it was edited out.
   if(forwardHistory && !body.includes(FWD_MARKER)) body = (body?body+'\n\n':'') + forwardHistory;
-  const st=document.getElementById('nmStatus'); const btn=document.getElementById('nmSendBtn');
-  const who=(COMPOSE_PERSONAS[ncP()]||COMPOSE_PERSONAS.claire).first;
-  if(!to){ st.style.color='#b91c1c'; st.textContent='Enter at least one recipient email.'; return; }
-  if(!body){ st.style.color='#b91c1c'; st.textContent='Write a message, or have '+who+' draft one.'; return; }
-  btn.disabled=true; const o=btn.textContent; btn.textContent='Sending…'; st.style.color='#5a7390'; st.textContent='Sending as '+who+'…';
+  const btn=document.getElementById('nmSendBtn'); const who=ncWho();
+  if(!NC.to.length){ ncStatus('Add at least one recipient.','#b91c1c'); return; }
+  if(!body){ ncStatus('Write a message, or have '+who+' draft one.','#b91c1c'); return; }
+  if(NC.attachments.some(a=>a.uploading)){ ncStatus('Wait for the attachments to finish uploading.','#b91c1c'); return; }
+  if(NC.attachments.some(a=>a.failed)){ ncStatus('A file did not attach (marked in red). Remove it or attach it again before sending.','#b91c1c'); return; }
+  btn.disabled=true; const o=btn.textContent; btn.textContent='Sending…'; ncStatus('Sending as '+who+'…');
   try{
-    const r=await af('/api/email-triage/compose',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({to,cc,subject,community_name,body,persona:ncP(),source_email_id:window._composeSourceId||null})});
-    const j=await r.json();
-    if(!r.ok||!j.sent){ st.style.color='#b91c1c'; st.textContent=j.detail||j.error||('Send failed (HTTP '+r.status+').'); }
-    else{ const t=Array.isArray(j.to)?j.to.join(', '):j.to; st.style.color='#166534'; st.textContent='✓ Sent to '+t+(j.attached_files?' with '+j.attached_files+' original attachment'+(j.attached_files===1?'':'s'):'')+(j.linked_to_homeowner?' — filed on their record.':'.'); setTimeout(()=>{closeCompose(); loadStats(); loadList();},1800); }
-  }catch(e){ st.style.color='#b91c1c'; st.textContent='Send failed: '+(e.message||'network'); }
-  finally{ btn.disabled=false; btn.textContent=o; }
+    const id=await ncEnsureDraft();
+    if(!id){ ncStatus('The draft could not be saved, so nothing was sent. Try again.','#b91c1c'); return; }
+    const p=ncPayload(); p.body=body;
+    const r=await af('/api/email-triage/compose',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...p, draft_id:id, community_name:ncCommunityName()})});
+    const j=await r.json().catch(()=>({}));
+    if(!r.ok||!j.sent){ ncStatus((j.detail||j.error||('Send failed (HTTP '+r.status+').'))+(r.status===409&&/already/.test(j.detail||'')?'':' The draft is still saved.'),'#b91c1c'); }
+    else{
+      NC.status='sent'; clearTimeout(NC.saveTimer); NC.saveTimer=null;
+      const t=Array.isArray(j.to)?j.to.join(', '):j.to;
+      ncStatus('✓ Sent to '+t+(j.attached_files?' with '+j.attached_files+' attachment'+(j.attached_files===1?'':'s'):'')+(j.linked_to_homeowner?', filed on their record':'')+(j.task_closed?'. Removed from '+who+'’s to-do list.':'.'),'#166534');
+      ncSaveNote(''); document.getElementById('nmDiscard').style.display='none';
+      setTimeout(()=>{ document.getElementById('composeModal').style.display='none'; loadStats(); loadList(); loadComposeDrafts(); },1800);
+    }
+  }catch(e){ ncStatus('Send failed: '+(e.message||'network')+'. The draft is still saved.','#b91c1c'); }
+  finally{ if(NC.status==='draft'){ btn.disabled=false; btn.textContent=o; } }
 };
+// Leaving the page with an unsaved edit: save it (the browser may still warn).
+window.addEventListener('beforeunload', (e)=>{ if(NC.saveTimer && NC.status==='draft'){ try{ ncSave(); }catch(_){} e.preventDefault(); e.returnValue=''; } });
 
 // BETA: Communications is owner-only. Confirm the admin session before loading
 // anything; everyone else (and any error, and any missing session) gets the
@@ -1486,6 +1766,9 @@ window.ncSend = async function(){
     const me = meRes.ok ? (await meRes.json()).user : null;
     if (!me || me.role !== 'admin') return showComingSoon();
     loadStats(); loadList(); loadStaff(); loadDraftCount();
+    loadComposeDrafts();
+    // Opened from a Mission Control task: reopen that draft as it was.
+    try { const dq = new URLSearchParams(location.search).get('compose_draft'); if (dq) openComposeDraft(dq); } catch (_) {}
     loadCommunities().then(() => { try { loadList(); } catch (_) {} });  // populate the picker cache, then re-render
   } catch (e) { showComingSoon(); }
 })();
@@ -1499,55 +1782,100 @@ async function loadDraftCount(){
 }
 </script>
 
+<style>
+  #composeModal .nc-lbl { display:block; font-size:12px; font-weight:600; color:var(--muted); margin-bottom:3px; }
+  #composeModal .nc-box { position:relative; display:flex; flex-wrap:wrap; gap:5px; align-items:center; min-height:40px; padding:5px 7px; border:1px solid var(--line); border-radius:8px; background:#fff; }
+  #composeModal .nc-box:focus-within { border-color:var(--navy); }
+  #composeModal .nc-box input { flex:1; min-width:140px; border:none; outline:none; font-size:14px; padding:4px 2px; font-family:inherit; }
+  #composeModal .nc-chips { display:contents; }
+  #composeModal .nc-chip, #composeModal .nc-att { display:inline-flex; align-items:center; gap:5px; background:#eef2ff; border:1px solid #c7d2fe; border-radius:6px; padding:2px 7px; font-size:12.5px; color:#1e2a5a; max-width:100%; }
+  #composeModal .nc-att { background:#f1f5f9; border-color:#e2e8f0; }
+  #composeModal .nc-att.bad { background:#fef2f2; border-color:#fecaca; color:#991b1b; }
+  #composeModal .nc-chip a, #composeModal .nc-att a { color:#b91c1c; text-decoration:none; font-weight:700; padding:0 2px; }
+  #composeModal .nc-chip-mail { color:var(--muted); font-size:11.5px; }
+  #composeModal .nc-sugbox { display:none; position:absolute; left:0; right:0; top:100%; margin-top:3px; background:#fff; border:1px solid var(--line); border-radius:8px; box-shadow:0 8px 24px rgba(11,29,52,.14); z-index:5; max-height:280px; overflow:auto; }
+  #composeModal .nc-sug { padding:7px 10px; cursor:pointer; border-bottom:1px solid #f1f5f9; }
+  #composeModal .nc-sug.on, #composeModal .nc-sug:hover { background:#f1f5ff; }
+  #composeModal .nc-sug-name { font-size:13.5px; font-weight:600; color:var(--navy); }
+  #composeModal .nc-sug-meta { font-size:12px; color:var(--muted); }
+  #composeModal .nc-sug-note { padding:7px 10px; font-size:12px; color:var(--muted); }
+  #composeModal .nc-pick { margin-top:5px; width:100%; padding:6px 8px; border:1px solid var(--line); border-radius:8px; font-size:12px; color:var(--muted); }
+  #composeModal .nc-in { width:100%; padding:9px 11px; border:1px solid var(--line); border-radius:8px; font-size:14px; font-family:inherit; }
+  #nmAttRow { border:1px dashed var(--line); border-radius:9px; padding:8px 10px; margin-bottom:11px; display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
+  #nmAttRow.dragging { border-color:var(--navy); background:#f1f5ff; }
+  .nc-dl { display:block; padding:8px 11px; border-bottom:1px solid var(--line); text-decoration:none; color:var(--navy); }
+  .nc-dl span { display:block; font-size:12px; color:var(--muted); }
+  .nc-dl:hover { background:#f8fafc; }
+  @media (max-width:640px){ #composeModal .nc-row { flex-direction:column; } }
+</style>
 <div id="composeModal" style="display:none; position:fixed; inset:0; background:rgba(11,29,52,0.5); z-index:2000; align-items:flex-start; justify-content:center; padding:40px 16px; overflow:auto;">
-  <div style="background:#fff; border-radius:14px; max-width:640px; width:100%;">
+  <div style="background:#fff; border-radius:14px; max-width:680px; width:100%;" ondragover="ncDragOver(event)" ondragleave="ncDragLeave(event)" ondrop="ncDrop(event)">
     <div style="background:var(--navy); color:#fff; padding:14px 18px; border-radius:14px 14px 0 0; display:flex; justify-content:space-between; align-items:center;">
       <div id="nmHeaderTitle" style="font-weight:700; font-size:16px;">&#9993;&#65039; New AI team email</div>
-      <button onclick="closeCompose()" style="background:rgba(255,255,255,0.15); color:#fff; border:none; padding:5px 11px; border-radius:6px; cursor:pointer; font-size:14px;">&#10005;</button>
+      <button onclick="closeCompose()" title="Close (the draft is kept)" style="background:rgba(255,255,255,0.15); color:#fff; border:none; padding:5px 11px; border-radius:6px; cursor:pointer; font-size:14px;">&#10005;</button>
     </div>
     <div style="padding:18px;">
-      <label style="display:block; font-size:12px; font-weight:600; color:var(--muted); margin-bottom:3px;">Send as</label>
-      <select id="nmPersona" onchange="ncPersonaChange()" style="width:100%; padding:9px 11px; border:1px solid var(--line); border-radius:8px; font-size:14px; margin-bottom:8px;">
-        <option value="claire">Claire — front office (homeowners &amp; boards)</option>
-        <option value="emma">Emma Brooks — accounts payable (vendors)</option>
-        <option value="annie">Annie Reeves — architectural review (ACC/ARC)</option>
-        <option value="miranda">Miranda Pierce — compliance / DRV</option>
-        <option value="paige">Paige Chandler — board operations</option>
-        <option value="kat">Katherine &quot;Kat&quot; Reed — accounting manager</option>
-        <option value="amanda">Amanda Albright — senior community manager</option>
-        <option value="reese">Reese Calloway — resale &amp; estoppels</option>
-        <option value="isabella">Isabella Reyes — front office (Español)</option>
-        <option value="mei">Mei Chen — front office (中文)</option>
-        <option value="priya">Priya Sharma — front office (हिन्दी)</option>
+      <label class="nc-lbl" for="nmPersona">Send as</label>
+      <select id="nmPersona" onchange="ncPersonaChange()" class="nc-in" style="margin-bottom:8px;">
+        <option value="claire">Claire, front office (homeowners &amp; boards)</option>
+        <option value="emma">Emma Brooks, accounts payable (vendors)</option>
+        <option value="annie">Annie Reeves, architectural review (ACC/ARC)</option>
+        <option value="miranda">Miranda Pierce, compliance / DRV</option>
+        <option value="paige">Paige Chandler, board operations</option>
+        <option value="kat">Katherine &quot;Kat&quot; Reed, accounting manager</option>
+        <option value="amanda">Amanda Albright, senior community manager</option>
+        <option value="reese">Reese Calloway, resale &amp; estoppels</option>
+        <option value="isabella">Isabella Reyes, front office (Español)</option>
+        <option value="mei">Mei Chen, front office (中文)</option>
+        <option value="priya">Priya Sharma, front office (हिन्दी)</option>
       </select>
-      <div id="nmFromHint" style="font-size:12px; color:var(--muted); margin-bottom:12px;">Sends from <strong>claire@bedrocktx.com</strong> with the Bedrock logo + honest-AI signature. Logged on the homeowner's record when the address matches one on file.</div>
-      <div style="display:flex; gap:11px; margin-bottom:11px;">
-        <div style="flex:1;"><label style="display:block; font-size:12px; font-weight:600; color:var(--muted); margin-bottom:3px;">To <span style="font-weight:400;">(commas for multiple)</span></label>
-          <input id="nmTo" type="text" placeholder="board@…, owner@…, or pick below" style="width:100%; padding:9px 11px; border:1px solid var(--line); border-radius:8px; font-size:14px;">
-          <select id="nmToPick" onchange="ncAddRecip('nmTo',this)" style="margin-top:5px; width:100%; padding:6px 8px; border:1px solid var(--line); border-radius:8px; font-size:12px; color:var(--muted);"></select></div>
-        <div style="flex:1;"><label style="display:block; font-size:12px; font-weight:600; color:var(--muted); margin-bottom:3px;">Cc <span style="font-weight:400;">(optional)</span></label>
-          <input id="nmCc" type="text" placeholder="cc@…, or pick below" style="width:100%; padding:9px 11px; border:1px solid var(--line); border-radius:8px; font-size:14px;">
-          <select id="nmCcPick" onchange="ncAddRecip('nmCc',this)" style="margin-top:5px; width:100%; padding:6px 8px; border:1px solid var(--line); border-radius:8px; font-size:12px; color:var(--muted);"></select></div>
+      <div id="nmFromHint" style="font-size:12px; color:var(--muted); margin-bottom:12px;">Sends from <strong>claire@bedrocktx.com</strong> with the Bedrock logo + honest-AI signature.</div>
+      <div class="nc-row" style="display:flex; gap:11px; margin-bottom:11px;">
+        <div style="flex:1; min-width:0;"><label class="nc-lbl" for="nmToInput">To</label>
+          <div class="nc-box" onclick="if(event.target===this)document.getElementById('nmToInput').focus()">
+            <span id="nmToChips" class="nc-chips"></span>
+            <input id="nmToInput" type="text" autocomplete="off" placeholder="Name or email" role="combobox" aria-autocomplete="list" aria-controls="nmToSug"
+              oninput="ncSearch('nmTo')" onkeydown="ncKey(event,'nmTo')" onblur="ncBlur('nmTo')" onpaste="ncPaste(event,'nmTo')">
+            <div id="nmToSug" class="nc-sugbox" role="listbox"></div>
+          </div>
+          <select id="nmToPick" class="nc-pick" onchange="ncAddRecip('nmTo',this)" aria-label="Add a board list, staff, everyone, or an AI agent to To"></select></div>
+        <div style="flex:1; min-width:0;"><label class="nc-lbl" for="nmCcInput">Cc <span style="font-weight:400;">(optional)</span></label>
+          <div class="nc-box" onclick="if(event.target===this)document.getElementById('nmCcInput').focus()">
+            <span id="nmCcChips" class="nc-chips"></span>
+            <input id="nmCcInput" type="text" autocomplete="off" placeholder="Name or email" role="combobox" aria-autocomplete="list" aria-controls="nmCcSug"
+              oninput="ncSearch('nmCc')" onkeydown="ncKey(event,'nmCc')" onblur="ncBlur('nmCc')" onpaste="ncPaste(event,'nmCc')">
+            <div id="nmCcSug" class="nc-sugbox" role="listbox"></div>
+          </div>
+          <select id="nmCcPick" class="nc-pick" onchange="ncAddRecip('nmCc',this)" aria-label="Add a board list, staff, everyone, or an AI agent to Cc"></select></div>
       </div>
-      <div style="display:flex; gap:11px; margin-bottom:11px;">
-        <div style="flex:2;"><label style="display:block; font-size:12px; font-weight:600; color:var(--muted); margin-bottom:3px;">Subject</label>
-          <input id="nmSubject" placeholder="Subject" style="width:100%; padding:9px 11px; border:1px solid var(--line); border-radius:8px; font-size:14px;"></div>
-        <div style="flex:1;"><label style="display:block; font-size:12px; font-weight:600; color:var(--muted); margin-bottom:3px;">Community <span style="font-weight:400;">(opt.)</span></label>
-          <input id="nmCommunity" placeholder="e.g. Eaglewood" style="width:100%; padding:9px 11px; border:1px solid var(--line); border-radius:8px; font-size:14px;"></div>
+      <div class="nc-row" style="display:flex; gap:11px; margin-bottom:11px;">
+        <div style="flex:2;"><label class="nc-lbl" for="nmSubject">Subject</label>
+          <input id="nmSubject" class="nc-in" placeholder="Subject" oninput="ncTouch()"></div>
+        <div style="flex:1;"><label class="nc-lbl" for="nmCommunity">Community <span style="font-weight:400;">(opt.)</span></label>
+          <select id="nmCommunity" class="nc-in" onchange="ncTouch()" title="Contacts from this community are suggested first"><option value="">(none, search everyone)</option></select></div>
       </div>
       <div style="background:#f8fafc; border:1px solid #e6edf5; border-radius:9px; padding:10px 11px; margin-bottom:11px;">
-        <label id="nmDraftLabel" style="display:block; font-size:12px; font-weight:600; color:var(--navy); margin-bottom:3px;">&#9997;&#65039; Have Claire write it <span style="font-weight:400; color:var(--muted);">— tell her the gist, she drafts it, you edit below</span></label>
+        <label id="nmDraftLabel" for="nmIntent" style="display:block; font-size:12px; font-weight:600; color:var(--navy); margin-bottom:3px;">&#9997;&#65039; Have Claire write it</label>
         <div style="display:flex; gap:8px;">
-          <input id="nmIntent" type="text" placeholder="e.g. tell the Waterview board the pool reopens Monday" style="flex:1; padding:9px 11px; border:1px solid var(--line); border-radius:8px; font-size:14px;" onkeydown="if(event.key==='Enter'){event.preventDefault();ncDraft();}">
+          <input id="nmIntent" type="text" class="nc-in" placeholder="e.g. tell the Waterview board the pool reopens Monday" style="flex:1;" oninput="ncTouch()" onkeydown="if(event.key==='Enter'){event.preventDefault();ncDraft();}">
           <button id="nmDraftBtn" onclick="ncDraft()" style="background:var(--navy); color:#fff; border:none; padding:9px 16px; border-radius:8px; font-size:13px; font-weight:600; cursor:pointer; white-space:nowrap;">Draft it</button>
         </div>
       </div>
-      <label style="display:block; font-size:12px; font-weight:600; color:var(--muted); margin-bottom:3px;">Message</label>
-      <textarea id="nmBody" rows="9" placeholder="Write the message, or use “Have Claire write it” above. Signature + logo are added automatically." style="width:100%; padding:10px 11px; border:1px solid var(--line); border-radius:8px; font-size:14px; font-family:inherit; resize:vertical;"></textarea>
-      <div id="nmStatus" style="font-size:12.5px; margin-top:8px; min-height:16px;"></div>
-      <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:12px;">
-        <button onclick="closeCompose()" style="background:#fff; color:var(--navy); border:1px solid var(--line); padding:9px 16px; border-radius:8px; font-size:14px; font-weight:600; cursor:pointer;">Cancel</button>
-        <button id="nmSendBtn" onclick="ncSend()" style="background:var(--gold); color:var(--navy); border:none; padding:9px 20px; border-radius:8px; font-size:14px; font-weight:700; cursor:pointer;">Send as Claire</button>
+      <div id="nmAttRow">
+        <button type="button" onclick="ncPickFiles()" style="background:#fff; color:var(--navy); border:1px solid var(--line); padding:6px 12px; border-radius:7px; font-size:13px; font-weight:600; cursor:pointer;">&#128206; Attach files</button>
+        <span id="nmAttList" style="display:contents;"></span>
+        <span style="font-size:11.5px; color:var(--muted);">PDF, Word, Excel or images, up to 15 MB each. Or drop files here.</span>
+        <input id="nmFile" type="file" multiple accept=".pdf,.doc,.docx,.xls,.xlsx,.csv,.png,.jpg,.jpeg,.gif,.webp,.heic,.heif,.bmp,.tif,.tiff" style="display:none;" onchange="ncFiles(this.files); this.value='';">
+      </div>
+      <label class="nc-lbl" for="nmBody">Message</label>
+      <textarea id="nmBody" rows="9" class="nc-in" oninput="ncTouch()" placeholder="Write the message, or use “Have Claire write it” above. Signature + logo are added automatically." style="resize:vertical;"></textarea>
+      <div id="nmStatus" role="status" style="font-size:12.5px; margin-top:8px; min-height:16px;"></div>
+      <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; margin-top:12px; flex-wrap:wrap;">
+        <div style="font-size:12px;"><span id="nmSaveNote" style="color:var(--muted);"></span> <a id="nmDiscard" href="#" onclick="event.preventDefault();ncDiscard()" style="display:none; color:#b91c1c; margin-left:6px;">Discard draft</a></div>
+        <div style="display:flex; gap:10px;">
+          <button onclick="closeCompose()" title="Close. The draft is kept on the agent's to-do list." style="background:#fff; color:var(--navy); border:1px solid var(--line); padding:9px 16px; border-radius:8px; font-size:14px; font-weight:600; cursor:pointer;">Cancel</button>
+          <button id="nmSendBtn" onclick="ncSend()" style="background:var(--gold); color:var(--navy); border:none; padding:9px 20px; border-radius:8px; font-size:14px; font-weight:700; cursor:pointer;">Send as Claire</button>
+        </div>
       </div>
     </div>
   </div>
