@@ -14,7 +14,18 @@ const fs = require('fs');
 const path = require('path');
 const { resolveCurrentAR } = require('../lib/ar/resolve_current_ar');
 const { postHomeownerCharge } = require('../lib/accounting/homeowner_charge');
-const { _test: { upsertSubledgerPayment } } = require('../lib/payments/assessment_posting');
+
+// An online payment as the live path records it (post_stripe_tenure_payment +
+// payment_commit_posting, migration 469): a tenure-stamped 'stripe_payment' row in
+// its own committed batch. (The old lib/payments/assessment_posting.js writer was
+// dead code and is removed.)
+function onlinePayment(db, { amountCents, n }) {
+  const batch = `b-stripe-${n}`;
+  db.transaction_upload_batches.push({ id: batch, community_id: C, status: 'committed' });
+  db.homeowner_transactions.push({ id: `hs${n}`, source_batch_id: batch, source_row_index: 1, community_id: C, tenure_id: 't-buyer',
+    vantaca_account_id: 'B2', property_id: P, contact_id: 'c-buyer', transaction_date: '2026-08-06', txn_type: 'payment',
+    charge_category: 'payment', amount_cents: -amountCents, raw_row_jsonb: { source: 'stripe_payment', payment_id: `pay-${n}` } });
+}
 
 let failed = 0;
 const tests = [];
@@ -192,15 +203,15 @@ t('a normal charge posts to the CURRENT account and changes that balance', async
 });
 
 t('an online payment reduces the same balance', async () => {
-  const { client } = makeDb(seed());
-  await upsertSubledgerPayment(client, { communityId: C, propertyId: P, vantacaAccountId: 'B2', amountCents: 3500, sessionId: 'cs_1', paymentIntentId: 'pi_1', propLabel: '1 Test Ln' });
+  const { client, db } = makeDb(seed());
+  onlinePayment(db, { amountCents: 3500, n: 1 });
   assert.strictEqual((await resolveCurrentAR(client, { propertyId: P })).balance_cents, 19000);
 });
 
 t('charge then payment: the portal/Claire/autopay balance tracks both', async () => {
-  const { client } = makeDb(seed());
+  const { client, db } = makeDb(seed());
   await postHomeownerCharge(client, { communityId: C, propertyId: P, transactionDate: '2026-08-05', description: 'Late fee', chargeCategory: 'late_fee', amountCents: 2500 });
-  await upsertSubledgerPayment(client, { communityId: C, propertyId: P, vantacaAccountId: 'B2', amountCents: 25000, sessionId: 'cs_2', paymentIntentId: 'pi_2', propLabel: '1 Test Ln' });
+  onlinePayment(db, { amountCents: 25000, n: 2 });
   assert.strictEqual((await resolveCurrentAR(client, { propertyId: P })).balance_cents, 0);
 });
 
