@@ -20,7 +20,9 @@
 //   - a carried balance passes a control only when exact, approved and evidenced (partial,
 //     mismatched or unapproved: FAIL); an opening correction carries the open AP it restores;
 //   - the service fails closed, naming migration 535, when the 535 functions are missing; an
-//     approval needs the owner AND the in-app channel.
+//     approval needs the owner AND the in-app channel;
+//   - the preflight plans with the batch's own source system, never an assumed one (the
+//     behaviour, including a non-Vantaca source, is proven in tests/sql/535_conversion_primitives_e2e.mjs).
 // ============================================================================
 const assert = require('assert');
 const crypto = require('crypto');
@@ -266,6 +268,16 @@ check('opening correction: open AP items validate (number, date, positive cents;
   assert.deepStrictEqual(oc.open_ap_items, [{ vendor: 'Vendor LLC', invoice_number: '4654', invoice_date: '2026-02-25', amount_cents: 72000 }]);
   const [none] = OBJ.openingCorrections({ adjustments: [{ ...base, open_ap_items: [], id: 'a2', status: 'approved', fingerprint: '8'.repeat(64), adjustment_no: 4 }] });
   assert.ok(!('open_ap_items' in none));
+});
+
+check('source system: the preflight hands the planner the BATCH source system, and the planner never assumes one', () => {
+  const fs = require('fs'); const path = require('path');
+  const svcSrc = fs.readFileSync(path.join(__dirname, '../lib/onboarding/service.js'), 'utf8');
+  const call = svcSrc.slice(svcSrc.indexOf('buildConversionPlan({'), svcSrc.indexOf('buildConversionPlan({') + 400);
+  assert.ok(/batch:\s*\{[^}]*source_system:\s*view\.batch\.source_system/.test(call), 'service.js must pass source_system: view.batch.source_system into the plan batch');
+  const planSrc = fs.readFileSync(path.join(__dirname, '../lib/onboarding/conversion_plan.js'), 'utf8');
+  assert.ok(!/source_system\s*\|\|\s*['"]/.test(planSrc), 'conversion_plan.js must not default a missing source system');
+  assert.ok(/names no source system/.test(planSrc), 'a missing source system must fail the establishment closed');
 });
 
 (async () => {

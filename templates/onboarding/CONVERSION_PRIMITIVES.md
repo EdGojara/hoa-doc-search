@@ -61,6 +61,7 @@ No new stages and no new transitions; `lib/onboarding/stages.js` is unchanged.
 | At EXECUTE: approved-objects digest = the preflight's; each applied adjustment approved with that fingerprint; old-format preflight refused when approved objects exist; planned identities absent; prior-owner rows only on legacy records; current-owner rows only on their lot's current owner tenure; write counts | DB | `onboarding_execute` (536) |
 | A conversion creates only a legacy record (no lot) or a lot's FIRST owner tenure | DB | `ownership_tenures_transfer_only` (536) + transaction-local flag set only inside `onboarding_execute` |
 | A source account is established at most once per community | DB | UNIQUE `uq_conversion_source_identity` |
+| An establishment and its source identity carry the batch's own source system (never a default; a batch with none establishes nothing) | App + DB | `conversion_plan` fails the identity control closed; `onboarding_execute` (536) refuses an establishment whose source system differs from the batch's |
 | The `human` actor is the signed-in OWNER; the actor comes from the session, never the request body | **App** | `api/onboarding.js` (`requireOwner`), `service.decideObject` |
 | The approval came from the app UI | **App** (tag only) | the API route sets `channel: 'in_app'`; the database cannot tell the app from any other holder of the service key |
 | A plan needing 536 writes is refused while 536 is missing | **App** | `service.executeSupportsPlan` (probe `onboarding_execute_capabilities`) |

@@ -42,6 +42,12 @@ const PF = require(`${REPO}/lib/onboarding/preflight.js`);
 const SF = require(`${REPO}/lib/onboarding/source_facts.js`);
 const OBJ = require(`${REPO}/lib/onboarding/conversion_objects.js`);
 const PRINT = process.argv.includes('--print-objects');
+// The source system every batch here names. The file runs once as 'vantaca' and then re-runs itself
+// under a synthetic NON-Vantaca source system (REGRESSION: an establishment or source identity must
+// carry the batch's exact source system; nothing may silently become 'vantaca').
+const SRC = process.env.CONV_E2E_SOURCE_SYSTEM || 'vantaca';
+const OTHER_SRC = SRC === 'vantaca' ? 'synthetic-ledger' : 'vantaca';
+console.log(`source system under test: ${SRC}`);
 let pass = 0, fail = 0;
 const check = (name, cond, extra = '') => { if (cond) { pass++; console.log('PASS ', name); } else { fail++; console.log('FAIL ', name, extra); } };
 const code = async (fn) => { try { await fn(); return null; } catch (e) { return `${e.code || ''} ${e.message || ''}`; } };
@@ -167,7 +173,7 @@ const AGENT = { kind: 'agent', id: 'agent-1', assigned_stage: 'source_controls' 
 
 // =============================================== 1) the persisted normalized source
 const CUTOFF = '2026-03-31';
-const B0 = await rpc('onboarding_create_batch', { p_community: COMM, p_batch_code: 'CONV-EXM-FACTS', p_as_of: CUTOFF, p_source_system: 'vantaca', p_actor_kind: 'human', p_actor_id: 'owner-user-id' });
+const B0 = await rpc('onboarding_create_batch', { p_community: COMM, p_batch_code: 'CONV-EXM-FACTS', p_as_of: CUTOFF, p_source_system: SRC, p_actor_kind: 'human', p_actor_id: 'owner-user-id' });
 const ctl = [{ code: 'ok', label: 'ok', status: 'PASS' }];
 const c0 = await rpc('onboarding_record_completion', { p_batch: B0, p_stage: 'intake', p_status: 'PASS', p_open: [], p_controls: ctl, p_summary: {}, p_actor_kind: 'system', p_actor_id: 'op' });
 await rpc('onboarding_auto_advance', { p_batch: B0, p_completion: c0, p_actor_id: 'op' });
@@ -199,7 +205,7 @@ check('a bound fact set cannot be bound to a second result', /sealed, unbound se
 
 // ======================================== 2) adjustments and policies: fingerprints and approvals
 const EVID = { description: 'GL trial balance at the cutoff', artifact_sha256: 'a'.repeat(64), locator: 'account 3000' };
-await db.query(`INSERT INTO onboarding_artifacts (batch_id, community_id, artifact_type, filename, sha256, bytes, storage_path, source_system, cutoff_date) VALUES ($1, $2, 'gl_trial_balance', 'tb.txt', $3, 10, 'x', 'vantaca', $4)`, [B0, COMM, 'a'.repeat(64), CUTOFF]).catch(() => null);
+await db.query(`INSERT INTO onboarding_artifacts (batch_id, community_id, artifact_type, filename, sha256, bytes, storage_path, source_system, cutoff_date) VALUES ($1, $2, 'gl_trial_balance', 'tb.txt', $3, 10, 'x', $5, $4)`, [B0, COMM, 'a'.repeat(64), CUTOFF, SRC]).catch(() => null);
 const adjBody = (no, extra = {}) => ({ adjustment_no: no, kind: 'equity_normalization', effect: 'post_opening', allow_sign_change: true, lines: [{ account: '3000', amount_cents: 500 }, { account: '3050', amount_cents: -500 }], resolves: [], reason: 'Move the never-closed opening fund balance to the accumulated fund balance', evidence: EVID, ...extra });
 const r1 = await rpc('conversion_propose_adjustment', { p_batch: B0, p_adjustment: adjBody(1), p_actor_kind: 'agent', p_actor_id: 'agent-1' });
 const row1 = await one(`SELECT * FROM conversion_adjustments WHERE id = $1`, [r1.id]);
@@ -247,7 +253,7 @@ await db.query(`INSERT INTO transaction_upload_batches (id, management_company_i
 await db.query(`INSERT INTO homeowner_transactions (source_batch_id, source_row_index, community_id, vantaca_account_id, property_id, transaction_date, description, txn_type, amount_cents) VALUES ($1, 1, $2, '20001', $3, '2026-02-01', 'legacy charge', 'charge', 700)`, [LB, COMM, P1]);
 
 async function toPreflight(batchCode) {
-  const B = await rpc('onboarding_create_batch', { p_community: COMM, p_batch_code: batchCode, p_as_of: CUTOFF, p_source_system: 'vantaca', p_actor_kind: 'human', p_actor_id: 'owner-user-id' });
+  const B = await rpc('onboarding_create_batch', { p_community: COMM, p_batch_code: batchCode, p_as_of: CUTOFF, p_source_system: SRC, p_actor_kind: 'human', p_actor_id: 'owner-user-id' });
   const c = await rpc('onboarding_record_completion', { p_batch: B, p_stage: 'intake', p_status: 'PASS', p_open: [], p_controls: ctl, p_summary: {}, p_actor_kind: 'system', p_actor_id: 'op' });
   await rpc('onboarding_auto_advance', { p_batch: B, p_completion: c, p_actor_id: 'op' });
   const fs1 = await rpc('onboarding_open_fact_set', { p_batch: B, p_cutoff: CUTOFF, p_actor_kind: 'system', p_actor_id: 'op' });
@@ -306,17 +312,22 @@ async function prepare(code0) {
   await rpc('onboarding_auto_advance', { p_batch: Bx, p_completion: br, p_actor_id: 'op' });
   return { B: Bx, code: code0, snap, br, fp, items, lines, objs, A1, A2, proposeP, approve };
 }
-async function buildReport(W, { dropDigest = false } = {}) {
+// The plan's source system is the batch's own (as the service passes view.batch.source_system);
+// `sourceSystem` overrides it only to prove the refusals.
+const batchSource = async (Bx) => (await one(`SELECT source_system FROM conversion_batches WHERE id = $1`, [Bx])).source_system;
+async function buildReport(W, { dropDigest = false, sourceSystem } = {}) {
   const ctx = await loadConversionContext(RO, COMM, { cutoff: CUTOFF, identities: true }); const trusted = await trustedNow();
-  const plan = buildConversionPlan({ batch: { id: W.B, batch_code: W.code, community_id: COMM, as_of_date: CUTOFF, source_system: 'vantaca' }, objects: await svc.listObjects(W.B),
+  const src = sourceSystem === undefined ? await batchSource(W.B) : sourceSystem;
+  const plan = buildConversionPlan({ batch: { id: W.B, batch_code: W.code, community_id: COMM, as_of_date: CUTOFF, source_system: src }, objects: await svc.listObjects(W.B),
     snapshot: { completion_id: W.snap, sha256: 'a'.repeat(64), roles: { ar_account: '1300', prepaid_account: '2400', ap_account: '2000' }, lines: W.lines },
     bridge: { completion_id: W.br, sha256: 'b'.repeat(64), trusted_fingerprint: W.fp, status: 'PASS', items: W.items }, source, trusted, ctx: { ...ctx, current_trusted_fingerprint: trustedFingerprint(trusted) } });
   if (dropDigest) delete plan.preconditions.conversion_objects_digest;
   const { controls, ...body } = plan;
-  return PF.buildConversionPreflight({ batch: { batch_code: W.code, community_id: COMM, source_system: 'vantaca', stage: 'preflight' }, source_cutoff: { cutoff_date: CUTOFF, cutover_date: plan.cutover },
+  return PF.buildConversionPreflight({ batch: { batch_code: W.code, community_id: COMM, source_system: src, stage: 'preflight' }, source_cutoff: { cutoff_date: CUTOFF, cutover_date: plan.cutover },
     inputs: { snapshot: { completion_id: W.snap, sha256: 'a'.repeat(64), status: 'PASS' }, bridge: { completion_id: W.br, sha256: 'b'.repeat(64), trusted_fingerprint: W.fp, status: 'PASS', engine: 'test' }, decisions: [], bridge_waivers: [], artifacts: [] },
     plan: body, controls }, []);
 }
+const ctlOf = (r, c) => r.controls.find((x) => x.code === c) || {};
 const recordPf = async (Bx, report) => rpc('onboarding_record_completion', { p_batch: Bx, p_stage: 'preflight', p_status: report.status.overall, p_open: report.controls.filter((c) => c.status !== 'PASS').map((c) => c.code),
   p_controls: report.controls.map((c) => ({ code: c.code, label: c.label, status: c.status })), p_summary: { preflight_format: report.format, preflight_sha256: report.sha256, preflight_report: report }, p_actor_kind: 'system', p_actor_id: 'onboarding-operator' });
 
@@ -325,7 +336,7 @@ const recordPf = async (Bx, report) => rpc('onboarding_record_completion', { p_b
   const WX = await prepare('CONV-EXM-X-20260331');
   const rx = await buildReport(WX); const pfx = await recordPf(WX.B, rx);
   await svc.approve(ED, WX.B, { completion_id: pfx, preflight: rx });
-  const extra = await WX.proposeP({ policy_kind: 'cutoff_authority', value: { source_system: 'vantaca', authoritative_through: CUTOFF }, reason: 'the source is the book of record through the cutoff' });
+  const extra = await WX.proposeP({ policy_kind: 'cutoff_authority', value: { source_system: SRC, authoritative_through: CUTOFF }, reason: 'the source is the book of record through the cutoff' });
   await WX.approve('policy', extra);
   check('approved conversion objects changed after the preflight -> EXECUTE refused by the database', /changed since the preflight/.test((await code(() => rpc('onboarding_execute', { p_batch: WX.B, p_completion: pfx, p_preflight_sha256: rx.sha256, p_actor_kind: 'human', p_actor_id: 'owner-user-id' }))) || ''));
   check('... and by the service (stale preflight)', /PREFLIGHT_STALE|stale/.test((await code(() => svc.execute(ED, WX.B, { completion_id: pfx, preflight_sha256: rx.sha256 }))) || ''));
@@ -334,6 +345,12 @@ const recordPf = async (Bx, report) => rpc('onboarding_record_completion', { p_b
   // The service would already refuse it (stale: it binds no objects digest); approve it at the database to prove the database refuses too.
   check('the service refuses to approve a preflight that does not bind the approved objects', /PREFLIGHT_STALE/.test((await code(() => svc.approve(ED, WY.B, { completion_id: pfy, preflight: ry }))) || ''));
   await rpc('onboarding_approve', { p_batch: WY.B, p_completion: pfy, p_preflight_sha256: ry.sha256, p_actor_kind: 'human', p_actor_id: 'owner-user-id' });
+  const WZ = await prepare('CONV-EXM-Z-20260331');
+  const rz = await buildReport(WZ, { sourceSystem: OTHER_SRC }); const pfz = await recordPf(WZ.B, rz);
+  await rpc('onboarding_approve', { p_batch: WZ.B, p_completion: pfz, p_preflight_sha256: rz.sha256, p_actor_kind: 'human', p_actor_id: 'owner-user-id' });
+  const zErr = await code(() => rpc('onboarding_execute', { p_batch: WZ.B, p_completion: pfz, p_preflight_sha256: rz.sha256, p_actor_kind: 'human', p_actor_id: 'owner-user-id' }));
+  check(`an establishment keyed to a source system other than the batch's (${OTHER_SRC} vs ${SRC}) is refused by the database at EXECUTE, nothing written`,
+    rz.plan.writes.establishments.length === 1 && /keyed to source system/.test(zErr || '') && (await one(`SELECT count(*)::int AS n FROM conversion_source_identities WHERE community_id = $1`, [COMM])).n === 0, zErr || 'executed');
   check('an old-format preflight that ignores approved conversion objects is refused by the database', /predates them/.test((await code(() => rpc('onboarding_execute', { p_batch: WY.B, p_completion: pfy, p_preflight_sha256: ry.sha256, p_actor_kind: 'human', p_actor_id: 'owner-user-id' }))) || ''));
 }
 
@@ -350,6 +367,16 @@ check('the plan: one post-opening adjustment entry (3050 changes sign, declared)
   && w.establishments.length === 1 && w.establishments[0].property_id === P2 && w.establishments[0].start_date === null
   && w.establishments[0].tenure_xref === null && w.establishments[0].xref_held_by_legacy_tenure === TLEG2 && (w.reconciling_items || []).some((x) => x.kind === 'suspense_balance' && x.item_key === '2310'),
   JSON.stringify(report2.plan.summary));
+check(`the batch's source system (${SRC}) is carried exactly: the establishment and the identity EXECUTE must find absent`,
+  w.establishments.length === 1 && w.establishments[0].source_system === SRC && JSON.stringify(report2.plan.preconditions.source_identities_absent) === JSON.stringify([{ source_system: SRC, external_id_kind: 'account', external_id: '20002' }]),
+  JSON.stringify(report2.plan.preconditions.source_identities_absent));
+for (const missing of [null, '', '   ']) {
+  const rn = await buildReport(W, { sourceSystem: missing });
+  const c = ctlOf(rn, 'preflight.establishments_identity_safe');
+  check(`FAIL CLOSED: a batch with no source system (${JSON.stringify(missing)}) establishes nothing and blocks the identity control (never defaults to vantaca)`,
+    rn.status.overall !== 'PASS' && c.status === 'BLOCKED' && /names no source system/.test(JSON.stringify(c)) && rn.plan.writes.establishments.length === 0
+    && rn.plan.preconditions.source_identities_absent.length === 0, JSON.stringify(c).slice(0, 400));
+}
 const pf2 = await recordPf(B, report2);
 const apprErr = await code(() => svc.approve(ED, B, { completion_id: pf2, preflight: report2 }));
 const res = apprErr ? null : await svc.execute(ED, B, { completion_id: pf2, preflight_sha256: report2.sha256 }).catch((e) => ({ error: e.message }));
@@ -377,7 +404,7 @@ if (res && res.status === 'executed') {
   const former = await q(`SELECT vantaca_account_id, balance_cents::int AS b FROM v_former_owner_ledger_balances WHERE community_id = $1 AND vantaca_account_id IN ('90009','90010') ORDER BY 1`, [COMM]);
   check('... and both prior-owner balances are separately identifiable in the former-owner view', JSON.stringify(former) === JSON.stringify([{ vantaca_account_id: '90009', b: 500 }, { vantaca_account_id: '90010', b: -100 }]), JSON.stringify(former));
   const est = await one(`SELECT t.kind, t.origin, t.start_date, t.vantaca_account_id, s.external_id, s.source_system FROM ownership_tenures t JOIN conversion_source_identities s ON s.tenure_id = t.id WHERE t.property_id = $1`, [P2]);
-  check('the first owner tenure of lot 2 was established: origin conversion, start not invented, keyed by source system + account', est && est.kind === 'owner' && est.origin === 'conversion' && est.start_date === null && est.external_id === '20002' && est.source_system === 'vantaca');
+  check('the first owner tenure of lot 2 was established: origin conversion, start not invented, keyed by source system + account', est && est.kind === 'owner' && est.origin === 'conversion' && est.start_date === null && est.external_id === '20002' && est.source_system === SRC);
   const estId = (await one(`SELECT tenure_id FROM conversion_source_identities WHERE community_id = $1 AND external_id = '20002'`, [COMM])).tenure_id;
   const on20002 = await q(`SELECT tenure_id, amount_cents::int AS c FROM homeowner_transactions WHERE community_id = $1 AND vantaca_account_id = '20002' AND source_batch_id IS DISTINCT FROM $2`, [COMM, LB]);
   const onLegacy = await one(`SELECT count(*)::int AS n, coalesce(sum(amount_cents), 0)::int AS c FROM homeowner_transactions WHERE tenure_id = $1`, [TLEG2]);
@@ -387,11 +414,19 @@ if (res && res.status === 'executed') {
     on20002.length === 1 && on20002[0].tenure_id === estId && on20002[0].c === 700 && onLegacy.n === 0 && onLegacy.c === 0
     && legacyRec.kind === 'legacy' && legacyRec.property_id === null && legacyRec.vantaca_account_id === '20002' && legacyRec.origin === 'backfill_legacy'
     && formerOf20002.every((r) => r.b === 0), JSON.stringify({ estId, on20002, onLegacy, legacyRec, formerOf20002 }));
+  const ids = await q(`SELECT source_system, external_id FROM conversion_source_identities WHERE community_id = $1`, [COMM]);
+  check(`every source identity written carries the batch's exact source system (${SRC}); none became another system`, ids.length === 1 && ids[0].source_system === SRC && ids[0].external_id === '20002', JSON.stringify(ids));
+  const rerun = await buildReport(W);
+  check(`RERUN in the same namespace (${SRC}): the established identity is found, nothing is planned again, the identity control PASSES`,
+    rerun.plan.writes.establishments.length === 0 && rerun.plan.preconditions.source_identities_absent.length === 0 && ctlOf(rerun, 'preflight.establishments_identity_safe').status === 'PASS', JSON.stringify(ctlOf(rerun, 'preflight.establishments_identity_safe')).slice(0, 400));
+  const cross = await buildReport(W, { sourceSystem: OTHER_SRC });
+  check(`a different namespace (${OTHER_SRC}) does not see the ${SRC} identity, and the lot that now has its owner is never established again (no establishment, no identity planned)`,
+    cross.plan.writes.establishments.length === 0 && cross.plan.preconditions.source_identities_absent.length === 0, JSON.stringify(ctlOf(cross, 'preflight.establishments_identity_safe')).slice(0, 400));
   check('a labelled suspense balance is a reconciling item (never allocated)', (await one(`SELECT kind, amount_cents::int AS c, detail->>'label' AS l FROM conversion_reconciling_items WHERE batch_id = $1 AND kind = 'suspense_balance'`, [B])).c === -400);
   // ---------------------------------------------------------------- idempotency
   const again = await svc.execute(ED, B, { completion_id: pf2, preflight_sha256: report2.sha256 });
   check('a retry returns the committed execution and writes nothing', again.status === 'already_executed' && again.rows_written_now === 0);
-  check('the same source account can never be established twice (unique identity)', /uq_conversion_source_identity|duplicate key/.test((await code(() => db.query(`INSERT INTO conversion_source_identities (community_id, source_system, external_id_kind, external_id, property_id, batch_id) VALUES ($1, 'vantaca', 'account', '20002', $2, $3)`, [COMM, P2, B]))) || ''));
+  check('the same source account can never be established twice (unique identity)', /uq_conversion_source_identity|duplicate key/.test((await code(() => db.query(`INSERT INTO conversion_source_identities (community_id, source_system, external_id_kind, external_id, property_id, batch_id) VALUES ($1, $4, 'account', '20002', $2, $3)`, [COMM, P2, B, SRC]))) || ''));
   check('the ownership guard refuses a second first-owner tenure for the lot even under the conversion flag', /first owner tenure|only a legacy-owner record/.test((await code(() => db.exec(`BEGIN; SELECT set_config('trusted.onboarding_establish', 'on', true);
     INSERT INTO ownership_tenures (community_id, property_id, kind, origin) VALUES ('${COMM}', '${P2}', 'owner', 'conversion'); COMMIT;`))) || ''));
   await db.exec('ROLLBACK').catch(() => null);
@@ -399,5 +434,12 @@ if (res && res.status === 'executed') {
   check('after EXECUTE no adjustment or policy can be proposed or decided on the batch', /fixed once the batch enters execute/.test((await code(() => proposeP({ policy_kind: 'preserve_source_coding', value: { account: '5000', note: 'keep the source coding as is' }, reason: 'owner decision to keep it' }))) || ''));
 }
 
-console.log(`\n${pass} passed, ${fail} failed`);
+console.log(`\n${pass} passed, ${fail} failed (source system ${SRC})`);
+// Re-run the whole file under a synthetic non-Vantaca source system (fresh database).
+if (!process.env.CONV_E2E_SOURCE_SYSTEM) {
+  const { spawnSync } = await import('child_process');
+  console.log('\n--- re-running under a non-Vantaca source system: synthetic-ledger');
+  const r = spawnSync(process.execPath, [fileURLToPath(import.meta.url)], { stdio: 'inherit', env: { ...process.env, CONV_E2E_SOURCE_SYSTEM: 'synthetic-ledger' } });
+  check('the whole rehearsal passes under the non-Vantaca source system', r.status === 0);
+}
 process.exit(fail ? 1 : 0);

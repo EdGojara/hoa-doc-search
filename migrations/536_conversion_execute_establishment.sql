@@ -305,6 +305,9 @@ BEGIN
     VALUES (exec_id, p_batch, 'ownership_tenures', tid, 'insert', 'legacy_tenure', r->>'key', jsonb_build_object('kind', 'legacy', 'vantaca_account_id', r->>'vantaca_account_id'));
   END LOOP;
   FOR r IN SELECT x FROM jsonb_array_elements(coalesce(w->'establishments', '[]'::jsonb)) x LOOP
+    IF nullif(btrim(coalesce(bt.source_system, '')), '') IS NULL OR r->>'source_system' IS DISTINCT FROM btrim(bt.source_system) THEN
+      RAISE EXCEPTION 'onboarding execute: establishment % is keyed to source system % but the batch source system is %', r->>'key', coalesce(r->>'source_system', '(none)'), coalesce(bt.source_system, '(none)') USING ERRCODE = 'check_violation';
+    END IF;
     IF NOT EXISTS (SELECT 1 FROM properties WHERE id = (r->>'property_id')::uuid AND community_id = comm) THEN
       RAISE EXCEPTION 'onboarding execute: establishment % names a lot outside this community', r->>'key' USING ERRCODE = 'check_violation';
     END IF;
