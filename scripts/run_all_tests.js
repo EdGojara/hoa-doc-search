@@ -81,6 +81,7 @@ const CHECKS = [
   'tests/test_bill_classifier.js',
   'tests/test_ap_restatement.js',
   'tests/test_interfund.js',
+  'tests/test_interfund_defects.js',
   'tests/test_vendor_address.js',
   'tests/test_lunch.js',
   'tests/test_property_resolution.js',

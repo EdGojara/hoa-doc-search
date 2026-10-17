@@ -46570,7 +46570,10 @@ ${questionsPage}
     // cross-fund transfer settles the interfund Due To/Due From toward zero.
     let _bkXferChart = null;
     function _bkCashAccounts() {
-      return (_bkXferChart || []).filter((a) => !a.is_summary && (String(a.account_type || '') === 'asset' || /^1/.test(String(a.account_number || ''))));
+      // Same rule as POST /api/books/transfer: an asset that is not one half of an
+      // interfund receivable/payable ("Due To" / "Due From" are claims between
+      // funds, never cash). The server also refuses them by role.
+      return (_bkXferChart || []).filter((a) => !a.is_summary && String(a.account_type || '') === 'asset' && !/\bdue\s+(to|from)\b/i.test(String(a.account_name || '')));
     }
     function _bkAcctLabel(a) {
       const f = a.account_funds && a.account_funds.fund_code ? ` · ${a.account_funds.fund_code}` : '';
