@@ -1,0 +1,39 @@
+{
+  "migration": "528_books_closed_guard.sql",
+  "summary": "A database guard closes the ledger of any community whose books trustEd does not keep (books elsewhere, financials off, archived, terminated, past its last day, or a prospect): no journal entry or journal entry line can be inserted, edited, voided or deleted for it, by any path. Existing rows are preserved exactly; reads and exports are unaffected; every active community is unaffected.",
+  "requires": ["516_community_archived_status.sql"],
+  "preflight": [
+    { "name": "the guard does not exist yet", "sql": "SELECT count(*)::int FROM pg_trigger WHERE tgname IN ('trg_journal_entries_books_closed', 'trg_journal_entry_lines_books_closed') AND NOT tgisinternal", "expect": 0 },
+    { "name": "only one closed community has ledger rows (Eaglewood)", "sql": "SELECT count(DISTINCT je.community_id)::int FROM journal_entries je JOIN communities c ON c.id = je.community_id WHERE c.books_of_record IS DISTINCT FROM 'trusted' OR c.financials_active IS FALSE OR c.management_status IN ('archived', 'terminated', 'prospect') OR (c.management_status = 'terminating' AND c.management_end_date < (now() AT TIME ZONE 'America/Chicago')::date)", "expect": 1 },
+    { "name": "Eaglewood is archived with books in Vantaca", "sql": "SELECT count(*)::int FROM communities WHERE name = 'Eaglewood' AND management_status = 'archived' AND books_of_record = 'vantaca' AND financials_active IS FALSE", "expect": 1 }
+  ],
+  "expected_changes": [
+    "New function community_books_closed_reason(uuid): NULL when trustEd keeps the books, otherwise the reason.",
+    "Triggers on journal_entries and journal_entry_lines refuse INSERT, UPDATE and DELETE for a community whose books are closed (error code P0001, message starting 'books_closed:').",
+    "No row changes. Eaglewood's existing journal entries and lines stay exactly as they are."
+  ],
+  "objects": {
+    "added": [
+      "function:community_books_closed_reason",
+      "function:journal_entries_books_closed_guard",
+      "function:journal_entry_lines_books_closed_guard",
+      "trigger:journal_entries.trg_journal_entries_books_closed",
+      "trigger:journal_entry_lines.trg_journal_entry_lines_books_closed"
+    ],
+    "changed": [],
+    "removed": []
+  },
+  "row_changes": { "journal_entries": 0, "journal_entry_lines": 0, "communities": 0 },
+  "protected": [
+    { "table": "journal_entries", "order_by": "id" },
+    { "table": "journal_entry_lines", "order_by": "id" },
+    { "table": "communities", "order_by": "id" }
+  ],
+  "verify": [
+    { "name": "both guard triggers exist", "sql": "SELECT count(*)::int FROM pg_trigger WHERE tgname IN ('trg_journal_entries_books_closed', 'trg_journal_entry_lines_books_closed') AND NOT tgisinternal", "expect": 2 },
+    { "name": "Eaglewood's ledger is closed", "sql": "SELECT count(*)::int FROM communities WHERE name = 'Eaglewood' AND community_books_closed_reason(id) IS NOT NULL", "expect": 1 },
+    { "name": "every active community's ledger stays open", "sql": "SELECT count(*)::int FROM communities WHERE management_status IN ('active', 'onboarding') AND books_of_record = 'trusted' AND financials_active IS NOT FALSE AND community_books_closed_reason(id) IS NOT NULL", "expect": 0 },
+    { "name": "Canyon Gate's ledger stays open", "sql": "SELECT count(*)::int FROM communities WHERE id = 'a0000000-0000-4000-8000-000000000003' AND community_books_closed_reason(id) IS NULL", "expect": 1 },
+    { "name": "Eaglewood still has its 179+ journal entries", "sql": "SELECT (count(*) >= 179)::int FROM journal_entries je JOIN communities c ON c.id = je.community_id WHERE c.name = 'Eaglewood'", "expect": 1 }
+  ]
+}

@@ -130,6 +130,8 @@ function classify(num) {
   const { data: comm, error: cErr } = await s.from('communities').select('id, name').eq('slug', slug).maybeSingle();
   if (cErr || !comm) { console.error('community lookup failed:', cErr ? cErr.message : 'not found'); process.exit(1); }
   const CID = comm.id;
+  { const own = await require('../lib/accounting/ownership').accountingStatusFor(s, CID);
+    if (!own.enabled) { console.error(`refused: ${own.reason} Set the community to Onboarding before rebuilding its GL.`); process.exit(1); } }
   console.log(`\n=== ${comm.name} (${slug}) — GL rebuild ===\n`);
 
   // ---- Parse sources --------------------------------------------------------
