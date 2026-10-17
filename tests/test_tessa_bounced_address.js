@@ -120,6 +120,22 @@ check('both rows on file (Nicole’s real book): the typo row points at "Nicole 
   assert.deepStrictEqual(r.best && r.best.email, GOOD);
 });
 
+check('with availability (#91): the scheduler reads the times Nicole offered from her CORRECTED address', async () => {
+  const store = AS.memoryStore({ contacts: [{ id: 'c-hill', name: 'Nicole Hill', email: BAD }] });
+  const seen = [];
+  const out = await runRequest('Confirm Nicole Hill for a phone interview Friday.', {
+    parser: async () => ({ ...parsed('Nicole Hill'), search_terms: ['Nicole'] }),
+    resolveRecipient: bookResolver(store),
+    searchMailbox: mailbox([sendBad, ndr, resend, { ...reply, preview: reply.preview.replace('Nicole Hill', 'Nicole') }]), mailboxes: [TESSA],
+    addressStore: store, ownAddresses: [ED, TESSA],
+    schedule: async (args) => { seen.push(args.proposalText); return null; },
+    drafter: async () => ({ subject: 'Confirmed', body: 'Hi Nicole' }),
+  });
+  assert.deepStrictEqual(out.to.map((p) => p.email), [GOOD]);
+  assert.strictEqual(seen.length, 1);
+  assert.ok(/available on Friday with exception of 10:30 to 11:00/.test(seen[0]), `proposal text: ${seen[0]}`);
+});
+
 // ------------------------------------------------------------------ never revert
 check('a bounced address with NO verified replacement is dropped and Tessa asks; it is never sent to', async () => {
   const store = AS.memoryStore({ contacts: [{ id: 'c-hill', name: 'Nicole Hill', email: BAD }] });
