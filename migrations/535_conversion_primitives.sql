@@ -11,7 +11,9 @@
 --                             an approval binds to that exact fingerprint.
 --    conversion_policies      approved NON-journal instructions: cutoff authority,
 --                             legacy-owner routing, suspense treatment, timing treatment,
---                             preserve source coding. Same fingerprint / approval rules.
+--                             preserve source coding, carried balance (an exact, source-
+--                             supported balance carried as a reconciling item that explains a
+--                             control's difference). Same fingerprint / approval rules.
 --    conversion_exceptions    (452, EXTENDED here, not duplicated) detected discrepancies
 --                             and ambiguities from the activity bridge: evidence,
 --                             classification, resolution, confidence, proposed resolution.
@@ -111,6 +113,7 @@ CREATE TABLE IF NOT EXISTS conversion_adjustments (
   allow_sign_change    boolean NOT NULL DEFAULT false,
   lines                jsonb NOT NULL,
   resolves             jsonb NOT NULL DEFAULT '[]'::jsonb,
+  open_ap_items        jsonb NOT NULL DEFAULT '[]'::jsonb,    -- invoices an opening correction restores to AP at the cutoff
   reason               text NOT NULL,
   evidence             jsonb NOT NULL,
   instruction_source   text,
@@ -128,6 +131,7 @@ CREATE TABLE IF NOT EXISTS conversion_adjustments (
   CONSTRAINT conversion_adjustments_sign_change CHECK (NOT allow_sign_change OR effect = 'post_opening'),
   CONSTRAINT conversion_adjustments_lines_shape CHECK (jsonb_typeof(lines) = 'array' AND jsonb_array_length(lines) >= 2),
   CONSTRAINT conversion_adjustments_resolves_shape CHECK (jsonb_typeof(resolves) = 'array'),
+  CONSTRAINT conversion_adjustments_open_ap_shape CHECK (jsonb_typeof(open_ap_items) = 'array' AND (jsonb_array_length(open_ap_items) = 0 OR effect = 'opening')),
   CONSTRAINT conversion_adjustments_reason CHECK (length(btrim(reason)) >= 10),
   CONSTRAINT conversion_adjustments_evidence CHECK (jsonb_typeof(evidence) = 'object' AND evidence ? 'artifact_sha256' AND evidence ? 'locator' AND evidence ? 'description'),
   CONSTRAINT conversion_adjustments_fingerprint CHECK (fingerprint ~ '^[0-9a-f]{64}$'),
@@ -144,7 +148,7 @@ CREATE TABLE IF NOT EXISTS conversion_policies (
   id                   uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   batch_id             uuid NOT NULL REFERENCES conversion_batches(id) ON DELETE RESTRICT,
   community_id         uuid NOT NULL REFERENCES communities(id) ON DELETE RESTRICT,
-  policy_kind          text NOT NULL CHECK (policy_kind IN ('cutoff_authority','legacy_owner_routing','suspense_treatment','timing_treatment','preserve_source_coding')),
+  policy_kind          text NOT NULL CHECK (policy_kind IN ('cutoff_authority','legacy_owner_routing','suspense_treatment','timing_treatment','preserve_source_coding','carried_balance')),
   policy_key           text NOT NULL DEFAULT '',
   value                jsonb NOT NULL CHECK (jsonb_typeof(value) = 'object'),
   reason               text NOT NULL CHECK (length(btrim(reason)) >= 10),
@@ -183,12 +187,12 @@ BEGIN
     END LOOP;
     IF total <> 0 THEN RAISE EXCEPTION 'an adjustment must balance (its lines net to %)', total USING ERRCODE = 'check_violation'; END IF;
     NEW.fingerprint := conversion_sha256_jsonb(jsonb_build_object('batch_id', NEW.batch_id, 'adjustment_no', NEW.adjustment_no, 'kind', NEW.kind, 'effect', NEW.effect,
-      'allow_sign_change', NEW.allow_sign_change, 'lines', NEW.lines, 'resolves', NEW.resolves, 'reason', NEW.reason, 'evidence', NEW.evidence));
+      'allow_sign_change', NEW.allow_sign_change, 'lines', NEW.lines, 'resolves', NEW.resolves, 'open_ap_items', NEW.open_ap_items, 'reason', NEW.reason, 'evidence', NEW.evidence));
     RETURN NEW;
   END IF;
-  IF (NEW.id, NEW.batch_id, NEW.community_id, NEW.adjustment_no, NEW.kind, NEW.effect, NEW.allow_sign_change, NEW.lines, NEW.resolves, NEW.reason, NEW.evidence,
+  IF (NEW.id, NEW.batch_id, NEW.community_id, NEW.adjustment_no, NEW.kind, NEW.effect, NEW.allow_sign_change, NEW.lines, NEW.resolves, NEW.open_ap_items, NEW.reason, NEW.evidence,
       NEW.instruction_source, NEW.supersedes_id, NEW.fingerprint, NEW.proposed_by_kind, NEW.proposed_by, NEW.proposed_at)
-     IS DISTINCT FROM (OLD.id, OLD.batch_id, OLD.community_id, OLD.adjustment_no, OLD.kind, OLD.effect, OLD.allow_sign_change, OLD.lines, OLD.resolves, OLD.reason, OLD.evidence,
+     IS DISTINCT FROM (OLD.id, OLD.batch_id, OLD.community_id, OLD.adjustment_no, OLD.kind, OLD.effect, OLD.allow_sign_change, OLD.lines, OLD.resolves, OLD.open_ap_items, OLD.reason, OLD.evidence,
       OLD.instruction_source, OLD.supersedes_id, OLD.fingerprint, OLD.proposed_by_kind, OLD.proposed_by, OLD.proposed_at) THEN
     RAISE EXCEPTION 'a conversion adjustment''s content is fixed once proposed; propose a new one that supersedes it' USING ERRCODE = 'check_violation';
   END IF;
@@ -214,9 +218,17 @@ BEGIN
     IF NEW.status <> 'proposed' OR NEW.approved_by_user_id IS NOT NULL OR NEW.approved_at IS NOT NULL OR NEW.approval_channel IS NOT NULL THEN
       RAISE EXCEPTION 'a conversion policy is created proposed; it is approved only through conversion_decide_object' USING ERRCODE = 'check_violation';
     END IF;
-    NEW.policy_key := CASE WHEN NEW.policy_kind IN ('suspense_treatment','preserve_source_coding') THEN btrim(coalesce(NEW.value->>'account', '')) ELSE '' END;
+    NEW.policy_key := CASE WHEN NEW.policy_kind IN ('suspense_treatment','preserve_source_coding') THEN btrim(coalesce(NEW.value->>'account', ''))
+                           WHEN NEW.policy_kind = 'carried_balance' THEN btrim(coalesce(NEW.value->>'control', '')) || ':' || btrim(coalesce(NEW.value->>'item_key', ''))
+                           ELSE '' END;
     IF NEW.policy_kind IN ('suspense_treatment','preserve_source_coding') AND NEW.policy_key = '' THEN
       RAISE EXCEPTION 'a % policy names its account', NEW.policy_kind USING ERRCODE = 'check_violation';
+    END IF;
+    -- A carried balance names the control it explains, the reconciling item and the exact cents, and is
+    -- source-supported: its evidence is required (a document of the batch; checked by the application).
+    IF NEW.policy_kind = 'carried_balance' AND (NEW.policy_key ~ '(^:|:$)' OR coalesce(NEW.value->>'amount_cents', '') !~ '^-?[0-9]+$'
+       OR NEW.evidence IS NULL OR NOT (NEW.evidence ? 'artifact_sha256' AND NEW.evidence ? 'locator')) THEN
+      RAISE EXCEPTION 'a carried-balance policy names the control, the reconciling item, the exact amount_cents and its source evidence' USING ERRCODE = 'check_violation';
     END IF;
     IF NEW.policy_kind = 'suspense_treatment' AND coalesce(NEW.value->>'allocate_to_owners', '') <> 'false' THEN
       RAISE EXCEPTION 'a suspense balance is never allocated to owners (allocate_to_owners must be false)' USING ERRCODE = 'check_violation';
@@ -262,9 +274,9 @@ BEGIN
     INSERT INTO conversion_object_events (batch_id, community_id, object_type, object_id, event, fingerprint, actor_kind, actor_id, channel, detail)
     VALUES (p_batch, bt.community_id, 'adjustment', old.id, 'superseded', old.fingerprint, p_actor_kind, p_actor_id, CASE p_actor_kind WHEN 'human' THEN 'in_app' WHEN 'agent' THEN 'agent' ELSE 'operator' END, jsonb_build_object('prior_status', old.status));
   END IF;
-  INSERT INTO conversion_adjustments (batch_id, community_id, adjustment_no, kind, effect, allow_sign_change, lines, resolves, reason, evidence, instruction_source, supersedes_id, fingerprint, proposed_by_kind, proposed_by)
+  INSERT INTO conversion_adjustments (batch_id, community_id, adjustment_no, kind, effect, allow_sign_change, lines, resolves, open_ap_items, reason, evidence, instruction_source, supersedes_id, fingerprint, proposed_by_kind, proposed_by)
   VALUES (p_batch, bt.community_id, (p_adjustment->>'adjustment_no')::int, p_adjustment->>'kind', p_adjustment->>'effect', coalesce((p_adjustment->>'allow_sign_change')::boolean, false),
-          p_adjustment->'lines', coalesce(p_adjustment->'resolves', '[]'::jsonb), p_adjustment->>'reason', p_adjustment->'evidence', p_adjustment->>'instruction_source',
+          p_adjustment->'lines', coalesce(p_adjustment->'resolves', '[]'::jsonb), coalesce(p_adjustment->'open_ap_items', '[]'::jsonb), p_adjustment->>'reason', p_adjustment->'evidence', p_adjustment->>'instruction_source',
           (p_adjustment->>'supersedes_id')::uuid, repeat('0', 64), p_actor_kind, p_actor_id)
   RETURNING id, fingerprint INTO id_new, fp;
   INSERT INTO conversion_object_events (batch_id, community_id, object_type, object_id, event, fingerprint, actor_kind, actor_id, channel, detail)

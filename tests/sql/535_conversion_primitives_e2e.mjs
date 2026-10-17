@@ -16,6 +16,9 @@
 //     identity; a labelled suspense balance is a reconciling item;
 //   * the PORTAL PATH: v_current_owner_ledger / v_current_owner_balance (what the portal reads)
 //     never contain a prior-owner row; v_former_owner_ledger_balances does;
+//   * REGRESSION: a source account previously held on a legacy record whose lot is established
+//     in the conversion: its cutoff balance goes to the new current owner, never the legacy record;
+//   * carried-balance policies need evidence and exact cents; open AP rides only on an opening correction;
 //   * idempotency: a retry writes nothing; the same source account can never be established
 //     twice (unique identity; the tenure guard refuses a second first-owner tenure).
 // Postgres 17 (PGlite 0.3.x). Skips without PGlite. --print-objects (PRINT_FILE=<migration>) prints its object diff.
@@ -110,14 +113,18 @@ for (const [n, t] of [['1000', 'asset'], ['1300', 'asset'], ['2000', 'liability'
 }
 await db.query(`INSERT INTO accounting_periods (community_id, fiscal_year, period_number, period_start, period_end, status)
   SELECT $1, 2026, m, make_date(2026, m, 1), (make_date(2026, m, 1) + interval '1 month - 1 day')::date, 'open' FROM generate_series(1, 12) m`, [COMM]);
-const P1 = u(101); const P2 = u(102); const T1 = u(201); const TLEG = u(202);
+const P1 = u(101); const P2 = u(102); const T1 = u(201); const TLEG = u(202); const TLEG2 = u(203);
 await db.exec(`
   INSERT INTO properties (id, community_id, vantaca_account_id, street_address, city, state, zip) VALUES
     ('${P1}', '${COMM}', '20001', '1 Example Lane', 'Example', 'TX', '77000'), ('${P2}', '${COMM}', '20002', '2 Example Lane', 'Example', 'TX', '77000');
   INSERT INTO ownership_tenures (id, community_id, property_id, kind, start_date, vantaca_account_id, origin) VALUES
     ('${T1}', '${COMM}', '${P1}', 'owner', '2020-01-01', '20001', 'backfill_current'),
-    ('${TLEG}', '${COMM}', NULL, 'legacy', NULL, '90010', 'backfill_legacy');`);
+    ('${TLEG}', '${COMM}', NULL, 'legacy', NULL, '90010', 'backfill_legacy'),
+    ('${TLEG2}', '${COMM}', NULL, 'legacy', NULL, '20002', 'backfill_legacy');`);
 // P2 has NEVER had an owner tenure (a lot added before the conversion): the conversion establishes it.
+// REGRESSION: P2's source account 20002 was previously held on a LEGACY record (TLEG2, no lot). The
+// cutoff balance of 20002 belongs to the current owner the conversion establishes on P2, never to the
+// legacy record, which stays for provenance only and carries no balance.
 // Production carries 459's single-transfer-path guard on ownership_tenures; install the real one (as
 // committed) so 535's object diff here is production's (the guard function CHANGED, not added).
 { const m459 = lf(`${REPO}/migrations/459_ownership_transfer_single_path.sql`);
@@ -196,7 +203,7 @@ await db.query(`INSERT INTO onboarding_artifacts (batch_id, community_id, artifa
 const adjBody = (no, extra = {}) => ({ adjustment_no: no, kind: 'equity_normalization', effect: 'post_opening', allow_sign_change: true, lines: [{ account: '3000', amount_cents: 500 }, { account: '3050', amount_cents: -500 }], resolves: [], reason: 'Move the never-closed opening fund balance to the accumulated fund balance', evidence: EVID, ...extra });
 const r1 = await rpc('conversion_propose_adjustment', { p_batch: B0, p_adjustment: adjBody(1), p_actor_kind: 'agent', p_actor_id: 'agent-1' });
 const row1 = await one(`SELECT * FROM conversion_adjustments WHERE id = $1`, [r1.id]);
-const recomputed = (await one(`SELECT conversion_sha256_jsonb(jsonb_build_object('batch_id', batch_id, 'adjustment_no', adjustment_no, 'kind', kind, 'effect', effect, 'allow_sign_change', allow_sign_change, 'lines', lines, 'resolves', resolves, 'reason', reason, 'evidence', evidence)) AS f FROM conversion_adjustments WHERE id = $1`, [r1.id])).f;
+const recomputed = (await one(`SELECT conversion_sha256_jsonb(jsonb_build_object('batch_id', batch_id, 'adjustment_no', adjustment_no, 'kind', kind, 'effect', effect, 'allow_sign_change', allow_sign_change, 'lines', lines, 'resolves', resolves, 'open_ap_items', open_ap_items, 'reason', reason, 'evidence', evidence)) AS f FROM conversion_adjustments WHERE id = $1`, [r1.id])).f;
 check('the DATABASE computes the fingerprint over the content (the caller cannot supply it)', row1.fingerprint === r1.fingerprint && row1.fingerprint === recomputed && row1.status === 'proposed' && row1.fingerprint !== '0'.repeat(64));
 check('an unbalanced adjustment is refused', /must balance/.test((await code(() => rpc('conversion_propose_adjustment', { p_batch: B0, p_adjustment: adjBody(2, { lines: [{ account: '3000', amount_cents: 500 }, { account: '3050', amount_cents: -400 }] }), p_actor_kind: 'agent', p_actor_id: 'agent-1' }))) || ''));
 check('a sign change on an OPENING adjustment is refused (the opening always equals the source sign)', /sign_change|23514/.test((await code(() => rpc('conversion_propose_adjustment', { p_batch: B0, p_adjustment: adjBody(2, { effect: 'opening' }), p_actor_kind: 'agent', p_actor_id: 'agent-1' }))) || ''));
@@ -219,6 +226,10 @@ const ev1 = await q(`SELECT event, actor_kind, channel, fingerprint FROM convers
 check('the audit trail: proposed (agent) then approved (human, in_app, the fingerprint)', JSON.stringify(ev1.map((e) => [e.event, e.actor_kind, e.channel, e.fingerprint === r1.fingerprint])) === JSON.stringify([['proposed', 'agent', 'agent', true], ['approved', 'human', 'in_app', true]]));
 check('the audit trail is append-only', /append-only/.test((await code(() => db.query(`DELETE FROM conversion_object_events WHERE object_id = $1`, [r1.id]))) || ''));
 check('the approved-objects digest in SQL equals the JS formula', (await rpc('onboarding_conversion_objects_digest', { p_batch: B0 })) === OBJ.objectsDigest(await svc.listObjects(B0)));
+check('a carried-balance policy without source evidence or exact cents is refused (DATABASE)',
+  /carried-balance policy names/.test((await code(() => rpc('conversion_propose_policy', { p_batch: B0, p_policy: { policy_kind: 'carried_balance', value: { control: 'preflight.builder_positions_resolved', reconciling_kind: 'builder_position_unresolved', item_key: 'lot-1', amount_cents: 9018, label: 'a builder balance carried' }, reason: 'carried as the source shows it' }, p_actor_kind: 'agent', p_actor_id: 'agent-1' }))) || '')
+  && /carried-balance policy names/.test((await code(() => rpc('conversion_propose_policy', { p_batch: B0, p_policy: { policy_kind: 'carried_balance', value: { control: 'preflight.builder_positions_resolved', reconciling_kind: 'builder_position_unresolved', item_key: 'lot-1', amount_cents: 'about 90', label: 'a builder balance carried' }, reason: 'carried as the source shows it', evidence: EVID }, p_actor_kind: 'agent', p_actor_id: 'agent-1' }))) || ''));
+check('open AP items ride only on an OPENING correction (DATABASE)', /open_ap_shape|23514/.test((await code(() => rpc('conversion_propose_adjustment', { p_batch: B0, p_adjustment: adjBody(7, { effect: 'post_opening', open_ap_items: [{ vendor: 'Acme Pools', invoice_number: 'X-1', invoice_date: '2026-03-01', amount_cents: 500 }] }), p_actor_kind: 'agent', p_actor_id: 'agent-1' }))) || ''));
 check('a suspense policy that would allocate to owners is refused (DATABASE)', /never allocated/.test((await code(() => rpc('conversion_propose_policy', { p_batch: B0, p_policy: { policy_kind: 'suspense_treatment', value: { account: '2310', label: 'Unapplied cash carried', allocate_to_owners: true }, reason: 'no owner-level source exists' }, p_actor_kind: 'agent', p_actor_id: 'agent-1' }))) || ''));
 const pp = { policy_kind: 'timing_treatment', value: { treatment: 'record_on_cutover_date', applies_to: 'absent_from_source_created_after_cutover', max_days_before_cutoff: 31 }, reason: 'late-entered bills move to the cutover date' };
 await rpc('conversion_propose_policy', { p_batch: B0, p_policy: pp, p_actor_kind: 'agent', p_actor_id: 'agent-1' });
@@ -336,7 +347,8 @@ const w = report2.plan.writes;
 check('the plan: every preflight control PASSES', report2.status.overall === 'PASS', JSON.stringify(report2.controls.filter((c) => c.status !== 'PASS')).slice(0, 1500));
 check('the plan: one post-opening adjustment entry (3050 changes sign, declared), 2 audit-chain links, 1 legacy record (90009; 90010 reuses its existing one), 1 establishment (lot 2), 1 suspense item',
   w.adjustment_journal_entries.length === 1 && w.adjustment_applications.length === 2 && w.legacy_tenures.length === 1 && w.legacy_tenures[0].vantaca_account_id === '90009'
-  && w.establishments.length === 1 && w.establishments[0].property_id === P2 && w.establishments[0].start_date === null && (w.reconciling_items || []).some((x) => x.kind === 'suspense_balance' && x.item_key === '2310'),
+  && w.establishments.length === 1 && w.establishments[0].property_id === P2 && w.establishments[0].start_date === null
+  && w.establishments[0].tenure_xref === null && w.establishments[0].xref_held_by_legacy_tenure === TLEG2 && (w.reconciling_items || []).some((x) => x.kind === 'suspense_balance' && x.item_key === '2310'),
   JSON.stringify(report2.plan.summary));
 const pf2 = await recordPf(B, report2);
 const apprErr = await code(() => svc.approve(ED, B, { completion_id: pf2, preflight: report2 }));
@@ -366,6 +378,15 @@ if (res && res.status === 'executed') {
   check('... and both prior-owner balances are separately identifiable in the former-owner view', JSON.stringify(former) === JSON.stringify([{ vantaca_account_id: '90009', b: 500 }, { vantaca_account_id: '90010', b: -100 }]), JSON.stringify(former));
   const est = await one(`SELECT t.kind, t.origin, t.start_date, t.vantaca_account_id, s.external_id, s.source_system FROM ownership_tenures t JOIN conversion_source_identities s ON s.tenure_id = t.id WHERE t.property_id = $1`, [P2]);
   check('the first owner tenure of lot 2 was established: origin conversion, start not invented, keyed by source system + account', est && est.kind === 'owner' && est.origin === 'conversion' && est.start_date === null && est.external_id === '20002' && est.source_system === 'vantaca');
+  const estId = (await one(`SELECT tenure_id FROM conversion_source_identities WHERE community_id = $1 AND external_id = '20002'`, [COMM])).tenure_id;
+  const on20002 = await q(`SELECT tenure_id, amount_cents::int AS c FROM homeowner_transactions WHERE community_id = $1 AND vantaca_account_id = '20002' AND source_batch_id IS DISTINCT FROM $2`, [COMM, LB]);
+  const onLegacy = await one(`SELECT count(*)::int AS n, coalesce(sum(amount_cents), 0)::int AS c FROM homeowner_transactions WHERE tenure_id = $1`, [TLEG2]);
+  const legacyRec = await one(`SELECT kind, property_id, vantaca_account_id, origin FROM ownership_tenures WHERE id = $1`, [TLEG2]);
+  const formerOf20002 = await q(`SELECT balance_cents::int AS b FROM v_former_owner_ledger_balances WHERE community_id = $1 AND vantaca_account_id = '20002'`, [COMM]);
+  check('REGRESSION: a source account previously held on a legacy record whose lot is established: its cutoff balance goes to the NEW current owner (not the legacy record)',
+    on20002.length === 1 && on20002[0].tenure_id === estId && on20002[0].c === 700 && onLegacy.n === 0 && onLegacy.c === 0
+    && legacyRec.kind === 'legacy' && legacyRec.property_id === null && legacyRec.vantaca_account_id === '20002' && legacyRec.origin === 'backfill_legacy'
+    && formerOf20002.every((r) => r.b === 0), JSON.stringify({ estId, on20002, onLegacy, legacyRec, formerOf20002 }));
   check('a labelled suspense balance is a reconciling item (never allocated)', (await one(`SELECT kind, amount_cents::int AS c, detail->>'label' AS l FROM conversion_reconciling_items WHERE batch_id = $1 AND kind = 'suspense_balance'`, [B])).c === -400);
   // ---------------------------------------------------------------- idempotency
   const again = await svc.execute(ED, B, { completion_id: pf2, preflight_sha256: report2.sha256 });

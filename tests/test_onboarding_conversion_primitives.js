@@ -17,6 +17,8 @@
 //     a different counterparty is NOT a match; two candidate lines are NOT a match; a twin is a
 //     duplicate candidate; timing by an approved policy only (entered after the cutover, inside
 //     the window); every item carries its resolution;
+//   - a carried balance passes a control only when exact, approved and evidenced (partial,
+//     mismatched or unapproved: FAIL); an opening correction carries the open AP it restores;
 //   - the service fails closed, naming migration 535, when the 535 functions are missing; an
 //     approval needs the owner AND the in-app channel.
 // ============================================================================
@@ -200,6 +202,70 @@ check('a plan that needs the 536 EXECUTE writes is refused while 536 is not appl
   assert.deepStrictEqual(calls, ['onboarding_execute_capabilities', 'onboarding_execute_capabilities']);
   const present = createOnboardingService({ rpc: async () => ['initial_ownership'], storage: { putOnce: async () => {}, get: async () => Buffer.alloc(0) } });
   assert.strictEqual(await present.executeSupportsPlan({ legacy_tenures: [{}] }), null);
+});
+
+// ------------------------------------------------------------- carried balances (no waiver)
+{
+  const EV = { artifact_sha256: 'e'.repeat(64), locator: { page: 1 }, description: 'source aging line for the item' };
+  const items = [
+    { kind: 'builder_position_unresolved', item_key: 'lot-1', amount_cents: 9018 },
+    { kind: 'deferral_residue', item_key: '2205', amount_cents: 200 },
+  ];
+  const builderCtl = () => ({ code: 'preflight.builder_positions_resolved', label: 'builder', status: 'FAIL', failures: [{ lot: '1 Main', property_id: 'lot-1', problem: 'unresolved', rows: [] }] });
+  const deferCtl = () => ({ code: 'preflight.deferral_schedule_reconciles', label: 'deferral', status: 'FAIL', failures: [{ account: '2205', residue_cents: 200, problem: 'residue' }] });
+  const cbp = (over = {}) => ({ id: over.id || 'cb1', policy_kind: 'carried_balance', status: 'approved', fingerprint: 'c'.repeat(64), approved_by_label: 'Owner', approved_at: '2026-10-17T00:00:00Z', evidence: EV,
+    value: { control: 'preflight.builder_positions_resolved', reconciling_kind: 'builder_position_unresolved', item_key: 'lot-1', amount_cents: 9018, label: 'builder position carried as a reconciling item', ...(over.value || {}) }, ...over, ...(over.value ? { value: { control: 'preflight.builder_positions_resolved', reconciling_kind: 'builder_position_unresolved', item_key: 'lot-1', amount_cents: 9018, label: 'builder position carried as a reconciling item', ...over.value } } : {}) });
+
+  check('carried balance: an exact, approved, evidenced policy PASSES the control and cites the policy + evidence', () => {
+    const { controls, explained } = OBJ.resolveCarriedBalances([builderCtl(), deferCtl()], items, { policies: [cbp(), cbp({ id: 'cb2', value: { control: 'preflight.deferral_schedule_reconciles', reconciling_kind: 'deferral_residue', item_key: '2205', amount_cents: 200 } })] });
+    assert.deepStrictEqual(controls.map((c) => c.status), ['PASS', 'PASS']);
+    assert.strictEqual(controls[0].explained_by[0].policy_id, 'cb1');
+    assert.strictEqual(controls[0].explained_by[0].evidence.artifact_sha256, 'e'.repeat(64));
+    assert.strictEqual(controls[0].source_failures.length, 1);
+    assert.strictEqual(explained.length, 2);
+  });
+  check('carried balance: wrong cents, wrong item, wrong kind, unapproved, or another control explains nothing (FAIL stays)', () => {
+    for (const over of [{ value: { amount_cents: 9000 } }, { value: { item_key: 'lot-2' } }, { value: { reconciling_kind: 'deferral_residue' } }, { status: 'proposed' }, { value: { control: 'preflight.other' } }]) {
+      const { controls, explained } = OBJ.resolveCarriedBalances([builderCtl()], items, { policies: [cbp(over)] });
+      assert.strictEqual(controls[0].status, 'FAIL', JSON.stringify(over)); assert.strictEqual(explained.length, 0);
+    }
+  });
+  check('carried balance: partial (one of two failures explained) leaves the control FAIL', () => {
+    const two = { ...builderCtl(), failures: [...builderCtl().failures, { lot: '2 Main', property_id: 'lot-2', problem: 'unresolved', rows: [] }] };
+    const { controls } = OBJ.resolveCarriedBalances([two], [...items, { kind: 'builder_position_unresolved', item_key: 'lot-2', amount_cents: 500 }], { policies: [cbp()] });
+    assert.strictEqual(controls[0].status, 'FAIL'); assert.ok(/1 failure/.test(controls[0].carried_balance_refused));
+  });
+  check('carried balance: a BLOCKED control is never passed by a policy', () => {
+    const { controls } = OBJ.resolveCarriedBalances([{ ...builderCtl(), status: 'BLOCKED' }], items, { policies: [cbp()] });
+    assert.strictEqual(controls[0].status, 'BLOCKED');
+  });
+  check('carried balance: validation requires control, item, exact non-zero cents, a label and evidence', () => {
+    const shas = new Set(['e'.repeat(64)]);
+    const ok = { policy_kind: 'carried_balance', reason: 'a reason of enough length', evidence: EV, value: cbp().value };
+    assert.deepStrictEqual(OBJ.validatePolicy(ok, { artifactShas: shas }), []);
+    assert.strictEqual(OBJ.policyKey(ok), 'preflight.builder_positions_resolved:lot-1');
+    assert.ok(OBJ.validatePolicy({ ...ok, evidence: undefined }, { artifactShas: shas }).some((p) => /evidence is required/.test(p.problem)));
+    assert.ok(OBJ.validatePolicy({ ...ok, value: { ...ok.value, amount_cents: 90.18 } }, { artifactShas: shas }).length);
+    assert.ok(OBJ.validatePolicy({ ...ok, value: { ...ok.value, item_key: '' } }, { artifactShas: shas }).length);
+  });
+}
+
+// ------------------------------------------------------------- an opening correction restores open AP
+check('opening correction: open AP items validate (number, date, positive cents; opening only) and ride into the snapshot shape', () => {
+  const EV = { artifact_sha256: 'f'.repeat(64), locator: { page: 1 }, description: 'the vendor invoice' };
+  const base = { kind: 'opening_correction', effect: 'opening', reason: 'an invoice omitted from the legacy AP', evidence: EV,
+    lines: [{ account: '5250', amount_cents: 72000 }, { account: '2000', amount_cents: -72000 }],
+    open_ap_items: [{ vendor: 'Vendor LLC', invoice_number: '4654', invoice_date: '2026-02-25', amount_cents: 72000 }] };
+  const shas = new Set(['f'.repeat(64)]);
+  const probs = (a) => OBJ.validateAdjustment(a, { artifactShas: shas }).map((p) => p.problem).join(' | ');
+  assert.ok(!/open AP/.test(probs(base)), probs(base));
+  assert.ok(/open AP items ride only on an opening correction/.test(probs({ ...base, effect: 'post_opening' })));
+  assert.ok(/each open AP item needs/.test(probs({ ...base, open_ap_items: [{ vendor: 'Vendor LLC', invoice_number: '', invoice_date: '2026-02-25', amount_cents: 72000 }] })));
+  assert.ok(/each open AP item needs/.test(probs({ ...base, open_ap_items: [{ vendor: 'Vendor LLC', invoice_number: '4654', invoice_date: '2026-02-25', amount_cents: -1 }] })));
+  const [oc] = OBJ.openingCorrections({ adjustments: [{ ...base, id: 'adj', status: 'approved', fingerprint: '9'.repeat(64), adjustment_no: 3, approved_by_label: 'Owner', approved_at: 'x', approval_channel: 'in_app' }] });
+  assert.deepStrictEqual(oc.open_ap_items, [{ vendor: 'Vendor LLC', invoice_number: '4654', invoice_date: '2026-02-25', amount_cents: 72000 }]);
+  const [none] = OBJ.openingCorrections({ adjustments: [{ ...base, open_ap_items: [], id: 'a2', status: 'approved', fingerprint: '8'.repeat(64), adjustment_no: 4 }] });
+  assert.ok(!('open_ap_items' in none));
 });
 
 (async () => {

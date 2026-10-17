@@ -9,7 +9,7 @@ Reusable onboarding-engine capabilities. They are source-agnostic and community-
 | Concept | Table | What it is | Acts when |
 |---|---|---|---|
 | Adjustment | `conversion_adjustments` | A balanced accounting transformation of the source position: lines (account, debit-positive cents), reason, evidence (a source report or evidence document of the batch, plus a locator). Effect `opening` rides in the opening entry and may never flip a sign. Effect `post_opening` is its own entry at the cutoff; a declared `allow_sign_change` is allowed only here. | approved |
-| Policy | `conversion_policies` | An approved non-journal instruction, one of: `cutoff_authority`, `legacy_owner_routing` (default `control_accounts`), `suspense_treatment`, `timing_treatment`, `preserve_source_coding`. | approved |
+| Policy | `conversion_policies` | An approved non-journal instruction, one of: `cutoff_authority`, `legacy_owner_routing` (default `control_accounts`), `suspense_treatment`, `timing_treatment`, `preserve_source_coding`, `carried_balance` (an exact, source-supported balance the conversion carries as a reconciling item; it explains a preflight control's difference so the control PASSES citing the policy; a partial or unsupported one explains nothing). | approved |
 | Exception | `conversion_exceptions` (452, extended) | A bridge item a rule or policy resolved beyond identifiers / provenance, or a question still open for the owner. It records the evidence, classification, resolution, confidence and proposed resolution. | recorded per bridge result |
 
 `conversion_object_events` (append-only) records `proposed / approved / rejected / superseded / recorded` for all three, with actor kind, actor id, label, channel and fingerprint.

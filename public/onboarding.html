@@ -346,7 +346,7 @@ async function loadPreflight(v) {
 // ---- Conversion adjustments, policies and bridge exceptions (migration 535). Proposals come from
 // staff or the operator; ONLY the signed-in owner approves or rejects, and only the exact fingerprint
 // shown here (the server sets the in-app channel; the database refuses any other fingerprint).
-const POLICY_TEXT = { cutoff_authority: 'Source period (book of record through the cutoff)', legacy_owner_routing: 'Prior-owner balances', suspense_treatment: 'Suspense balance', timing_treatment: 'Late-entered bills (timing)', preserve_source_coding: 'Keep the source coding' };
+const POLICY_TEXT = { cutoff_authority: 'Source period (book of record through the cutoff)', legacy_owner_routing: 'Prior-owner balances', suspense_treatment: 'Suspense balance', timing_treatment: 'Late-entered bills (timing)', preserve_source_coding: 'Keep the source coding', carried_balance: 'Carried balance (explains a control)' };
 async function loadConversionObjects(v) {
   const el = $('convobjects'); el.innerHTML = '';
   let o;
