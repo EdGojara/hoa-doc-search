@@ -13,11 +13,11 @@ const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const require = createRequire(import.meta.url);
 const express = require('express');
 const { PGlite } = await import('@electric-sql/pglite');
-const { onboardingWorld, COMM } = await import('../tests/sql/onboarding_world.mjs');
+const { onboardingWorld, normalizeFacts, COMM } = await import('../tests/sql/onboarding_world.mjs');
 const { buildRouter } = require('../api/onboarding.js');
 const { createOnboardingService } = require('../lib/onboarding/service.js');
 
-const world = await onboardingWorld(PGlite, { through: 486 });
+const world = await onboardingWorld(PGlite, { through: 486, primitives: true });   // 535: facts, adjustments, policies
 const mem = new Map();
 const storage = { async putOnce(p, b) { if (!mem.has(p)) mem.set(p, Buffer.from(b)); }, async get(p) { return Buffer.from(mem.get(p)); } };
 // Synthetic Trusted activity for the bridge view (no client data).
@@ -43,6 +43,17 @@ for (const t of ['gl_trial_balance', 'balance_sheet', 'ar_aging', 'homeowner_tra
 let r = await service.runStage(OWNER, B); await service.advance(OWNER, B, { completion_id: r.completion_id, to: 'normalize' });
 r = await service.runStage(OWNER, B); await service.advance(OWNER, B, { completion_id: r.completion_id, to: 'source_controls' });
 await service.runStage(OWNER, B, { roles: { ar_account: '1300', prepaid_account: '2400' }, authoritative: { ar: { label: 'AR = 510.00', cents: 51000, derive: { kind: 'gl_ending', account: '1300' } }, cash: { label: 'Cash = 1,400.00 (deliberately wrong)', cents: 140000, derive: { kind: 'gl_ending', account: '1000' } } } });
+// 535: conversion adjustments and policies on that batch (synthetic): one approved, two waiting for the owner.
+{
+  const AGENT = { kind: 'agent', id: 'harness-agent', assigned_stage: 'source_controls' };
+  const gl = (await world.rpc('onboarding_batch_view', { p_batch: B })).artifacts.find((a) => a.artifact_type === 'gl_trial_balance');
+  const ev = { description: 'GL trial balance at the cutoff', artifact_sha256: gl.sha256, locator: 'account 3000 beginning and ending balance' };
+  const a1 = await service.proposeAdjustment(AGENT, B, { adjustment_no: 1, kind: 'equity_normalization', effect: 'post_opening', allow_sign_change: true, lines: [{ account: '3000', amount_cents: 50000 }, { account: '3050', amount_cents: -50000 }], reason: 'Opening fund balance never closed to the accumulated fund balance', evidence: ev, instruction_source: 'harness fixture' });
+  await service.proposePolicy(AGENT, B, { policy_kind: 'suspense_treatment', value: { account: '2310', label: 'Unapplied cash carried from the prior system', allocate_to_owners: false }, reason: 'No owner-level source exists for this balance' });
+  const p2 = await service.proposePolicy(AGENT, B, { policy_kind: 'legacy_owner_routing', value: { presentation: 'control_accounts' }, reason: 'Prior owners stay in the control accounts on legacy records' });
+  await service.decideObject(OWNER, B, { object_type: 'policy', id: p2.id, decision: 'approved', fingerprint: p2.fingerprint, channel: 'in_app' });
+  console.log(`adjustment ${a1.id} proposed`);
+}
 
 // Second batch walked to the snapshot stage (synthetic data; the waiver here is test-fixture only).
 const B2 = await service.createBatch(OWNER, { community_id: COMM, batch_code: 'CONV-EX-SNAPSHOT', as_of_date: '2026-03-31', source_system: 'vantaca' });
@@ -62,7 +73,7 @@ await service.runStage(OWNER, B2);
   const PF = require('../lib/onboarding/preflight.js');
   const rpc = world.rpc; const ctl = [{ code: 'ok', label: 'ok', status: 'PASS' }]; const FP = trustedFingerprint(trusted);
   const B3 = await rpc('onboarding_create_batch', { p_community: COMM, p_batch_code: 'CONV-EX-PREFLIGHT', p_as_of: '2026-03-31', p_source_system: 'vantaca', p_actor_kind: 'human', p_actor_id: 'ed' });
-  for (const s of ['intake', 'normalize', 'source_controls']) { const c = await rpc('onboarding_record_completion', { p_batch: B3, p_stage: s, p_status: 'PASS', p_open: [], p_controls: ctl, p_summary: {}, p_actor_kind: 'system', p_actor_id: 'onboarding-operator' }); await rpc('onboarding_auto_advance', { p_batch: B3, p_completion: c, p_actor_id: 'onboarding-operator' }); }
+  for (const s of ['intake', 'normalize', 'source_controls']) { const c = await rpc('onboarding_record_completion', { p_batch: B3, p_stage: s, p_status: 'PASS', p_open: [], p_controls: ctl, p_summary: s === 'normalize' ? await normalizeFacts(rpc, B3) : {}, p_actor_kind: 'system', p_actor_id: 'onboarding-operator' }); await rpc('onboarding_auto_advance', { p_batch: B3, p_completion: c, p_actor_id: 'onboarding-operator' }); }
   const sn = await rpc('onboarding_record_snapshot', { p_batch: B3, p_status: 'PASS', p_open: [], p_controls: ctl, p_summary: {}, p_lines: [], p_snapshot_sha256: 'a'.repeat(64), p_actor_kind: 'system', p_actor_id: 'onboarding-operator' });
   await rpc('onboarding_auto_advance', { p_batch: B3, p_completion: sn, p_actor_id: 'onboarding-operator' });
   const br = await rpc('onboarding_record_bridge', { p_batch: B3, p_status: 'PASS', p_open: [], p_controls: ctl, p_summary: { snapshot_completion_id: sn, bridge_engine: 'harness' }, p_items: [], p_bridge_sha256: 'b'.repeat(64), p_trusted_fingerprint: FP, p_actor_kind: 'system', p_actor_id: 'onboarding-operator' });

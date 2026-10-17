@@ -27,7 +27,7 @@ const OWNER = { kind: 'human', id: 'ed', role: 'owner' };
 const ADMIN = { kind: 'human', id: 'staffer', role: 'admin' };
 function memoryStorage() { const m = new Map(); return { m, async putOnce(p, b) { if (!m.has(p)) m.set(p, Buffer.from(b)); }, async get(p) { if (!m.has(p)) throw new Error('missing'); return Buffer.from(m.get(p)); } }; }
 
-const world = await onboardingWorld(PGlite, { through: 484 });
+const world = await onboardingWorld(PGlite, { through: 484, primitives: true });   // 535: the service persists / reads source facts
 const storage = memoryStorage();
 let rpcCalls = [];
 // Synthetic Trusted financial activity for the bridge (no client data). Mutable so a test can change it.
@@ -146,7 +146,7 @@ const tv = await svc.getBatch(B2, OWNER);
 check('tampered artifact: intake FAILS on the re-hash check (the stored bytes no longer match the record)', t0.status === 'FAIL' && tv.current.controls.find((c) => c.code === 'intake.artifacts_match_recorded_hashes').status === 'FAIL');
 
 // Only allowlisted guarded functions were ever called; the service holds no table writes.
-check('service used only the allowlisted onboarding_* functions', rpcCalls.every((n) => /^onboarding_(batches|batch_view|create_batch|register_artifact|record_completion|waive|approve|advance|record_snapshot|snapshot_view|record_bridge|bridge_view|bridge_decisions_view|record_bridge_decisions|register_evidence|evidence_view)$/.test(n)));
+check('service used only the allowlisted onboarding_* / conversion_* functions', rpcCalls.every((n) => /^onboarding_(batches|batch_view|create_batch|register_artifact|record_completion|waive|approve|advance|record_snapshot|snapshot_view|record_bridge|bridge_view|bridge_decisions_view|record_bridge_decisions|register_evidence|evidence_view|open_fact_set|append_source_facts|seal_fact_set|fact_set_view|source_facts_page|record_exceptions)$|^conversion_objects_view$/.test(n)), JSON.stringify([...new Set(rpcCalls)]));
 const forged = await code(() => svc.waive({ kind: 'human', id: 'ed', role: 'admin' }, B, { completion_id: r2b.completion_id, code: 'x', reason: 'pretending to be the owner' }));
 check('identity: an actor without the owner role cannot waive even with the owner id', forged === 'OWNER_ONLY');
 console.log(`\n${pass} passed, ${fail} failed`);

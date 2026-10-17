@@ -52,7 +52,7 @@ const q = async (sql, params) => (await db.query(sql, params)).rows;
 const one = async (sql, params) => (await q(sql, params))[0];
 await db.exec(`
   ALTER TABLE chart_of_accounts ADD COLUMN account_type text, ADD COLUMN is_active boolean DEFAULT true, ADD COLUMN is_summary boolean DEFAULT false;
-  ALTER TABLE properties ADD COLUMN trusted_account_number text;
+  ALTER TABLE properties ADD COLUMN trusted_account_number text, ADD COLUMN city text, ADD COLUMN state text, ADD COLUMN zip text;   -- production columns the conversion context reads
   ALTER TABLE contacts ADD COLUMN full_name text;
   ALTER TABLE vendors ADD COLUMN dba text, ADD COLUMN is_active boolean DEFAULT true;
   ALTER TABLE ownership_tenures ADD COLUMN vantaca_account_id text,

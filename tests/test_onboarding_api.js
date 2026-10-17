@@ -159,7 +159,9 @@ check('migration 495: append-only evidence table, refused once execution starts,
 });
 check('service guard: its only database calls are the onboarding_* rpc allowlist and the write-once artifact store', () => {
   const s = fs.readFileSync(path.join(__dirname, '..', 'lib', 'onboarding', 'service.js'), 'utf8').replace(/\/\/.*$/gm, '');
-  assert.ok(RPC.length === 20 && RPC.every((n) => /^onboarding_/.test(n)));
+  // 535 adds the fact-set and conversion-object functions (onboarding_* / conversion_*), still one allowlist.
+  assert.ok(RPC.length === 31 && RPC.every((n) => /^(onboarding|conversion)_/.test(n)), String(RPC.length));
+  for (const n of ['conversion_decide_object', 'conversion_propose_adjustment', 'conversion_propose_policy', 'onboarding_fact_set_view', 'onboarding_record_exceptions']) assert.ok(RPC.includes(n), `535 rpc ${n}`);
   for (const n of ['onboarding_register_evidence', 'onboarding_evidence_view']) assert.ok(RPC.includes(n), `evidence rpc ${n}`);
   for (const n of ['onboarding_execute', 'onboarding_record_execution_failure', 'onboarding_execution_view']) assert.ok(RPC.includes(n), `M6 rpc ${n}`);
   assert.strictEqual((s.match(/\.rpc\(/g) || []).length, 1, 'exactly one rpc call site');

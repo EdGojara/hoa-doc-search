@@ -1,6 +1,7 @@
 // tests/sql/onboarding_world.mjs — shared PGlite world for the onboarding engine
 // tests: the stub tables 452 references, then the REAL 452 / 481 (and optionally
 // 482 / 483 / 484) migration files, exactly as committed. Returns { db, client, rpc }.
+// { primitives: true } also applies 535 (conversion records) as committed.
 //   rpc(name, args) calls a SQL function with named arguments, like supabase.rpc.
 // { gl: true } replaces the minimal stubs with the accounting tables EXECUTE (488)
 // writes, with the production columns and constraints that matter to it (170 GL +
@@ -77,7 +78,21 @@ const GL_STUBS = `
       is_ach_autopay boolean NOT NULL DEFAULT false,
       UNIQUE (community_id, vendor_id, vendor_invoice_number));`;
 
-export async function onboardingWorld(PGlite, { through = 485, gl = false } = {}) {
+// 535: a normalize PASS must carry a sealed fact set. For tests that record stage results directly
+// (not through the service), this seals a minimal set for the batch and returns the summary to record.
+export async function normalizeFacts(rpc, batchId) {
+  const v = await rpc('onboarding_batch_view', { p_batch: batchId });
+  const cutoff = String(v.batch.as_of_date).slice(0, 10);
+  const { createRequire } = await import('module');
+  const SF = createRequire(import.meta.url)(`${REPO}/lib/onboarding/source_facts.js`);
+  const f = SF.factsFromParsed({ synthetic: { artifact_type: 'synthetic', as_of: cutoff, defects: [], printed: {}, rows: [] } }, { cutoff });
+  const id = await rpc('onboarding_open_fact_set', { p_batch: batchId, p_cutoff: cutoff, p_actor_kind: 'system', p_actor_id: 'op' });
+  await rpc('onboarding_append_source_facts', { p_fact_set: id, p_facts: f.facts });
+  await rpc('onboarding_seal_fact_set', { p_fact_set: id, p_count: f.fact_count, p_sha256: f.facts_sha256, p_slices: [] });
+  return { fact_set: { id, fact_count: f.fact_count, facts_sha256: f.facts_sha256 } };
+}
+
+export async function onboardingWorld(PGlite, { through = 485, gl = false, primitives = false } = {}) {
   const db = new PGlite();
   await db.exec(`
     CREATE ROLE anon; CREATE ROLE authenticated; CREATE ROLE service_role;
@@ -102,6 +117,9 @@ export async function onboardingWorld(PGlite, { through = 485, gl = false } = {}
   // onboarding chain: production's ap_invoices has it before any further conversion executes, so the
   // GL world always carries it (a conversion now writes opening AP as 'conversion_review').
   if (gl) { await db.exec(lf(`${REPO}/migrations/504_opening_ap_payment_clearances.sql`)); await db.exec(`INSERT INTO schema_migrations (filename, sha256) VALUES ('504_opening_ap_payment_clearances.sql', 'recorded')`); }
+  // 535 (conversion records: persisted source facts, adjustments, policies, bridge exceptions) needs only the
+  // engine core (481-484). The service requires it for every stage after intake (it fails closed without it).
+  if (primitives) { await db.exec(lf(`${REPO}/migrations/535_conversion_primitives.sql`)); await db.exec(`INSERT INTO schema_migrations (filename, sha256) VALUES ('535_conversion_primitives.sql', 'recorded')`); }
   const client = { query: async (sql, params) => {
     if (params) { const r = await db.query(sql, params.map((v) => (v && typeof v === 'object' ? JSON.stringify(v) : v))); return { rows: r.rows, rowCount: r.affectedRows ?? r.rows.length }; }
     const rs = await db.exec(sql); const last = rs[rs.length - 1] || { rows: [] }; return { rows: last.rows, rowCount: last.affectedRows ?? 0 };

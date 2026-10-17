@@ -9,7 +9,7 @@
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { createRequire } from 'module';
-import { onboardingWorld, COMM } from './onboarding_world.mjs';
+import { normalizeFacts, onboardingWorld, COMM } from './onboarding_world.mjs';
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 let PGlite;
 try { ({ PGlite } = await import(process.env.PGLITE_MODULE || '@electric-sql/pglite')); }
@@ -23,7 +23,7 @@ let pass = 0, fail = 0;
 const check = (name, cond, extra = '') => { if (cond) { pass++; console.log('PASS ', name); } else { fail++; console.log('FAIL ', name, extra); } };
 const code = async (fn) => { try { await fn(); return null; } catch (e) { return `${e.code || ''} ${e.message || ''}`; } };
 
-const world = await onboardingWorld(PGlite, { through: 486 });
+const world = await onboardingWorld(PGlite, { through: 486, primitives: true });   // 535: the service persists / reads source facts
 const { rpc, db } = world;
 const trusted = { journal_entries: [], journal_entry_lines: [], ap_invoices: [], ap_payments: [], ar_charges: [], ar_payments: [], payments: [], homeowner_transactions: [] };
 let liveTrusted = trusted;
@@ -36,7 +36,7 @@ const FP = trustedFingerprint(trusted);
 // walk a batch to preflight with PASS results (system operator path)
 const B = await rpc('onboarding_create_batch', { p_community: COMM, p_batch_code: 'CONV-EX-PF', p_as_of: '2026-03-31', p_source_system: 'vantaca', p_actor_kind: 'human', p_actor_id: 'ed' });
 const ctl = [{ code: 'ok', label: 'ok', status: 'PASS' }];
-for (const s of ['intake', 'normalize', 'source_controls']) { const c = await rpc('onboarding_record_completion', { p_batch: B, p_stage: s, p_status: 'PASS', p_open: [], p_controls: ctl, p_summary: {}, p_actor_kind: 'system', p_actor_id: 'op' }); await rpc('onboarding_auto_advance', { p_batch: B, p_completion: c, p_actor_id: 'op' }); }
+for (const s of ['intake', 'normalize', 'source_controls']) { const c = await rpc('onboarding_record_completion', { p_batch: B, p_stage: s, p_status: 'PASS', p_open: [], p_controls: ctl, p_summary: s === 'normalize' ? await normalizeFacts(rpc, B) : {}, p_actor_kind: 'system', p_actor_id: 'op' }); await rpc('onboarding_auto_advance', { p_batch: B, p_completion: c, p_actor_id: 'op' }); }
 const sn = await rpc('onboarding_record_snapshot', { p_batch: B, p_status: 'PASS', p_open: [], p_controls: ctl, p_summary: { roles: { ar_account: '1300' } }, p_lines: [], p_snapshot_sha256: 'a'.repeat(64), p_actor_kind: 'system', p_actor_id: 'op' });
 await rpc('onboarding_auto_advance', { p_batch: B, p_completion: sn, p_actor_id: 'op' });
 const br = await rpc('onboarding_record_bridge', { p_batch: B, p_status: 'PASS', p_open: [], p_controls: ctl, p_summary: { snapshot_completion_id: sn, bridge_engine: 'test' }, p_items: [], p_bridge_sha256: 'b'.repeat(64), p_trusted_fingerprint: FP, p_actor_kind: 'system', p_actor_id: 'op' });
@@ -91,7 +91,7 @@ check('still nothing posted anywhere', (await db.query(`SELECT count(*)::int AS 
 // A large, real-shape preflight (1,500 homeowner-ledger rows) whose full report would not fit a request body.
 async function walk(code6) {
   const id = await rpc('onboarding_create_batch', { p_community: COMM, p_batch_code: code6, p_as_of: '2026-03-31', p_source_system: 'vantaca', p_actor_kind: 'human', p_actor_id: 'ed' });
-  for (const s of ['intake', 'normalize', 'source_controls']) { const c = await rpc('onboarding_record_completion', { p_batch: id, p_stage: s, p_status: 'PASS', p_open: [], p_controls: ctl, p_summary: {}, p_actor_kind: 'system', p_actor_id: 'op' }); await rpc('onboarding_auto_advance', { p_batch: id, p_completion: c, p_actor_id: 'op' }); }
+  for (const s of ['intake', 'normalize', 'source_controls']) { const c = await rpc('onboarding_record_completion', { p_batch: id, p_stage: s, p_status: 'PASS', p_open: [], p_controls: ctl, p_summary: s === 'normalize' ? await normalizeFacts(rpc, id) : {}, p_actor_kind: 'system', p_actor_id: 'op' }); await rpc('onboarding_auto_advance', { p_batch: id, p_completion: c, p_actor_id: 'op' }); }
   const s1 = await rpc('onboarding_record_snapshot', { p_batch: id, p_status: 'PASS', p_open: [], p_controls: ctl, p_summary: {}, p_lines: [], p_snapshot_sha256: 'a'.repeat(64), p_actor_kind: 'system', p_actor_id: 'op' });
   await rpc('onboarding_auto_advance', { p_batch: id, p_completion: s1, p_actor_id: 'op' });
   const b1 = await rpc('onboarding_record_bridge', { p_batch: id, p_status: 'PASS', p_open: [], p_controls: ctl, p_summary: { snapshot_completion_id: s1, bridge_engine: 'test' }, p_items: [], p_bridge_sha256: 'b'.repeat(64), p_trusted_fingerprint: FP, p_actor_kind: 'system', p_actor_id: 'op' });
