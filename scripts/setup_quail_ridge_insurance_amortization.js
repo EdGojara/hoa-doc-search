@@ -37,7 +37,7 @@ const CID = 'a0000000-0000-4000-8000-000000000005';
   for (const p of prior || []) {
     const { data: posts } = await s.from('recognition_postings').select('journal_entry_id').eq('schedule_id', p.id);
     const jeIds = (posts || []).map((x) => x.journal_entry_id).filter(Boolean);
-    if (jeIds.length) { await s.from('journal_entry_lines').delete().in('journal_entry_id', jeIds); await s.from('journal_entries').delete().in('id', jeIds); }
+    if (jeIds.length) { { const { error: delErr } = await s.from('journal_entry_lines').delete().in('journal_entry_id', jeIds); if (delErr) { console.error(`Refused deleting journal_entry_lines: ${delErr.message} (a posted entry is permanent, migration 529; void it in the app). Stopping before anything is re-imported.`); process.exit(1); } } { const { error: delErr } = await s.from('journal_entries').delete().in('id', jeIds); if (delErr) { console.error(`Refused deleting journal_entries: ${delErr.message} (a posted entry is permanent, migration 529; void it in the app). Stopping before anything is re-imported.`); process.exit(1); } } }
     await s.from('recognition_schedules').delete().eq('id', p.id);
   }
   const { data: sched, error: se } = await s.from('recognition_schedules').insert(SCHEDULE).select('id').single();

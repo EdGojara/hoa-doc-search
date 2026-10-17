@@ -1,0 +1,69 @@
+{
+  "migration": "529_posted_lines_immutable.sql",
+  "summary": "A posted journal entry is permanent in the database itself, open month or closed, any community, any writer (app, script or database function). Lines of a non-draft entry cannot be deleted or changed. A non-draft header never returns to draft, a void is final, and its community, posting date, period, totals and reversal link never change. Drafts stay fully editable; metadata edits, the void flip and the superseded flip / restore are unaffected. Coexists with 502 (closed months) and 528 (former clients). Scar: LOPF JE-2026-00169..00172 lost their lines on 2026-09-28/29. Repairs nothing; no row changes.",
+  "requires": [
+    "170_gl_foundation.sql",
+    "454_journal_entry_superseded_status.sql",
+    "528_books_closed_guard.sql"
+  ],
+  "preflight": [
+    {
+      "name": "the guard does not exist yet",
+      "sql": "SELECT count(*)::int FROM pg_trigger WHERE tgname IN ('trg_journal_entry_lines_posted_guard', 'trg_journal_entries_posted_guard') AND NOT tgisinternal",
+      "expect": 0
+    },
+    {
+      "name": "exactly the four known Lakes of Pine Forest accruals are exempt: posted, no lines, $6,277.75",
+      "sql": "SELECT (count(*) = 4 AND sum(je.total_debits_cents) = 627775)::int FROM journal_entries je LEFT JOIN (SELECT journal_entry_id, sum(debit_cents) dr, sum(credit_cents) cr, count(*) n FROM journal_entry_lines GROUP BY journal_entry_id) l ON l.journal_entry_id = je.id WHERE je.status <> 'draft' AND (l.n IS NULL OR l.dr <> je.total_debits_cents OR l.cr <> je.total_credits_cents) AND (je.total_debits_cents > 0 OR l.n IS NOT NULL) AND je.community_id = 'a0000000-0000-4000-8000-000000000002' AND je.reference IN ('JE-2026-00169', 'JE-2026-00170', 'JE-2026-00171', 'JE-2026-00172') AND l.n IS NULL",
+      "expect": 1
+    },
+    {
+      "name": "no other non-draft entry, in any community, has missing lines or lines that do not total its header",
+      "sql": "SELECT count(*)::int FROM journal_entries je LEFT JOIN (SELECT journal_entry_id, sum(debit_cents) dr, sum(credit_cents) cr, count(*) n FROM journal_entry_lines GROUP BY journal_entry_id) l ON l.journal_entry_id = je.id WHERE je.status <> 'draft' AND (l.n IS NULL OR l.dr <> je.total_debits_cents OR l.cr <> je.total_credits_cents) AND (je.total_debits_cents > 0 OR l.n IS NOT NULL) AND NOT (je.community_id = 'a0000000-0000-4000-8000-000000000002' AND je.reference IN ('JE-2026-00169', 'JE-2026-00170', 'JE-2026-00171', 'JE-2026-00172') AND l.n IS NULL)",
+      "expect": 0
+    }
+  ],
+  "expected_changes": [
+    "New function journal_entry_lines_posted_guard() and trigger trg_journal_entry_lines_posted_guard (BEFORE UPDATE OR DELETE on journal_entry_lines): refuses deleting a line of a non-draft entry, changing any column of such a line, and moving a line into a non-draft entry. A write that changes nothing passes. Message starts 'posted_lines_immutable:' (P0001).",
+    "New function journal_entries_posted_guard() and trigger trg_journal_entries_posted_guard (BEFORE UPDATE on journal_entries): a posted / voided / superseded entry never returns to draft; a voided entry stays voided with the same reversal; community_id, posting_date, period_id, total_debits_cents, total_credits_cents and reverses_je_id never change. Description, notes, document links, needs_review, classification_reason, prior_period_through, the void flip and the superseded flip / restore are unaffected.",
+    "New function journal_entries_posted_guard() and trigger trg_journal_entries_posted_guard (BEFORE UPDATE on journal_entries), for a posted / voided / superseded entry: never returns to draft; a void is final; posted -> voided only with void_reversal_je_id naming an entry that reverses it (502's rule); posted -> superseded only with superseded_by_conversion set; superseded is final unless a reviewed rollback sets the transaction-local flag trusted.conversion_restore = 'on'; community_id, posting_date, period_id, total_debits_cents, total_credits_cents and reverses_je_id never change. Description, notes, document links, needs_review, classification_reason and prior_period_through stay editable.",
+    "Trigger order (Postgres fires same-event BEFORE row triggers by name): books_closed (528) -> close_guard (502) -> posted_guard (529) on both tables.",
+    "No row changes. The four LOPF headers JE-2026-00169..00172 stay exactly as they are; their repair is a separate correcting entry approved in the app."
+  ],
+  "objects": {
+    "added": [
+      "function:journal_entries_posted_guard",
+      "function:journal_entry_lines_posted_guard",
+      "trigger:journal_entries.trg_journal_entries_posted_guard",
+      "trigger:journal_entry_lines.trg_journal_entry_lines_posted_guard"
+    ],
+    "changed": [],
+    "removed": []
+  },
+  "row_changes": {
+    "journal_entries": 0,
+    "journal_entry_lines": 0
+  },
+  "protected": [
+    {
+      "table": "journal_entries",
+      "order_by": "id"
+    },
+    {
+      "table": "journal_entry_lines",
+      "order_by": "id"
+    }
+  ],
+  "verify": [
+    {
+      "name": "both guard triggers exist",
+      "sql": "SELECT count(*)::int FROM pg_trigger WHERE tgname IN ('trg_journal_entry_lines_posted_guard', 'trg_journal_entries_posted_guard') AND NOT tgisinternal",
+      "expect": 2
+    },
+    {
+      "name": "the line guard fires on UPDATE and DELETE only (INSERT unchanged)",
+      "sql": "SELECT count(*)::int FROM information_schema.triggers WHERE trigger_name = 'trg_journal_entry_lines_posted_guard' AND event_manipulation IN ('UPDATE', 'DELETE')",
+      "expect": 2
+    }
+  ]
+}

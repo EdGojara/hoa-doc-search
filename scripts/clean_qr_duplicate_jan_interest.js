@@ -41,7 +41,7 @@ const f = (c) => '$' + (Number(c || 0) / 100).toFixed(2);
 
   const deb = dup.reduce((a, l) => a + Number(l.debit_cents), 0);
   const cr = dup.reduce((a, l) => a + Number(l.credit_cents), 0);
-  await s.from('journal_entry_lines').delete().in('id', dup.map((l) => l.id));
+  { const { error: delErr } = await s.from('journal_entry_lines').delete().in('id', dup.map((l) => l.id)); if (delErr) { console.error(`Refused deleting journal_entry_lines: ${delErr.message} (a posted entry is permanent, migration 529; void it in the app). Stopping before anything is re-imported.`); process.exit(1); } }
   await s.from('journal_entries').update({
     total_debits_cents: Number(je1.total_debits_cents) - deb,
     total_credits_cents: Number(je1.total_credits_cents) - cr,
@@ -49,8 +49,8 @@ const f = (c) => '$' + (Number(c || 0) / 100).toFixed(2);
   console.log(`Removed 1/1 duplicate (${dup.length} lines, ${f(deb)}).`);
 
   if (je2) {
-    await s.from('journal_entry_lines').delete().eq('journal_entry_id', je2.id);
-    await s.from('journal_entries').delete().eq('id', je2.id);
+    { const { error: delErr } = await s.from('journal_entry_lines').delete().eq('journal_entry_id', je2.id); if (delErr) { console.error(`Refused deleting journal_entry_lines: ${delErr.message} (a posted entry is permanent, migration 529; void it in the app). Stopping before anything is re-imported.`); process.exit(1); } }
+    { const { error: delErr } = await s.from('journal_entries').delete().eq('id', je2.id); if (delErr) { console.error(`Refused deleting journal_entries: ${delErr.message} (a posted entry is permanent, migration 529; void it in the app). Stopping before anything is re-imported.`); process.exit(1); } }
     console.log('Deleted 2/11 reversal entry.');
   }
 })().catch((e) => { console.error('FAILED:', e.message); process.exit(1); });

@@ -79,8 +79,8 @@ const lastDay = (y, m) => new Date(Date.UTC(y, m, 0)).getUTCDate();
   // 4) Idempotent: remove any prior activity-migration entries first.
   const { data: prior } = await s.from('journal_entries').select('id').eq('community_id', CID).eq('source_module', 'vantaca_import');
   if (prior && prior.length) {
-    await s.from('journal_entry_lines').delete().in('journal_entry_id', prior.map((j) => j.id));
-    await s.from('journal_entries').delete().in('id', prior.map((j) => j.id));
+    { const { error: delErr } = await s.from('journal_entry_lines').delete().in('journal_entry_id', prior.map((j) => j.id)); if (delErr) { console.error(`Refused deleting journal_entry_lines: ${delErr.message} (a posted entry is permanent, migration 529; void it in the app). Stopping before anything is re-imported.`); process.exit(1); } }
+    { const { error: delErr } = await s.from('journal_entries').delete().in('id', prior.map((j) => j.id)); if (delErr) { console.error(`Refused deleting journal_entries: ${delErr.message} (a posted entry is permanent, migration 529; void it in the app). Stopping before anything is re-imported.`); process.exit(1); } }
     console.log(`Cleared ${prior.length} prior activity entries.`);
   }
 

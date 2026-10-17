@@ -72,6 +72,7 @@ router.post('/charges', express.json(), async (req, res) => {
     res.json(result);
   } catch (err) {
     if (require('../lib/accounting/ownership').isBooksClosed(err)) return res.status(409).json({ error: 'books_closed', detail: err.message });
+    if (require('../lib/accounting/ownership').isPostedEntryPermanent(err)) return res.status(409).json({ error: 'posted_entry_permanent', detail: 'A posted journal entry is permanent. Post a correcting entry (or void it, which posts a reversal) instead.' });
     if (err.code === 'invalid_input' || err.code === 'invalid_state' || err.code === 'period_closed') {
       return res.status(400).json({ error: err.message, code: err.code });
     }

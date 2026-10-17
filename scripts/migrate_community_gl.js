@@ -406,8 +406,9 @@ function classify(num) {
   // balances (LOPF hit exactly this). Live/native postings (other source_modules)
   // are untouched. No lower bound; keep the upper bound so nothing past this
   // rebuild is disturbed.
-  const { data: prior } = await s.from('journal_entries').select('id').eq('community_id', CID).in('source_module', ['opening_entry', 'vantaca_import', 'closing_entry']).lte('posting_date', range1);
-  if (prior && prior.length) { await s.from('journal_entry_lines').delete().in('journal_entry_id', prior.map((j) => j.id)); await s.from('journal_entries').delete().in('id', prior.map((j) => j.id)); console.log(`Cleared ${prior.length} prior entries.`); }
+  const { data: prior, error: priorErr } = await s.from('journal_entries').select('id').eq('community_id', CID).in('source_module', ['opening_entry', 'vantaca_import', 'closing_entry']).lte('posting_date', range1);
+  if (priorErr) { console.error(`Could not read prior importer entries: ${priorErr.message}. Stopping (re-importing on top of them would double-count).`); process.exit(1); }
+  if (prior && prior.length) { { const { error: delErr } = await s.from('journal_entry_lines').delete().in('journal_entry_id', prior.map((j) => j.id)); if (delErr) { console.error(`Refused deleting journal_entry_lines: ${delErr.message} (a posted entry is permanent, migration 529; void it in the app). Stopping before anything is re-imported.`); process.exit(1); } } { const { error: delErr } = await s.from('journal_entries').delete().in('id', prior.map((j) => j.id)); if (delErr) { console.error(`Refused deleting journal_entries: ${delErr.message} (a posted entry is permanent, migration 529; void it in the app). Stopping before anything is re-imported.`); process.exit(1); } } console.log(`Cleared ${prior.length} prior entries.`); }
 
   // Opening (OPENING MODE only)
   if (!conversionMode && opening.length) {
