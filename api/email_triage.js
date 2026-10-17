@@ -59,7 +59,7 @@ function personaFor(m) {
   // Accounting Manager: mail to kat@ is Kat's (close/reconciliation/financials).
   if (mailbox === String(graphSend.KAT_MAILBOX || '').toLowerCase()) return 'kat';
   // Senior Community Manager (escalations): mail to amanda@ is Amanda's.
-  if (mailbox === String(graphSend.AMANDA_MAILBOX || '').toLowerCase()) return 'amanda';
+  if (graphSend.isAmandaAddress(mailbox)) return 'amanda';
   if (mailbox === String(graphSend.EMMA_MAILBOX || '').toLowerCase()) return 'emma';
   // Language front office: mail to isabella@/mei@/priya@ is owned by that persona.
   // She is the same front-office brain as Claire, in her language; the send path

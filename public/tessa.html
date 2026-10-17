@@ -48,6 +48,7 @@
   .soon { text-align:center; padding:70px 20px; color:var(--muted); } .soon b { display:block; color:var(--navy); font-size:18px; margin-bottom:6px; }
 </style>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="/team-identity.js"></script>
 </head>
 <body>
 <div class="wrap">
@@ -318,7 +319,7 @@ async function loadRecipients(){
   const sel = $('rpick'); if(!sel) return;
   // AI team mirrors lib/email/graph_send.js persona mailboxes.
   const AI = [
-    ['Amanda Albright','amanda@bedrocktx.com','senior community manager'],
+    ['Amanda Albright',((window.TEAM_IDENTITY||{}).amanda||{}).email||'','senior community manager'], // AMANDA_PUBLIC_EMAIL via /team-identity.js
     ['Annie Reeves','annie@bedrocktx.com','ACC / ARC'],
     ['Claire','claire@bedrocktx.com','front office'],
     ['Emma Brooks','emma@bedrocktx.com','accounts payable'],

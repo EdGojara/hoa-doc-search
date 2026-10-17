@@ -90,6 +90,7 @@
 <div class="toast" id="toast"></div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="/team-identity.js"></script>
 <script>
 const $ = (id) => document.getElementById(id);
 let drafts = [], current = null, tab = 'draft', af = (u,o)=>fetch(u,o);
@@ -258,7 +259,7 @@ async function loadRoster(){
     {email:'emma@bedrocktx.com',    name:'Emma Brooks',     label:'Emma Brooks — accounts payable',        kind:'ai'},
     {email:'miranda@bedrocktx.com', name:'Miranda Pierce',  label:'Miranda Pierce — compliance / DRV',     kind:'ai'},
     {email:'kat@bedrocktx.com',     name:'Kat Reed',        label:'Kat Reed — accounting manager',         kind:'ai'},
-    {email:'amanda@bedrocktx.com',  name:'Amanda Albright', label:'Amanda Albright — senior community mgr',kind:'ai'},
+    {email:((window.TEAM_IDENTITY||{}).amanda||{}).email||'', name:'Amanda Albright', label:'Amanda Albright — senior community mgr',kind:'ai'}, // AMANDA_PUBLIC_EMAIL via /team-identity.js
     {email:'reese@bedrocktx.com',   name:'Reese Calloway',  label:'Reese Calloway — resale & closings',    kind:'ai'},
     {email:'paige@bedrocktx.com',   name:'Paige Chandler',  label:'Paige Chandler — board operations',     kind:'ai'},
   ];
