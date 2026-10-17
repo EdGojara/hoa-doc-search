@@ -6,6 +6,7 @@
   "scripts": {
     "test": "node scripts/run_all_tests.js",
     "test:constraints": "node scripts/check_constraint_values.js",
+    "test:network-guard": "node scripts/check_test_network_guard.js",
     "test:vantaca": "node tests/test_vantaca_extraction.js",
     "test:retrieval": "node scripts/check_retrieval_truncation.js",
     "test:builder-letters": "node tests/test_builder_letter_validate.js",
