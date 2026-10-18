@@ -1515,7 +1515,9 @@ router.post('/:id/send', express.json(), async (req, res) => {
       if (!g.ok) return res.status(409).json({ error: g.error, code: 'unverified_bank_recipient' });
     }
     const commName = m.community ? m.community.name : '';
-    const subj = subject || (/^re:/i.test(m.subject || '') ? m.subject : `Re: ${m.subject || 'your message'}`);
+    const _webInq = m.extracted && m.extracted.website_inquiry;
+    // A verified website inquiry's subject is the form's internal one; reply under a customer-facing subject.
+    const subj = subject || (_webInq && _webInq.verified ? require('../lib/email/website_inquiry').REPLY_SUBJECT : (/^re:/i.test(m.subject || '') ? m.subject : `Re: ${m.subject || 'your message'}`));
 
     // LANGUAGE BRIDGE (Ed 2026-09-13): the reply was drafted, reviewed, and
     // edited in English (English governs the record and it works for our
@@ -1601,6 +1603,11 @@ router.post('/:id/send', express.json(), async (req, res) => {
       const { buildReeseEmail } = require('../lib/email/reese_signature');
       ({ html, attachments } = buildReeseEmail(sendBody, commName, inlineQuote));
       fromMailbox = graphSend.REESE_MAILBOX; senderLabel = 'Reese Calloway (Bedrock AI)';
+    } else if (persona === 'maggie') {
+      // Maggie (Business Development): website prospects. Roster-driven signature, sends from maggie@.
+      const { buildPersonaEmail } = require('../lib/email/persona_signature');
+      ({ html, attachments } = buildPersonaEmail('maggie', sendBody, commName, inlineQuote));
+      fromMailbox = graphSend.MAGGIE_MAILBOX; senderLabel = 'Maggie Sullivan (Bedrock AI)';
     } else if (persona === 'isabella' || persona === 'mei' || persona === 'priya') {
       // Language front office: one generic, roster-driven signature builder — no
       // per-persona file needed. sendBody is already translated to the resident's
