@@ -1482,6 +1482,24 @@ router.post('/:id/send', express.json(), async (req, res) => {
       });
       if (!guard.allow) return res.status(guard.status).json({ error: guard.error, message: guard.message, sent: false });
     }
+    // ANSWERED BY STAFF (PR #225): right before sending, re-check the shared mailbox's Sent
+    // Items for a newer human reply. Verified -> blocked; unprovable -> explicit confirmation;
+    // lookup failure -> blocked. Only mail that landed in a staff-reply mailbox (info@/welcome@).
+    {
+      const staffSvc = require('../lib/email/staff_reply').productionService(supabase);
+      const actorEmail = String((req.admin && req.admin.email) || '').toLowerCase();
+      const actor = { email: actorEmail || null, is_owner: !!actorEmail && actorEmail === OWNER_EMAIL };
+      const overrideReason = req.body && typeof req.body.staff_reply_override_reason === 'string' ? req.body.staff_reply_override_reason : null;
+      const staffGuard = await staffSvc.guardBeforeSend({ ...m, id: req.params.id }, {
+        confirmed: !!(req.body && req.body.confirm_staff_reply_review === true), override: overrideReason ? { reason: overrideReason } : null, actor });
+      if (!staffGuard.allow) return res.status(staffGuard.status).json({ error: staffGuard.error, message: staffGuard.message, needs_confirmation: !!staffGuard.needs_confirmation, overridable: staffGuard.overridable || false, staff_reply: staffGuard.evidence || null, sent: false });
+      // An exception (owner override / confirmed ambiguous match) is recorded on the email BEFORE
+      // the send; if it cannot be recorded, nothing is sent.
+      if (staffGuard.audit) {
+        try { await staffSvc.store.appendAudit({ id: req.params.id }, staffGuard.audit); console.warn('[email_triage] staff-reply exception recorded:', { id: req.params.id, ...staffGuard.audit }); }
+        catch (e) { return res.status(503).json({ error: 'staff_reply_audit_failed', message: 'The override could not be recorded, so nothing was sent. Try again.', sent: false }); }
+      }
+    }
     // No classification block on send: Ed reviews and approves every outgoing
     // reply himself (admin-only), and explicitly wants to reply to any email,
     // including internal/staff mail (the staff-interaction loop). The human gate
