@@ -1482,6 +1482,14 @@ router.post('/:id/send', express.json(), async (req, res) => {
       });
       if (!guard.allow) return res.status(guard.status).json({ error: guard.error, message: guard.message, sent: false });
     }
+    // ANSWERED BY STAFF (PR #225): right before sending, re-check the shared mailbox's Sent
+    // Items for a newer human reply. Verified -> blocked; unprovable -> explicit confirmation;
+    // lookup failure -> blocked. Only mail that landed in a staff-reply mailbox (info@/welcome@).
+    {
+      const staffGuard = await require('../lib/email/staff_reply').productionService(supabase)
+        .guardBeforeSend({ ...m, id: req.params.id }, { confirmed: !!(req.body && req.body.confirm_staff_reply_review === true) });
+      if (!staffGuard.allow) return res.status(staffGuard.status).json({ error: staffGuard.error, message: staffGuard.message, needs_confirmation: !!staffGuard.needs_confirmation, staff_reply: staffGuard.evidence || null, sent: false });
+    }
     // No classification block on send: Ed reviews and approves every outgoing
     // reply himself (admin-only), and explicitly wants to reply to any email,
     // including internal/staff mail (the staff-interaction loop). The human gate

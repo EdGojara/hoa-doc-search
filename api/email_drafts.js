@@ -254,6 +254,24 @@ router.post('/:id/send', async (req, res) => {
     //     otherwise a fresh message with the quoted original inline;
     //   * on success the inbound is marked handled.
     // (Ed 2026-10-06, Amanda inbox.)
+    // ANSWERED BY STAFF (PR #225): any draft that replies to an inbound is re-checked against
+    // the shared mailbox's Sent Items right before sending (verified -> blocked, unprovable ->
+    // explicit confirmation, lookup failure -> blocked). Amanda's guard below is unchanged.
+    if (d.source_email_ref && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(d.source_email_ref))) {   // an email_messages row id (other refs are not inbound rows)
+      const { data: srcRow, error: srcRowErr } = await supabase.from('email_messages')
+        .select('id, mailbox, conversation_id, internet_message_id, sender_email, body_full, body_preview, received_at, triage_status, extracted')
+        .eq('id', d.source_email_ref).maybeSingle();
+      if (srcRowErr) return res.status(503).json({ error: 'staff_reply_check_failed', message: 'Could not check whether staff already answered this email. Nothing was sent; try again in a moment.' });
+      if (srcRow) {
+        const staffGuard = await require('../lib/email/staff_reply').productionService(supabase)
+          .guardBeforeSend(srcRow, { confirmed: !!(req.body && req.body.confirm_staff_reply_review === true) });
+        if (!staffGuard.allow) {
+          await supabase.from('outbound_email_drafts').update({ send_error: `blocked: ${staffGuard.message}` }).eq('id', d.id);
+          return res.status(staffGuard.status).json({ error: staffGuard.error, message: staffGuard.message, needs_confirmation: !!staffGuard.needs_confirmation, blocked: true });
+        }
+      }
+    }
+
     let replyTo = null;
     if (d.draft_kind === 'amanda_reply' && d.source_email_ref) {
       const { data: src, error: srcErr } = await supabase.from('email_messages')

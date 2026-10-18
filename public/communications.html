@@ -460,6 +460,7 @@ function msgHtml(m){
       ${m.extracted&&m.extracted.held_for_coding?`<div style="font-size:11.5px;color:#6d28d9;font-weight:600;margin-top:4px;">🕓 Held — needs community coding. Pick the association above once known; the platform will learn it.</div>`:''}
       ${m.standing?`<div style="font-size:12px;margin-top:5px;background:${m.standing.escalate?'#fdecec':(m.standing.in_payables?'#eaf7ee':'#fff7ed')};border:1px solid ${m.standing.escalate?'#f3c0c0':(m.standing.in_payables?'#b7e0c2':'#f6d5ad')};border-radius:6px;padding:6px 9px;color:#1a2230;">${esc(m.standing.banner)}</div>`:''}
       ${!m.standing&&m.extracted&&m.extracted.follow_up?(function(){var c=m.extracted.follow_up.chased;var paid=c&&c.status==='paid';var nf=c&&c.found===false;return '<div style="font-size:12px;margin-top:5px;background:'+(paid?'#eaf7ee':nf?'#fdecec':'#fff7ed')+';border:1px solid '+(paid?'#b7e0c2':nf?'#f3c0c0':'#f6d5ad')+';border-radius:6px;padding:6px 9px;color:#1a2230;">🔔 <strong>Vendor is chasing payment.</strong> '+(c?esc(c.message||''):'Match this to the bill in Payables.')+(c&&c.found&&c.invoice_number?' <span style="color:#64748b;">(invoice '+esc(c.invoice_number)+')</span>':'')+'</div>';})():''}
+      ${staffReplyBannerHtml(m)}
       ${m.extracted&&m.extracted.draft&&m.extracted.draft.review_hint?`<div style="font-size:12px;color:#8a6d00;background:#fbf7ec;border:1px solid #e8dcae;border-radius:6px;padding:6px 9px;margin-top:5px;">💡 <strong>Claire suggests:</strong> ${esc(m.extracted.draft.review_hint)} <a href="#" onclick="event.preventDefault();forwardPrompt('${m.id}','${esc(m.sender_email||'')}'${m.extracted.draft.route&&m.extracted.draft.route.persona?`,'${esc(m.extracted.draft.route.persona)}'`:''})" style="color:#0B1D34;font-weight:600;white-space:nowrap;">↪ ${m.extracted.draft.route&&m.extracted.draft.route.name?'Hand to '+esc(m.extracted.draft.route.name):'Loop someone in'}</a></div>`:''}
       ${m.extracted&&m.extracted.forwarded?`<div style="font-size:11.5px;color:#5b21b6;font-weight:600;margin-top:4px;">↪ Forwarded to ${esc(m.extracted.forwarded.name||m.extracted.forwarded.to)}${m.extracted.forwarded.at?' · '+new Date(m.extracted.forwarded.at).toLocaleString():''} — awaiting their review</div>`:''}
       ${m.extracted&&m.extracted.positive_pay&&m.extracted.positive_pay.items?ppPanelHtml(m):''}
@@ -468,7 +469,7 @@ function msgHtml(m){
       <div class="link-row">${linkCell(m)}</div>
       <div id="glentry-${m.id}"></div>
       <div id="filemsg-${m.id}" class="result" style="margin-top:4px;"></div>
-      <div id="draft-${m.id}">${m.extracted&&m.extracted.draft?draftBoxHtml(m.id, m.extracted.draft.subject, m.extracted.draft.body, m.extracted.draft.careful, m.persona||'claire', null, m.extracted.draft.attachments, m.extracted.draft.to || m.sender_email, {restore:true}):''}</div>
+      <div id="draft-${m.id}">${m.extracted&&m.extracted.draft&&m.extracted.draft.status==='superseded_by_staff'?supersededDraftHtml(m):m.extracted&&m.extracted.draft?draftBoxHtml(m.id, m.extracted.draft.subject, m.extracted.draft.body, m.extracted.draft.careful, m.persona||'claire', null, m.extracted.draft.attachments, m.extracted.draft.to || m.sender_email, {restore:true}):''}</div>
     </div>`;
 }
 // Positive Pay: Kat's match of each presented check against our register, and the BANK's decision,
@@ -1175,6 +1176,19 @@ async function doRewrite(id, persona){
   verificationByMsg[id] = j.verification || null;
   box.innerHTML = draftBoxHtml(id, j.subject, j.body, j.careful, persona, coversByMsg[id], genAttsByMsg[id]) + groundingPanelHtml(j.grounding, j.verification);
 }
+// ---- Answered by Staff (PR #225) -----------------------------------------
+// Staff reply in Outlook AS info@/welcome@; Pull inbox recognises those replies.
+function _ctTime(t){ try { return new Date(t).toLocaleString('en-US',{timeZone:'America/Chicago',month:'short',day:'numeric',hour:'numeric',minute:'2-digit'})+' CT'; } catch(_) { return ''; } }
+function staffReplyBannerHtml(m){
+  const sr = m.extracted && m.extracted.staff_reply; if(!sr) return '';
+  if(sr.status==='answered') return `<div style="font-size:12px;margin-top:5px;background:#eaf7ee;border:1px solid #b7e0c2;border-radius:6px;padding:6px 9px;color:#14532d;">✅ <strong>Answered by staff</strong> from ${esc(sr.mailbox||'')}${sr.sent_at?' · '+esc(_ctTime(sr.sent_at)):''}${sr.to&&sr.to.length?' · to '+esc(sr.to.join(', ')):''}. No AI reply needed.</div>`;
+  if(sr.status==='review') return `<div style="font-size:12px;margin-top:5px;background:#fff7ed;border:1px solid #f6d5ad;border-radius:6px;padding:6px 9px;color:#7c2d12;">⚠️ <strong>May already be answered by staff.</strong> A reply from ${esc(sr.mailbox||'the shared mailbox')} exists in this conversation but couldn't be verified${sr.reasons&&sr.reasons.length?' ('+esc(sr.reasons.join(', '))+')':''}. Check its Sent Items before sending.</div>`;
+  return '';
+}
+function supersededDraftHtml(m){
+  const d = m.extracted.draft;
+  return `<div class="draftbox" style="opacity:.8;"><div class="note" style="color:#14532d;font-weight:600;">Superseded by staff reply: this AI draft was not sent and is kept for the record.</div><pre style="white-space:pre-wrap;font-family:inherit;font-size:12.5px;color:#475569;margin:6px 0 0;">${esc((d.subject?('Subject: '+d.subject+'\n\n'):'')+(d.body||''))}</pre></div>`;
+}
 async function doSend(id, btn, careful, persona){
   const who = (PNAME[persona]||'Claire').split(' ')[0];
   const covers = coversByMsg[id] || [];
@@ -1209,6 +1223,12 @@ async function doSend(id, btn, careful, persona){
   // Items first; only an explicit confirmation sends anyway.
   if(r.status===409 && j.error==='amanda_unverified_confirm_required' && confirm((j.message||'Amanda may already have replied.')+'\n\nSend this reply anyway?')){
     r = await af(`${API}/${id}/send`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...payload, confirm_after_amanda:true})});
+    j = await r.json();
+  }
+  // Staff may already have answered (PR #225): an unprovable match needs an explicit confirmation;
+  // a VERIFIED staff reply or a failed check is never sent from here (falls to the alert below).
+  if(r.status===409 && j.error==='staff_reply_review_required' && confirm((j.message||'Staff may already have answered this email.')+'\n\nSend this reply anyway?')){
+    r = await af(`${API}/${id}/send`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...payload, confirm_after_amanda:true, confirm_staff_reply_review:true})});
     j = await r.json();
   }
   if(r.ok){

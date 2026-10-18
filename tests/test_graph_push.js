@@ -27,6 +27,9 @@ stub('../lib/email/triage', { classifyAndExtract: async () => { calls.classify +
 stub('../lib/email/graph_move', { getInboxId: async () => 'INBOX', fileMessage: async () => { calls.fileMessage += 1; return { moved: true }; } });
 const PAGE = [1, 2, 3].map((i) => ({ id: `g${i}`, internetMessageId: `<m${i}@x>`, parentFolderId: 'INBOX', receivedDateTime: '2026-10-04T19:00:00Z' }));
 let fetchGate = null;
+// This file counts Graph fetches to prove single flight; the Answered-by-Staff Sent Items read that an
+// info@/welcome@ ingest now makes (PR #225) is covered by tests/test_staff_reply.js, so it is scoped out here.
+process.env.STAFF_REPLY_MAILBOXES = 'none@invalid.example';
 global.fetch = async (url) => { calls.graphFetch += 1; calls.graphUrls.push(String(url)); if (fetchGate) await fetchGate; return { ok: true, json: async () => ({ value: PAGE }) }; };
 const allSeen = () => ({ data: PAGE.map((m) => ({ internet_message_id: m.internetMessageId, extracted: {} })), error: null });
 const reset = () => Object.assign(calls, { classify: 0, fileMessage: 0, graphFetch: 0, graphUrls: [], otherTables: [] });
