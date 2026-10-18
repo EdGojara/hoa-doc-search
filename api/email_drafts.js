@@ -184,7 +184,7 @@ async function logSentDraftToTimeline(d, from, subject) {
     }
     const nm = String((PERSONA[d.persona] && PERSONA[d.persona].label) || '').split(' (')[0].trim();
     const cc = String(d.cc || '').split(',').map((s) => s.trim()).filter(Boolean);
-    const { error } = await supabase.from('email_messages').insert({
+    const row = {
       mailbox: from, direction: 'outbound', sender_email: from,
       sender_name: nm ? `${nm} (Bedrock AI)` : 'Bedrock', persona: d.persona || null,
       recipients: [d.to_email, ...cc].filter(Boolean),
@@ -194,9 +194,15 @@ async function logSentDraftToTimeline(d, from, subject) {
       community_id: communityId, conversation_id: conversationId,
       triage_status: 'handled', record_ownership: 'association_record',
       reviewed_at: new Date().toISOString(), sent_at: new Date().toISOString(), received_at: new Date().toISOString(),
-    });
+    };
+    if (d.draft_kind === 'compose') row.outbound_draft_id = d.id;   // the sent email links back to its draft (migration 532)
+    let ins = await supabase.from('email_messages').insert(row).select('id').maybeSingle();
+    if (ins.error && row.outbound_draft_id && /outbound_draft_id|42703|schema cache/i.test(`${ins.error.message} ${ins.error.code}`)) {
+      delete row.outbound_draft_id; ins = await supabase.from('email_messages').insert(row).select('id').maybeSingle();
+    }
+    const { error } = ins;
     if (error) console.warn('[email_drafts] timeline log failed:', error.message);
-    return { logged: !error, resolved: !!contactId };
+    return { logged: !error, resolved: !!contactId, email_message_id: (ins.data && ins.data.id) || null };
   } catch (e) { console.warn('[email_drafts] timeline log skipped:', e.message); return { logged: false, resolved: false }; }
 }
 
@@ -212,6 +218,14 @@ router.post('/:id/send', async (req, res) => {
     if (d.status === 'sent') return res.status(409).json({ error: 'already_sent' });
     if (d.status === 'discarded') return res.status(409).json({ error: 'discarded' });
     if (!graphSend.isConfigured()) return res.status(400).json({ error: 'email not connected (Graph credentials missing)' });
+    // A New Email draft is sent exactly once and closes its agent task (same rules
+    // as POST /api/email-triage/compose): claim it before Graph is called.
+    const CD = require('../lib/email/compose_drafts');
+    const isCompose = d.draft_kind === CD.COMPOSE_KIND;
+    if (isCompose && d.status !== 'draft') return res.status(409).json({ error: `not_sendable (${d.status})` });
+    if (isCompose && !(await CD.claimForSend(d.id))) return res.status(409).json({ error: 'already being sent' });
+    let wentOut = false;
+    try {
 
     // Re-render the branded wrapper from the (possibly edited) plain body, so
     // what Ed edits is what goes out — signature + logo applied at send.
@@ -234,8 +248,8 @@ router.post('/:id/send', async (req, res) => {
     // Pull any stored file attachments. Default bucket is 'documents'; an
     // attachment may name its own bucket (e.g. a violation letter lives in
     // 'violation-letters'), so honor a.bucket when set. (Ed 2026-08-01.)
-    const fileAttachments = [];
-    for (const a of Array.isArray(d.attachments) ? d.attachments : []) {
+    const fileAttachments = isCompose ? await CD.loadAttachmentsForSend(d.attachments) : [];
+    for (const a of (isCompose ? [] : Array.isArray(d.attachments) ? d.attachments : [])) {
       if (!a || !a.storage_path) continue;
       try {
         const { data: blob, error: dErr } = await supabase.storage.from(a.bucket || 'documents').download(a.storage_path);
@@ -300,13 +314,16 @@ router.post('/:id/send', async (req, res) => {
       // Keep it a draft with the reason, so it stays visible as blocked. (Ed 2026-10-06.)
       if (sent && sent.suppressed) {
         const why = `blocked: outbound guard suppressed this send (${sent.reason || 'no reason given'})`;
+        if (isCompose) await CD.releaseClaim(d.id, why);
         await supabase.from('outbound_email_drafts').update({ send_error: why }).eq('id', d.id);
         return res.status(409).json({ error: why, blocked: true });
       }
     } catch (e) {
+      if (isCompose) await CD.releaseClaim(d.id, e.message);
       await supabase.from('outbound_email_drafts').update({ send_error: e.message }).eq('id', d.id);
       return res.status(502).json({ error: `send failed: ${e.message}` });
     }
+    wentOut = true;
     await supabase.from('outbound_email_drafts').update({
       status: 'sent', sent_at: new Date().toISOString(), sent_from: from,
       approved_by: req.body.approved_by || 'staff', send_error: null,
@@ -336,7 +353,18 @@ router.post('/:id/send', async (req, res) => {
 
     // Log the sent email onto the homeowner's 360 (resolved). Best-effort.
     const timeline = await logSentDraftToTimeline(d, from, subject);
-    res.json({ ok: true, sent_from: from, to: d.to_email, timeline, threaded_reply: threaded || undefined });
+    let task;
+    if (isCompose) {
+      if (timeline.email_message_id) await supabase.from('outbound_email_drafts').update({ sent_email_message_id: timeline.email_message_id }).eq('id', d.id).then(({ error: e2 }) => { if (e2) console.warn('[email_drafts] sent email id not stamped:', e2.message); });
+      task = await CD.resolveComposeTask(d, { outcome: 'sent', emailMessageId: timeline.email_message_id || null, actor: req.body.approved_by || 'staff' });
+    }
+    res.json({ ok: true, sent_from: from, to: d.to_email, timeline, threaded_reply: threaded || undefined, task_closed: task ? !!task.closed : undefined });
+    } catch (inner) {
+      // Anything that fails before Graph accepted the send hands the claim back.
+      if (isCompose && !wentOut) await CD.releaseClaim(d.id, inner.detail || inner.message);
+      if (inner.status) return res.status(inner.status).json({ error: inner.detail || inner.code });
+      throw inner;
+    }
   } catch (err) {
     console.error('[email_drafts] send failed:', err.message);
     res.status(500).json({ error: safe(err) });
@@ -452,10 +480,12 @@ router.post('/:id/forward', async (req, res) => {
 router.post('/:id/discard', async (req, res) => {
   try {
     const { data, error } = await supabase.from('outbound_email_drafts')
-      .update({ status: 'discarded' }).eq('id', req.params.id).eq('status', 'draft').select('id').maybeSingle();
+      .update({ status: 'discarded' }).eq('id', req.params.id).eq('status', 'draft').select('id, draft_kind').maybeSingle();
     if (error) throw error;
     if (!data) return res.status(409).json({ error: 'not_discardable' });
-    res.json({ ok: true });
+    const CD = require('../lib/email/compose_drafts');
+    const task = data.draft_kind === CD.COMPOSE_KIND ? await CD.resolveComposeTask({ id: data.id }, { outcome: 'discarded', actor: (req.body && req.body.approved_by) || 'staff' }) : null;
+    res.json({ ok: true, task_closed: task ? !!task.closed : undefined });
   } catch (err) {
     console.error('[email_drafts] discard failed:', err.message);
     res.status(500).json({ error: safe(err) });

@@ -1,0 +1,80 @@
+{
+  "migration": "532_compose_drafts_agent_tasks.sql",
+  "summary": "New Email drafts stay on the creating agent's Mission Control list until sent or discarded. Adds compose_state, work_item_id and sent_email_message_id to outbound_email_drafts, outbound_draft_id to email_messages (the sent email links back to its draft), and a community FK (NOT VALID) on outbound_email_drafts.community_id. Additive only: no row is changed and nothing is sent.",
+  "requires": [
+    "513_mission_control.sql"
+  ],
+  "preflight": [
+    {
+      "name": "outbound_email_drafts does not have compose_state yet",
+      "sql": "SELECT count(*)::int FROM information_schema.columns WHERE table_name = 'outbound_email_drafts' AND column_name = 'compose_state'",
+      "expect": 0
+    },
+    {
+      "name": "email_messages does not have outbound_draft_id yet",
+      "sql": "SELECT count(*)::int FROM information_schema.columns WHERE table_name = 'email_messages' AND column_name = 'outbound_draft_id'",
+      "expect": 0
+    },
+    {
+      "name": "work_items exists (Mission Control tasks)",
+      "sql": "SELECT count(*)::int FROM information_schema.tables WHERE table_name = 'work_items'",
+      "expect": 1
+    }
+  ],
+  "expected_changes": [
+    "outbound_email_drafts: new nullable columns compose_state, work_item_id, sent_email_message_id.",
+    "email_messages: new nullable column outbound_draft_id.",
+    "Foreign keys: drafts -> communities (NOT VALID), drafts -> work_items, drafts -> email_messages, email_messages -> outbound_email_drafts.",
+    "Three partial indexes.",
+    "No row changes."
+  ],
+  "objects": {
+    "added": [
+      "column:outbound_email_drafts.compose_state",
+      "column:outbound_email_drafts.work_item_id",
+      "column:outbound_email_drafts.sent_email_message_id",
+      "column:email_messages.outbound_draft_id",
+      "constraint:outbound_email_drafts.outbound_email_drafts_community_fkey",
+      "constraint:outbound_email_drafts.outbound_email_drafts_work_item_fkey",
+      "constraint:outbound_email_drafts.outbound_email_drafts_sent_email_fkey",
+      "constraint:email_messages.email_messages_outbound_draft_fkey",
+      "index:idx_outbound_drafts_compose_open",
+      "index:idx_outbound_drafts_work_item",
+      "index:idx_email_messages_outbound_draft"
+    ],
+    "changed": [],
+    "removed": []
+  },
+  "row_changes": {
+    "outbound_email_drafts": 0,
+    "email_messages": 0,
+    "work_items": 0
+  },
+  "protected": [
+    {
+      "table": "outbound_email_drafts",
+      "order_by": "id"
+    },
+    {
+      "table": "work_items",
+      "order_by": "id"
+    }
+  ],
+  "verify": [
+    {
+      "name": "draft columns exist",
+      "sql": "SELECT count(*)::int FROM information_schema.columns WHERE table_name = 'outbound_email_drafts' AND column_name IN ('compose_state', 'work_item_id', 'sent_email_message_id')",
+      "expect": 3
+    },
+    {
+      "name": "sent email links back to its draft",
+      "sql": "SELECT count(*)::int FROM pg_constraint WHERE conname = 'email_messages_outbound_draft_fkey'",
+      "expect": 1
+    },
+    {
+      "name": "drafts carry a community FK",
+      "sql": "SELECT count(*)::int FROM pg_constraint WHERE conname = 'outbound_email_drafts_community_fkey'",
+      "expect": 1
+    }
+  ]
+}
