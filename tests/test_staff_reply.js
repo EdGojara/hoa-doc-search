@@ -189,6 +189,15 @@ check('website form relay: a reply to the form submitter (named in the body) is 
   assert.equal((await svcWith(fakeGraph({ journal: J1 })).evaluateInbound(form, [reply({ to: ['pat@example.com'] })])).status, 'answered');
 });
 
+check('website form relayed from notifications@bedrocktxai.com: a reply to the SUBMITTER answers it; a reply to the RELAY address never does', async () => {
+  const formBody = ['New Bedrock website inquiry', 'Purpose: prospective', 'Name: Pat Example', 'Email: pat@example.com', 'Phone: 555-0100', 'Community: —', 'Message: learn more'].join(String.fromCharCode(10));
+  const form = inbound({ from: 'notifications@bedrocktxai.com', body: formBody, extracted: {} });
+  const svc = svcWith(fakeGraph({ journal: J1 }));
+  assert.equal((await svc.evaluateInbound(form, [reply({ to: ['pat@example.com'] })])).status, 'answered');
+  const relay = await svc.evaluateInbound(form, [reply({ to: ['notifications@bedrocktxai.com'] })]);
+  assert.equal(relay.status, 'review'); assert.ok(relay.evidence.reasons.includes('recipient_not_proven'));
+});
+
 check('Read, Archive and Filed are never evidence; a reply sent before the inbound never answers it', async () => {
   const svc = svcWith(fakeGraph({ journal: J1 }));
   assert.equal((await svc.evaluateInbound({ ...inbound(), isRead: true, parentFolderId: 'ARCHIVE', triage_status: 'linked' }, [])).status, 'none');
