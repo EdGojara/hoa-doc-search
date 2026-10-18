@@ -1231,6 +1231,15 @@ async function doSend(id, btn, careful, persona){
     r = await af(`${API}/${id}/send`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...payload, confirm_after_amanda:true, confirm_staff_reply_review:true})});
     j = await r.json();
   }
+  // No conversation identifiers: trustEd cannot verify, so it will not send. Only the account
+  // owner may override, with a written reason the server records before sending.
+  if(r.status===409 && j.error==='staff_reply_unverifiable'){
+    const reason = prompt((j.message||'trustEd cannot verify whether staff already answered this email.')+'\n\nOwner override: type the reason (it is recorded), or Cancel to leave it unsent.');
+    if(reason && reason.trim()){
+      r = await af(`${API}/${id}/send`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...payload, confirm_after_amanda:true, staff_reply_override_reason:reason.trim()})});
+      j = await r.json();
+    }
+  }
   if(r.ok){
     const fu = j.followups||{};
     const fuMsg = (fu.queued&&fu.queued.length) ? `<div class="note" style="color:#166534;margin-top:4px;">✉️ Also queued a follow-up draft to ${fu.queued.map(q=>esc(q.name||q.email)).join(', ')} — review it in the <a href="/admin/draft-queue" style="color:#0B1D34;font-weight:600;">Draft Queue</a>.</div>` : '';

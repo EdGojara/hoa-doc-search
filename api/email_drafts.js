@@ -263,11 +263,22 @@ router.post('/:id/send', async (req, res) => {
         .eq('id', d.source_email_ref).maybeSingle();
       if (srcRowErr) return res.status(503).json({ error: 'staff_reply_check_failed', message: 'Could not check whether staff already answered this email. Nothing was sent; try again in a moment.' });
       if (srcRow) {
-        const staffGuard = await require('../lib/email/staff_reply').productionService(supabase)
-          .guardBeforeSend(srcRow, { confirmed: !!(req.body && req.body.confirm_staff_reply_review === true) });
+        const staffSvc = require('../lib/email/staff_reply').productionService(supabase);
+        let authed = null;
+        try { authed = await require('./_require_admin').getAuthedUser(req); } catch (_) { authed = null; }
+        const actorEmail = String((authed && authed.email) || '').toLowerCase();
+        const OWNER = require('./_require_admin').OWNER_EMAIL;
+        const actor = { email: actorEmail || null, is_owner: !!actorEmail && actorEmail === String(OWNER || '').toLowerCase() };
+        const overrideReason = req.body && typeof req.body.staff_reply_override_reason === 'string' ? req.body.staff_reply_override_reason : null;
+        const staffGuard = await staffSvc.guardBeforeSend(srcRow, {
+          confirmed: !!(req.body && req.body.confirm_staff_reply_review === true), override: overrideReason ? { reason: overrideReason } : null, actor });
         if (!staffGuard.allow) {
           await supabase.from('outbound_email_drafts').update({ send_error: `blocked: ${staffGuard.message}` }).eq('id', d.id);
-          return res.status(staffGuard.status).json({ error: staffGuard.error, message: staffGuard.message, needs_confirmation: !!staffGuard.needs_confirmation, blocked: true });
+          return res.status(staffGuard.status).json({ error: staffGuard.error, message: staffGuard.message, needs_confirmation: !!staffGuard.needs_confirmation, overridable: staffGuard.overridable || false, blocked: true });
+        }
+        if (staffGuard.audit) {
+          try { await staffSvc.store.appendAudit(srcRow, { ...staffGuard.audit, outbound_draft_id: d.id }); console.warn('[email_drafts] staff-reply exception recorded:', { draft: d.id, ...staffGuard.audit }); }
+          catch (e) { return res.status(503).json({ error: 'staff_reply_audit_failed', message: 'The override could not be recorded, so nothing was sent. Try again.', blocked: true }); }
         }
       }
     }
