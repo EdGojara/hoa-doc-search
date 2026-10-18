@@ -156,7 +156,7 @@ async function dismissUnattrib(id){
   }catch(e){ alert('Could not dismiss: '+e.message); }
 }
 let filter = 'needs_review';
-const CLASS_LABEL = { homeowner_request:'Homeowner', violation_report:'Violation', acc_request:'ACC', vendor_financial:'Vendor $', vendor_general:'Vendor', legal_privileged:'Legal', internal:'Internal', spam:'Spam', other:'Other' };
+const CLASS_LABEL = { website_inquiry:'Website', homeowner_request:'Homeowner', violation_report:'Violation', acc_request:'ACC', vendor_financial:'Vendor $', vendor_general:'Vendor', legal_privileged:'Legal', internal:'Internal', spam:'Spam', other:'Other' };
 const esc = s => String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 // Auth-attaching fetch — set to the JWT version once we confirm the admin
 // session in boot(). Until then it's plain fetch (only used after boot, and
@@ -460,6 +460,7 @@ function msgHtml(m){
       ${m.extracted&&m.extracted.held_for_coding?`<div style="font-size:11.5px;color:#6d28d9;font-weight:600;margin-top:4px;">🕓 Held — needs community coding. Pick the association above once known; the platform will learn it.</div>`:''}
       ${m.standing?`<div style="font-size:12px;margin-top:5px;background:${m.standing.escalate?'#fdecec':(m.standing.in_payables?'#eaf7ee':'#fff7ed')};border:1px solid ${m.standing.escalate?'#f3c0c0':(m.standing.in_payables?'#b7e0c2':'#f6d5ad')};border-radius:6px;padding:6px 9px;color:#1a2230;">${esc(m.standing.banner)}</div>`:''}
       ${!m.standing&&m.extracted&&m.extracted.follow_up?(function(){var c=m.extracted.follow_up.chased;var paid=c&&c.status==='paid';var nf=c&&c.found===false;return '<div style="font-size:12px;margin-top:5px;background:'+(paid?'#eaf7ee':nf?'#fdecec':'#fff7ed')+';border:1px solid '+(paid?'#b7e0c2':nf?'#f3c0c0':'#f6d5ad')+';border-radius:6px;padding:6px 9px;color:#1a2230;">🔔 <strong>Vendor is chasing payment.</strong> '+(c?esc(c.message||''):'Match this to the bill in Payables.')+(c&&c.found&&c.invoice_number?' <span style="color:#64748b;">(invoice '+esc(c.invoice_number)+')</span>':'')+'</div>';})():''}
+      ${websiteInquiryBannerHtml(m)}${m.extracted&&m.extracted.classification_error?`<div style="font-size:12px;margin-top:5px;background:#fff7ed;border:1px solid #f6d5ad;border-radius:6px;padding:6px 9px;color:#7c2d12;">⚠️ <strong>Classification failed</strong>: ${esc(m.extracted.classification_error)}. Kept for review, not dismissed.</div>`:''}
       ${m.extracted&&m.extracted.draft&&m.extracted.draft.review_hint?`<div style="font-size:12px;color:#8a6d00;background:#fbf7ec;border:1px solid #e8dcae;border-radius:6px;padding:6px 9px;margin-top:5px;">💡 <strong>Claire suggests:</strong> ${esc(m.extracted.draft.review_hint)} <a href="#" onclick="event.preventDefault();forwardPrompt('${m.id}','${esc(m.sender_email||'')}'${m.extracted.draft.route&&m.extracted.draft.route.persona?`,'${esc(m.extracted.draft.route.persona)}'`:''})" style="color:#0B1D34;font-weight:600;white-space:nowrap;">↪ ${m.extracted.draft.route&&m.extracted.draft.route.name?'Hand to '+esc(m.extracted.draft.route.name):'Loop someone in'}</a></div>`:''}
       ${m.extracted&&m.extracted.forwarded?`<div style="font-size:11.5px;color:#5b21b6;font-weight:600;margin-top:4px;">↪ Forwarded to ${esc(m.extracted.forwarded.name||m.extracted.forwarded.to)}${m.extracted.forwarded.at?' · '+new Date(m.extracted.forwarded.at).toLocaleString():''} — awaiting their review</div>`:''}
       ${m.extracted&&m.extracted.positive_pay&&m.extracted.positive_pay.items?ppPanelHtml(m):''}
@@ -1174,6 +1175,15 @@ async function doRewrite(id, persona){
   communityByMsg[id] = j.community_id || communityByMsg[id] || '';
   verificationByMsg[id] = j.verification || null;
   box.innerHTML = draftBoxHtml(id, j.subject, j.body, j.careful, persona, coversByMsg[id], genAttsByMsg[id]) + groundingPanelHtml(j.grounding, j.verification);
+}
+// ---- Verified website inquiries (PR #224) -----------------------------------
+// The bedrocktx.com Contact form; the submitter (not the relay address) is who we reply to.
+function websiteInquiryBannerHtml(m){
+  const w = m.extracted && m.extracted.website_inquiry; if(!w || !w.claimed) return '';
+  const who = [w.name, w.email, w.phone].filter(Boolean).map(esc).join(' · ');
+  const OWN = { maggie:'Maggie (business development)', claire:'Claire', reese:'Reese (closings)', emma:'Emma (payables)', amanda:'Amanda' };
+  if(w.verified) return `<div style="font-size:12px;margin-top:5px;background:#eef6ff;border:1px solid #bcdcff;border-radius:6px;padding:6px 9px;color:#0b4a8f;">🌐 <strong>Website inquiry</strong> (${esc(w.purpose||'')})${w.community?' · '+esc(w.community):''} · from ${who||'?'} · owner: ${esc(OWN[w.owner]||w.owner||'')}${m.extracted.ai_classification&&m.extracted.ai_classification!=='website_inquiry'?` · <span title="What the AI classifier said before the verified website origin overrode it">AI said: ${esc(m.extracted.ai_classification)}</span>`:''}</div>`;
+  return `<div style="font-size:12px;margin-top:5px;background:#fdecec;border:1px solid #f3c0c0;border-radius:6px;padding:6px 9px;color:#7f1d1d;">⚠️ <strong>Unverified website inquiry.</strong> ${esc(w.warning||'Could not be verified.')}${w.reasons&&w.reasons.length?' ('+esc(w.reasons.join(', '))+')':''}</div>`;
 }
 async function doSend(id, btn, careful, persona){
   const who = (PNAME[persona]||'Claire').split(' ')[0];

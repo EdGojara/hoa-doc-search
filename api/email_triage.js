@@ -703,6 +703,7 @@ router.get('/:id/thread', async (req, res) => {
 // in everyone who's been on the conversation. Our own bot/system inboxes are
 // stripped, but real staff (e.g. the community manager) are kept. (Ed 2026-07-26.)
 const SYSTEM_MAILBOXES = new Set([
+  ...graphSend.TEAM_INGEST_MAILBOXES,   // every shared / AI inbox we ingest (info@, welcome@, functional boxes, teammates)
   graphSend.CLAIRE_MAILBOX, graphSend.EMMA_MAILBOX, graphSend.ANNIE_MAILBOX, graphSend.MIRANDA_MAILBOX,
   graphSend.PAIGE_MAILBOX, graphSend.REESE_MAILBOX, graphSend.KAT_MAILBOX, graphSend.AMANDA_MAILBOX,
   graphSend.ISABELLA_MAILBOX, graphSend.MEI_MAILBOX, graphSend.PRIYA_MAILBOX,
@@ -1514,7 +1515,9 @@ router.post('/:id/send', express.json(), async (req, res) => {
       if (!g.ok) return res.status(409).json({ error: g.error, code: 'unverified_bank_recipient' });
     }
     const commName = m.community ? m.community.name : '';
-    const subj = subject || (/^re:/i.test(m.subject || '') ? m.subject : `Re: ${m.subject || 'your message'}`);
+    const _webInq = m.extracted && m.extracted.website_inquiry;
+    // A verified website inquiry's subject is the form's internal one; reply under a customer-facing subject.
+    const subj = subject || (_webInq && _webInq.verified ? require('../lib/email/website_inquiry').REPLY_SUBJECT : (/^re:/i.test(m.subject || '') ? m.subject : `Re: ${m.subject || 'your message'}`));
 
     // LANGUAGE BRIDGE (Ed 2026-09-13): the reply was drafted, reviewed, and
     // edited in English (English governs the record and it works for our
@@ -1600,6 +1603,11 @@ router.post('/:id/send', express.json(), async (req, res) => {
       const { buildReeseEmail } = require('../lib/email/reese_signature');
       ({ html, attachments } = buildReeseEmail(sendBody, commName, inlineQuote));
       fromMailbox = graphSend.REESE_MAILBOX; senderLabel = 'Reese Calloway (Bedrock AI)';
+    } else if (persona === 'maggie') {
+      // Maggie (Business Development): website prospects. Roster-driven signature, sends from maggie@.
+      const { buildPersonaEmail } = require('../lib/email/persona_signature');
+      ({ html, attachments } = buildPersonaEmail('maggie', sendBody, commName, inlineQuote));
+      fromMailbox = graphSend.MAGGIE_MAILBOX; senderLabel = 'Maggie Sullivan (Bedrock AI)';
     } else if (persona === 'isabella' || persona === 'mei' || persona === 'priya') {
       // Language front office: one generic, roster-driven signature builder — no
       // per-persona file needed. sendBody is already translated to the resident's
@@ -2184,13 +2192,13 @@ router.post('/pull', express.json(), async (req, res) => {
     const mailboxes = [...new Set([...graphSend.TEAM_INGEST_MAILBOXES, ...extra])];
     const days = Math.min(60, parseInt((req.body || {}).days, 10) || 14);
     const sinceISO = new Date(Date.now() - days * 864e5).toISOString();
-    const results = {}; let kept = 0, drafted = 0, invoicesLoaded = 0, filed = 0;
+    const results = {}; let kept = 0, drafted = 0, invoicesLoaded = 0, filed = 0, failed = 0;
     // Mailboxes are independent — pull them at the same time instead of waiting
     // for each to finish before starting the next.
     await Promise.all(mailboxes.map(async (mbx) => {
       try {
         const s = await graphIngest.ingestMailbox(mbx, { sinceISO, light: false, onlyLinked: false, max: 500 });
-        results[mbx] = s; kept += s.kept || 0; invoicesLoaded += s.invoices_loaded || 0; filed += s.filed || 0;
+        results[mbx] = s; kept += s.kept || 0; invoicesLoaded += s.invoices_loaded || 0; filed += s.filed || 0; failed += s.failed || 0;
       } catch (e) { results[mbx] = { error: e.message }; }
     }));
     // Also refresh Tessa's owner-only inbox (ea_inbox). Its 15-min scheduler poll
@@ -2209,7 +2217,7 @@ router.post('/pull', express.json(), async (req, res) => {
         .eq('direction', 'inbound').eq('triage_status', 'needs_review').not('extracted->draft', 'is', null);
       drafted = count || 0;
     } catch (_) {}
-    res.json({ ok: true, since: sinceISO, mailboxes, kept, drafts_waiting: drafted, tessa_pulled, invoices_loaded: invoicesLoaded, filed, results });
+    res.json({ ok: true, since: sinceISO, mailboxes, kept, failed, drafts_waiting: drafted, tessa_pulled, invoices_loaded: invoicesLoaded, filed, results });
   } catch (err) {
     console.error('[email_triage] pull failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });

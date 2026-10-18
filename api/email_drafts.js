@@ -47,6 +47,8 @@ const PERSONA = {
   reese:   { mailbox: graphSend.REESE_MAILBOX,   build: buildReeseEmail,    label: 'Reese Calloway (resale / closings)' },
   paige:   { mailbox: graphSend.PAIGE_MAILBOX,   build: buildPaigeEmail,    label: 'Paige Chandler (board operations)' },
   tessa:   { mailbox: graphSend.TESSA_MAILBOX,   build: buildTessaEmail,    label: 'Tessa McCall (executive assistant)' },
+  // Maggie (Business Development): roster-driven signature, sends from maggie@.
+  maggie:  { mailbox: graphSend.MAGGIE_MAILBOX,  build: (body, comm, q) => require('../lib/email/persona_signature').buildPersonaEmail('maggie', body, comm, q), label: 'Maggie Sullivan (business development)' },
 };
 function personaMailbox(p, fallback) {
   return (PERSONA[p] && PERSONA[p].mailbox) || fallback || graphSend.CLAIRE_MAILBOX;
