@@ -185,6 +185,7 @@ const CHECKS = [
   'scripts/check_micr_pitch.js',
   'tests/test_contact_mining.js',
   'tests/test_persona_routing.js',
+  'tests/test_welcome_mailbox.js',
   'tests/test_signature_identity.js',
   'tests/test_signature_headshot_size.js',
   'tests/test_forward_signature.js',
