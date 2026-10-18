@@ -1,0 +1,14 @@
+'use strict';
+const assert = require('node:assert/strict');
+const { classifyStaffReply } = require('../lib/email/staff_reply_match');
+const i = { internet_message_id: '<abc@example.org>', received_at: '2026-10-18T12:00:00Z', sender_email: 'owner@example.org' };
+const s = { from: 'info@bedrocktx.com', toRecipients: [{ emailAddress: { address: 'owner@example.org' } }], sentDateTime: '2026-10-18T13:00:00Z' };
+const check = (changes = {}) => classifyStaffReply({ inbound: i, sent: s, sharedMailbox: 'info@bedrocktx.com', journalHeaders: { 'In-Reply-To': '<abc@example.org>' }, ...changes });
+assert.equal(check().status, 'answered');
+assert.equal(check({ journalHeaders: null }).status, 'review');
+assert.equal(check({ journalHeaders: { 'In-Reply-To': '<wrong@example.org>' } }).status, 'review');
+assert.equal(check({ sent: { ...s, sentDateTime: '2026-10-18T11:00:00Z' } }).status, 'review');
+assert.equal(check({ sent: { ...s, toRecipients: [{ emailAddress: { address: 'elsewhere@example.org' } }] } }).status, 'review');
+assert.equal(check({ sent: { ...s, from: 'staff@bedrocktx.com' } }).status, 'ignore');
+assert.equal(check({ journalHeaders: [{ name: 'References', value: '<earlier@example.org> <abc@example.org>' }] }).status, 'answered');
+console.log('staff_reply_match: 7 checks passed');
