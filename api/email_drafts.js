@@ -215,7 +215,14 @@ router.post('/:id/send', async (req, res) => {
 
     // Re-render the branded wrapper from the (possibly edited) plain body, so
     // what Ed edits is what goes out — signature + logo applied at send.
-    const p = PERSONA[d.persona];
+    // A teammate without a dedicated entry here resolves through the shared sender resolver
+    // (never a silent Claire fallback); an unknown persona is refused.
+    let p = PERSONA[d.persona];
+    if (!p && d.persona) {
+      const S = require('../lib/email/persona_sender').resolveSender(d.persona);
+      if (!S.ok) { await supabase.from('outbound_email_drafts').update({ send_error: S.reason }).eq('id', d.id); return res.status(409).json({ error: 'no_sender_for_persona', message: S.reason }); }
+      p = { mailbox: S.mailbox, build: S.build, label: S.label };
+    }
     let html = d.body_html || null;
     let personaAttachments = [];
     if (p && p.build && d.body_text) {
@@ -245,7 +252,7 @@ router.post('/:id/send', async (req, res) => {
       } catch (e) { console.warn('[email_drafts] attachment error:', e.message); }
     }
 
-    const from = personaMailbox(d.persona, d.from_mailbox);
+    const from = (p && p.mailbox) || personaMailbox(d.persona, d.from_mailbox);
     const subject = d.subject || '(no subject)';
 
     // Amanda reply drafts (draft_kind 'amanda_reply', staged on her desk against an

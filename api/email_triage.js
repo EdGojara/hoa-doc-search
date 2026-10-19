@@ -862,6 +862,13 @@ router.post('/:id/link', express.json(), async (req, res) => {
 // only homeowner-linked mail is kept out of the 65k-message firehose.
 // Incremental/current: pass light=false + a short since_days. Needs the Azure
 // app (Mail.Read) + GRAPH_* env; returns a clean message until then.
+// GET /personas — who each teammate sends AS (name, mailbox), from the same resolver the send
+// routes use. The page reads this instead of keeping its own list. Read-only.
+router.get('/personas', (req, res) => {
+  try { res.json({ personas: require('../lib/email/persona_sender').senderDirectory() }); }
+  catch (err) { console.error('[email_triage] personas failed:', err.message); res.status(500).json({ error: safeErrorMessage(err) }); }
+});
+
 // GET /viewer — is the signed-in user the account owner? Lets the page show owner-only
 // actions (Pull Welcome) without knowing the owner's address. Read-only.
 router.get('/viewer', async (req, res) => {
@@ -972,6 +979,21 @@ router.post('/:id/draft-reply', express.json(), async (req, res) => {
         return res.json({ ...d, positive_pay: review, suggested_recipient: d.to, on_file_emails: [], covers: [], auto_attachments: [], community_id: m.community_id || null });
       }
     } catch (e) { console.error('[email_triage] positive pay correspondence failed:', e.message); return res.status(500).json({ error: safeErrorMessage(e) }); }
+
+    // A verified website prospect (owner Maggie): Maggie's prospect reply standard, to the form
+    // submitter, never the relay address. (Ed 2026-10-19.)
+    try {
+      const { data: wx, error: wxErr } = await supabase.from('email_messages').select('extracted').eq('id', req.params.id).maybeSingle();
+      if (wxErr) console.warn('[email_triage] website inquiry lookup failed:', wxErr.message);
+      const w = wx && wx.extracted && wx.extracted.website_inquiry;
+      if (w && w.verified && w.owner === 'maggie') {
+        const { draftMaggieProspectReply } = require('../lib/team/maggie_prospect_reply');
+        const WI = require('../lib/email/website_inquiry');
+        const parsed = WI.parseBody(m.body_full || m.body_preview || '');
+        const d = await draftMaggieProspectReply({ name: w.name, message: (parsed && parsed.message) || '', community: w.community, phone: w.phone, intent: w.intent, notes });
+        return res.json({ ...d, subject: WI.REPLY_SUBJECT, to: w.email, suggested_recipient: w.email, recipient_source: 'website_form', on_file_emails: [], covers: [], auto_attachments: [], community_id: m.community_id || null });
+      }
+    } catch (e) { console.error('[email_triage] website prospect draft failed:', e.message); return res.status(500).json({ error: safeErrorMessage(e) }); }
 
     // Other UNHANDLED inbound emails from the same homeowner in a short window —
     // "forgot something / sent more info." Reply once, cover them all.
@@ -1506,9 +1528,14 @@ router.post('/:id/send', express.json(), async (req, res) => {
     // the person. Suggest the body email when present. (Ed 2026-07-25.)
     let bankInquiry = false;
     try { bankInquiry = require('../lib/banking/positive_pay_notice').isPositivePayNotice(m); } catch (_) {}
+    // A website-form inquiry is answered to the person who filled in the form (the verified Email
+    // field), never the relay mailbox that delivered it. (Ed 2026-10-19.)
+    const _wiTo = m.extracted && m.extracted.website_inquiry;
     const recipient = (to && String(to).trim())
+      || (_wiTo && _wiTo.verified && _wiTo.email ? _wiTo.email : null)
       || (bankInquiry ? (m.extracted && m.extracted.draft && m.extracted.draft.to) || null : suggestReplyTo({ senderEmail: m.sender_email, senderName: m.sender_name, bodyText: m.body_full || m.body_preview, replyTo: (await messageHeaders(m)).replyTo, mailbox: m.mailbox }).email);
     if (!recipient) return res.status(400).json({ error: 'no_recipient' });
+    if (_wiTo && _wiTo.claimed && normEmail(recipient) === normEmail(m.sender_email)) return res.status(409).json({ error: 'relay_recipient', detail: `Not sent: ${recipient} is the website form's relay address. Reply to the person who filled in the form${_wiTo.email ? ` (${_wiTo.email})` : ''}.` });
     // The To the person approved is the To that is validated and used, exactly (threaded or not).
     if (!isValidEmail(recipient)) return res.status(400).json({ error: 'invalid_recipient', detail: `Not a valid email address: ${recipient}` });
     {
@@ -1584,53 +1611,15 @@ router.post('/:id/send', express.json(), async (req, res) => {
     // the notice (account endings, checks, amounts, the recipient list in question).
     const threaded = !bankInquiry && !!m.graph_id && graphSend.sameMailbox(m.mailbox, replyFrom);
     const inlineQuote = threaded || bankInquiry ? '' : quoted;
+    // WHO it is sent as: the one resolver (lib/email/persona_sender.js) the page also reads, so the
+    // sender shown on screen is the sender used. A named teammate with no mailbox/signature is
+    // refused, never silently sent as Claire. (Ed 2026-10-19: Maggie's draft showed claire@.)
     let html, attachments, fromMailbox, senderLabel;
-    if (persona === 'emma') {
-      const { buildEmmaEmail } = require('../lib/email/emma_signature');
-      ({ html, attachments } = buildEmmaEmail(sendBody, commName, inlineQuote));
-      fromMailbox = graphSend.EMMA_MAILBOX; senderLabel = 'Emma Brooks (Bedrock AI)';
-    } else if (persona === 'miranda') {
-      const { buildMirandaEmail } = require('../lib/email/miranda_signature');
-      ({ html, attachments } = buildMirandaEmail(sendBody, commName, inlineQuote));
-      fromMailbox = graphSend.MIRANDA_MAILBOX; senderLabel = 'Miranda Pierce (Bedrock AI)';
-    } else if (persona === 'annie') {
-      const { buildAnnieEmail } = require('../lib/email/annie_signature');
-      ({ html, attachments } = buildAnnieEmail(sendBody, commName, inlineQuote));
-      fromMailbox = graphSend.ANNIE_MAILBOX; senderLabel = 'Annie Reeves (Bedrock AI)';
-    } else if (persona === 'paige') {
-      const { buildPaigeEmail } = require('../lib/email/paige_signature');
-      ({ html, attachments } = buildPaigeEmail(sendBody, commName, inlineQuote));
-      fromMailbox = graphSend.PAIGE_MAILBOX; senderLabel = 'Paige Chandler (Bedrock AI)';
-    } else if (persona === 'kat') {
-      const { buildKatEmail } = require('../lib/email/kat_signature');
-      ({ html, attachments } = buildKatEmail(sendBody, commName, inlineQuote));
-      fromMailbox = graphSend.KAT_MAILBOX; senderLabel = 'Kat Reed (Bedrock AI)';
-    } else if (persona === 'amanda') {
-      const { buildAmandaEmail } = require('../lib/email/amanda_signature');
-      ({ html, attachments } = buildAmandaEmail(sendBody, commName, inlineQuote));
-      fromMailbox = graphSend.AMANDA_MAILBOX; senderLabel = 'Amanda Albright (Bedrock AI)';
-    } else if (persona === 'reese') {
-      const { buildReeseEmail } = require('../lib/email/reese_signature');
-      ({ html, attachments } = buildReeseEmail(sendBody, commName, inlineQuote));
-      fromMailbox = graphSend.REESE_MAILBOX; senderLabel = 'Reese Calloway (Bedrock AI)';
-    } else if (persona === 'maggie') {
-      // Maggie (Business Development): website prospects. Roster-driven signature, sends from maggie@.
-      const { buildPersonaEmail } = require('../lib/email/persona_signature');
-      ({ html, attachments } = buildPersonaEmail('maggie', sendBody, commName, inlineQuote));
-      fromMailbox = graphSend.MAGGIE_MAILBOX; senderLabel = 'Maggie Sullivan (Bedrock AI)';
-    } else if (persona === 'isabella' || persona === 'mei' || persona === 'priya') {
-      // Language front office: one generic, roster-driven signature builder — no
-      // per-persona file needed. sendBody is already translated to the resident's
-      // language above; her signature (name + language title + reply-to mailbox)
-      // comes straight off the roster.
-      const { buildPersonaEmail } = require('../lib/email/persona_signature');
-      ({ html, attachments } = buildPersonaEmail(persona, sendBody, commName, inlineQuote));
-      const L = { isabella: ['Isabella Reyes', graphSend.ISABELLA_MAILBOX], mei: ['Mei Chen', graphSend.MEI_MAILBOX], priya: ['Priya Sharma', graphSend.PRIYA_MAILBOX] }[persona];
-      fromMailbox = L[1]; senderLabel = `${L[0]} (Bedrock AI)`;
-    } else {
-      const { buildClaireEmail } = require('../lib/email/claire_signature');
-      ({ html, attachments } = buildClaireEmail(sendBody, commName, inlineQuote));
-      fromMailbox = graphSend.CLAIRE_MAILBOX; senderLabel = 'Claire (Bedrock AI)';
+    {
+      const sender = require('../lib/email/persona_sender').resolveSender(persona);
+      if (!sender.ok) return res.status(409).json({ error: 'no_sender_for_persona', message: sender.reason, persona, sent: false });
+      ({ html, attachments } = sender.build(sendBody, commName, inlineQuote));
+      fromMailbox = sender.mailbox; senderLabel = sender.label;
     }
 
     // ARC form auto-attach DISABLED at send (Ed 2026-09-08 incident). This used
