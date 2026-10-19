@@ -47,7 +47,7 @@ CREATE TABLE IF NOT EXISTS ea_followup_events (
   id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   followup_id  UUID NOT NULL REFERENCES ea_followups(id) ON DELETE RESTRICT,
   event        TEXT NOT NULL CHECK (event IN ('delegated', 'document_received', 'document_checked', 'signature_verified', 'signature_rejected',
-                                              'filed', 'mailing_assigned', 'mailing_confirmed', 'alert_sent', 'note')),
+                                              'filed', 'mailing_assigned', 'document_opened', 'mailing_confirmed', 'alert_sent', 'note')),
   actor        TEXT NOT NULL,
   detail       JSONB,
   created_at   TIMESTAMPTZ NOT NULL DEFAULT now()

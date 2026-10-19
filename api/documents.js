@@ -738,8 +738,10 @@ router.get('/', async (req, res) => {
     if (req.query.include_predecessor === 'false') {
       q = q.eq('created_by_mgmt_company', 'Bedrock');
     }
-    const { data: libDocs, error } = await q.limit(Number(req.query.limit) || 200);
+    const { data: libDocsAll, error } = await q.limit(Number(req.query.limit) || 200);
     if (error) throw error;
+    // Restricted association records (signed tax returns) are listed for the owner only.
+    const libDocs = await require('../lib/documents/restricted').filterForViewer(req, libDocsAll);
 
     const libraryNormalized = (libDocs || []).map(d => ({
       ...d,
@@ -833,7 +835,7 @@ router.get('/open-by-name', async (req, res) => {
     // try normalized/original/title, exact then contains. Sequential (not .or)
     // because filenames can contain commas that would break PostgREST's .or().
     const base = () => supabase.from('library_documents')
-      .select('id, community:community_id(name)')
+      .select('id, category, community:community_id(name)')
       .eq('management_company_id', BEDROCK_MGMT_CO_ID).neq('status', 'missing');
     let data = null;
     const attempts = [
@@ -845,7 +847,8 @@ router.get('/open-by-name', async (req, res) => {
     ];
     for (const attempt of attempts) {
       const r = await attempt().limit(10);
-      if (r.data && r.data.length) { data = r.data; break; }
+      const visible = r.data && r.data.length ? await require('../lib/documents/restricted').filterForViewer(req, r.data) : [];
+      if (visible.length) { data = visible; break; }
     }
     if (!data) return res.status(404).json({ error: 'Document not found in the library.' });
     let match = data[0];
@@ -2307,7 +2310,7 @@ router.get('/:id', async (req, res) => {
       .eq('management_company_id', BEDROCK_MGMT_CO_ID)
       .maybeSingle();
     if (error) throw error;
-    if (!data) return res.status(404).json({ error: 'Document not found' });
+    if (!data || !(await require('../lib/documents/restricted').mayOpen(req, data))) return res.status(404).json({ error: 'Document not found' });
     res.json({ document: data });
   } catch (err) {
     console.error('[documents] detail failed:', err.message);
@@ -2322,11 +2325,11 @@ router.get('/:id/download', async (req, res) => {
   try {
     const { data: doc } = await supabase
       .from('library_documents')
-      .select('file_path, file_name_normalized')
+      .select('file_path, file_name_normalized, category')
       .eq('id', req.params.id)
       .eq('management_company_id', BEDROCK_MGMT_CO_ID)
       .maybeSingle();
-    if (!doc || !doc.file_path) return res.status(404).json({ error: 'File not available' });
+    if (!doc || !doc.file_path || !(await require('../lib/documents/restricted').mayOpen(req, doc))) return res.status(404).json({ error: 'File not available' });
 
     const { data, error } = await supabase.storage.from(STORAGE_BUCKET).download(doc.file_path);
     if (error) throw error;
@@ -2349,11 +2352,11 @@ router.get('/:id/preview', async (req, res) => {
   try {
     const { data: doc } = await supabase
       .from('library_documents')
-      .select('file_path, file_name_normalized')
+      .select('file_path, file_name_normalized, category')
       .eq('id', req.params.id)
       .eq('management_company_id', BEDROCK_MGMT_CO_ID)
       .maybeSingle();
-    if (!doc || !doc.file_path) return res.status(404).json({ error: 'File not available' });
+    if (!doc || !doc.file_path || !(await require('../lib/documents/restricted').mayOpen(req, doc))) return res.status(404).json({ error: 'File not available' });
 
     const { data, error } = await supabase.storage.from(STORAGE_BUCKET).download(doc.file_path);
     if (error) throw error;

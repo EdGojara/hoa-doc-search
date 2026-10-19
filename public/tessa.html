@@ -155,7 +155,7 @@ function render(){
           <h2 style="margin:0;">Delegated to Tessa</h2>
           <button class="btn ghost sm" onclick="dlLoad()">Refresh</button>
         </div>
-        <div class="note">What you handed her to see through. She tracks each step and tells you when something is late. She checks documents but never treats one as signed until you confirm it, and she never sends, files or mails anything on her own: you approve each step, and only the staff member who mails it can mark it mailed.</div>
+        <div class="note">What you handed her to see through. She tracks each step and tells you when something is late. She checks documents but never treats one as signed until you confirm it, and she never sends, files or mails anything on her own: you approve each step, and it counts as mailed only when the assigned staff member records the date, method and tracking number.</div>
         <div id="dlList" style="margin-top:10px;"><div class="note">Loading&hellip;</div></div>
       </div>
       <div class="card">
@@ -818,13 +818,13 @@ function dlStepText(k,s){
   s=s||{};
   if(k==='received'&&s.state==='received_unverified') return 'came back '+(s.at?new Date(s.at).toLocaleDateString():'')+((s.attachments||[]).length?' ('+s.attachments.map(esc).join(', ')+')':'')+', not yet verified';
   if(k==='signature'){
-    if(s.state==='checked') return 'Tessa: '+esc((s.advisory||{}).verdict||'uncertain').replace('_',' ')+((s.advisory||{}).concerns||[]).map(c=>'<br>⚠ '+esc(c)).join('');
+    if(s.state==='checked'){ const a=s.advisory||{}; return 'Tessa: '+esc(a.verdict||'uncertain').replace('_',' ')+' · association '+(a.association_match===true?'matches the document':a.association_match===false?'<b>does not match</b>':'not proven by the document')+(a.concerns||[]).map(c=>'<br>⚠ '+esc(c)).join(''); }
     if(s.state==='verified') return 'confirmed by '+esc(s.verified_by||'');
     if(s.state==='rejected') return 'not accepted ('+esc(s.rejected_by||'')+')';
   }
   if(k==='filed'&&s.state==='filed') return 'in tax records';
   if(k==='mail_assigned'&&s.state==='assigned') return esc(s.assigned_to||'')+', '+(s.at?new Date(s.at).toLocaleDateString():'');
-  if(k==='mailed'&&s.state==='confirmed_by_staff') return 'confirmed by '+esc(s.by||'')+(s.notes?' · '+esc(s.notes):'');
+  if(k==='mailed'&&s.state==='confirmed_by_staff') return esc(s.mailed_on||'')+' by '+esc(s.by||'')+' · '+esc(s.method_label||s.method||'')+(s.tracking_number?' #'+esc(s.tracking_number):'')+(s.notes?' · '+esc(s.notes):'');
   return s.state==='done'?'done':'';
 }
 let _dlStaff=null;
@@ -861,10 +861,17 @@ async function dlAct(id, what){
   try{ const r=await af('/api/tessa/delegations/'+id+'/'+what,{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'}); const j=await r.json(); if(!r.ok) throw new Error(j.detail||j.error||'failed'); dlLoad(); }
   catch(e){ msg.innerHTML='<span class="err">'+esc(e.message)+'</span>'; }
 }
-async function dlVerify(id, verdict, sha256){
-  if(!confirm(verdict==='signed'?'Confirm you looked at this document and it is signed?':'Mark this document as NOT signed? Tessa will ask for a signed copy only when you approve a message.')) return;
+async function dlVerify(id, verdict, sha256, associationConfirmed){
+  if(!associationConfirmed && !confirm(verdict==='signed'?'Confirm you looked at this document and it is signed?':'Mark this document as NOT signed? Tessa will ask for a signed copy only when you approve a message.')) return;
   const msg=$('dlmsg-'+id);
-  try{ const r=await af('/api/tessa/delegations/'+id+'/verify',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({verdict, sha256})}); const j=await r.json(); if(!r.ok) throw new Error(j.detail||j.error||'failed'); dlLoad(); }
+  try{
+    const r=await af('/api/tessa/delegations/'+id+'/verify',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({verdict, sha256, association_confirmed: !!associationConfirmed})}); const j=await r.json();
+    // The document did not prove which association it is for: Ed confirms it himself, knowingly.
+    if(r.status===409&&j.error==='association_unconfirmed'){
+      if(confirm(j.detail+' I reviewed the document and confirm it belongs to this association.')) return dlVerify(id, verdict, sha256, true);
+      msg.innerHTML='<span class="err">Not confirmed. Nothing changed.</span>'; return;
+    }
+    if(!r.ok) throw new Error(j.detail||j.error||'failed'); dlLoad(); }
   catch(e){ msg.innerHTML='<span class="err">'+esc(e.message)+'</span>'; }
 }
 async function dlAssign(id){

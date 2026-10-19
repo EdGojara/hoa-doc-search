@@ -36,7 +36,10 @@ function reset() {
   for (const k of Object.keys(DB)) delete DB[k];
   DB.communities = [AM, { id: 'a0000000-0000-4000-8000-0000000000b2', name: 'Canyon Gate', active: true, management_company_id: 'mc-1' }, { id: 'a0000000-0000-4000-8000-0000000000c3', name: 'Waterview', active: true, management_company_id: 'mc-1' }];
   DB.board_members = []; DB.ea_inbox = []; DB.ea_followups = []; DB.ea_followup_events = []; DB.work_items = []; DB.work_item_events = []; DB.library_documents = [];
+  for (const k of Object.keys(FAIL)) delete FAIL[k];
 }
+const FAIL = {};      // 'table:op' -> error message (failure injection)
+const STORAGE = {};   // path -> Buffer
 const likeRe = (p) => new RegExp('^' + String(p).replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/%/g, '.*').replace(/_/g, '.') + '$', 'i');
 function query(table) {
   const st = { op: 'select', filters: [], order: null, limit: null, single: false, payload: null, sel: '*', returning: false };
@@ -49,6 +52,8 @@ function query(table) {
     return out;
   };
   const run = () => {
+    const f = FAIL[table + ':' + st.op] || FAIL[table + ':*'];
+    if (f) return { data: null, error: { message: f } };
     if (st.op === 'insert') {
       const list = (Array.isArray(st.payload) ? st.payload : [st.payload]).map((p) => {
         const now = new Date().toISOString();
@@ -78,13 +83,14 @@ function query(table) {
   };
   return q;
 }
-const fakeSupabase = { from: (t) => query(t), storage: { from: () => ({ upload: async () => ({ error: null }), download: async () => ({ data: null, error: { message: 'none' } }) }) } };
+const fakeSupabase = { from: (t) => query(t), storage: { from: () => ({ upload: async () => ({ error: null }),
+  download: async (p) => STORAGE[p] ? { data: { arrayBuffer: async () => STORAGE[p] }, error: null } : { data: null, error: { message: 'not found' } } }) } };
 const realSB = require('@supabase/supabase-js');
 stub('@supabase/supabase-js', { ...realSB, createClient: () => fakeSupabase });
 
 // ---------------------------------------------------------------- stubs
 const OWNER_EMAIL = 'egojara@bedrocktx.com';
-const USERS = { owner: { id: 'u1', role: 'admin', email: OWNER_EMAIL, full_name: 'Ed Gojara' }, admin: { id: 'u2', role: 'admin', email: 'other@bedrocktx.com' }, staff: { id: 'u3', role: 'staff', email: 'celina@bedrocktx.com', full_name: 'Celina Ruiz' } };
+const USERS = { owner: { id: 'u1', role: 'admin', email: OWNER_EMAIL, full_name: 'Ed Gojara' }, admin: { id: 'u2', role: 'admin', email: 'other@bedrocktx.com' }, staff: { id: 'u3', role: 'staff', email: 'celina@bedrocktx.com', full_name: 'Celina Ruiz' }, staff2: { id: 'u4', role: 'staff', email: 'jordan@bedrocktx.com', full_name: 'Jordan Lee' } };
 const userFor = (req) => USERS[String(req.headers['x-test-user'] || '')] || null;
 const realAuth = require('../api/_require_admin');
 stub('../api/_require_admin', { ...realAuth, OWNER_EMAIL, getAuthedUser: async (req) => userFor(req),
@@ -101,7 +107,7 @@ let mailboxFiles = [];
 const realGA = require('../lib/email/graph_attachments');
 stub('../lib/email/graph_attachments', { ...realGA,
   fetchAttachmentNames: async () => mailboxFiles.map((f) => f.filename),
-  fetchAllAttachmentBuffers: async () => mailboxFiles.map((f) => ({ ...f, isPdf: /\.pdf$/i.test(f.filename), isImage: false, isDoc: false, contentType: 'application/pdf' })) });
+  fetchAllAttachmentBuffers: async () => Object.assign(mailboxFiles.map((f) => ({ ...f, isPdf: /\.pdf$/i.test(f.filename), isImage: false, isDoc: false, contentType: 'application/pdf' })), mailboxFiles.listError ? { listError: mailboxFiles.listError } : {}) });
 
 let modelHandle = null;   // what Tessa's handler "decides"
 const realTessa = require('../lib/ea/tessa');
@@ -109,14 +115,14 @@ stub('../lib/ea/tessa', { ...realTessa, handleForwarded: async (a) => modelHandl
 
 let checkResult = null;
 const realDC = require('../lib/ea/document_check');
-stub('../lib/ea/document_check', { ...realDC, checkReturnedDocument: async ({ buffer, filename }) => ({ advisory: realDC.normalizeCheck(checkResult, { form: '1120-H', tax_year: '2025', entity: 'August Meadows' }), raw_extracted: checkResult, sha256: realDC.sha256(buffer), filename }) });
+stub('../lib/ea/document_check', { ...realDC, checkReturnedDocument: async ({ buffer, filename, expect }) => ({ advisory: realDC.normalizeCheck(checkResult, expect), expectSeen: expect, raw_extracted: checkResult, sha256: realDC.sha256(buffer), filename }) });
 
 const filedCalls = [];
 const realIntake = require('../lib/contracts/intake');
-stub('../lib/contracts/intake', { ...realIntake, fileContractDocument: async (sb, o) => { filedCalls.push(o); const id = uuid(); DB.library_documents.push({ id, community_id: o.community_id, category: o.category, title: o.title }); return { library_document_id: id, file_hash: realDC.sha256(o.buffer), reused: false }; } });
+stub('../lib/contracts/intake', { ...realIntake, fileContractDocument: async (sb, o) => { filedCalls.push(o); const id = uuid(); if (FAIL['storage:upload']) throw Object.assign(new Error(FAIL['storage:upload']), { code: 'storage' }); const fp = 'mc-1/' + o.community_id + '/tax_return/' + realDC.sha256(o.buffer) + '.pdf'; STORAGE[fp] = o.buffer; DB.library_documents.push({ id, management_company_id: 'mc-1', community_id: o.community_id, category: o.category, title: o.title, file_path: fp, file_hash: realDC.sha256(o.buffer), file_name_normalized: 'August Meadows - ' + o.title + '.pdf' }); return { library_document_id: id, file_hash: realDC.sha256(o.buffer), reused: false }; } });
 
 const tasks = [];
-stub('../api/mission_control', { upsertAgentTask: async (o) => { const id = uuid(); tasks.push({ id, ...o }); DB.work_items.push({ id, status: 'new', assigned_to: o.assigned_to, notes: null, completed_at: null }); return { id, created: true }; } });
+stub('../api/mission_control', { upsertAgentTask: async (o) => { const id = uuid(); tasks.push({ id, ...o }); DB.work_items.push({ id, status: 'new', assigned_to: o.assigned_to, notes: null, completed_at: null, source_ref: o.source_ref, library_document_id: o.library_document_id, title: o.title, next_step: o.next_step, why: o.why, evidence_required: o.evidence_required, community_id: o.community_id }); return { id, created: true }; } });
 
 // ---------------------------------------------------------------- fixtures (Paul, read-only shape)
 const ED_REQUEST = { graph_id: 'g-ed-1015', from_email: 'egojara@bedrocktx.com', from_name: 'Ed Gojara', subject: 'Tax return', received_at: '2026-10-15T21:34:43+00:00',
@@ -186,8 +192,13 @@ check('ENGINE: only a named person verifies, and only the exact file that was ch
   assert.throws(() => D.applyOwnerVerify(steps, { verdict: 'signed', sha256: 'other', by: 'Ed Gojara' }), /not the file/);
   assert.throws(() => D.applyOwnerVerify(steps, { verdict: 'signed', sha256: 'abc', by: 'tessa' }), /named person/);
   assert.throws(() => D.applyOwnerVerify(D.applyReceived(fresh(), { inboxId: 'x', attachments: ['a.pdf'] }).steps, { verdict: 'signed', sha256: 'abc', by: 'Ed' }), /Check the document first/);
-  const v = D.applyOwnerVerify(steps, { verdict: 'signed', sha256: 'abc', by: 'Ed Gojara' });
-  assert.equal(v.signature.state, 'verified'); assert.equal(v.signature.verified_by, 'Ed Gojara');
+  assert.throws(() => D.applyOwnerVerify(steps, { verdict: 'signed', sha256: 'abc', by: 'Ed Gojara' }), /could not prove which association/, 'no association evidence -> Ed must confirm it');
+  const conflict = { ...steps, signature: { ...steps.signature, advisory: { verdict: 'uncertain', association_match: false } } };
+  assert.throws(() => D.applyOwnerVerify(conflict, { verdict: 'signed', sha256: 'abc', by: 'Ed Gojara' }), /does not match this association/);
+  assert.equal(D.applyOwnerVerify(conflict, { verdict: 'signed', sha256: 'abc', by: 'Ed Gojara', associationConfirmed: true }).signature.association_confirmed_by, 'Ed Gojara');
+  const proven = { ...steps, signature: { ...steps.signature, advisory: { verdict: 'appears_signed', association_match: true } } };
+  const v = D.applyOwnerVerify(proven, { verdict: 'signed', sha256: 'abc', by: 'Ed Gojara' });
+  assert.equal(v.signature.state, 'verified'); assert.equal(v.signature.verified_by, 'Ed Gojara'); assert.equal(v.signature.association_confirmed_by, 'document');
   const r = D.applyOwnerVerify(steps, { verdict: 'not_signed', sha256: 'abc', by: 'Ed Gojara' });
   assert.equal(r.signature.state, 'rejected');
   const again = D.applyReceived(r, { inboxId: 'in-3', attachments: ['signed.pdf'] });
@@ -195,7 +206,7 @@ check('ENGINE: only a named person verifies, and only the exact file that was ch
 });
 check('ENGINE: file only after verification; assign only after filing; assign a person', () => {
   let { steps } = D.applyReceived(fresh(), { inboxId: 'in-2', attachments: ['DOC000.pdf'] });
-  steps = D.applyOwnerVerify(D.applyCheck(steps, { advisory: {}, sha256: 'abc' }), { verdict: 'signed', sha256: 'abc', by: 'Ed Gojara' });
+  steps = D.applyOwnerVerify(D.applyCheck(steps, { advisory: { association_match: true }, sha256: 'abc' }), { verdict: 'signed', sha256: 'abc', by: 'Ed Gojara' });
   assert.throws(() => D.applyAssigned(steps, { workItemId: 'w', assignedTo: 'Celina Ruiz' }), /File the verified return first/);
   steps = D.applyFiled(steps, { libraryDocumentId: 'doc-1', by: 'Ed Gojara' });
   assert.throws(() => D.applyFiled(steps, { libraryDocumentId: 'doc-2', by: 'Ed' }), /Already filed/);
@@ -203,13 +214,27 @@ check('ENGINE: file only after verification; assign only after filing; assign a 
   steps = D.applyAssigned(steps, { workItemId: 'w-1', assignedTo: 'Celina Ruiz', by: 'Ed Gojara' });
   assert.equal(D.currentStep(steps), 'mailed'); assert.match(D.nextAction(steps), /Celina Ruiz to confirm/);
 });
-check('ENGINE: mailing is confirmed only by the staff person who closed the task, never by Tessa or an agent', () => {
-  let s = fresh(); s = { ...s, mail_assigned: { state: 'assigned', work_item_id: 'w-1', assigned_to: 'Celina Ruiz', at: '2026-10-20T15:00:00Z' } };
-  assert.equal(D.applyMailedFromTask(s, { task: { status: 'in_progress' }, closedBy: 'Celina Ruiz' }).changed, false);
-  assert.equal(D.applyMailedFromTask(s, { task: { status: 'done' }, closedBy: 'agent' }).changed, false);
-  assert.equal(D.applyMailedFromTask(s, { task: { status: 'done' }, closedBy: 'Tessa McCall' }).changed, false);
-  const ok = D.applyMailedFromTask(s, { task: { status: 'done', completed_at: '2026-10-21T18:00:00Z', notes: 'Certified 9407 1111' }, closedBy: 'Celina Ruiz' });
-  assert.equal(ok.changed, true); assert.equal(ok.steps.mailed.state, 'confirmed_by_staff'); assert.equal(ok.steps.mailed.by, 'Celina Ruiz');
+check('ENGINE: mailing needs an explicit record from the ASSIGNED person: date, method, tracking number for tracked methods', () => {
+  const s = { ...fresh(), mail_assigned: { state: 'assigned', work_item_id: 'w-1', assigned_to: 'Celina Ruiz', at: '2026-10-20T15:00:00Z' } };
+  const at = new Date('2026-10-21T20:00:00Z');
+  const good = { mailed_on: '2026-10-21', method: 'certified_mail', tracking_number: '9407 1112 0620 1234 5678 90' };
+  assert.throws(() => D.applyMailingConfirmed(s, { record: good, by: 'Tessa', at }), /named person/);
+  assert.throws(() => D.applyMailingConfirmed(s, { record: good, by: 'Jordan Lee', at }), /Only Celina Ruiz/);
+  assert.throws(() => D.applyMailingConfirmed(s, { record: { ...good, tracking_number: '' }, by: 'Celina Ruiz', at }), /certified-mail number/);
+  assert.throws(() => D.applyMailingConfirmed(s, { record: { ...good, method: 'carrier pigeon' }, by: 'Celina Ruiz', at }), /how it was mailed/);
+  assert.throws(() => D.applyMailingConfirmed(s, { record: { ...good, mailed_on: '2026-10-25' }, by: 'Celina Ruiz', at }), /future/);
+  assert.throws(() => D.applyMailingConfirmed(s, { record: { ...good, mailed_on: '2026-10-19' }, by: 'Celina Ruiz', at }), /before the task was assigned/);
+  assert.throws(() => D.applyMailingConfirmed(s, { record: {}, by: 'Celina Ruiz', at }), /date it was mailed/);
+  assert.throws(() => D.applyMailingConfirmed(fresh(), { record: good, by: 'Celina Ruiz', at }), /not been assigned/);
+  const ok = D.applyMailingConfirmed(s, { record: good, by: 'celina ruiz', at });
+  assert.equal(ok.mailed.state, 'confirmed_by_staff'); assert.equal(ok.mailed.tracking_number, '9407111206201234567890'); assert.equal(ok.mailed.method, 'certified_mail');
+  assert.equal(D.applyMailingConfirmed(s, { record: { mailed_on: '2026-10-21', method: 'first_class' }, by: 'Ed Gojara', isOwner: true, at }).mailed.tracking_number, null, 'untracked method, Ed may confirm');
+  assert.throws(() => D.applyMailingConfirmed(ok, { record: good, by: 'Celina Ruiz', at }), /already confirmed/);
+});
+check('ENGINE: a task closed without a mailing record is NOT mailed and alerts Ed', () => {
+  const s = { ...fresh(), received: { state: 'received_unverified' }, signature: { state: 'verified' }, filed: { state: 'filed' }, mail_assigned: { state: 'assigned', assigned_to: 'Celina Ruiz', at: '2026-10-20T15:00:00Z' }, meta: { ...fresh().meta, deadline: null } };
+  const a = D.dueAlerts(s, { now: '2026-10-21T15:00:00Z', taskClosed: true });
+  assert.deepEqual(a.map((x) => x.kind), ['closed_without_mailing_record']); assert.equal(D.currentStep(s), 'mailed');
 });
 check('ENGINE: late or stuck alerts Ed, at most once per kind every 48h', () => {
   const s = fresh();
@@ -230,6 +255,14 @@ check('CHECK: the model\'s read is downgraded to uncertain when it cannot show a
   const y = N({ verdict: 'appears_signed', signature_visible: true, form: '1120-H', tax_year: '2024', entity_name: 'August Meadows' }); assert.equal(y.verdict, 'uncertain'); assert.ok(y.concerns.some((c) => /2024/.test(c)));
   assert.equal(N({ verdict: 'appears_signed', signature_visible: true, form: '1120-H', tax_year: '2025', entity_name: 'Canyon Gate HOA' }).verdict, 'uncertain');
   assert.equal(N({ verdict: 'verified' }).verdict, 'uncertain', 'no other verdicts exist');
+  const E = (r, ein) => realDC.normalizeCheck(r, { form: '1120-H', tax_year: '2025', entity: 'August Meadows Community Association', ein });
+  const page = { verdict: 'appears_signed', signature_visible: true, form: '1120-H', tax_year: '2025', entity_name: 'AUGUST MEADOWS COMMUNITY ASSOCIATION', ein: '12-3456789' };
+  assert.equal(E(page, '123456789').association_match, true, 'name + EIN match');
+  assert.equal(E(page, '98-7654321').association_match, false, 'EIN conflicts'); assert.equal(E(page, '98-7654321').verdict, 'uncertain');
+  assert.equal(E({ ...page, ein: '' }, '123456789').association_match, null, 'EIN unreadable: not proven');
+  assert.equal(E({ ...page, entity_name: 'Waterview Estates HOA' }, null).association_match, false, 'another association on the page');
+  assert.equal(E(page, null).association_match, true, 'no EIN on file: the printed name is the evidence');
+  assert.ok(E(page, null).concerns.some((c) => /No EIN is on file/.test(c)));
   assert.equal(N(null).verdict, 'uncertain');
 });
 check('PLAN: Tessa never invents a date or a task deadline', () => {
@@ -244,6 +277,9 @@ check('PLAN: Tessa never invents a date or a task deadline', () => {
 const express = require('express');
 const { router } = require('../api/tessa');
 const app = express(); app.use('/api/tessa', router);
+app.use('/api/tessa-mailing', require('../api/tessa_mailing').router);
+app.use('/api/documents', require('../api/documents').router);
+const TODAY = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Chicago' });
 let base;
 async function call(method, p, user, body) {
   const r = await fetch(base + p, { method, headers: { 'Content-Type': 'application/json', ...(user ? { 'x-test-user': user } : {}) }, body: body ? JSON.stringify(body) : undefined });
@@ -303,6 +339,7 @@ check('ROUTES: Ed confirms on the exact file (a different fingerprint is refused
   assert.equal((await call('POST', `/api/tessa/delegations/${delegationId}/verify`, 'owner', { verdict: 'signed', sha256: 'deadbeef' })).status, 409);
   const r = await call('POST', `/api/tessa/delegations/${delegationId}/verify`, 'owner', { verdict: 'signed', sha256: checkedSha });
   assert.equal(r.status, 200, JSON.stringify(r.j)); assert.equal(r.j.delegation.steps.signature.verified_by, 'Ed Gojara');
+  assert.equal(r.j.delegation.steps.signature.association_confirmed_by, 'document', 'the printed name proved August Meadows');
 });
 check('ROUTES: filing refuses a file that changed in the mailbox since Ed verified it', async () => {
   mailboxFiles = [{ filename: 'DOC000.pdf', buffer: Buffer.from('%PDF different bytes') }];
@@ -331,21 +368,75 @@ check('ROUTES: Ed assigns a staff member; the task links the filed return and ca
   assert.ok(!/Please print, sign and scan|ventanaland|paulgrover/i.test(blob), 'the staff task carries none of Ed\'s correspondence');
   assert.equal(r.j.delegation.steps.mailed.state, 'pending', 'assigning is not mailing');
 });
-check('ROUTES: the tick confirms mailing only when a PERSON closed the task, and audits it', async () => {
+check("ROUTES: the task's Open link is the mailing page; staff see the instructions and title only, never Ed's email", async () => {
+  const w = DB.work_items[0];
+  assert.equal(w.action_url, `/app/irs-mailing?task=${w.id}`);
+  const r = await call('GET', `/api/tessa-mailing/${w.id}`, 'staff');
+  assert.equal(r.status, 200, JSON.stringify(r.j));
+  assert.match(r.j.document.title, /2025 Form 1120-H \(signed\)/); assert.equal(r.j.mailed, null);
+  assert.ok(!/Please print, sign and scan|ventanaland|paulgrover|DOC000/i.test(JSON.stringify(r.j)), 'no correspondence, no sender, no source file name');
+  assert.ok(r.j.methods.length >= 4 && r.j.methods.every((m, i, a) => !i || a[i - 1].label.localeCompare(m.label) <= 0), 'methods listed alphabetically');
+});
+check('ROUTES: only the assigned person (or Ed) can open the return or confirm mailing; anyone else is refused', async () => {
+  const w = DB.work_items[0];
+  for (const [m, p] of [['GET', `/api/tessa-mailing/${w.id}`], ['GET', `/api/tessa-mailing/${w.id}/document`], ['POST', `/api/tessa-mailing/${w.id}/confirm`]]) {
+    assert.equal((await call(m, p, 'staff2', m === 'GET' ? undefined : { mailed_on: TODAY, method: 'first_class' })).status, 403, `another staff member ${m} ${p}`);
+    assert.equal((await call(m, p, null, m === 'GET' ? undefined : {})).status, 403, `signed out ${m} ${p}`);
+  }
+  assert.equal((await call('GET', `/api/tessa-mailing/${uuid()}`, 'staff')).status, 404, 'not a mailing task');
+  assert.equal(DB.ea_followups.find((x) => x.id === delegationId).steps.mailed.state, 'pending');
+});
+check('ROUTES: the assignee opens exactly the filed return (and the opening is audited)', async () => {
+  const w = DB.work_items[0];
+  const r = await fetch(`${base}/api/tessa-mailing/${w.id}/document`, { headers: { 'x-test-user': 'staff' } });
+  assert.equal(r.status, 200); assert.equal(r.headers.get('content-type'), 'application/pdf'); assert.equal(r.headers.get('cache-control'), 'no-store');
+  assert.equal(Buffer.from(await r.arrayBuffer()).toString(), PDF_SIGNED.toString());
+  const ev = DB.ea_followup_events.filter((e) => e.event === 'document_opened');
+  assert.equal(ev.length, 1); assert.equal(ev[0].actor, 'Celina Ruiz'); assert.equal(ev[0].detail.library_document_id, w.library_document_id);
+});
+check('ROUTES: closing the Mission Control task without a mailing record is NOT mailed; Tessa tells Ed', async () => {
   const D2 = require('../lib/ea/delegation_store');
   const w = DB.work_items[0];
-  Object.assign(w, { status: 'done', completed_at: '2026-10-21T18:00:00Z', notes: 'Mailed certified, 9407 1111 2222' });
-  DB.work_item_events.push({ work_item_id: w.id, event: 'status_changed', actor: 'agent', created_at: '2026-10-21T18:00:00Z' });
-  let out = await D2.tick(fakeSupabase, { now: new Date('2026-10-21T19:00:00Z') });
-  assert.equal(out.mailed_confirmed, 0, 'an agent closing it is not mailing');
-  DB.work_item_events.push({ work_item_id: w.id, event: 'status_changed', actor: 'Celina Ruiz', created_at: '2026-10-21T18:05:00Z' });
-  out = await D2.tick(fakeSupabase, { now: new Date('2026-10-21T19:00:00Z') });
-  assert.equal(out.mailed_confirmed, 1);
+  Object.assign(w, { status: 'done', completed_at: new Date().toISOString() });
+  DB.work_item_events.push({ work_item_id: w.id, event: 'status_changed', actor: 'Celina Ruiz', created_at: new Date().toISOString() });
+  const texts = [];
+  await D2.tick(fakeSupabase, { textOwner: async (t) => { texts.push(t); return { ok: true }; } });
   const d = DB.ea_followups.find((x) => x.id === delegationId);
-  assert.equal(d.status, 'done'); assert.equal(d.steps.mailed.by, 'Celina Ruiz'); assert.match(d.steps.mailed.notes, /certified/);
-  assert.deepEqual(DB.ea_followup_events.map((e) => e.event), ['delegated', 'document_received', 'document_checked', 'signature_verified', 'filed', 'mailing_assigned', 'mailing_confirmed']);
-  const ev = await call('GET', `/api/tessa/delegations/${delegationId}/events`, 'owner');
-  assert.equal(ev.j.events.length, 7);
+  assert.equal(d.steps.mailed.state, 'pending'); assert.notEqual(d.status, 'done');
+  assert.ok(texts.some((t) => /nobody recorded the mailing date/.test(t)), texts.join(' | '));
+  Object.assign(w, { status: 'new', completed_at: null });
+});
+check('ROUTES: an incomplete mailing record is refused with every missing piece named; nothing advances', async () => {
+  const w = DB.work_items[0];
+  const r = await call('POST', `/api/tessa-mailing/${w.id}/confirm`, 'staff', { method: 'certified_mail' });
+  assert.equal(r.status, 400); assert.equal(r.j.error, 'bad_mailing_record');
+  assert.ok(r.j.errors.some((e) => /date it was mailed/.test(e)) && r.j.errors.some((e) => /certified-mail number/.test(e)), JSON.stringify(r.j.errors));
+  assert.equal(DB.ea_followups.find((x) => x.id === delegationId).steps.mailed.state, 'pending');
+  assert.equal(DB.ea_followup_events.filter((e) => e.event === 'mailing_confirmed').length, 0);
+});
+check('ROUTES: the assignee records date, method and certified number: mailed, task closed with evidence, audited', async () => {
+  const w = DB.work_items[0];
+  const r = await call('POST', `/api/tessa-mailing/${w.id}/confirm`, 'staff', { mailed_on: TODAY, method: 'certified_mail', tracking_number: '9407 1112 0620 1234 5678 90', notes: 'Receipt in the AM tax folder' });
+  assert.equal(r.status, 200, JSON.stringify(r.j)); assert.equal(r.j.task_closed, true);
+  const d = DB.ea_followups.find((x) => x.id === delegationId);
+  assert.equal(d.status, 'done'); assert.equal(d.steps.mailed.by, 'Celina Ruiz'); assert.equal(d.steps.mailed.tracking_number, '9407111206201234567890');
+  assert.equal(w.status, 'done'); assert.match(w.notes, /Mailed .* by Celina Ruiz, Certified Mail #9407111206201234567890/);
+  const ev = DB.work_item_events.find((e) => e.event === 'closed_by_evidence');
+  assert.equal(ev.actor, 'Celina Ruiz'); assert.equal(ev.detail.tracking_number, '9407111206201234567890');
+  assert.equal((await call('POST', `/api/tessa-mailing/${w.id}/confirm`, 'staff', { mailed_on: TODAY, method: 'first_class' })).status, 409, 'not twice');
+});
+check('AUDIT: every step names who authorized it, the exact file approved and filed, and who confirmed mailing', async () => {
+  const ev = (await call('GET', `/api/tessa/delegations/${delegationId}/events`, 'owner')).j.events;
+  assert.deepEqual(ev.map((e) => e.event), ['delegated', 'document_received', 'document_checked', 'signature_verified', 'filed', 'mailing_assigned', 'document_opened', 'alert_sent', 'mailing_confirmed']);
+  const by =Object.fromEntries(ev.map((e) => [e.event, e]));
+  assert.equal(by.delegated.actor, 'Ed Gojara'); assert.equal(by.delegated.detail.community_id, AM.id);
+  assert.equal(by.document_received.actor, 'tessa'); assert.equal(by.document_received.detail.verified, false);
+  assert.equal(by.document_checked.detail.requested_by, 'Ed Gojara'); assert.equal(by.document_checked.detail.sha256, checkedSha); assert.equal(by.document_checked.detail.filename, 'DOC000.pdf');
+  assert.equal(by.signature_verified.actor, 'Ed Gojara'); assert.equal(by.signature_verified.detail.sha256, checkedSha); assert.equal(by.signature_verified.detail.association_confirmed_by, 'document');
+  assert.equal(by.filed.actor, 'Ed Gojara'); assert.equal(by.filed.detail.file_hash, checkedSha, 'the filed file IS the approved file'); assert.equal(by.filed.detail.category, 'tax_return');
+  assert.equal(by.mailing_assigned.actor, 'Ed Gojara'); assert.equal(by.mailing_assigned.detail.assigned_to, 'Celina Ruiz');
+  assert.equal(by.document_opened.actor, 'Celina Ruiz');
+  assert.equal(by.mailing_confirmed.actor, 'Celina Ruiz'); assert.equal(by.mailing_confirmed.detail.method, 'certified_mail'); assert.equal(by.mailing_confirmed.detail.mailed_on, TODAY);
 });
 check('ROUTES: an overdue return texts Ed once (the tick sends nothing else)', async () => {
   reset(); const row = seed({ ...ED_REQUEST, graph_id: 'g2' });
@@ -355,6 +446,149 @@ check('ROUTES: an overdue return texts Ed once (the tick sends nothing else)', a
   await D2.tick(fakeSupabase, { now: new Date('2026-10-19T15:00:00Z'), textOwner: async (t) => { texts.push(t); return { ok: true }; } });
   await D2.tick(fakeSupabase, { now: new Date('2026-10-19T18:00:00Z'), textOwner: async (t) => { texts.push(t); return { ok: true }; } });
   assert.equal(texts.length, 1); assert.match(texts[0], /expected by 2026-10-16/);
+});
+
+// A delegation advanced to "received" for the failure / association tests.
+async function receivedDelegation() {
+  reset(); const ed = seed({ ...ED_REQUEST, graph_id: 'g-ed-' + uuid() }); seed({ ...PAUL_REPLY, graph_id: 'g-p-' + uuid() });
+  const r = await call('POST', `/api/tessa/inbox/${ed.id}/delegate`, 'owner', { community_id: AM.id, expected_from: 'paulgrover@ventanaland.com', document_label: '2025 Form 1120-H', tax_year: '2025' });
+  assert.equal(r.status, 200, JSON.stringify(r.j));
+  return r.j.delegation.id;
+}
+const stepsOf = (id) => JSON.parse(JSON.stringify(DB.ea_followups.find((x) => x.id === id).steps));
+check('ASSOCIATION: a file name is never proof; if the return names another association, Ed must confirm (or it stops)', async () => {
+  const id = await receivedDelegation();
+  mailboxFiles = [{ filename: 'DOC000.pdf', buffer: PDF_SIGNED }];
+  checkResult = { verdict: 'appears_signed', signature_visible: true, form: '1120-H', tax_year: '2025', entity_name: 'Waterview Estates Homeowners Association' };
+  const c = await call('POST', `/api/tessa/delegations/${id}/check`, 'owner', {});
+  assert.equal(c.j.advisory.association_match, false); assert.equal(c.j.advisory.verdict, 'uncertain');
+  const v = await call('POST', `/api/tessa/delegations/${id}/verify`, 'owner', { verdict: 'signed', sha256: c.j.sha256 });
+  assert.equal(v.status, 409); assert.equal(v.j.error, 'association_unconfirmed'); assert.equal(stepsOf(id).signature.state, 'checked');
+  const ok = await call('POST', `/api/tessa/delegations/${id}/verify`, 'owner', { verdict: 'signed', sha256: c.j.sha256, association_confirmed: true });
+  assert.equal(ok.status, 200); assert.equal(ok.j.delegation.steps.signature.association_confirmed_by, 'Ed Gojara');
+  const e = DB.ea_followup_events.find((x) => x.event === 'signature_verified');
+  assert.equal(e.detail.advisory_association_match, false); assert.equal(e.detail.association_confirmed_by, 'Ed Gojara', 'the override is on the record');
+});
+check('ASSOCIATION: with an EIN on file, a mismatched EIN on the return blocks the automatic match', async () => {
+  const id = await receivedDelegation();
+  AM.ein = '12-3456789';
+  try {
+    mailboxFiles = [{ filename: 'DOC000.pdf', buffer: PDF_SIGNED }];
+    checkResult = { verdict: 'appears_signed', signature_visible: true, form: '1120-H', tax_year: '2025', entity_name: 'August Meadows Community Association', ein: '98-7654321' };
+    const realCheck = require('../lib/ea/document_check');
+    // the route passes the association's EIN to the check
+    const c = await call('POST', `/api/tessa/delegations/${id}/check`, 'owner', {});
+    assert.equal(c.status, 200, JSON.stringify(c.j));
+    assert.equal(c.j.advisory.association_match, false, 'the route compared the EIN on file'); assert.equal(c.j.advisory.verdict, 'uncertain'); void realCheck;
+  } finally { delete AM.ein; }
+});
+check('FAILURE: before migration 537 the delegation routes say so and change nothing', async () => {
+  const id = await receivedDelegation(); const before = stepsOf(id);
+  FAIL['ea_followups:select'] = 'column ea_followups.kind does not exist';
+  const r = await call('GET', '/api/tessa/delegations', 'owner');
+  assert.equal(r.status, 409); assert.equal(r.j.error, 'migration_537_required');
+  const c = await call('POST', `/api/tessa/delegations/${id}/check`, 'owner', {});
+  assert.equal(c.status, 409); assert.equal(c.j.error, 'migration_537_required');
+  delete FAIL['ea_followups:select'];
+  assert.deepEqual(stepsOf(id), before);
+});
+check('FAILURE: Tessa\'s mailbox unreadable -> a clear 502, the step does not move', async () => {
+  const id = await receivedDelegation(); const before = stepsOf(id);
+  const saved = mailboxFiles; mailboxFiles = Object.assign([], { listError: 'attachment list failed (HTTP 403)' });
+  const r = await call('POST', `/api/tessa/delegations/${id}/check`, 'owner', {});
+  mailboxFiles = saved;
+  assert.equal(r.status, 502); assert.equal(r.j.error, 'document_unavailable'); assert.match(r.j.detail, /HTTP 403/);
+  assert.deepEqual(stepsOf(id), before); assert.equal(DB.ea_followup_events.filter((e) => e.event === 'document_checked').length, 0);
+});
+async function verifiedDelegation() {
+  const id = await receivedDelegation();
+  mailboxFiles = [{ filename: 'DOC000.pdf', buffer: PDF_SIGNED }];
+  checkResult = { verdict: 'appears_signed', signature_visible: true, form: '1120-H', tax_year: '2025', entity_name: 'August Meadows Community Association' };
+  const c = await call('POST', `/api/tessa/delegations/${id}/check`, 'owner', {});
+  await call('POST', `/api/tessa/delegations/${id}/verify`, 'owner', { verdict: 'signed', sha256: c.j.sha256 });
+  assert.equal(stepsOf(id).signature.state, 'verified');
+  return id;
+}
+check('FAILURE: a storage write failure files nothing and leaves the return verified-but-unfiled', async () => {
+  const id = await verifiedDelegation(); const n = filedCalls.length;
+  FAIL['storage:upload'] = 'storage unavailable';
+  const r = await call('POST', `/api/tessa/delegations/${id}/file`, 'owner', {});
+  delete FAIL['storage:upload'];
+  assert.equal(r.status, 502); assert.equal(r.j.error, 'filing_failed'); assert.match(r.j.detail, /Nothing was filed/);
+  assert.equal(stepsOf(id).filed.state, 'pending'); assert.equal(DB.ea_followup_events.filter((e) => e.event === 'filed').length, 0);
+  assert.equal(filedCalls.length, n + 1, 'it was attempted');
+});
+check('FAILURE: if the filed return cannot be marked signed + internal-only, it is not counted as filed', async () => {
+  const id = await verifiedDelegation();
+  FAIL['library_documents:update'] = 'permission denied for table library_documents';
+  const r = await call('POST', `/api/tessa/delegations/${id}/file`, 'owner', {});
+  delete FAIL['library_documents:update'];
+  assert.equal(r.status, 502); assert.equal(r.j.error, 'filing_failed'); assert.equal(stepsOf(id).filed.state, 'pending');
+  const retry = await call('POST', `/api/tessa/delegations/${id}/file`, 'owner', {});
+  assert.equal(retry.status, 200, 'a retry completes it');
+});
+check('FAILURE: if the audit entry cannot be written, the step does not advance', async () => {
+  const id = await verifiedDelegation();
+  FAIL['ea_followup_events:insert'] = 'permission denied for table ea_followup_events';
+  const r = await call('POST', `/api/tessa/delegations/${id}/file`, 'owner', {});
+  delete FAIL['ea_followup_events:insert'];
+  assert.equal(r.status, 500); assert.equal(r.j.error, 'audit_write_failed'); assert.equal(stepsOf(id).filed.state, 'pending');
+});
+check('FAILURE: the mailing task cannot be created or linked -> nothing is assigned', async () => {
+  const id = await verifiedDelegation();
+  await call('POST', `/api/tessa/delegations/${id}/file`, 'owner', {});
+  FAIL['work_items:update'] = 'permission denied for table work_items';
+  const r = await call('POST', `/api/tessa/delegations/${id}/assign-mailing`, 'owner', { assigned_to: 'Celina Ruiz' });
+  delete FAIL['work_items:update'];
+  assert.equal(r.status, 502); assert.equal(stepsOf(id).mail_assigned.state, 'pending');
+});
+check('FAILURE: the filed return missing from storage -> the assignee gets a clear error, nothing advances', async () => {
+  const id = await verifiedDelegation();
+  await call('POST', `/api/tessa/delegations/${id}/file`, 'owner', {});
+  await call('POST', `/api/tessa/delegations/${id}/assign-mailing`, 'owner', { assigned_to: 'Celina Ruiz' });
+  const w = DB.work_items[DB.work_items.length - 1];
+  const doc = DB.library_documents.find((x) => x.id === w.library_document_id);
+  const keep = STORAGE[doc.file_path]; delete STORAGE[doc.file_path];
+  const r = await call('GET', `/api/tessa-mailing/${w.id}/document`, 'staff');
+  STORAGE[doc.file_path] = keep;
+  assert.equal(r.status, 502); assert.equal(r.j.error, 'document_unavailable'); assert.equal(DB.ea_followup_events.filter((e) => e.event === 'document_opened').length, 0);
+});
+
+// ============================================================ RESTRICTED DOCUMENTS
+console.log('Restricted association records');
+const BEDROCK_MC = require('../lib/company').BEDROCK_MGMT_CO_ID;
+function seedDocs() {
+  const mc = BEDROCK_MC || 'mc-1';
+  const tax = { id: uuid(), management_company_id: mc, community_id: AM.id, category: 'tax_return', title: '2025 Form 1120-H (signed)', file_path: 'p/tax.pdf', file_name_normalized: 'tax.pdf', status: 'current', uploaded_at: '2026-10-20' };
+  const bylaws = { id: uuid(), management_company_id: mc, community_id: AM.id, category: 'bylaws', title: 'Bylaws', file_path: 'p/bylaws.pdf', file_name_normalized: 'bylaws.pdf', status: 'current', uploaded_at: '2026-01-01' };
+  DB.library_documents.push(tax, bylaws); STORAGE['p/tax.pdf'] = Buffer.from('%PDF tax'); STORAGE['p/bylaws.pdf'] = Buffer.from('%PDF bylaws');
+  return { tax, bylaws };
+}
+check('RESTRICTED: staff cannot list, open, download or preview a signed tax return in Documents; other documents are unchanged', async () => {
+  reset(); const { tax, bylaws } = seedDocs();
+  const list = await call('GET', `/api/documents?community_id=${AM.id}&include_legacy=false`, 'staff');
+  assert.equal(list.status, 200, JSON.stringify(list.j));
+  const ids = JSON.stringify(list.j);
+  assert.ok(ids.includes(bylaws.id) && !ids.includes(tax.id), 'listed without the tax return');
+  for (const p of [`/api/documents/${tax.id}`, `/api/documents/${tax.id}/download`, `/api/documents/${tax.id}/preview`]) assert.equal((await call('GET', p, 'staff')).status, 404, p);
+  assert.equal((await call('GET', `/api/documents/${bylaws.id}`, 'staff')).status, 200);
+});
+check('RESTRICTED: the owner still sees the tax return in Documents', async () => {
+  reset(); const { tax } = seedDocs();
+  const list = await call('GET', `/api/documents?community_id=${AM.id}&include_legacy=false`, 'owner');
+  assert.ok(JSON.stringify(list.j).includes(tax.id));
+  assert.equal((await call('GET', `/api/documents/${tax.id}`, 'owner')).status, 200);
+});
+check('RESTRICTED: a signed tax return is never attached to an outgoing email from the generic attach path', async () => {
+  reset(); const { tax, bylaws } = seedDocs();
+  const { getDocAttachment } = require('../lib/email/doc_attachment');
+  assert.equal(await getDocAttachment(tax.id), null);
+  assert.ok(await getDocAttachment(bylaws.id), 'ordinary documents still attach');
+});
+check('RESTRICTED: the Communications document search and viewer exclude restricted records', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'api/email_triage.js'), 'utf8');
+  assert.ok(/\.filter\(\(d\) => !isRestricted\(d\)\)/.test(src), 'search filters restricted');
+  assert.ok(/require\('\.\.\/lib\/documents\/restricted'\)\.mayOpen\(req, doc\)/.test(src), 'viewer checks restricted');
 });
 check('ROUTES: the whole flow sent no email', () => { assert.equal(sent.length, 0); });
 check('ROUTES: a follow-up proposal is saved only when Ed adds it, with the source email named', async () => {

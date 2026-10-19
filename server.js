@@ -900,6 +900,7 @@ app.get('/app/financial', (req, res) => res.sendFile(require('path').join(__dirn
 app.get('/app/operations', (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'app', 'operations.html')));
 // Mission Control (Ed 2026-10-12): Operations, Platform Buildout, Needs my action.
 app.get('/app/mission-control', (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'app', 'mission-control.html')));
+app.get('/app/irs-mailing', (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'app', 'irs-mailing.html')));
 // Legal Invoice Review (Issue #9 step 2). Draft only: no GL or owner postings.
 app.get('/app/financial/legal', (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'app', 'legal.html')));
 app.get('/app/financial/cutoff', (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'app', 'cutoff.html')));
@@ -1862,6 +1863,8 @@ app.use('/api/payment-plans', paymentPlansRouter);
 
 const { router: tessaRouter } = require('./api/tessa');
 app.use('/api/tessa', tessaRouter);
+// Staff side of an IRS mailing task Tessa prepared: assigned person only (Ed 2026-10-19).
+app.use('/api/tessa-mailing', require('./api/tessa_mailing').router);
 
 const { router: voicesRouter, loadVoiceOverrides, loadTtsVoiceOverrides } = require('./api/voices');
 app.use('/api/voices', voicesRouter);

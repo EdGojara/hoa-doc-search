@@ -571,8 +571,11 @@ router.get('/docs', async (req, res) => {
       .not('file_path', 'is', null).order('uploaded_at', { ascending: false }).limit(20);
     if (communityId) query = query.or(`community_id.eq.${communityId},community_id.is.null`);
     if (q) query = query.or(`title.ilike.%${q}%,file_name_original.ilike.%${q}%,category.ilike.%${q}%`);
-    const { data } = await query;
-    res.json({ docs: (data || []).map((d) => ({ id: d.id, title: d.title || d.file_name_original || '(untitled)', category: d.category })) });
+    const { data, error } = await query;
+    if (error) throw error;
+    // Restricted association records (signed tax returns) are never offered as attachments.
+    const { isRestricted } = require('../lib/documents/restricted');
+    res.json({ docs: (data || []).filter((d) => !isRestricted(d)).map((d) => ({ id: d.id, title: d.title || d.file_name_original || '(untitled)', category: d.category })) });
   } catch (err) { console.error('[email_triage] docs failed:', err.message); res.status(500).json({ error: safeErrorMessage(err) }); }
 });
 
@@ -580,8 +583,9 @@ router.get('/docs', async (req, res) => {
 // can see the attachment before sending). Registered before /:id.
 router.get('/doc/:id/url', async (req, res) => {
   try {
-    const { data: doc } = await supabase.from('library_documents').select('title, file_path').eq('id', req.params.id).maybeSingle();
-    if (!doc || !doc.file_path) return res.status(404).json({ error: 'not_found' });
+    const { data: doc, error: dErr } = await supabase.from('library_documents').select('title, file_path, category').eq('id', req.params.id).maybeSingle();
+    if (dErr) throw dErr;
+    if (!doc || !doc.file_path || !(await require('../lib/documents/restricted').mayOpen(req, doc))) return res.status(404).json({ error: 'not_found' });
     const { data: signed, error } = await supabase.storage.from('documents').createSignedUrl(doc.file_path, 600);
     if (error || !signed) return res.status(500).json({ error: 'sign_failed' });
     res.json({ url: signed.signedUrl, title: doc.title });

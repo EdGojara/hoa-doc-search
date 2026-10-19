@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>IRS Mailing · Trusted</title>
+<meta name="robots" content="noindex">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/brand.css">
+<link rel="stylesheet" href="/app/tx.css">
+<style>
+  .im-wrap { padding: 30px 32px 56px; max-width: 760px; }
+  .im-wrap h1 { margin: 6px 0 6px; font-family: var(--font-serif); font-weight: 600; font-size: clamp(28px, 4vw, 38px); color: var(--navy); line-height: 1.1; }
+  .im-card { padding: 18px 20px; margin-top: 16px; }
+  .im-card label { display: block; font: 600 12.5px var(--font-sans); color: var(--tx-text-2); margin: 12px 0 4px; }
+  .im-card input, .im-card select, .im-card textarea { width: 100%; box-sizing: border-box; font: 14px var(--font-sans); padding: 8px 10px; border: 1px solid var(--tx-line, #d9d4c7); border-radius: 8px; background: #fff; }
+  .im-err { color: #b91c1c; font-size: 13.5px; margin-top: 10px; }
+  .im-ok { color: #166534; font-size: 14px; margin-top: 10px; font-weight: 600; }
+  .im-note { color: var(--tx-text-2); font-size: 13.5px; line-height: 1.5; }
+  @media (max-width: 640px) { .im-wrap { padding: 20px 16px 40px; } }
+</style>
+</head>
+<body class="tx-body">
+<div class="tx-shell" id="tx-shell">
+  <main class="tx-main" id="tx-main">
+    <div class="tx-top"><button class="tx-menu-btn" id="tx-menu-btn" aria-label="Open navigation"></button></div>
+    <div class="im-wrap">
+      <div class="tx-muted" style="font-size:12px;letter-spacing:.08em;text-transform:uppercase">Mailing task</div>
+      <h1 id="im-title">Loading…</h1>
+      <div class="im-note" id="im-why"></div>
+      <div class="tx-card im-card" id="im-doc"></div>
+      <div class="tx-card im-card" id="im-form"></div>
+    </div>
+  </main>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4"></script>
+<script src="/app/tx-icons.js"></script>
+<script src="/app/tx.js"></script>
+<script>
+(async function () {
+  'use strict';
+  var esc = TX.esc, $ = function (id) { return document.getElementById(id); };
+  var user = await TX.boot({ active: 'projects' });
+  if (!user) return;
+  var taskId = new URLSearchParams(location.search).get('task') || '';
+  if (!/^[0-9a-f-]{36}$/i.test(taskId)) { $('im-title').textContent = 'No task selected'; return; }
+  var r = await TX.get('/api/tessa-mailing/' + taskId);
+  if (!r.ok) { $('im-title').textContent = r.status === 403 ? 'This mailing is assigned to someone else' : 'This task could not be opened'; $('im-why').textContent = r.error || ''; return; }
+  var d = r.data;
+  $('im-title').textContent = d.task.title;
+  $('im-why').innerHTML = esc(d.task.why || '') + (d.task.next_step ? '<br><br>' + esc(d.task.next_step) : '');
+  $('im-doc').innerHTML = d.document
+    ? '<b>' + esc(d.document.title) + '</b><div class="im-note" style="margin-top:4px">The signed return to print. Opening it is recorded.</div><button class="tx-btn tx-btn--sec" style="margin-top:10px" id="im-open">Open the return</button><div id="im-doc-msg"></div>'
+    : '<div class="im-err">No document is linked to this task. Tell Ed.</div>';
+  if ($('im-open')) $('im-open').addEventListener('click', async function () {
+    var w = window.open('', '_blank');
+    try {
+      var t = await TX.token();
+      var resp = await fetch('/api/tessa-mailing/' + taskId + '/document', { headers: t ? { Authorization: 'Bearer ' + t } : {}, credentials: 'same-origin' });
+      if (!resp.ok) { var j = {}; try { j = await resp.json(); } catch (_) {} throw new Error(j.detail || j.error || ('HTTP ' + resp.status)); }
+      var url = URL.createObjectURL(await resp.blob());
+      if (w) w.location = url; else location.href = url;
+    } catch (e) { if (w) w.close(); $('im-doc-msg').innerHTML = '<div class="im-err">' + esc(e.message) + '</div>'; }
+  });
+  if (d.mailed) { $('im-form').innerHTML = '<div class="im-ok">Mailed ' + esc(d.mailed.mailed_on) + ' by ' + esc(d.mailed.by) + ', ' + esc(d.mailed.method_label || d.mailed.method) + (d.mailed.tracking_number ? ' #' + esc(d.mailed.tracking_number) : '') + '.</div>'; return; }
+  var today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Chicago' });
+  $('im-form').innerHTML = '<b>Record the mailing</b><div class="im-note">Closing the task is not enough. It counts as mailed only when this is recorded.</div>'
+    + '<label for="im-date">Date mailed</label><input type="date" id="im-date" max="' + today + '">'
+    + '<label for="im-method">How it was mailed</label><select id="im-method"><option value="">Choose…</option>' + d.methods.map(function (m) { return '<option value="' + esc(m.value) + '" data-tracked="' + (m.tracked ? '1' : '') + '">' + esc(m.label) + '</option>'; }).join('') + '</select>'
+    + '<div id="im-track-wrap"><label for="im-track">Tracking / certified-mail number</label><input id="im-track" autocomplete="off" placeholder="e.g. 9407 1112 0620 1234 5678 90"></div>'
+    + '<label for="im-notes">Notes (optional)</label><textarea id="im-notes" rows="2" placeholder="e.g. receipt kept in the August Meadows tax folder"></textarea>'
+    + '<button class="tx-btn tx-btn--gold" style="margin-top:14px" id="im-confirm">Confirm it was mailed</button><div id="im-msg"></div>';
+  function syncTrack() { var o = $('im-method').selectedOptions[0]; $('im-track-wrap').style.display = o && o.value && !o.dataset.tracked ? 'none' : ''; }
+  $('im-method').addEventListener('change', syncTrack); syncTrack();
+  $('im-confirm').addEventListener('click', async function () {
+    var btn = $('im-confirm'); btn.disabled = true; $('im-msg').innerHTML = '';
+    var res = await TX.post('/api/tessa-mailing/' + taskId + '/confirm', { mailed_on: $('im-date').value, method: $('im-method').value, tracking_number: $('im-track').value, notes: $('im-notes').value });
+    btn.disabled = false;
+    if (!res.ok) { var errs = (res.body && res.body.errors) || [res.error]; $('im-msg').innerHTML = '<div class="im-err">' + errs.map(esc).join('<br>') + '</div>'; return; }
+    var m = res.data.mailed;
+    $('im-form').innerHTML = '<div class="im-ok">Recorded: mailed ' + esc(m.mailed_on) + ', ' + esc(m.method_label) + (m.tracking_number ? ' #' + esc(m.tracking_number) : '') + '. Thank you.</div>' + (res.data.warning ? '<div class="im-err">' + esc(res.data.warning) + '</div>' : '');
+  });
+})();
+</script>
+</body>
+</html>

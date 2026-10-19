@@ -1151,7 +1151,8 @@ const DFLOW = () => require('../lib/ea/delegation');
 const ownerName = (u) => u.full_name || u.email || 'Ed';
 const delegationErr = (res, e) => {
   const known = { not_found: 404, community_required: 400, expected_from_required: 400, already_delegated: 409, nothing_received: 409, no_hash: 409,
-    not_checked: 409, hash_mismatch: 409, needs_person: 400, bad_verdict: 400, not_verified: 409, already_filed: 409, not_filed: 409, audit_write_failed: 500 };
+    not_checked: 409, hash_mismatch: 409, needs_person: 400, bad_verdict: 400, not_verified: 409, already_filed: 409, not_filed: 409, audit_write_failed: 500,
+    association_unconfirmed: 409, document_unavailable: 502, filing_failed: 502 };
   if (e && known[e.code]) return res.status(known[e.code]).json({ error: e.code, detail: e.message, ...(e.id ? { id: e.id } : {}) });
   if (e && /ea_followup_events|column ea_followups.(kind|steps|community_id)|kind|schema cache/i.test(e.message || '') && /does not exist|schema cache|could not find/i.test(e.message || '')) {
     return res.status(409).json({ error: 'migration_537_required', detail: 'Delegations need migration 537. Nothing was changed.' });
@@ -1217,7 +1218,9 @@ async function returnedPdf(d) {
   if (error) throw error;
   if (!msg || !msg.graph_id) throw Object.assign(new Error('The email that brought the document is no longer on file.'), { code: 'not_found' });
   const { fetchAllAttachmentBuffers } = require('../lib/email/graph_attachments');
-  const files = (await fetchAllAttachmentBuffers(graphSend.TESSA_MAILBOX, msg.graph_id)).filter((f) => f.isPdf);
+  const all = await fetchAllAttachmentBuffers(graphSend.TESSA_MAILBOX, msg.graph_id);
+  if (all && all.listError) throw Object.assign(new Error(`Tessa's mailbox could not be read (${all.listError}). Nothing changed.`), { code: 'document_unavailable' });
+  const files = (all || []).filter((f) => f.isPdf);
   const want = (req) => files.find((f) => f.filename === req) || null;
   return { files, want };
 }
@@ -1232,10 +1235,11 @@ router.post('/delegations/:id/check', express.json(), async (req, res) => {
     const { files, want } = await returnedPdf(d);
     const file = (req.body && req.body.filename && want(req.body.filename)) || (files.length === 1 ? files[0] : null);
     if (!file) return res.status(409).json({ error: files.length ? 'choose_file' : 'no_pdf', detail: files.length ? 'More than one PDF came back. Choose which one to check.' : 'The PDF could not be read from Tessa\'s mailbox.', files: files.map((f) => f.filename) });
-    const { data: comm } = await supabase.from('communities').select('name').eq('id', d.community_id).maybeSingle();
+    const { data: comm, error: cErr } = await supabase.from('communities').select('name, legal_name, ein').eq('id', d.community_id).maybeSingle();
+    if (cErr) throw cErr;
     const m = d.steps.meta || {};
     const { checkReturnedDocument } = require('../lib/ea/document_check');
-    const r = await checkReturnedDocument({ buffer: file.buffer, filename: file.filename, expect: { form: (m.document_label || '').match(/1120-?H|1120|990|941|W-?9/i)?.[0] || null, tax_year: m.tax_year, entity: comm && comm.name } });
+    const r = await checkReturnedDocument({ buffer: file.buffer, filename: file.filename, expect: { form: (m.document_label || '').match(/1120-?H|1120|990|941|W-?9/i)?.[0] || null, tax_year: m.tax_year, entity: comm && (comm.legal_name || comm.name), ein: (comm && comm.ein) || null } });
     const steps = DFLOW().applyCheck(d.steps, { advisory: r.advisory, sha256: r.sha256, filename: file.filename });
     await DSTORE().recordEvent(supabase, d.id, 'document_checked', 'tessa', { filename: file.filename, sha256: r.sha256, advisory: r.advisory, requested_by: ownerName(owner) });
     const saved = await DSTORE().saveSteps(supabase, d, steps);
@@ -1250,8 +1254,13 @@ router.post('/delegations/:id/verify', express.json(), async (req, res) => {
   try {
     const d = await DSTORE().loadDelegation(supabase, req.params.id);
     const b = req.body || {};
-    const steps = DFLOW().applyOwnerVerify(d.steps, { verdict: b.verdict, sha256: b.sha256, by: ownerName(owner) });
-    await DSTORE().recordEvent(supabase, d.id, b.verdict === 'signed' ? 'signature_verified' : 'signature_rejected', ownerName(owner), { sha256: b.sha256, filename: d.steps.signature.filename, advisory_verdict: d.steps.signature.advisory && d.steps.signature.advisory.verdict, note: b.note ? String(b.note).slice(0, 500) : null });
+    const steps = DFLOW().applyOwnerVerify(d.steps, { verdict: b.verdict, sha256: b.sha256, by: ownerName(owner), associationConfirmed: b.association_confirmed === true });
+    const adv = d.steps.signature.advisory || {};
+    await DSTORE().recordEvent(supabase, d.id, b.verdict === 'signed' ? 'signature_verified' : 'signature_rejected', ownerName(owner), {
+      sha256: b.sha256, filename: d.steps.signature.filename, community_id: d.community_id,
+      advisory_verdict: adv.verdict || null, advisory_association_match: adv.association_match === undefined ? null : adv.association_match,
+      association_confirmed_by: b.verdict === 'signed' ? (adv.association_match === true ? 'document' : ownerName(owner)) : null,
+      note: b.note ? String(b.note).slice(0, 500) : null });
     const saved = await DSTORE().saveSteps(supabase, d, steps);
     res.json({ ok: true, delegation: delegationView(saved) });
   } catch (e) { delegationErr(res, e); }
@@ -1274,10 +1283,12 @@ router.post('/delegations/:id/file', express.json(), async (req, res) => {
     if (ce) throw ce;
     const title = `${m.tax_year ? m.tax_year + ' ' : ''}${(m.document_label || 'Tax Return').replace(/^\d{4}\s+/, '')} (signed)`;
     const { fileContractDocument } = require('../lib/contracts/intake');
-    const filed = await fileContractDocument(supabase, { community_id: d.community_id, buffer: file.buffer, filename: file.filename, mimetype: 'application/pdf', category: 'tax_return', title,
-      notes: `Signed copy returned by ${m.expected_from || 'the signer'}; signature confirmed by ${d.steps.signature.verified_by} on ${String(d.steps.signature.verified_at).slice(0, 10)}. Filed from Tessa (delegation ${d.id}).` });
+    let filed;
+    try { filed = await fileContractDocument(supabase, { community_id: d.community_id, buffer: file.buffer, filename: file.filename, mimetype: 'application/pdf', category: 'tax_return', title,
+      notes: `Signed copy returned by ${m.expected_from || 'the signer'}; signature confirmed by ${d.steps.signature.verified_by} on ${String(d.steps.signature.verified_at).slice(0, 10)}. Filed from Tessa (delegation ${d.id}).` }); }
+    catch (fe) { console.error('[tessa] filing failed:', fe.message); throw Object.assign(new Error(`The return could not be saved to the association's records (${fe.code || 'storage'}). Nothing was filed; try again.`), { code: 'filing_failed' }); }
     const { error: ue } = await supabase.from('library_documents').update({ approval_status: 'signed', member_scope: 'internal_only', period_label: m.tax_year || null }).eq('id', filed.library_document_id);
-    if (ue) throw ue;
+    if (ue) { console.error('[tessa] filed document could not be marked signed/internal:', ue.message); throw Object.assign(new Error('The return was saved but could not be marked signed and internal-only. It is not counted as filed; try again.'), { code: 'filing_failed' }); }
     const steps = DFLOW().applyFiled(d.steps, { libraryDocumentId: filed.library_document_id, by: ownerName(owner) });
     await DSTORE().recordEvent(supabase, d.id, 'filed', ownerName(owner), { library_document_id: filed.library_document_id, file_hash: filed.file_hash, reused: filed.reused, community: comm && comm.name, category: 'tax_return' });
     const saved = await DSTORE().saveSteps(supabase, d, steps);
@@ -1305,11 +1316,14 @@ router.post('/delegations/:id/assign-mailing', express.json(), async (req, res) 
       community_id: d.community_id, assigned_to: assignedTo, requested_by: ownerName(owner), item_type: 'task', urgency: m.deadline ? 'high' : 'normal',
       library_document_id: d.steps.filed.library_document_id,
       why: `The signed ${label} is filed in ${comm ? comm.name + "'s" : 'the association\'s'} tax records and needs to be mailed to the IRS.`,
-      next_step: 'Open the attached document, print it, mail it to the IRS address for this form, then close this task with the mailed date and method (certified number if sent certified).',
+      next_step: 'Click Open: print the return, mail it to the IRS address for this form, then record the mailed date, method and tracking / certified number there. Closing this task without that record does not count as mailed.',
       evidence_required: 'Mailed date, mailing method, certified tracking number if certified, and who mailed it. Keep the mailing receipt.',
       sla_due_at: new Date(Date.now() + DFLOW().MAIL_DAYS * 864e5).toISOString(),
     });
     if (!task || !task.id) return res.status(502).json({ error: 'task_not_created', detail: 'The Mission Control task could not be created. Nothing was assigned.' });
+    // The assignee's "Open" link: the return, the instructions and the mailing form, nothing else.
+    const { error: linkErr } = await supabase.from('work_items').update({ action_url: `/app/irs-mailing?task=${task.id}` }).eq('id', task.id);
+    if (linkErr) return res.status(502).json({ error: 'task_not_created', detail: 'The task was created but its link could not be saved. Nothing was assigned; try again.' });
     const steps = DFLOW().applyAssigned(d.steps, { workItemId: task.id, assignedTo, by: ownerName(owner) });
     await DSTORE().recordEvent(supabase, d.id, 'mailing_assigned', ownerName(owner), { work_item_id: task.id, assigned_to: assignedTo, library_document_id: d.steps.filed.library_document_id });
     const saved = await DSTORE().saveSteps(supabase, d, steps);

@@ -148,5 +148,5 @@
     return user;
   }
 
-  window.TX = { boot: boot, get: get, post: post, patch: patch, icon: icon, esc: esc, fixture: FIXTURE, mark: mark, LEGACY_URL: LEGACY_URL };
+  window.TX = { boot: boot, get: get, post: post, patch: patch, icon: icon, esc: esc, fixture: FIXTURE, mark: mark, LEGACY_URL: LEGACY_URL, token: token };
 })();
