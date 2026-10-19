@@ -1687,7 +1687,14 @@ router.post('/:id/send', express.json(), async (req, res) => {
 
     // Files the operator drag-and-dropped from their computer (stashed via
     // /attach-upload). Pulled from storage and attached at send. (Ed 2026-08-01.)
+    // Only files stashed by /attach-upload FOR THIS EMAIL ride along: the path must
+    // be under its own email_outbound_attachments/<id>/ folder. Any other storage
+    // path (another email's file, a library document, a signed tax return) is
+    // refused rather than downloaded and mailed. (Ed 2026-10-19.)
+    const stashPrefix = `email_outbound_attachments/${req.params.id}/`;
     const attachUploads = Array.isArray(req.body && req.body.attach_uploads) ? req.body.attach_uploads.filter((u) => u && u.storage_path).slice(0, 8) : [];
+    const strayUpload = attachUploads.find((u) => { const p = String(u.storage_path); return !p.startsWith(stashPrefix) || p.includes('..') || p.includes('\\') || p.slice(stashPrefix.length).includes('/'); });
+    if (strayUpload) return res.status(400).json({ error: 'invalid_attachment', detail: 'An attachment was not uploaded for this email. Nothing was sent; attach the file again.' });
     for (const u of attachUploads) {
       try {
         const { data: blob, error: dErr } = await supabase.storage.from('documents').download(u.storage_path);

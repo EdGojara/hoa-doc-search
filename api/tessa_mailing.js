@@ -23,7 +23,7 @@ const REF = /^tessa:delegation:([0-9a-f-]{36}):mail$/i;
 
 const isOwner = (u) => !!(u && u.role === 'admin' && String(u.email || '').toLowerCase() === String(OWNER_EMAIL).toLowerCase());
 const who = (u) => u.full_name || u.email;
-const same = (a, b) => String(a || '').trim().toLowerCase() === String(b || '').trim().toLowerCase();
+const userId = (u) => (u && u.user && u.user.id) || (u && u.id) || null;   // the stable auth user id
 
 // The task, its delegation, and whether this user may handle it. Errors are explicit.
 async function load(req, res) {
@@ -32,12 +32,16 @@ async function load(req, res) {
   if (error) { console.error('[tessa_mailing] task lookup failed:', error.message); res.status(500).json({ error: safeErrorMessage(error) }); return null; }
   const m = task && REF.exec(String(task.source_ref || ''));
   if (!task || !m) { res.status(404).json({ error: 'not_found' }); return null; }
-  if (!isOwner(u) && !same(task.assigned_to, u.full_name) && !same(task.assigned_to, u.email)) {
-    res.status(403).json({ error: 'not_assignee', detail: `This mailing is assigned to ${task.assigned_to}.` }); return null;
-  }
   const { data: d, error: de } = await supabase.from('ea_followups').select('id, steps, community_id').eq('id', m[1]).maybeSingle();
   if (de) { console.error('[tessa_mailing] delegation lookup failed:', de.message); res.status(/does not exist|schema cache/i.test(de.message) ? 409 : 500).json({ error: /does not exist|schema cache/i.test(de.message) ? 'migration_537_required' : safeErrorMessage(de) }); return null; }
   if (!d || !d.steps) { res.status(404).json({ error: 'not_found' }); return null; }
+  // Who may handle it: the assigned USER (by id, never by name) or Ed. The task in
+  // Mission Control and the delegation must also agree on which task this is.
+  const ma = d.steps.mail_assigned || {};
+  if (ma.work_item_id !== task.id) { res.status(404).json({ error: 'not_found' }); return null; }
+  if (!isOwner(u) && (!ma.assigned_user_id || String(userId(u) || '') !== String(ma.assigned_user_id))) {
+    res.status(403).json({ error: 'not_assignee', detail: `This mailing is assigned to ${ma.assigned_to || task.assigned_to}.` }); return null;
+  }
   return { u, task, d };
 }
 
@@ -65,7 +69,7 @@ router.get('/:taskId/document', async (req, res) => {
     const { data: blob, error: se } = await supabase.storage.from('documents').download(doc.file_path);
     if (se || !blob) return res.status(502).json({ error: 'document_unavailable', detail: 'The filed return could not be opened right now. Try again, or tell Ed.' });
     const { recordEvent } = require('../lib/ea/delegation_store');
-    await recordEvent(supabase, d.id, 'document_opened', who(u), { work_item_id: task.id, library_document_id: task.library_document_id, file_hash: doc.file_hash || null });
+    await recordEvent(supabase, d.id, 'document_opened', who(u), { opened_by_user_id: userId(u), work_item_id: task.id, library_document_id: task.library_document_id, file_hash: doc.file_hash || null });
     const buf = Buffer.from(await blob.arrayBuffer());
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `inline; filename="${String(doc.file_name_normalized || 'return.pdf').replace(/"/g, '')}"`);
@@ -81,11 +85,11 @@ router.post('/:taskId/confirm', express.json({ limit: '8kb' }), async (req, res)
     const D = require('../lib/ea/delegation');
     const S = require('../lib/ea/delegation_store');
     let steps;
-    try { steps = D.applyMailingConfirmed(d.steps, { record: req.body || {}, by: who(u), isOwner: isOwner(u) }); }
+    try { steps = D.applyMailingConfirmed(d.steps, { record: req.body || {}, by: who(u), byUserId: userId(u), isOwner: isOwner(u) }); }
     catch (e) { return res.status(e.code === 'not_assignee' ? 403 : e.code === 'already_mailed' ? 409 : 400).json({ error: e.code || 'bad_request', detail: e.message, errors: e.errors || undefined }); }
     const rec = steps.mailed;
     // Audit first: if it does not save, the mailing is not confirmed.
-    await S.recordEvent(supabase, d.id, 'mailing_confirmed', who(u), { work_item_id: task.id, mailed_on: rec.mailed_on, method: rec.method, tracking_number: rec.tracking_number, notes: rec.notes, library_document_id: task.library_document_id });
+    await S.recordEvent(supabase, d.id, 'mailing_confirmed', who(u), { confirmed_by_user_id: userId(u), work_item_id: task.id, mailed_on: rec.mailed_on, method: rec.method, tracking_number: rec.tracking_number, notes: rec.notes, library_document_id: task.library_document_id });
     await S.saveSteps(supabase, d, steps);
     const summary = `Mailed ${rec.mailed_on} by ${who(u)}, ${rec.method_label}${rec.tracking_number ? ` #${rec.tracking_number}` : ''}.${rec.notes ? ' ' + rec.notes : ''}`;
     const { error: we } = await supabase.from('work_items').update({ status: 'done', completed_at: new Date().toISOString(), notes: summary }).eq('id', task.id);

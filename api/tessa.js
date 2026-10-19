@@ -1304,12 +1304,20 @@ router.post('/delegations/:id/assign-mailing', express.json(), async (req, res) 
   try {
     const d = await DSTORE().loadDelegation(supabase, req.params.id);
     DFLOW().assertCanAssign(d.steps);
-    const assignedTo = String((req.body && req.body.assigned_to) || '').trim();
+    // Assign a USER by stable id; the name is display only. The person must be an
+    // active staff account. (Ed 2026-10-19: names are not identities.)
+    const assignedUserId = String((req.body && req.body.assigned_user_id) || '').trim();
+    if (!/^[0-9a-f-]{36}$/i.test(assignedUserId)) return res.status(400).json({ error: 'needs_person', detail: 'Choose a staff member from the list.' });
+    const { data: who, error: we } = await supabase.from('user_profiles').select('id, full_name, email, role, is_active').eq('id', assignedUserId).maybeSingle();
+    if (we) throw we;
+    if (!who || who.is_active === false || !who.role) return res.status(400).json({ error: 'needs_person', detail: 'That person is not an active staff account.' });
+    const assignee = { id: who.id, name: who.full_name || who.email, email: who.email || null };
+    const assignedTo = assignee.name;
     const m = d.steps.meta || {};
     const { data: comm, error: ce } = await supabase.from('communities').select('name').eq('id', d.community_id).maybeSingle();
     if (ce) throw ce;
     const label = m.document_label || 'tax return';
-    DFLOW().applyAssigned(d.steps, { workItemId: 'pending', assignedTo, by: ownerName(owner) });   // validate before creating the task
+    DFLOW().applyAssigned(d.steps, { workItemId: 'pending', assignee, by: ownerName(owner) });   // validate before creating the task
     const { upsertAgentTask } = require('./mission_control');
     const task = await upsertAgentTask({
       source_ref: `tessa:delegation:${d.id}:mail`, title: `Print and mail ${comm ? comm.name + ' ' : ''}${label} to the IRS`,
@@ -1324,8 +1332,8 @@ router.post('/delegations/:id/assign-mailing', express.json(), async (req, res) 
     // The assignee's "Open" link: the return, the instructions and the mailing form, nothing else.
     const { error: linkErr } = await supabase.from('work_items').update({ action_url: `/app/irs-mailing?task=${task.id}` }).eq('id', task.id);
     if (linkErr) return res.status(502).json({ error: 'task_not_created', detail: 'The task was created but its link could not be saved. Nothing was assigned; try again.' });
-    const steps = DFLOW().applyAssigned(d.steps, { workItemId: task.id, assignedTo, by: ownerName(owner) });
-    await DSTORE().recordEvent(supabase, d.id, 'mailing_assigned', ownerName(owner), { work_item_id: task.id, assigned_to: assignedTo, library_document_id: d.steps.filed.library_document_id });
+    const steps = DFLOW().applyAssigned(d.steps, { workItemId: task.id, assignee, by: ownerName(owner) });
+    await DSTORE().recordEvent(supabase, d.id, 'mailing_assigned', ownerName(owner), { work_item_id: task.id, assigned_user_id: assignee.id, assigned_to: assignedTo, library_document_id: d.steps.filed.library_document_id });
     const saved = await DSTORE().saveSteps(supabase, d, steps);
     res.json({ ok: true, work_item_id: task.id, delegation: delegationView(saved) });
   } catch (e) { delegationErr(res, e); }

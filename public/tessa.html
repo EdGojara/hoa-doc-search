@@ -829,7 +829,7 @@ function dlStepText(k,s){
 }
 let _dlStaff=null;
 async function dlStaffOptions(){
-  if(!_dlStaff){ try{ const r=await af('/api/users'); const j=await r.json(); const l=Array.isArray(j)?j:(j.users||[]); _dlStaff=l.filter(u=>u&&(u.full_name||u.email)&&(u.is_active===undefined||u.is_active)).map(u=>u.full_name||u.email).sort((a,b)=>a.localeCompare(b)); }catch(_){ _dlStaff=[]; } }
+  if(!_dlStaff){ try{ const r=await af('/api/users'); const j=await r.json(); const l=Array.isArray(j)?j:(j.users||[]); _dlStaff=l.filter(u=>u&&u.id&&(u.full_name||u.email)&&u.is_active!==false).map(u=>({id:u.id,name:u.full_name||u.email,email:u.email||''})).sort((a,b)=>a.name.localeCompare(b.name)); }catch(_){ _dlStaff=[]; } }
   return _dlStaff;
 }
 async function dlLoad(){
@@ -845,7 +845,7 @@ async function dlLoad(){
       if(d.current_step==='signature'&&s.received&&s.received.state==='received_unverified'&&sig.state==='pending') act=`<button class="btn sm" onclick="dlAct('${d.id}','check')">Check the document</button>`;
       if(sig.state==='checked') act=`<button class="btn gold sm" onclick="dlVerify('${d.id}','signed','${esc(sig.sha256)}')">It is signed</button> <button class="btn ghost sm" onclick="dlVerify('${d.id}','not_signed','${esc(sig.sha256)}')">Not signed</button>`;
       if(d.current_step==='filed') act=`<button class="btn gold sm" onclick="dlAct('${d.id}','file')">File in ${esc((d.community&&d.community.name)||'the association')}'s tax records</button>`;
-      if(d.current_step==='mail_assigned') act=`<select id="dl-staff-${d.id}"><option value="">Who prints and mails it?</option>${staff.map(n=>`<option>${esc(n)}</option>`).join('')}</select> <button class="btn gold sm" onclick="dlAssign('${d.id}')">Assign</button>`;
+      if(d.current_step==='mail_assigned') act=`<select id="dl-staff-${d.id}"><option value="">Who prints and mails it?</option>${staff.map(p=>`<option value="${esc(p.id)}">${esc(p.name)}${staff.filter(q=>q.name===p.name).length>1&&p.email?' ('+esc(p.email)+')':''}</option>`).join('')}</select> <button class="btn gold sm" onclick="dlAssign('${d.id}')">Assign</button>`;
       return `<div class="fu" id="dl-${d.id}">
         <div class="t">${esc(d.title||'')}</div>
         <div class="note">${esc(d.next_action||'')}${d.due_date?' · expected by '+esc(d.due_date):''}${s.meta&&s.meta.deadline?' · deadline '+esc(s.meta.deadline):''}</div>
@@ -877,7 +877,7 @@ async function dlVerify(id, verdict, sha256, associationConfirmed){
 async function dlAssign(id){
   const who=($('dl-staff-'+id)||{}).value; const msg=$('dlmsg-'+id);
   if(!who){ msg.innerHTML='<span class="err">Choose who prints and mails it.</span>'; return; }
-  try{ const r=await af('/api/tessa/delegations/'+id+'/assign-mailing',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({assigned_to:who})}); const j=await r.json(); if(!r.ok) throw new Error(j.detail||j.error||'failed'); dlLoad(); }
+  try{ const r=await af('/api/tessa/delegations/'+id+'/assign-mailing',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({assigned_user_id:who})}); const j=await r.json(); if(!r.ok) throw new Error(j.detail||j.error||'failed'); dlLoad(); }
   catch(e){ msg.innerHTML='<span class="err">'+esc(e.message)+'</span>'; }
 }
 async function dlEvents(id){
