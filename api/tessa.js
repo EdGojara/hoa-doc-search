@@ -903,10 +903,14 @@ router.get('/inbox', async (req, res) => {
     // Computing this server-side means the label and the actual send agree,
     // rather than the UI guessing.
     const { replyOptions, describeRecipients } = require('../lib/ea/tessa_reply_recipients');
+    const { isCopiedFyi } = require('../lib/ea/tessa_inbox');
     const inbox = (data || []).map((item) => {
       const opts = replyOptions(item, graphSend);
       return {
         ...item,
+        // Copied (FYI): she was Cc'd/Bcc'd, filed without a draft. One server-side
+        // answer so the label and the actions agree. (Ed 2026-10-19.)
+        copied_fyi: isCopiedFyi(item),
         reply_to_sender: opts.sender,
         reply_to_all: opts.all,
         reply_recipients_known: opts.known,
@@ -1028,8 +1032,23 @@ router.post('/inbox/:id/handle', express.json(), async (req, res) => {
     const instruction = String((req.body && req.body.instruction) || '').trim();
     const mode = 'tessa';   // she always sends as herself
     const { handleForwarded } = require('../lib/ea/tessa');
-    const d = await handleForwarded({ incomingSubject: item.subject, incomingBody: item.body_full || item.body_preview, fromName: item.from_name || item.from_email, instruction, mode });
+    const d = await handleForwarded({ incomingSubject: item.subject, incomingBody: item.body_full || item.body_preview, fromName: item.from_name || item.from_email, instruction, mode, receivedAt: item.received_at, attachmentNames: Array.isArray(item.attachment_names) ? item.attachment_names : [] });
     if (!d || d.degraded) return res.status(502).json({ error: 'draft_failed', detail: 'Tessa couldn’t draft that one. Try rephrasing the instruction.' });
+
+    // A follow-up task, not an email: return the proposal for Ed to add. Nothing
+    // is saved and nothing is sent here; the inbox item is unchanged.
+    if (d.action === 'followup') {
+      return res.json({ ok: true, action: 'followup', followup: d.followup, source: followupSource(item) });
+    }
+    // A delegation: return the PLAN (association, who sends it back, by when) for
+    // Ed to confirm. Nothing is saved until he does.
+    if (d.action === 'delegate') {
+      const { planFromInbox } = require('../lib/ea/delegation_store');
+      const { communityForThread } = require('../lib/ea/tessa_thread_community');
+      const plan = await planFromInbox(item, { proposal: d.delegate || {}, edMailbox: graphSend.ED_MAILBOX, communityForThread });
+      plan.form = (d.delegate && d.delegate.form) || null;
+      return res.json({ ok: true, action: 'delegate', plan });
+    }
 
     // For a forward, resolve who it goes to from the address book.
     let recipient = null, toEmail = null;
@@ -1080,9 +1099,244 @@ router.post('/inbox/:id/handle', express.json(), async (req, res) => {
       }
     }
 
-    await supabase.from('ea_inbox').update({ draft_subject: d.subject, draft_body: d.body, draft_mode: d.mode, updated_at: new Date().toISOString() }).eq('id', item.id);
-    res.json({ ok: true, action: d.action, subject: d.subject, body: d.body, mode: d.mode, to: toEmail, recipient_hint: d.recipient_hint || null, recipient, group });
+    // Ed asked her to act on a Copied (FYI) message, so it is now a draft awaiting
+    // his review (Needs review). Still nothing sends until he presses Send.
+    const { isCopiedFyi } = require('../lib/ea/tessa_inbox');
+    const patch = { draft_subject: d.subject, draft_body: d.body, draft_mode: d.mode, updated_at: new Date().toISOString() };
+    if (isCopiedFyi(item)) patch.status = 'needs_review';
+    const { error: upErr } = await supabase.from('ea_inbox').update(patch).eq('id', item.id);
+    if (upErr) { console.error('[tessa] inbox handle save failed:', upErr.message); return res.status(500).json({ error: safeErrorMessage(upErr) }); }
+    res.json({ ok: true, action: d.action, status: patch.status || item.status, subject: d.subject, body: d.body, mode: d.mode, to: toEmail, recipient_hint: d.recipient_hint || null, recipient, group });
   } catch (err) { console.error('[tessa] inbox handle failed:', err.message); res.status(500).json({ error: safeErrorMessage(err) }); }
+});
+
+// Where a follow-up came from, so the task carries the original email's context.
+function followupSource(item) {
+  const when = item.received_at ? new Date(item.received_at).toLocaleDateString('en-US', { timeZone: 'America/Chicago', month: 'short', day: 'numeric', year: 'numeric' }) : null;
+  return `From ${item.from_name || item.from_email || 'unknown'}${item.from_email && item.from_name ? ` <${item.from_email}>` : ''}: "${item.subject || '(no subject)'}"${when ? `, ${when}` : ''}${item.addressed_as && item.addressed_as !== 'to' ? ' (Tessa was copied)' : ''}. Tessa inbox item ${item.id}.`;
+}
+
+// POST /inbox/:id/followup — Ed adds the follow-up Tessa proposed (or his own
+// edit of it). Owner-only. Creates an ea_followups task whose detail names the
+// source email; the email itself is not changed and nothing is sent.
+router.post('/inbox/:id/followup', express.json(), async (req, res) => {
+  const owner = await requireOwner(req, res); if (!owner) return;
+  try {
+    const { data: item, error: e0 } = await supabase.from('ea_inbox').select('id, from_email, from_name, subject, received_at, addressed_as').eq('id', req.params.id).maybeSingle();
+    if (e0) throw e0;
+    if (!item) return res.status(404).json({ error: 'not_found' });
+    const { normalizeFollowup } = require('../lib/ea/tessa');
+    const b = req.body || {};
+    // Ed typed or confirmed this date himself, so it is his date: validate it, never drop it.
+    const f = normalizeFollowup({ ...b, due_date: b.due_date }, { instruction: b.due_date ? String(b.due_date) : '' });
+    if (!f) return res.status(400).json({ error: 'title_required' });
+    if (b.due_date && !f.due_date) return res.status(400).json({ error: 'bad_due_date', detail: 'Use a real date (YYYY-MM-DD).' });
+    const detail = [f.detail, followupSource(item)].filter(Boolean).join('\n\n');
+    const { data, error } = await supabase.from('ea_followups').insert({
+      title: f.title, detail, category: f.category, status: 'open', waiting_on: f.waiting_on, due_date: f.due_date,
+      created_by: owner.full_name || owner.email || 'Ed',
+    }).select('*').single();
+    if (error) throw error;
+    res.json({ ok: true, followup: data });
+  } catch (err) { console.error('[tessa] inbox followup failed:', err.message); res.status(500).json({ error: safeErrorMessage(err) }); }
+});
+
+// ---- Delegated follow-through (Ed 2026-10-19) --------------------------------
+// A copied email becomes a delegation only when Ed confirms the plan. Every route
+// is owner-only; each step's rules live in lib/ea/delegation.js and every step is
+// written to the append-only audit (ea_followup_events). Nothing here sends an
+// email, distributes a document or mails anything.
+const DSTORE = () => require('../lib/ea/delegation_store');
+const DFLOW = () => require('../lib/ea/delegation');
+const ownerName = (u) => u.full_name || u.email || 'Ed';
+const delegationErr = (res, e) => {
+  const known = { not_found: 404, community_required: 400, expected_from_required: 400, already_delegated: 409, nothing_received: 409, no_hash: 409,
+    not_checked: 409, hash_mismatch: 409, needs_person: 400, bad_verdict: 400, not_verified: 409, already_filed: 409, not_filed: 409, audit_write_failed: 500,
+    association_unconfirmed: 409, document_unavailable: 502, filing_failed: 502 };
+  if (e && known[e.code]) return res.status(known[e.code]).json({ error: e.code, detail: e.message, ...(e.id ? { id: e.id } : {}) });
+  if (e && /ea_followup_events|column ea_followups.(kind|steps|community_id)|kind|schema cache/i.test(e.message || '') && /does not exist|schema cache|could not find/i.test(e.message || '')) {
+    return res.status(409).json({ error: 'migration_537_required', detail: 'Delegations need migration 537. Nothing was changed.' });
+  }
+  console.error('[tessa] delegation failed:', e && e.message);
+  return res.status(500).json({ error: safeErrorMessage(e) });
+};
+const delegationView = (d) => ({ ...d, current_step: DFLOW().currentStep(d.steps || {}), next_action: DFLOW().nextAction(d.steps || {}) });
+
+// POST /inbox/:id/delegate — Ed confirms the plan Tessa proposed (association, who
+// sends it back, due date, filing deadline). Creates the tracked delegation and
+// picks up a reply that already arrived. The email itself is not changed.
+router.post('/inbox/:id/delegate', express.json(), async (req, res) => {
+  const owner = await requireOwner(req, res); if (!owner) return;
+  try {
+    const { data: item, error } = await supabase.from('ea_inbox').select('*').eq('id', req.params.id).maybeSingle();
+    if (error) throw error;
+    if (!item) return res.status(404).json({ error: 'not_found' });
+    const b = req.body || {};
+    const { normalizeDelegate } = require('../lib/ea/tessa');
+    // Ed typed or confirmed these dates himself, so they are his dates.
+    const dates = normalizeDelegate({ due_date: b.due_date, deadline: b.deadline, tax_year: b.tax_year, document_label: b.document_label, form: b.form }, { context: `${b.due_date || ''} ${b.deadline || ''}` });
+    if ((b.due_date && !dates.due_date) || (b.deadline && !dates.deadline)) return res.status(400).json({ error: 'bad_date', detail: 'Use real dates (YYYY-MM-DD).' });
+    const { data: comm, error: ce } = b.community_id ? await supabase.from('communities').select('id, name').eq('id', b.community_id).maybeSingle() : { data: null, error: null };
+    if (ce) throw ce;
+    if (!comm) return res.status(400).json({ error: 'community_required', detail: 'Choose the association this belongs to.' });
+    const expected = String(b.expected_from || '').trim().toLowerCase();
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(expected)) return res.status(400).json({ error: 'expected_from_required', detail: 'Say who is sending it back (their email).' });
+    const label = dates.document_label || 'signed document';
+    const d = await DSTORE().createDelegation(supabase, { item, by: ownerName(owner), plan: {
+      community_id: comm.id, expected_from: expected, document_label: label, tax_year: dates.tax_year, due_date: dates.due_date, deadline: dates.deadline,
+      title: `${comm.name}: signed ${label} from ${expected}` } });
+    res.json({ ok: true, delegation: delegationView(d) });
+  } catch (e) { delegationErr(res, e); }
+});
+
+// GET /delegations — what Tessa is tracking, with each step and the next action.
+router.get('/delegations', async (req, res) => {
+  const owner = await requireOwner(req, res); if (!owner) return;
+  try {
+    let q = supabase.from('ea_followups').select('*, community:community_id(name)').eq('kind', DFLOW().KIND).order('created_at', { ascending: false }).limit(100);
+    if (req.query.status !== 'all') q = q.in('status', DSTORE().OPEN);
+    const { data, error } = await q;
+    if (error) throw error;
+    res.json({ delegations: (data || []).map(delegationView) });
+  } catch (e) { delegationErr(res, e); }
+});
+
+// GET /delegations/:id/events — the audit trail.
+router.get('/delegations/:id/events', async (req, res) => {
+  const owner = await requireOwner(req, res); if (!owner) return;
+  try {
+    const { data, error } = await supabase.from('ea_followup_events').select('event, actor, detail, created_at').eq('followup_id', req.params.id).order('created_at', { ascending: true }).limit(500);
+    if (error) throw error;
+    res.json({ events: data || [] });
+  } catch (e) { delegationErr(res, e); }
+});
+
+// The returned PDF, read from Tessa's mailbox (it is never copied out until filed).
+async function returnedPdf(d) {
+  const inboxId = d.steps.received && d.steps.received.inbox_id;
+  const { data: msg, error } = await supabase.from('ea_inbox').select('id, graph_id').eq('id', inboxId).maybeSingle();
+  if (error) throw error;
+  if (!msg || !msg.graph_id) throw Object.assign(new Error('The email that brought the document is no longer on file.'), { code: 'not_found' });
+  const { fetchAllAttachmentBuffers } = require('../lib/email/graph_attachments');
+  const all = await fetchAllAttachmentBuffers(graphSend.TESSA_MAILBOX, msg.graph_id);
+  if (all && all.listError) throw Object.assign(new Error(`Tessa's mailbox could not be read (${all.listError}). Nothing changed.`), { code: 'document_unavailable' });
+  const files = (all || []).filter((f) => f.isPdf);
+  const want = (req) => files.find((f) => f.filename === req) || null;
+  return { files, want };
+}
+
+// POST /delegations/:id/check — Tessa reads the returned PDF and reports what she
+// sees. ADVISORY: appears_signed / not_signed / uncertain. Verifies nothing.
+router.post('/delegations/:id/check', express.json(), async (req, res) => {
+  const owner = await requireOwner(req, res); if (!owner) return;
+  try {
+    const d = await DSTORE().loadDelegation(supabase, req.params.id);
+    if (d.steps.received.state !== 'received_unverified') return res.status(409).json({ error: 'nothing_received', detail: 'Nothing has come back to check yet.' });
+    const { files, want } = await returnedPdf(d);
+    const file = (req.body && req.body.filename && want(req.body.filename)) || (files.length === 1 ? files[0] : null);
+    if (!file) return res.status(409).json({ error: files.length ? 'choose_file' : 'no_pdf', detail: files.length ? 'More than one PDF came back. Choose which one to check.' : 'The PDF could not be read from Tessa\'s mailbox.', files: files.map((f) => f.filename) });
+    const { data: comm, error: cErr } = await supabase.from('communities').select('name, legal_name, ein').eq('id', d.community_id).maybeSingle();
+    if (cErr) throw cErr;
+    const m = d.steps.meta || {};
+    const { checkReturnedDocument } = require('../lib/ea/document_check');
+    const r = await checkReturnedDocument({ buffer: file.buffer, filename: file.filename, expect: { form: (m.document_label || '').match(/1120-?H|1120|990|941|W-?9/i)?.[0] || null, tax_year: m.tax_year, entity: comm && (comm.legal_name || comm.name), ein: (comm && comm.ein) || null } });
+    const steps = DFLOW().applyCheck(d.steps, { advisory: r.advisory, sha256: r.sha256, filename: file.filename });
+    await DSTORE().recordEvent(supabase, d.id, 'document_checked', 'tessa', { filename: file.filename, sha256: r.sha256, advisory: r.advisory, requested_by: ownerName(owner) });
+    const saved = await DSTORE().saveSteps(supabase, d, steps);
+    res.json({ ok: true, advisory: r.advisory, sha256: r.sha256, filename: file.filename, delegation: delegationView(saved) });
+  } catch (e) { delegationErr(res, e); }
+});
+
+// POST /delegations/:id/verify { verdict: 'signed'|'not_signed', sha256 } — Ed's
+// decision on the exact file Tessa checked.
+router.post('/delegations/:id/verify', express.json(), async (req, res) => {
+  const owner = await requireOwner(req, res); if (!owner) return;
+  try {
+    const d = await DSTORE().loadDelegation(supabase, req.params.id);
+    const b = req.body || {};
+    const steps = DFLOW().applyOwnerVerify(d.steps, { verdict: b.verdict, sha256: b.sha256, by: ownerName(owner), associationConfirmed: b.association_confirmed === true });
+    const adv = d.steps.signature.advisory || {};
+    await DSTORE().recordEvent(supabase, d.id, b.verdict === 'signed' ? 'signature_verified' : 'signature_rejected', ownerName(owner), {
+      sha256: b.sha256, filename: d.steps.signature.filename, community_id: d.community_id,
+      advisory_verdict: adv.verdict || null, advisory_association_match: adv.association_match === undefined ? null : adv.association_match,
+      association_confirmed_by: b.verdict === 'signed' ? (adv.association_match === true ? 'document' : ownerName(owner)) : null,
+      note: b.note ? String(b.note).slice(0, 500) : null });
+    const saved = await DSTORE().saveSteps(supabase, d, steps);
+    res.json({ ok: true, delegation: delegationView(saved) });
+  } catch (e) { delegationErr(res, e); }
+});
+
+// POST /delegations/:id/file — the verified return goes into that association's
+// tax records (library_documents, category tax_return, internal only), from the
+// exact file Ed verified. Re-fetched and re-hashed: a different file is refused.
+router.post('/delegations/:id/file', express.json(), async (req, res) => {
+  const owner = await requireOwner(req, res); if (!owner) return;
+  try {
+    const d = await DSTORE().loadDelegation(supabase, req.params.id);
+    DFLOW().assertCanFile(d.steps);
+    const { want } = await returnedPdf(d);
+    const file = want(d.steps.signature.filename);
+    const { sha256 } = require('../lib/ea/document_check');
+    if (!file || sha256(file.buffer) !== d.steps.signature.sha256) return res.status(409).json({ error: 'hash_mismatch', detail: 'The file in the mailbox is not the one you verified. Nothing was filed.' });
+    const m = d.steps.meta || {};
+    const { data: comm, error: ce } = await supabase.from('communities').select('name').eq('id', d.community_id).maybeSingle();
+    if (ce) throw ce;
+    const title = `${m.tax_year ? m.tax_year + ' ' : ''}${(m.document_label || 'Tax Return').replace(/^\d{4}\s+/, '')} (signed)`;
+    const { fileContractDocument } = require('../lib/contracts/intake');
+    let filed;
+    try { filed = await fileContractDocument(supabase, { community_id: d.community_id, buffer: file.buffer, filename: file.filename, mimetype: 'application/pdf', category: 'tax_return', title,
+      notes: `Signed copy returned by ${m.expected_from || 'the signer'}; signature confirmed by ${d.steps.signature.verified_by} on ${String(d.steps.signature.verified_at).slice(0, 10)}. Filed from Tessa (delegation ${d.id}).` }); }
+    catch (fe) { console.error('[tessa] filing failed:', fe.message); throw Object.assign(new Error(`The return could not be saved to the association's records (${fe.code || 'storage'}). Nothing was filed; try again.`), { code: 'filing_failed' }); }
+    const { error: ue } = await supabase.from('library_documents').update({ approval_status: 'signed', member_scope: 'internal_only', period_label: m.tax_year || null }).eq('id', filed.library_document_id);
+    if (ue) { console.error('[tessa] filed document could not be marked signed/internal:', ue.message); throw Object.assign(new Error('The return was saved but could not be marked signed and internal-only. It is not counted as filed; try again.'), { code: 'filing_failed' }); }
+    const steps = DFLOW().applyFiled(d.steps, { libraryDocumentId: filed.library_document_id, by: ownerName(owner) });
+    await DSTORE().recordEvent(supabase, d.id, 'filed', ownerName(owner), { library_document_id: filed.library_document_id, file_hash: filed.file_hash, reused: filed.reused, community: comm && comm.name, category: 'tax_return' });
+    const saved = await DSTORE().saveSteps(supabase, d, steps);
+    res.json({ ok: true, library_document_id: filed.library_document_id, delegation: delegationView(saved) });
+  } catch (e) { delegationErr(res, e); }
+});
+
+// POST /delegations/:id/assign-mailing { assigned_to } — Ed hands printing and
+// mailing to a named staff member as a Mission Control task. Tessa preparing this
+// is NOT mailing: the step completes only when that person closes the task.
+router.post('/delegations/:id/assign-mailing', express.json(), async (req, res) => {
+  const owner = await requireOwner(req, res); if (!owner) return;
+  try {
+    const d = await DSTORE().loadDelegation(supabase, req.params.id);
+    DFLOW().assertCanAssign(d.steps);
+    // Assign a USER by stable id; the name is display only. The person must be an
+    // active staff account. (Ed 2026-10-19: names are not identities.)
+    const assignedUserId = String((req.body && req.body.assigned_user_id) || '').trim();
+    if (!/^[0-9a-f-]{36}$/i.test(assignedUserId)) return res.status(400).json({ error: 'needs_person', detail: 'Choose a staff member from the list.' });
+    const { data: who, error: we } = await supabase.from('user_profiles').select('id, full_name, email, role, is_active').eq('id', assignedUserId).maybeSingle();
+    if (we) throw we;
+    if (!who || who.is_active === false || !who.role) return res.status(400).json({ error: 'needs_person', detail: 'That person is not an active staff account.' });
+    const assignee = { id: who.id, name: who.full_name || who.email, email: who.email || null };
+    const assignedTo = assignee.name;
+    const m = d.steps.meta || {};
+    const { data: comm, error: ce } = await supabase.from('communities').select('name').eq('id', d.community_id).maybeSingle();
+    if (ce) throw ce;
+    const label = m.document_label || 'tax return';
+    DFLOW().applyAssigned(d.steps, { workItemId: 'pending', assignee, by: ownerName(owner) });   // validate before creating the task
+    const { upsertAgentTask } = require('./mission_control');
+    const task = await upsertAgentTask({
+      source_ref: `tessa:delegation:${d.id}:mail`, title: `Print and mail ${comm ? comm.name + ' ' : ''}${label} to the IRS`,
+      community_id: d.community_id, assigned_to: assignedTo, requested_by: ownerName(owner), item_type: 'task', urgency: m.deadline ? 'high' : 'normal',
+      library_document_id: d.steps.filed.library_document_id,
+      why: `The signed ${label} is filed in ${comm ? comm.name + "'s" : 'the association\'s'} tax records and needs to be mailed to the IRS.`,
+      next_step: 'Click Open: print the return, mail it to the IRS address for this form, then record the mailed date, method and tracking / certified number there. Closing this task without that record does not count as mailed.',
+      evidence_required: 'Mailed date, mailing method, certified tracking number if certified, and who mailed it. Keep the mailing receipt.',
+      sla_due_at: new Date(Date.now() + DFLOW().MAIL_DAYS * 864e5).toISOString(),
+    });
+    if (!task || !task.id) return res.status(502).json({ error: 'task_not_created', detail: 'The Mission Control task could not be created. Nothing was assigned.' });
+    // The assignee's "Open" link: the return, the instructions and the mailing form, nothing else.
+    const { error: linkErr } = await supabase.from('work_items').update({ action_url: `/app/irs-mailing?task=${task.id}` }).eq('id', task.id);
+    if (linkErr) return res.status(502).json({ error: 'task_not_created', detail: 'The task was created but its link could not be saved. Nothing was assigned; try again.' });
+    const steps = DFLOW().applyAssigned(d.steps, { workItemId: task.id, assignee, by: ownerName(owner) });
+    await DSTORE().recordEvent(supabase, d.id, 'mailing_assigned', ownerName(owner), { work_item_id: task.id, assigned_user_id: assignee.id, assigned_to: assignedTo, library_document_id: d.steps.filed.library_document_id });
+    const saved = await DSTORE().saveSteps(supabase, d, steps);
+    res.json({ ok: true, work_item_id: task.id, delegation: delegationView(saved) });
+  } catch (e) { delegationErr(res, e); }
 });
 
 // ---- Standing instructions: recurring emails Tessa sends on schedule ---------

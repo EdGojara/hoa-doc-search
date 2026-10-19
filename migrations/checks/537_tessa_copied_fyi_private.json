@@ -1,0 +1,131 @@
+{
+  "migration": "537_tessa_copied_fyi_private.sql",
+  "summary": "Tessa: (1) a fyi inbox status for mail she was only copied on; (2) every Tessa table (the seven existing ones plus the new ea_followup_events) revokes all privileges from anon and authenticated and enables row level security with no policies, so only the server secret key (which bypasses RLS) can read Ed's private correspondence; (3) delegated follow-through: ea_inbox keeps conversation_id and attachment NAMES, ea_followups gains kind (task|signed_return), community_id, source_inbox_id and a steps checklist, and ea_followup_events is the append-only audit of each step. Changes no existing value.",
+  "requires": [
+    "285_ea_inbox.sql",
+    "284_ea_followups.sql",
+    "344_ea_contacts.sql",
+    "346_ea_standing_tasks.sql",
+    "405_tessa_outbox.sql",
+    "499_ea_email_address_status.sql",
+    "256_work_items.sql"
+  ],
+  "preflight": [
+    {
+      "name": "the ea_inbox status CHECK is named ea_inbox_status_check and allows exactly the three current values",
+      "sql": "SELECT count(*)::int FROM pg_constraint WHERE conrelid = 'public.ea_inbox'::regclass AND contype = 'c' AND conname = 'ea_inbox_status_check' AND pg_get_constraintdef(oid) LIKE '%needs_review%' AND pg_get_constraintdef(oid) LIKE '%replied%' AND pg_get_constraintdef(oid) LIKE '%dismissed%' AND pg_get_constraintdef(oid) NOT LIKE '%fyi%'",
+      "expect": 1
+    },
+    {
+      "name": "no other CHECK on ea_inbox mentions status (so the replacement is the only status rule)",
+      "sql": "SELECT count(*)::int FROM pg_constraint WHERE conrelid = 'public.ea_inbox'::regclass AND contype = 'c' AND conname <> 'ea_inbox_status_check' AND pg_get_constraintdef(oid) LIKE '%status%'",
+      "expect": 0
+    },
+    {
+      "name": "all seven Tessa tables exist",
+      "sql": "SELECT count(*)::int FROM information_schema.tables WHERE table_schema = 'public' AND table_name IN ('ea_inbox','ea_followups','ea_contacts','ea_standing_tasks','tessa_outbox','ea_email_events','ea_contact_email_history')",
+      "expect": 7
+    },
+    {
+      "name": "ea_followup_events does not exist yet",
+      "sql": "SELECT count(*)::int FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'ea_followup_events'",
+      "expect": 0
+    },
+    {
+      "name": "ea_followups has no kind column yet",
+      "sql": "SELECT count(*)::int FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'ea_followups' AND column_name IN ('kind','community_id','source_inbox_id','steps')",
+      "expect": 0
+    }
+  ],
+  "expected_changes": [
+    "ea_inbox_status_check is replaced: status IN ('needs_review','replied','dismissed','fyi'). Every existing row still satisfies it.",
+    "ea_inbox gains conversation_id (text) and attachment_names (jsonb); both NULL on existing rows.",
+    "ea_followups gains kind (NOT NULL DEFAULT task, CHECK task|signed_return), community_id (FK communities, RESTRICT), source_inbox_id (FK ea_inbox, SET NULL) and steps (jsonb); every existing follow-up reads kind task.",
+    "New table ea_followup_events (append-only audit: followup_id FK RESTRICT, event CHECK, actor, detail, created_at); service_role SELECT, INSERT only.",
+    "REVOKE ALL on the seven Tessa tables FROM anon, authenticated (four of them granted SELECT to authenticated).",
+    "ENABLE ROW LEVEL SECURITY (no policies) on the seven Tessa tables. The server's secret key bypasses RLS, so every /api/tessa route behaves exactly as before.",
+    "service_role keeps SELECT, INSERT, UPDATE, DELETE on all seven.",
+    "No row changes. Paul Grover's 2026-10-19 'RE: Tax return' row stays status 'dismissed'; the app shows it as Copied (FYI) by rule."
+  ],
+  "objects": {
+    "added": [
+      "column:ea_followup_events.actor",
+      "column:ea_followup_events.created_at",
+      "column:ea_followup_events.detail",
+      "column:ea_followup_events.event",
+      "column:ea_followup_events.followup_id",
+      "column:ea_followup_events.id",
+      "column:ea_followups.community_id",
+      "column:ea_followups.kind",
+      "column:ea_followups.source_inbox_id",
+      "column:ea_followups.steps",
+      "column:ea_inbox.attachment_names",
+      "column:ea_inbox.conversation_id",
+      "constraint:ea_followup_events.ea_followup_events_event_check",
+      "constraint:ea_followup_events.ea_followup_events_followup_id_fkey",
+      "constraint:ea_followup_events.ea_followup_events_pkey",
+      "constraint:ea_followups.ea_followups_community_id_fkey",
+      "constraint:ea_followups.ea_followups_kind_check",
+      "constraint:ea_followups.ea_followups_source_inbox_id_fkey",
+      "index:ea_followup_events_pkey",
+      "index:idx_ea_followup_events_followup",
+      "index:idx_ea_followups_kind_status",
+      "table:ea_followup_events"
+    ],
+    "changed": [
+      "constraint:ea_inbox.ea_inbox_status_check"
+    ],
+    "removed": []
+  },
+  "row_changes": {
+    "ea_inbox": 0,
+    "ea_followups": 0
+  },
+  "protected": [
+    {
+      "table": "ea_inbox",
+      "order_by": "id"
+    },
+    {
+      "table": "ea_followups",
+      "order_by": "id"
+    }
+  ],
+  "verify": [
+    {
+      "name": "the status CHECK allows fyi",
+      "sql": "SELECT count(*)::int FROM pg_constraint WHERE conrelid = 'public.ea_inbox'::regclass AND conname = 'ea_inbox_status_check' AND pg_get_constraintdef(oid) LIKE '%fyi%'",
+      "expect": 1
+    },
+    {
+      "name": "row level security is on for all eight Tessa tables",
+      "sql": "SELECT count(*)::int FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'public' AND c.relrowsecurity AND c.relname IN ('ea_inbox','ea_followups','ea_contacts','ea_standing_tasks','tessa_outbox','ea_email_events','ea_contact_email_history','ea_followup_events')",
+      "expect": 8
+    },
+    {
+      "name": "no Tessa table has a policy (nobody but the server reads it)",
+      "sql": "SELECT count(*)::int FROM pg_policies WHERE schemaname = 'public' AND tablename IN ('ea_inbox','ea_followups','ea_contacts','ea_standing_tasks','tessa_outbox','ea_email_events','ea_contact_email_history','ea_followup_events')",
+      "expect": 0
+    },
+    {
+      "name": "signed-in users (authenticated) and anon hold no privilege on any Tessa table",
+      "sql": "SELECT count(*)::int FROM information_schema.role_table_grants WHERE table_schema = 'public' AND grantee IN ('anon','authenticated') AND table_name IN ('ea_inbox','ea_followups','ea_contacts','ea_standing_tasks','tessa_outbox','ea_email_events','ea_contact_email_history','ea_followup_events')",
+      "expect": 0
+    },
+    {
+      "name": "the server role can still read and write all seven",
+      "sql": "SELECT count(*)::int FROM information_schema.role_table_grants WHERE table_schema = 'public' AND grantee = 'service_role' AND privilege_type IN ('SELECT','INSERT','UPDATE','DELETE') AND table_name IN ('ea_inbox','ea_followups','ea_contacts','ea_standing_tasks','tessa_outbox','ea_email_events','ea_contact_email_history')",
+      "expect": 28
+    },
+    {
+      "name": "every existing follow-up is kind task",
+      "sql": "SELECT count(*)::int FROM ea_followups WHERE kind <> 'task'",
+      "expect": 0
+    },
+    {
+      "name": "the audit table is insert-only for the server (no UPDATE or DELETE grant)",
+      "sql": "SELECT count(*)::int FROM information_schema.role_table_grants WHERE table_schema = 'public' AND table_name = 'ea_followup_events' AND grantee = 'service_role' AND privilege_type IN ('UPDATE','DELETE')",
+      "expect": 0
+    }
+  ]
+}

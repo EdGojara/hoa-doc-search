@@ -1719,7 +1719,9 @@ router.get('/budgets/living-lines', async (req, res) => {
       const docIds = [...new Set(lines.map((l) => l.source_document_id).filter(Boolean))];
       const docUrl = {};
       if (docIds.length) {
-        const { data: docs, error: dErr } = await supabase.from('library_documents').select('id, title, file_path').in('id', docIds);
+        const { data: docsAll, error: dErr } = await supabase.from('library_documents').select('id, title, file_path, category').in('id', docIds);
+        // A restricted association record (a signed tax return) is never linked here for staff.
+        const docs = await require('../lib/documents/restricted').filterForViewer(req, docsAll || []);
         if (dErr) console.warn('[books] living-lines basis documents unavailable:', dErr.message);
         for (const d of docs || []) { let url = null; if (d.file_path) { try { const { data: s } = await supabase.storage.from('documents').createSignedUrl(d.file_path, 3600); url = (s && s.signedUrl) || null; } catch (_) { /* link optional */ } } docUrl[d.id] = { title: d.title || null, url }; }
       }

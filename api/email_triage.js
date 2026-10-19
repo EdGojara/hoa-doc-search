@@ -571,8 +571,11 @@ router.get('/docs', async (req, res) => {
       .not('file_path', 'is', null).order('uploaded_at', { ascending: false }).limit(20);
     if (communityId) query = query.or(`community_id.eq.${communityId},community_id.is.null`);
     if (q) query = query.or(`title.ilike.%${q}%,file_name_original.ilike.%${q}%,category.ilike.%${q}%`);
-    const { data } = await query;
-    res.json({ docs: (data || []).map((d) => ({ id: d.id, title: d.title || d.file_name_original || '(untitled)', category: d.category })) });
+    const { data, error } = await query;
+    if (error) throw error;
+    // Restricted association records (signed tax returns) are never offered as attachments.
+    const { isRestricted } = require('../lib/documents/restricted');
+    res.json({ docs: (data || []).filter((d) => !isRestricted(d)).map((d) => ({ id: d.id, title: d.title || d.file_name_original || '(untitled)', category: d.category })) });
   } catch (err) { console.error('[email_triage] docs failed:', err.message); res.status(500).json({ error: safeErrorMessage(err) }); }
 });
 
@@ -580,8 +583,9 @@ router.get('/docs', async (req, res) => {
 // can see the attachment before sending). Registered before /:id.
 router.get('/doc/:id/url', async (req, res) => {
   try {
-    const { data: doc } = await supabase.from('library_documents').select('title, file_path').eq('id', req.params.id).maybeSingle();
-    if (!doc || !doc.file_path) return res.status(404).json({ error: 'not_found' });
+    const { data: doc, error: dErr } = await supabase.from('library_documents').select('title, file_path, category').eq('id', req.params.id).maybeSingle();
+    if (dErr) throw dErr;
+    if (!doc || !doc.file_path || !(await require('../lib/documents/restricted').mayOpen(req, doc))) return res.status(404).json({ error: 'not_found' });
     const { data: signed, error } = await supabase.storage.from('documents').createSignedUrl(doc.file_path, 600);
     if (error || !signed) return res.status(500).json({ error: 'sign_failed' });
     res.json({ url: signed.signedUrl, title: doc.title });
@@ -1683,7 +1687,14 @@ router.post('/:id/send', express.json(), async (req, res) => {
 
     // Files the operator drag-and-dropped from their computer (stashed via
     // /attach-upload). Pulled from storage and attached at send. (Ed 2026-08-01.)
+    // Only files stashed by /attach-upload FOR THIS EMAIL ride along: the path must
+    // be under its own email_outbound_attachments/<id>/ folder. Any other storage
+    // path (another email's file, a library document, a signed tax return) is
+    // refused rather than downloaded and mailed. (Ed 2026-10-19.)
+    const stashPrefix = `email_outbound_attachments/${req.params.id}/`;
     const attachUploads = Array.isArray(req.body && req.body.attach_uploads) ? req.body.attach_uploads.filter((u) => u && u.storage_path).slice(0, 8) : [];
+    const strayUpload = attachUploads.find((u) => { const p = String(u.storage_path); return !p.startsWith(stashPrefix) || p.includes('..') || p.includes('\\') || p.slice(stashPrefix.length).includes('/'); });
+    if (strayUpload) return res.status(400).json({ error: 'invalid_attachment', detail: 'An attachment was not uploaded for this email. Nothing was sent; attach the file again.' });
     for (const u of attachUploads) {
       try {
         const { data: blob, error: dErr } = await supabase.storage.from('documents').download(u.storage_path);

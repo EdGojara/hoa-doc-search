@@ -495,13 +495,27 @@ router.get('/profile/:contactId', async (req, res) => {
 // was sent (interactions.content, bucket 'violation-letters') or the inspection
 // photo (inspection_photos.storage_path, bucket 'documents'). Redirects to a
 // short-lived signed URL so staff can open/print/discuss it. Staff-gated by the
-// global staff cookie (the 360 is a staff surface). kind→bucket is allowlisted.
-const FILE_BUCKETS = { letter: 'violation-letters', photo: 'documents', document: 'documents' };
+// global staff cookie (the 360 is a staff surface).
+// The path is never trusted: it must resolve to a real record of the kind asked
+// for, in an association Bedrock manages, and a restricted document (a signed
+// tax return) needs the owner's signed-in token. Only the record's stored path
+// is signed. (lib/documents/signed_access.js; Ed 2026-10-19.)
 router.get('/file', async (req, res) => {
   try {
-    const bucket = FILE_BUCKETS[req.query.kind];
     const path = req.query.path;
-    if (!bucket || !path) return res.status(400).json({ error: 'kind (letter|photo) and path required' });
+    if (!req.query.kind || !path) return res.status(400).json({ error: 'kind (letter|photo|document) and path required' });
+    const { getAuthedUser, OWNER_EMAIL } = require('./_require_admin');
+    const u = await getAuthedUser(req);
+    const isOwner = !!(u && u.role === 'admin' && String(u.email || '').toLowerCase() === String(OWNER_EMAIL).toLowerCase());
+    const { authorizeFileLink } = require('../lib/documents/signed_access');
+    const auth = await authorizeFileLink(supabase, { kind: String(req.query.kind), path: String(path), viewer: u ? (u.full_name || u.email) : null, isOwner, mcId: require('../lib/company').BEDROCK_MGMT_CO_ID });
+    if (!auth.ok) {
+      if (auth.status === 404 && /text\/html/.test(req.headers.accept || '')) {
+        return res.status(404).type('html').send('<div style="font-family:system-ui,Arial,sans-serif;max-width:520px;margin:60px auto;padding:24px;text-align:center;color:#334155;"><h2 style="color:#0B1D34;">This file isn’t available</h2><p>There is no file on record at that link, or you do not have access to it.</p></div>');
+      }
+      return res.status(auth.status).json({ error: auth.error, detail: auth.detail });
+    }
+    const bucket = auth.bucket;
     // download=1 forces a "Save As" (Content-Disposition: attachment) with a
     // friendly filename, so staff can grab the letter to send to a homeowner
     // instead of it opening inline. name= sets the filename; sanitized here.
@@ -513,7 +527,7 @@ router.get('/file', async (req, res) => {
       if (!/\.pdf$/i.test(fname)) fname += '.pdf';
       opts = { download: fname };
     }
-    const { data, error } = await supabase.storage.from(bucket).createSignedUrl(String(path), 60 * 60, opts);
+    const { data, error } = await supabase.storage.from(bucket).createSignedUrl(auth.path, 60 * 60, opts);
     if (error || !data || !data.signedUrl) {
       // Opened in a browser tab — show a readable message, not raw JSON. Happens
       // when a letter row points at a PDF that was never written (a failed/caught
