@@ -190,6 +190,7 @@ const CHECKS = [
   'tests/test_pull_welcome.js',
   'tests/test_tessa_delegation.js',
   'tests/test_tessa_rls.js',
+  'tests/test_tessa_threaded_reply.js',
   'tests/test_signature_identity.js',
   'tests/test_signature_headshot_size.js',
   'tests/test_forward_signature.js',
