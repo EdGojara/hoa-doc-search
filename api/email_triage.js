@@ -862,8 +862,18 @@ router.post('/:id/link', express.json(), async (req, res) => {
 // only homeowner-linked mail is kept out of the 65k-message firehose.
 // Incremental/current: pass light=false + a short since_days. Needs the Azure
 // app (Mail.Read) + GRAPH_* env; returns a clean message until then.
+// GET /viewer — is the signed-in user the account owner? Lets the page show owner-only
+// actions (Pull Welcome) without knowing the owner's address. Read-only.
+router.get('/viewer', async (req, res) => {
+  try { res.json({ is_owner: await isOwner(req) }); }
+  catch (err) { console.error('[email_triage] viewer failed:', err.message); res.status(500).json({ error: safeErrorMessage(err) }); }
+});
+
+// POST /ingest — single-mailbox ingest (Pull Welcome; archive backfill). OWNER ONLY: it moves
+// mail and runs AI on a whole mailbox, so only the account owner may run it. (Ed 2026-10-18.)
 router.post('/ingest', express.json(), async (req, res) => {
   try {
+    if (!(await isOwner(req))) return res.status(403).json({ error: 'owner_only', detail: 'Only the account owner can run a single-mailbox ingest.' });
     if (!graphIngest.isConfigured()) return res.status(400).json({ error: 'graph_not_connected', detail: 'Outlook ingest needs the Azure app (Mail.Read, scoped to include the mailbox) + GRAPH_TENANT_ID / GRAPH_CLIENT_ID / GRAPH_CLIENT_SECRET.' });
     const b = req.body || {};
     const mailbox = b.mailbox || 'archive1emails@bedrocktx.com';
