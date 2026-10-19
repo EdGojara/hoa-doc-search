@@ -152,6 +152,14 @@ function render(){
       </div>
       <div class="card">
         <div class="row" style="justify-content:space-between;">
+          <h2 style="margin:0;">Delegated to Tessa</h2>
+          <button class="btn ghost sm" onclick="dlLoad()">Refresh</button>
+        </div>
+        <div class="note">What you handed her to see through. She tracks each step and tells you when something is late. She checks documents but never treats one as signed until you confirm it, and she never sends, files or mails anything on her own: you approve each step, and only the staff member who mails it can mark it mailed.</div>
+        <div id="dlList" style="margin-top:10px;"><div class="note">Loading&hellip;</div></div>
+      </div>
+      <div class="card">
+        <div class="row" style="justify-content:space-between;">
           <h2 style="margin:0;">Lunch (Lunchdrop)</h2>
           <button class="btn ghost sm" id="lunchBtn" onclick="checkLunch()">Check lunch inbox</button>
         </div>
@@ -199,6 +207,7 @@ function render(){
   loadOutbox();
   loadFu();
   loadInbox();
+  dlLoad();
   loadSent();
   loadRecipients();
   cbLoad();
@@ -610,6 +619,7 @@ async function loadInbox(){
     const list=j.inbox||[];
     if(!list.length){ $('inboxList').innerHTML='<div class="note">'+(_inboxStatus==='all'?'No forwarded emails yet.':'Nothing waiting. Forward an email to tessa@bedrocktx.com, then Check for new.')+'</div>'; return; }
     $('inboxList').innerHTML=list.map(it=>{
+      if(it.copied_fyi) return ibFyiCard(it);
       if(it.status&&it.status!=='needs_review'){
         const badge=it.status==='replied'?'<span style="color:#166534;font-weight:700;">✓ replied</span>':'<span class="note">dismissed</span>';
         return `<div class="fu"><div class="t">${esc(it.subject||'(no subject)')} · ${badge}</div><div class="note">from ${esc(it.from_name||it.from_email||'unknown')}${it.received_at?' · '+new Date(it.received_at).toLocaleString():''}</div></div>`;
@@ -732,6 +742,144 @@ function ibSetReply(id, mode){
   }
 }
 
+// Copied (FYI): Tessa was Cc'd, so she filed it without a draft. Ed can open it
+// and tell her what to do: reply, forward, a follow-up for him, or a delegation
+// she then tracks to the end. (Ed 2026-10-19, Paul Grover "RE: Tax return".)
+function ibFyiCard(it){
+  _ibmode[it.id]='tessa'; _ibitems[it.id]=it;
+  const who=[...(it.to_recipients||[]).map(a=>'To '+a), ...(it.cc_recipients||[]).map(a=>'Cc '+a)].join(' · ');
+  const files=(it.attachment_names||[]).length?'<div class="note">📎 '+(it.attachment_names||[]).map(esc).join(', ')+'</div>':'';
+  return `<div class="fu" id="ib-${it.id}">
+    <div class="t">${esc(it.subject||'(no subject)')} · <span style="color:#1d4ed8;font-weight:700;">Copied (FYI)</span></div>
+    <div class="note">from ${esc(it.from_name||it.from_email||'unknown')}${it.received_at?' · '+new Date(it.received_at).toLocaleString():''}${who?' · '+esc(who):''}</div>${files}
+    <details style="margin:6px 0;"><summary class="note" style="cursor:pointer;">Open</summary>
+      <div class="note" style="white-space:pre-wrap;margin-top:4px;max-height:260px;overflow:auto;border-left:2px solid var(--rule,#22354f);padding-left:10px;">${esc(it.body_full||it.body_preview||'')}</div>
+      <div class="note" style="margin-top:6px;">Tessa was copied, so she filed this without drafting anything. Tell her what you want: a reply, a forward, a reminder for you, or to take it over (“track Paul’s signed return, file it and have it mailed”).</div>
+      <div class="row" style="gap:6px;margin:4px 0 6px;">
+        <input id="ib-instr-${it.id}" placeholder="What should Tessa do with this?" style="flex:1;" onkeydown="if(event.key==='Enter')ibHandle('${it.id}')">
+        <button class="btn sm" style="white-space:nowrap;" onclick="ibHandle('${it.id}')">🪄 Ask Tessa</button>
+      </div>
+      <div id="ibplan-${it.id}"></div>
+      <div id="ibdraft-${it.id}" style="display:none;">
+        ${ibRecipientPicker(it)}
+        <label>Subject</label><input id="ib-subj-${it.id}" value="${esc('Re: '+(it.subject||''))}">
+        <label>Tessa’s draft</label><textarea id="ib-body-${it.id}" rows="7"></textarea>
+        <div class="row" style="justify-content:flex-end;margin-top:8px;"><button class="btn gold sm" id="ibsend-${it.id}" onclick="ibSend('${it.id}')">Send reply</button></div>
+      </div>
+    </details>
+    <div id="ibmsg-${it.id}" class="result"></div>
+  </div>`;
+}
+let _dlCommunities=null;
+async function dlCommunities(){
+  if(_dlCommunities) return _dlCommunities;
+  try{ const r=await af('/api/communities'); const j=await r.json(); _dlCommunities=(j.communities||[]).slice().sort((a,b)=>String(a.name).localeCompare(String(b.name))); }catch(_){ _dlCommunities=[]; }
+  return _dlCommunities;
+}
+async function ibShowPlan(id, plan){
+  const box=$('ibplan-'+id); if(!box) return;
+  const cs=await dlCommunities();
+  const opts=['<option value="">Choose the association…</option>'].concat(cs.map(c=>`<option value="${esc(c.id)}"${plan.community&&plan.community.id===c.id?' selected':''}>${esc(c.name)}${c.active===false?' (not active)':''}</option>`)).join('');
+  box.innerHTML=`<div class="fu" style="background:#f5f8ff;">
+    <div class="t">Tessa’s plan: track it to the end</div>
+    <div class="note">Requested → received → signature checked and confirmed by you → filed in the association’s tax records → staff assigned to print and mail → staff confirms mailing. She tells you if it is late.</div>
+    <label>Association</label><select id="dl-comm-${id}">${opts}</select>
+    ${plan.community?`<div class="note">She found ${esc(plan.community.name)} from ${esc(plan.community.how||'the thread')}${plan.community.confident?'':' (a passing mention, please check)'}.</div>`:'<div class="note">She could not tell which association. Choose it.</div>'}
+    <label>Who sends it back</label><input id="dl-from-${id}" value="${esc(plan.expected_from||'')}" placeholder="their email">
+    <label>What is coming back</label><input id="dl-label-${id}" value="${esc(plan.document_label||'')}" placeholder="e.g. 2025 Form 1120-H">
+    <div class="row" style="gap:6px;">
+      <div style="flex:1;"><label>Tax year</label><input id="dl-year-${id}" value="${esc(plan.tax_year||'')}"></div>
+      <div style="flex:1;"><label>Expected back by</label><input type="date" id="dl-due-${id}" value="${esc(plan.due_date||'')}"></div>
+      <div style="flex:1;"><label>Filing deadline</label><input type="date" id="dl-deadline-${id}" value="${esc(plan.deadline||'')}"></div>
+    </div>
+    <div class="row" style="justify-content:flex-end;margin-top:6px;"><button class="btn gold sm" onclick="dlCreate('${id}')">Start tracking</button></div>
+  </div>`;
+}
+async function dlCreate(id){
+  const msg=$('ibmsg-'+id);
+  const body={ community_id:$('dl-comm-'+id).value, expected_from:$('dl-from-'+id).value.trim(), document_label:$('dl-label-'+id).value.trim(), tax_year:$('dl-year-'+id).value.trim(), due_date:$('dl-due-'+id).value, deadline:$('dl-deadline-'+id).value };
+  try{
+    const r=await af('/api/tessa/inbox/'+id+'/delegate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    const j=await r.json(); if(!r.ok) throw new Error(j.detail||j.error||'could not start');
+    $('ibplan-'+id).innerHTML='';
+    msg.innerHTML='<span class="ok">✓ Tessa is tracking it. '+esc(j.delegation.next_action||'')+'</span>';
+    dlLoad();
+  }catch(e){ msg.innerHTML='<span class="err">'+esc(e.message)+'</span>'; }
+}
+async function ibAddFollowup(id){
+  const msg=$('ibmsg-'+id);
+  const body={ title:$('fu-t-'+id).value.trim(), detail:$('fu-d-'+id).value.trim(), due_date:$('fu-due-'+id).value, waiting_on:$('fu-w-'+id).value.trim(), category:$('fu-c-'+id).value };
+  try{ const r=await af('/api/tessa/inbox/'+id+'/followup',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}); const j=await r.json(); if(!r.ok) throw new Error(j.detail||j.error||'could not add');
+    $('ibplan-'+id).innerHTML=''; msg.innerHTML='<span class="ok">✓ Added to your follow-ups.</span>'; if(typeof loadFu==='function') loadFu();
+  }catch(e){ msg.innerHTML='<span class="err">'+esc(e.message)+'</span>'; }
+}
+const DL_STEPS=[['requested','Requested'],['received','Received'],['signature','Signature'],['filed','Filed'],['mail_assigned','Mail assigned'],['mailed','Mailed']];
+function dlStepText(k,s){
+  s=s||{};
+  if(k==='received'&&s.state==='received_unverified') return 'came back '+(s.at?new Date(s.at).toLocaleDateString():'')+((s.attachments||[]).length?' ('+s.attachments.map(esc).join(', ')+')':'')+', not yet verified';
+  if(k==='signature'){
+    if(s.state==='checked') return 'Tessa: '+esc((s.advisory||{}).verdict||'uncertain').replace('_',' ')+((s.advisory||{}).concerns||[]).map(c=>'<br>⚠ '+esc(c)).join('');
+    if(s.state==='verified') return 'confirmed by '+esc(s.verified_by||'');
+    if(s.state==='rejected') return 'not accepted ('+esc(s.rejected_by||'')+')';
+  }
+  if(k==='filed'&&s.state==='filed') return 'in tax records';
+  if(k==='mail_assigned'&&s.state==='assigned') return esc(s.assigned_to||'')+', '+(s.at?new Date(s.at).toLocaleDateString():'');
+  if(k==='mailed'&&s.state==='confirmed_by_staff') return 'confirmed by '+esc(s.by||'')+(s.notes?' · '+esc(s.notes):'');
+  return s.state==='done'?'done':'';
+}
+let _dlStaff=null;
+async function dlStaffOptions(){
+  if(!_dlStaff){ try{ const r=await af('/api/users'); const j=await r.json(); const l=Array.isArray(j)?j:(j.users||[]); _dlStaff=l.filter(u=>u&&(u.full_name||u.email)&&(u.is_active===undefined||u.is_active)).map(u=>u.full_name||u.email).sort((a,b)=>a.localeCompare(b)); }catch(_){ _dlStaff=[]; } }
+  return _dlStaff;
+}
+async function dlLoad(){
+  const el=$('dlList'); if(!el) return;
+  try{
+    const r=await af('/api/tessa/delegations'); const j=await r.json(); if(!r.ok) throw new Error(j.error||'could not load');
+    const list=j.delegations||[];
+    if(!list.length){ el.innerHTML='<div class="note">Nothing delegated yet. Open a copied email and tell Tessa to take it over.</div>'; return; }
+    const staff=await dlStaffOptions();
+    el.innerHTML=list.map(d=>{
+      const s=d.steps||{}; const sig=s.signature||{};
+      let act='';
+      if(d.current_step==='signature'&&s.received&&s.received.state==='received_unverified'&&sig.state==='pending') act=`<button class="btn sm" onclick="dlAct('${d.id}','check')">Check the document</button>`;
+      if(sig.state==='checked') act=`<button class="btn gold sm" onclick="dlVerify('${d.id}','signed','${esc(sig.sha256)}')">It is signed</button> <button class="btn ghost sm" onclick="dlVerify('${d.id}','not_signed','${esc(sig.sha256)}')">Not signed</button>`;
+      if(d.current_step==='filed') act=`<button class="btn gold sm" onclick="dlAct('${d.id}','file')">File in ${esc((d.community&&d.community.name)||'the association')}'s tax records</button>`;
+      if(d.current_step==='mail_assigned') act=`<select id="dl-staff-${d.id}"><option value="">Who prints and mails it?</option>${staff.map(n=>`<option>${esc(n)}</option>`).join('')}</select> <button class="btn gold sm" onclick="dlAssign('${d.id}')">Assign</button>`;
+      return `<div class="fu" id="dl-${d.id}">
+        <div class="t">${esc(d.title||'')}</div>
+        <div class="note">${esc(d.next_action||'')}${d.due_date?' · expected by '+esc(d.due_date):''}${s.meta&&s.meta.deadline?' · deadline '+esc(s.meta.deadline):''}</div>
+        <div style="display:grid;grid-template-columns:auto 1fr;gap:2px 10px;margin:6px 0;font-size:12.5px;">${DL_STEPS.map(([k,l])=>{const st=(s[k]||{}).state; const ok=['done','received_unverified','verified','filed','assigned','confirmed_by_staff'].includes(st)&&!(k==='received'&&false); return `<div>${ok?'✅':(k===d.current_step?'⏳':'○')} ${l}</div><div class="note">${dlStepText(k,s[k])}</div>`;}).join('')}</div>
+        <div class="row" style="gap:6px;">${act}<a href="#" class="note" onclick="event.preventDefault();dlEvents('${d.id}')">History</a></div>
+        <div id="dlmsg-${d.id}" class="result"></div><div id="dlev-${d.id}"></div>
+      </div>`;
+    }).join('');
+  }catch(e){ el.innerHTML='<div class="err note">Could not load delegations.</div>'; }
+}
+async function dlAct(id, what){
+  const msg=$('dlmsg-'+id); msg.innerHTML='<span class="note">Working…</span>';
+  try{ const r=await af('/api/tessa/delegations/'+id+'/'+what,{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'}); const j=await r.json(); if(!r.ok) throw new Error(j.detail||j.error||'failed'); dlLoad(); }
+  catch(e){ msg.innerHTML='<span class="err">'+esc(e.message)+'</span>'; }
+}
+async function dlVerify(id, verdict, sha256){
+  if(!confirm(verdict==='signed'?'Confirm you looked at this document and it is signed?':'Mark this document as NOT signed? Tessa will ask for a signed copy only when you approve a message.')) return;
+  const msg=$('dlmsg-'+id);
+  try{ const r=await af('/api/tessa/delegations/'+id+'/verify',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({verdict, sha256})}); const j=await r.json(); if(!r.ok) throw new Error(j.detail||j.error||'failed'); dlLoad(); }
+  catch(e){ msg.innerHTML='<span class="err">'+esc(e.message)+'</span>'; }
+}
+async function dlAssign(id){
+  const who=($('dl-staff-'+id)||{}).value; const msg=$('dlmsg-'+id);
+  if(!who){ msg.innerHTML='<span class="err">Choose who prints and mails it.</span>'; return; }
+  try{ const r=await af('/api/tessa/delegations/'+id+'/assign-mailing',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({assigned_to:who})}); const j=await r.json(); if(!r.ok) throw new Error(j.detail||j.error||'failed'); dlLoad(); }
+  catch(e){ msg.innerHTML='<span class="err">'+esc(e.message)+'</span>'; }
+}
+async function dlEvents(id){
+  const box=$('dlev-'+id);
+  try{ const r=await af('/api/tessa/delegations/'+id+'/events'); const j=await r.json();
+    box.innerHTML='<div class="note" style="margin-top:4px;">'+(j.events||[]).map(e=>esc(new Date(e.created_at).toLocaleString())+' · '+esc(e.event.replace(/_/g,' '))+' · '+esc(e.actor)).join('<br>')+'</div>'; }
+  catch(_){ box.innerHTML='<div class="err note">Could not load the history.</div>'; }
+}
+
 // "Write it": Ed's rough thoughts -> Tessa's send-ready reply or forward.
 async function ibHandle(id){
   const instruction=(($('ib-instr-'+id)||{}).value||'').trim();
@@ -741,6 +889,19 @@ async function ibHandle(id){
   try{
     const r=await af('/api/tessa/inbox/'+id+'/handle',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({instruction, mode:_ibmode[id]})});
     const j=await r.json(); if(!r.ok||!j.ok) throw new Error(j.detail||j.error||'could not handle');
+    if(j.action==='delegate'){ await ibShowPlan(id, j.plan||{}); msg.innerHTML='<span class="ok">Tessa can take this over. Check her plan, then Start tracking. Nothing is tracked until you do.</span>'; return; }
+    if(j.action==='followup'){
+      const f=j.followup||{};
+      $('ibplan-'+id).innerHTML=`<div class="fu" style="background:#f5f8ff;"><div class="t">Follow-up for you</div>
+        <label>Task</label><input id="fu-t-${id}" value="${esc(f.title||'')}">
+        <label>Detail</label><input id="fu-d-${id}" value="${esc(f.detail||'')}">
+        <div class="row" style="gap:6px;"><div style="flex:1;"><label>Due</label><input type="date" id="fu-due-${id}" value="${esc(f.due_date||'')}"></div><div style="flex:1;"><label>Waiting on</label><input id="fu-w-${id}" value="${esc(f.waiting_on||'')}"></div>
+        <div style="flex:1;"><label>Category</label><select id="fu-c-${id}">${['admin','banking','other','personal','vendor'].map(c=>`<option${c===f.category?' selected':''}>${c}</option>`).join('')}</select></div></div>
+        <div class="note">${esc(j.source||'')}</div>
+        <div class="row" style="justify-content:flex-end;margin-top:6px;"><button class="btn gold sm" onclick="ibAddFollowup('${id}')">Add follow-up</button></div></div>`;
+      msg.innerHTML='<span class="ok">Tessa suggests a follow-up. Adjust it, then Add.</span>'; return;
+    }
+    const dd=$('ibdraft-'+id); if(dd) dd.style.display='';
     if(j.mode) ibMode(id, j.mode);
     $('ib-subj-'+id).value=j.subject||$('ib-subj-'+id).value;
     $('ib-body-'+id).value=j.body||'';
