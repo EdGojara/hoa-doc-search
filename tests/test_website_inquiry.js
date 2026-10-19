@@ -143,7 +143,11 @@ const seen = { classify: [], resolve: [], draftReply: [], maggie: [] };
 let classifyImpl = async (e) => { seen.classify.push(e); return { classification: 'spam', is_spam: true, summary: 'website inquiry', classification_confidence: 'high' }; };
 stub('../lib/email/triage', { classifyAndExtract: (e) => classifyImpl(e), resolveEntities: async (ex, e) => { seen.resolve.push(e.sender_email); return { community_id: null, contact_id: null, property_id: null, vendor_id: null, confidence: 'none', candidates: [] }; } });
 stub('../lib/email/draft_reply', { draftReply: async (a) => { seen.draftReply.push(a); return { draftable: true, subject: 'Re: x', body: `Draft for ${a.email.sender_email} as ${a.persona}`, careful: false }; }, DRAFTABLE: new Set(), CAREFUL: new Set(), NO_DRAFT: new Set() });
-stub('../lib/team/bedrock_ops_reply', { draftBedrockOpsReply: async (cfg, a) => { seen.maggie.push(a); return { draftable: true, careful: true, persona: 'maggie', subject: 'Re: Inquiry', body: `Hi ${a.contactName}, Maggie here.`, review_hint: 'Maggie growth' }; } });
+stub('../lib/team/bedrock_ops_reply', { draftBedrockOpsReply: async (cfg, a) => { seen.maggie.push(a); return { draftable: true, careful: true, persona: 'maggie', subject: 'Re: Inquiry', body: `Hi ${a.contactName},
+
+Thank you for reaching out to Bedrock Association Management. Could you tell me about your community? I would be glad to set up a short conversation.
+
+Warm regards,`, review_hint: 'Maggie growth' }; } });
 stub('../lib/email/graph_move', { getInboxId: async () => 'INBOX', fileMessage: async () => ({ moved: true }) });
 const gs = require('../lib/email/graph_send'); gs.getToken = async () => 'token';
 let pageMsgs = []; let headersFor = {};
@@ -181,6 +185,8 @@ check('INGEST: a verified short prospective inquiry the AI calls spam is stored 
   assert.equal(r.extracted.draft.persona, 'maggie'); assert.equal(r.extracted.draft.status, 'pending'); assert.equal(r.extracted.draft.to, 'pat@example.com');
   assert.equal(r.extracted.draft.subject, WI.REPLY_SUBJECT);
   assert.equal(seen.maggie.length, 1); assert.equal(seen.draftReply.length, 0, 'Claire does not also draft it');
+  assert.equal(r.extracted.draft.careful, false, 'a simple prospect inquiry is not compliance-sensitive');
+  assert.match(seen.maggie[0].contextHint, /REPLY STANDARD/, "drafted to Maggie's prospect reply standard");
   assert.deepEqual(seen.resolve, ['pat@example.com'], 'the person is resolved by the submitter, not the relay');
 });
 
@@ -240,7 +246,8 @@ const fs = require('fs'); const path = require('path');
 const read = (f) => fs.readFileSync(path.join(__dirname, '..', f), 'utf8');
 check('send paths: Maggie sends from maggie@ with her own signature; website replies use the customer-facing subject', () => {
   const t = read('api/email_triage.js');
-  assert.ok(/persona === 'maggie'[\s\S]{0,400}buildPersonaEmail\('maggie'[\s\S]{0,200}MAGGIE_MAILBOX/.test(t));
+  assert.ok(/persona_sender'\)\.resolveSender\(persona\)/.test(t), 'send uses the one sender resolver (tests/test_persona_sender.js proves maggie@ + signature)');
+  assert.equal(require('../lib/email/persona_sender').resolveSender('maggie').mailbox, 'maggie@bedrocktx.com');
   assert.ok(/website_inquiry[\s\S]{0,200}REPLY_SUBJECT/.test(t));
   assert.ok(/maggie:\s+\{ mailbox: graphSend\.MAGGIE_MAILBOX/.test(read('api/email_drafts.js')));
   assert.equal(require('../lib/email/graph_send').personaMailbox('maggie'), 'maggie@bedrocktx.com');

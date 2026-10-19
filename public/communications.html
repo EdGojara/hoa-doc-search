@@ -276,7 +276,7 @@ let recipientByMsg = {};// messageId -> {to, source} suggested reply recipient (
 let genAttsByMsg = {};  // messageId -> [{name, size, ...}] files the agent generated (RFP PDF, nominations) — shown read-only; attached server-side at send
 let originalDraftByMsg = {};// messageId -> Claire's FIRST autonomous draft (the encode-Ed learning baseline vs what Ed actually sends)
 let verificationByMsg = {}; // messageId -> independent number-check result, so Send can warn if a flagged figure wasn't resolved
-const PNAME = { claire:'Claire', emma:'Emma Brooks', kat:'Kat Reed', annie:'Annie Reeves', miranda:'Miranda Pierce', amanda:'Amanda Albright', reese:'Reese Calloway', paige:'Paige Chandler', isabella:'Isabella Reyes', mei:'Mei Chen', priya:'Priya Sharma', general:'General inbox' };
+const PNAME = { claire:'Claire', emma:'Emma Brooks', kat:'Kat Reed', annie:'Annie Reeves', miranda:'Miranda Pierce', amanda:'Amanda Albright', reese:'Reese Calloway', paige:'Paige Chandler', isabella:'Isabella Reyes', mei:'Mei Chen', priya:'Priya Sharma', maggie:'Maggie Sullivan', general:'General inbox' };
 // Every sending persona's mailbox, matching lib/email/graph_send.js. A missing
 // entry silently fell back to claire@ — Amanda's contract review showed "sends
 // from claire@" though she has her own mailbox (Ed 2026-09-01).
@@ -285,8 +285,43 @@ const PMAIL = {
   miranda:'miranda@bedrocktx.com', amanda:'amandaalbright@bedrocktx.com',
   kat:'kat@bedrocktx.com', paige:'paige@bedrocktx.com', reese:'reese@bedrocktx.com',
   isabella:'isabella@bedrocktx.com', mei:'mei@bedrocktx.com', priya:'priya@bedrocktx.com',
-  tessa:'tessa@bedrocktx.com', darby:'darby@bedrocktx.com',
+  tessa:'tessa@bedrocktx.com', darby:'darby@bedrocktx.com', maggie:'maggie@bedrocktx.com',
 };
+// The server's sender directory (GET /api/email-triage/personas) is the source of truth: it is
+// the SAME resolver the send route uses, so the name/mailbox shown is the one that sends. The
+// lists above are only first-paint defaults; a teammate the server cannot send as is marked
+// unsendable and gets no Send button (never a silent Claire fallback). (Ed 2026-10-19.)
+const PSEND = {};
+const FRONT_OFFICE = { '':1, general:1, claire:1 };
+function senderKey(persona){ persona = String(persona||'').toLowerCase(); return FRONT_OFFICE[persona] ? 'claire' : persona; }
+function senderInfo(persona){
+  const k = senderKey(persona);
+  const name = PNAME[k] || null, mail = PMAIL[k] || null;
+  const sendable = PSEND[k] ? PSEND[k].sendable !== false : !!(name && mail);
+  return { key:k, name: name || k, first: (name || k).split(' ')[0], mail, sendable, reason: (PSEND[k] && PSEND[k].reason) || (sendable ? '' : 'No sending mailbox is set up for this teammate.') };
+}
+async function loadPersonaDirectory(){
+  try {
+    const r = await af('/api/email-triage/personas'); if(!r.ok) return;
+    const j = await r.json();
+    for (const [k, v] of Object.entries(j.personas||{})) {
+      PSEND[k] = v;
+      if (v.sendable) {
+        PNAME[k] = k === 'claire' ? 'Claire' : v.name; PMAIL[k] = v.mailbox;
+        if (typeof COMPOSE_PERSONAS !== 'undefined' && COMPOSE_PERSONAS[k]) COMPOSE_PERSONAS[k].mail = v.mailbox;
+      }
+    }
+  } catch(_) {}
+}
+// The "Compliance-sensitive" banner is for genuinely compliance-class mail only (the same
+// classes the drafter treats as careful: legal / violation / ACC / vendor money). A careful flag
+// on anything else (e.g. a business-development inquiry) is a plain "review before sending".
+const COMPLIANCE_CLASSES = { legal_privileged:1, violation_report:1, acc_request:1, vendor_financial:1 };
+function complianceSensitive(id, careful){
+  if (!careful) return false;
+  const m = (window._msgs||[]).find(x=>x.id===id) || {};
+  return !!COMPLIANCE_CLASSES[m.classification];
+}
 let openPersona = null;   // which teammate's emails are expanded
 let _scrollToListNext = false; // jump to the email list on the next explicit open/filter (roster is tall)
 let teamCache = [];
@@ -454,7 +489,7 @@ function msgHtml(m){
         </div>
       </div>
       <div class="summary">${esc(m.ai_summary||'')} <a href="#" onclick="event.preventDefault();showThread('${m.id}',this)" style="font-size:11.5px;color:#0B1D34;font-weight:600;white-space:nowrap;">🧵 Show full email + thread</a></div>
-      ${m._siblings&&m._siblings.length?`<div class="note" style="background:#eef6ff;border:1px solid #bcdcff;border-radius:6px;padding:6px 9px;margin-top:6px;color:#0b4a8f;font-size:12px;">📎 ${esc((m.sender_name||'This homeowner').split(' ')[0])} sent ${m._siblings.length+1} emails close together (${esc([m.subject].concat(m._siblings.map(s=>s.subject||'(no subject)')).join(', '))}). Click <b>↻ Re-draft</b> here and ${esc((PNAME[m.persona]||'Claire').split(' ')[0])} will fold them into one reply — sending then clears all ${m._siblings.length+1}.</div>`:''}
+      ${m._siblings&&m._siblings.length?`<div class="note" style="background:#eef6ff;border:1px solid #bcdcff;border-radius:6px;padding:6px 9px;margin-top:6px;color:#0b4a8f;font-size:12px;">📎 ${esc((m.sender_name||'This homeowner').split(' ')[0])} sent ${m._siblings.length+1} emails close together (${esc([m.subject].concat(m._siblings.map(s=>s.subject||'(no subject)')).join(', '))}). Click <b>↻ Re-draft</b> here and ${esc(senderInfo(m.persona).first)} will fold them into one reply — sending then clears all ${m._siblings.length+1}.</div>`:''}
       ${m.extracted&&m.extracted.auto_gl?`<div style="font-size:11.5px;color:#166534;font-weight:600;margin-top:4px;">🤖 Auto-recorded to GL — $${((m.extracted.auto_gl.amount_cents||0)/100).toFixed(2)}, flagged for your month-end review.</div>`:''}
       ${m.extracted&&m.extracted.auto_filed?`<div style="font-size:11.5px;color:#065f46;font-weight:600;margin-top:4px;">🧾 Auto-filed to Payables — ${m.extracted.auto_filed.invoice_ids&&m.extracted.auto_filed.invoice_ids.length>1?m.extracted.auto_filed.invoice_ids.length+' invoices ':''}awaiting your approval. PDF saved on the bill.</div>`:''}
       ${m.extracted&&m.extracted.already_paid?`<div style="font-size:12px;margin-top:5px;background:#fef9c3;border:1px solid #fde68a;border-radius:6px;padding:6px 9px;color:#713f12;">⚠️ <strong>Possibly already paid.</strong> $${((m.extracted.already_paid.amount_cents||0)/100).toFixed(2)} on this account posted${m.extracted.already_paid.paid_at?' on '+String(m.extracted.already_paid.paid_at).slice(0,10):''}${m.extracted.already_paid.invoice_number?' (invoice '+esc(m.extracted.already_paid.invoice_number)+')':''} — check before recording again.</div>`:''}
@@ -462,7 +497,7 @@ function msgHtml(m){
       ${m.standing?`<div style="font-size:12px;margin-top:5px;background:${m.standing.escalate?'#fdecec':(m.standing.in_payables?'#eaf7ee':'#fff7ed')};border:1px solid ${m.standing.escalate?'#f3c0c0':(m.standing.in_payables?'#b7e0c2':'#f6d5ad')};border-radius:6px;padding:6px 9px;color:#1a2230;">${esc(m.standing.banner)}</div>`:''}
       ${!m.standing&&m.extracted&&m.extracted.follow_up?(function(){var c=m.extracted.follow_up.chased;var paid=c&&c.status==='paid';var nf=c&&c.found===false;return '<div style="font-size:12px;margin-top:5px;background:'+(paid?'#eaf7ee':nf?'#fdecec':'#fff7ed')+';border:1px solid '+(paid?'#b7e0c2':nf?'#f3c0c0':'#f6d5ad')+';border-radius:6px;padding:6px 9px;color:#1a2230;">🔔 <strong>Vendor is chasing payment.</strong> '+(c?esc(c.message||''):'Match this to the bill in Payables.')+(c&&c.found&&c.invoice_number?' <span style="color:#64748b;">(invoice '+esc(c.invoice_number)+')</span>':'')+'</div>';})():''}
       ${websiteInquiryBannerHtml(m)}${m.extracted&&m.extracted.classification_error?`<div style="font-size:12px;margin-top:5px;background:#fff7ed;border:1px solid #f6d5ad;border-radius:6px;padding:6px 9px;color:#7c2d12;">⚠️ <strong>Classification failed</strong>: ${esc(m.extracted.classification_error)}. Kept for review, not dismissed.</div>`:''}
-      ${m.extracted&&m.extracted.draft&&m.extracted.draft.review_hint?`<div style="font-size:12px;color:#8a6d00;background:#fbf7ec;border:1px solid #e8dcae;border-radius:6px;padding:6px 9px;margin-top:5px;">💡 <strong>Claire suggests:</strong> ${esc(m.extracted.draft.review_hint)} <a href="#" onclick="event.preventDefault();forwardPrompt('${m.id}','${esc(m.sender_email||'')}'${m.extracted.draft.route&&m.extracted.draft.route.persona?`,'${esc(m.extracted.draft.route.persona)}'`:''})" style="color:#0B1D34;font-weight:600;white-space:nowrap;">↪ ${m.extracted.draft.route&&m.extracted.draft.route.name?'Hand to '+esc(m.extracted.draft.route.name):'Loop someone in'}</a></div>`:''}
+      ${m.extracted&&m.extracted.draft&&m.extracted.draft.review_hint?`<div style="font-size:12px;color:#8a6d00;background:#fbf7ec;border:1px solid #e8dcae;border-radius:6px;padding:6px 9px;margin-top:5px;">💡 <strong>${esc(senderInfo(m.persona).first)} suggests:</strong> ${esc(m.extracted.draft.review_hint)} <a href="#" onclick="event.preventDefault();forwardPrompt('${m.id}','${esc(m.sender_email||'')}'${m.extracted.draft.route&&m.extracted.draft.route.persona?`,'${esc(m.extracted.draft.route.persona)}'`:''})" style="color:#0B1D34;font-weight:600;white-space:nowrap;">↪ ${m.extracted.draft.route&&m.extracted.draft.route.name?'Hand to '+esc(m.extracted.draft.route.name):'Loop someone in'}</a></div>`:''}
       ${m.extracted&&m.extracted.forwarded?`<div style="font-size:11.5px;color:#5b21b6;font-weight:600;margin-top:4px;">↪ Forwarded to ${esc(m.extracted.forwarded.name||m.extracted.forwarded.to)}${m.extracted.forwarded.at?' · '+new Date(m.extracted.forwarded.at).toLocaleString():''} — awaiting their review</div>`:''}
       ${m.extracted&&m.extracted.positive_pay&&m.extracted.positive_pay.items?ppPanelHtml(m):''}
       <div id="thread-${m.id}"></div>
@@ -660,9 +695,11 @@ function draftBoxHtml(id, subject, body, careful, persona, covers, genAtts, send
     recipientByMsg[id] = { ...(recipientByMsg[id] || { source: 'sender', onFile: [] }), to: unsent.to || '' };
     if (!(attachByMsg[id] && attachByMsg[id].length) && Array.isArray(unsent.attach)) attachByMsg[id] = unsent.attach;
   }
-  const who = PNAME[persona] || 'Claire';
-  const whoFirst = who.split(' ')[0];
-  const mail = PMAIL[persona] || 'claire@bedrocktx.com';
+  const S = senderInfo(persona);
+  const who = S.name;
+  const whoFirst = S.first;
+  const mail = S.mail;
+  const compliance = complianceSensitive(id, careful);
   covers = covers || [];
   // Files the agent GENERATED while drafting (e.g. Amanda's insurance RFP PDF,
   // Paige's call-for-nominations). They live in extracted.draft.attachments and
@@ -688,12 +725,13 @@ function draftBoxHtml(id, subject, body, careful, persona, covers, genAtts, send
     ? `<div class="note" style="background:#eef6ff;border:1px solid #bcdcff;border-radius:6px;padding:6px 9px;color:#0b4a8f;">📎 This homeowner sent ${covers.length+1} emails close together — this one reply covers them all${covers.length? ' ('+covers.map(c=>esc(c.subject||'(no subject)')).join(', ')+')':''}. Sending clears all ${covers.length+1}.</div>`
     : '';
   return `<div class="draftbox" id="draftbox-${id}" ondragover="boxDragOver(event,'${id}')" ondragleave="boxDragLeave(event,'${id}')" ondrop="boxDrop(event,'${id}')">
-    ${careful?`<div class="refuse">⚠ Compliance-sensitive (legal / violation / ACC / money). ${esc(whoFirst)} drafted a careful answer from the account + §209 / governing docs — <strong>read carefully</strong> before sending.</div>`:''}
+    ${compliance?`<div class="refuse">⚠ Compliance-sensitive (legal / violation / ACC / money). ${esc(whoFirst)} drafted a careful answer from the account + §209 / governing docs — <strong>read carefully</strong> before sending.</div>`:''}
+    ${S.sendable?'':`<div class="refuse">⚠ This can't be sent as ${esc(whoFirst)}: ${esc(S.reason)} Reassign the email to a teammate who can send it.</div>`}
     ${coversNote}
     <div class="note">${esc(whoFirst)}'s draft${subject?' ('+esc(subject)+')':''} — review / edit, then approve. Nothing sends until you click.</div>
     ${unsent?`<div class="note" id="unsent-${id}" style="background:#fff7ed;border:1px solid #fed7aa;border-radius:6px;padding:6px 9px;color:#9a3412;">↺ Restored your unsent edits from ${esc(new Date(unsent.savedAt).toLocaleString())}. This reply has <strong>not</strong> been sent. <a href="#" onclick="event.preventDefault();discardUnsent('${id}')" style="color:#9a3412;font-weight:600;">Discard saved edits</a></div>`:''}
     <textarea id="dt-${id}">${esc(body||'')}</textarea>
-    <div class="note" style="margin-top:5px;">Sends from <strong>${esc(mail)}</strong> with ${esc(whoFirst)}'s AI signature appended.</div>
+    ${S.sendable?`<div class="note" style="margin-top:5px;">Sends from <strong>${esc(mail)}</strong> with ${esc(whoFirst)}'s signature appended.</div>`:''}
     ${toRowHtml(id)}
     <div style="display:flex; gap:6px; align-items:center; margin-top:6px;">
       <label style="font-size:12px;color:var(--muted);min-width:24px;">Cc</label>
@@ -707,7 +745,7 @@ function draftBoxHtml(id, subject, body, careful, persona, covers, genAtts, send
       <button class="act" onclick="doRewrite('${id}','${persona}')" title="Have ${esc(whoFirst)} rewrite the draft incorporating your notes">↻ Rewrite with my notes</button>
     </div>
     <div style="margin-top:6px; display:flex; gap:6px;">
-      <button class="act send" onclick="doSend('${id}', this, ${careful?'true':'false'}, '${persona}')">✅ Approve &amp; send as ${esc(whoFirst)}</button>
+      ${S.sendable?`<button class="act send" onclick="doSend('${id}', this, ${compliance?'true':'false'}, '${persona}')">✅ Approve &amp; send as ${esc(whoFirst)}</button>`:''}
       <button class="act draft" onclick="navigator.clipboard.writeText(document.getElementById('dt-${id}').value); this.textContent='Copied ✓';">Copy</button>
       <button class="act dismiss" onclick="document.getElementById('draft-${id}').innerHTML='';">Close</button>
     </div></div>`;
@@ -1159,7 +1197,7 @@ async function doRewrite(id, persona){
   const current_draft = cur ? cur.value : '';
   const box = document.getElementById('draft-'+id);
   const prevHtml = box.innerHTML;
-  box.innerHTML = '<div class="draftbox"><div class="note">'+esc((PNAME[persona]||'Claire').split(' ')[0])+' is rewriting with your notes…</div></div>';
+  box.innerHTML = '<div class="draftbox"><div class="note">'+esc(senderInfo(persona).first)+' is rewriting with your notes…</div></div>';
   let r, j;
   try { r = await af(`${API}/${id}/draft-reply`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ notes, current_draft })}); j = await r.json(); }
   catch(e){ box.innerHTML = prevHtml; alert('Rewrite failed: '+(e.message||'network')); return; }
@@ -1187,7 +1225,7 @@ function websiteInquiryBannerHtml(m){
   return `<div style="font-size:12px;margin-top:5px;background:#fdecec;border:1px solid #f3c0c0;border-radius:6px;padding:6px 9px;color:#7f1d1d;">⚠️ <strong>Unverified website inquiry.</strong> ${esc(w.warning||'Could not be verified.')}${w.reasons&&w.reasons.length?' ('+esc(w.reasons.join(', '))+')':''}</div>`;
 }
 async function doSend(id, btn, careful, persona){
-  const who = (PNAME[persona]||'Claire').split(' ')[0];
+  const who = senderInfo(persona).first;
   const covers = coversByMsg[id] || [];
   if(careful && !confirm(`This is a compliance-sensitive reply (legal / violation / ACC / money). Send it as ${who} now?`)) return;
   // Soft-block: the independent number check flagged one or more figures in this
@@ -1523,7 +1561,7 @@ window.ncSend = async function(){
     const meRes = await fetch('/api/me', { headers: { Authorization: 'Bearer ' + session.access_token } });
     const me = meRes.ok ? (await meRes.json()).user : null;
     if (!me || me.role !== 'admin') return showComingSoon();
-    loadStats(); loadList(); loadStaff(); loadDraftCount(); showOwnerActions();
+    loadStats(); Promise.race([loadPersonaDirectory(), new Promise(r=>setTimeout(r,3000))]).finally(loadList); loadStaff(); loadDraftCount(); showOwnerActions();
     loadCommunities().then(() => { try { loadList(); } catch (_) {} });  // populate the picker cache, then re-render
   } catch (e) { showComingSoon(); }
 })();
