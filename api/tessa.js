@@ -981,23 +981,51 @@ router.post('/inbox/:id/send', express.json({ limit: '64kb' }), async (req, res)
     if (await refuseBounced(res, [...to, ...cc])) return;
 
     const from = asEd ? graphSend.ED_MAILBOX : graphSend.TESSA_MAILBOX;
-    // As Ed = his own email, no signature block. As Tessa = light branded sign-off.
-    let html, attachments;
+    // Her signature block already carries her name, title and the company: drop a
+    // typed sign-off that repeats them, keep the closing. (Ed 2026-10-19.)
+    const { stripDuplicateSignOff } = require('../lib/ea/tessa_reply_body');
+    const sendBody = asEd ? body : stripDuplicateSignOff(body, require('../lib/email/persona_signature').identity('tessa')).body;
+    if (!sendBody) return res.status(400).json({ error: 'The reply body is empty.' });
+    // A REAL reply in the existing conversation (threading headers + Outlook's own
+    // quoted history) whenever the original is in Tessa's mailbox, which is every
+    // message she polled. Never silently degraded to a new message: if the original
+    // is gone, say so and let Ed choose. (Ed 2026-10-19: "reply in the existing
+    // email conversation".)
+    const threaded = !asEd && !!item.graph_id;
+    let html, attachments, sentInThread = false;
     if (asEd) {
-      html = `<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.55;color:#1a2230;">${body.split(/\n{2,}/).map((p) => `<p style="margin:0 0 12px;">${p.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/\n/g, '<br>')}</p>`).join('')}</div>`;
+      html = `<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.55;color:#1a2230;">${sendBody.split(/\n{2,}/).map((p) => `<p style="margin:0 0 12px;">${p.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/\n/g, '<br>')}</p>`).join('')}</div>`;
+    } else if (threaded) {
+      ({ html, attachments } = require('../lib/email/tessa_signature').buildTessaEmail(sendBody, null, ''));   // Outlook supplies the quoted history
     } else {
-      // The thread goes out with the reply. Without it the recipient gets a
-      // sentence with no context, which is both unhelpful and the clearest
-      // tell that nobody read what they wrote.
+      // No original to reply to: a fresh message, with the thread quoted so the
+      // recipient has context.
       const quoted = quotedOriginal({
         fromName: item.from_name, fromEmail: item.from_email,
         sentAt: item.received_at, to: 'Tessa McCall',
         subject: item.subject,
         bodyText: item.body_full || item.body_preview,
       });
-      ({ html, attachments } = require('../lib/email/tessa_signature').buildTessaEmail(body, null, quoted));
+      ({ html, attachments } = require('../lib/email/tessa_signature').buildTessaEmail(sendBody, null, quoted));
     }
-    await graphSend.sendAs({ from, to, cc, subject, html, attachments });
+    if (threaded) {
+      try {
+        await graphSend.sendReplyAs({ from, sourceMailbox: from, sourceGraphId: item.graph_id, to, cc, html, attachments });
+        sentInThread = true;
+      } catch (e) {
+        const gone = e.step === 'createReply' && (e.status === 404 || e.graphCode === 'ErrorItemNotFound');
+        if (!(b.allow_new_thread === true && gone)) {
+          console.error('[tessa] threaded reply failed:', e.message);
+          return res.status(gone ? 409 : 502).json({ error: gone ? 'thread_unavailable' : 'send_failed',
+            detail: gone ? 'The original email is no longer in Tessa’s mailbox, so this cannot go as a reply in that conversation. Nothing was sent.' : (e.userMessage || 'The reply could not be sent. Nothing was sent.') });
+        }
+        const quoted = quotedOriginal({ fromName: item.from_name, fromEmail: item.from_email, sentAt: item.received_at, to: 'Tessa McCall', subject: item.subject, bodyText: item.body_full || item.body_preview });
+        ({ html, attachments } = require('../lib/email/tessa_signature').buildTessaEmail(sendBody, null, quoted));
+        await graphSend.sendAs({ from, to, cc, subject, html, attachments });
+      }
+    } else {
+      await graphSend.sendAs({ from, to, cc, subject, html, attachments });
+    }
 
     await supabase.from('ea_inbox').update({ status: 'replied', draft_subject: subject, draft_body: body, draft_mode: asEd ? 'ed' : 'tessa', updated_at: new Date().toISOString() }).eq('id', item.id);
     try {
@@ -1013,7 +1041,7 @@ router.post('/inbox/:id/send', express.json({ limit: '64kb' }), async (req, res)
         triage_status: 'handled', reviewed_at: new Date().toISOString(),
       });
     } catch (e) { console.warn('[tessa] inbox-send log skipped:', e.message); }
-    res.json({ sent: true, from, to, cc });
+    res.json({ sent: true, from, to, cc, in_thread: sentInThread });
   } catch (err) {
     console.error('[tessa] inbox-send failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
