@@ -3036,6 +3036,16 @@ app.get('/acc-review/decisions/:id/full', async (req, res) => {
     try { finalization = await require('./lib/acc/finalized').finalizationFor(supabase, data); } catch (_) {}
     // Who may decide this case and what is still missing (Ed 2026-10-20).
     const authority = require('./lib/acc/decision_authority').authorityFor(data);
+    // The community's instruments a decision may cite, and the authority basis
+    // its last recorded decision used, so a standing delegation is entered once.
+    authority.documents = await _accAuthorityDocuments(data.community_id);
+    try {
+      const { data: last } = await supabase.from('acc_decisions').select('decision_record')
+        .eq('community_id', data.community_id).not('decision_record', 'is', null)
+        .order('updated_at', { ascending: false }).limit(1);
+      const ab = last && last[0] && last[0].decision_record && last[0].decision_record.authority_basis;
+      authority.default_basis = ab ? { kind: ab.kind, reference: ab.reference, library_document_id: ab.library_document_id || null } : null;
+    } catch (_) { authority.default_basis = null; }
     res.json({ decision: data, finalization, authority });
   } catch (err) {
     console.error('[acc-review/decisions/:id/full] failed:', err.message);
@@ -3299,6 +3309,8 @@ app.post('/acc-review/decisions/:id/finalize', async (req, res) => {
           return res.status(403).json({ code: 'decision_not_authorized', error: 'Only Ed can record an ACC decision from this screen. Staff can draft and request more information.' });
         }
         const rec = DA.ownerDecisionRecord(actor, { ...body.decision_record, outcome: body.decision_record.outcome || decisionType });
+        const docErr = await _accResolveAuthorityDocument(dec, rec);
+        if (docErr) return res.status(409).json({ code: 'decision_record_invalid', error: `Decision record incomplete: ${docErr}. Nothing was sent or marked done.` });
         decRow = { ...dec, decision_record: rec };
       }
       const authz = DA.checkFinalDecision(decRow, { decisionType, texts: [bodyText], actor, requireIssuer: true });
@@ -3729,6 +3741,28 @@ app.post('/acc-review/decisions/:id/redraft', express.json({ limit: '64kb' }), a
 //   Ed's final decision, with the provision or written delegation that
 //   authorizes it and (for a paving expansion or deviation approval) the
 //   committee/Board decision with its evidence. Also counts as his review.
+// The governing instruments on file for a community: what a decision may cite
+// as its authority (a delegation, a declaration, guidelines, a resolution).
+const _ACC_AUTHORITY_CATEGORIES = ['declaration_ccrs', 'design_document', 'rules_and_regulations', 'resolutions_and_policies', 'bylaws', 'management_agreement'];
+async function _accAuthorityDocuments(communityId) {
+  if (!communityId) return [];
+  const { data, error } = await supabase.from('library_documents').select('id, title, category, effective_date')
+    .eq('community_id', communityId).in('category', _ACC_AUTHORITY_CATEGORIES).order('title').limit(200);
+  if (error) { console.warn('[acc-authority] documents lookup failed:', error.message); return []; }
+  return data || [];
+}
+// A cited instrument must be on file FOR THIS CASE'S COMMUNITY; the record
+// carries its title so the decision is traceable without a second lookup.
+async function _accResolveAuthorityDocument(dec, rec) {
+  const ab = rec.authority_basis || {};
+  if (!ab.library_document_id) return null;
+  const { data: doc, error } = await supabase.from('library_documents').select('id, title, community_id, category')
+    .eq('id', ab.library_document_id).maybeSingle();
+  if (error) return `the cited instrument could not be checked (${error.message})`;
+  if (!doc || doc.community_id !== dec.community_id) return 'the cited instrument is not on file for this community';
+  ab.library_document_title = doc.title;
+  return null;
+}
 async function _accAuthorityWrite(req, res, buildPatch) {
   const DA = require('./lib/acc/decision_authority');
   const actor = await getActingUser(req);
@@ -3742,7 +3776,7 @@ async function _accAuthorityWrite(req, res, buildPatch) {
   if (!DA.OPEN.includes(dec.status) || dec.status === 'finalizing') {
     return res.status(409).json({ code: 'case_closed', error: `This application is ${dec.status}. Its record is not changed here.` });
   }
-  const built = buildPatch(DA, actor, dec, req.body || {});
+  const built = await buildPatch(DA, actor, dec, req.body || {});
   if (built.errors && built.errors.length) return res.status(400).json({ code: 'invalid', error: built.errors.join('; '), errors: built.errors });
   const { data: upd, error: uErr } = await supabase.from('acc_decisions').update({ ...built.patch, updated_at: new Date().toISOString() })
     .eq('id', dec.id).in('status', ['pending_review', 'awaiting_info']).select('*').maybeSingle();
@@ -3757,9 +3791,11 @@ app.post('/acc-review/decisions/:id/owner-review', express.json({ limit: '32kb' 
   const a = DA.authorityFor(dec);
   return { patch: { owner_review: { reviewed_at: new Date().toISOString(), reviewed_by_user_id: actor.id, reviewed_by_email: String(actor.email).toLowerCase(), reviewed_by_name: actor.full_name || null, notes: String(b.notes || '').trim() || null, triggers: a.triggers } } };
 }).catch((e) => res.status(500).json({ error: e.message })));
-app.post('/acc-review/decisions/:id/decision-record', express.json({ limit: '64kb' }), (req, res) => _accAuthorityWrite(req, res, (DA, actor, dec, b) => {
+app.post('/acc-review/decisions/:id/decision-record', express.json({ limit: '64kb' }), (req, res) => _accAuthorityWrite(req, res, async (DA, actor, dec, b) => {
   const rec = DA.ownerDecisionRecord(actor, b);
+  const docErr = await _accResolveAuthorityDocument(dec, rec);
   const errors = DA.validateDecisionRecord(rec, { ...dec, decision_record: rec });
+  if (docErr) errors.unshift(docErr);
   if (errors.length) return { errors };
   const now = new Date().toISOString();
   return { patch: {

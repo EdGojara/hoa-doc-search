@@ -114,10 +114,33 @@ for (const [n, r] of [['19814 Moss Bark', MOSS_BARK], ['19919 Pemetic', PEMETIC]
 }
 check('historical fixtures were not mutated by any check', JSON.stringify([BRIAN, MOSS_BARK, PEMETIC]) === snapshot);
 {
-  const sql = fs.readFileSync(path.join(__dirname, '..', 'migrations', '540_acc_decision_authority.sql'), 'utf8');
-  check('the DB trigger fires only on the transition INTO finalizing/decided (historical rows untouched)', /OLD\.status NOT IN \('finalizing', 'decided'\)/.test(sql) && /TG_OP = 'INSERT'/.test(sql));
-  check('the migration changes no existing row (no UPDATE ... SET on acc_decisions)', !/UPDATE\s+acc_decisions\s+SET/i.test(sql));
-  check('new rows are never decided by default', /ALTER COLUMN status SET DEFAULT 'pending_review'/.test(sql));
+  const cols = fs.readFileSync(path.join(__dirname, '..', 'migrations', '540_acc_decision_authority_columns.sql'), 'utf8');
+  const sql = fs.readFileSync(path.join(__dirname, '..', 'migrations', '541_acc_decision_authority_guard.sql'), 'utf8');
+  check('540 is additive only: no default, trigger or row change (safe before the code)', !/SET DEFAULT|CREATE TRIGGER|UPDATE\s+acc_decisions\s+SET|DROP COLUMN/i.test(cols) && /ADD COLUMN IF NOT EXISTS decision_record/.test(cols));
+  check('541 trigger fires only on the transition INTO finalizing/decided (historical rows untouched)', /OLD\.status NOT IN \('finalizing', 'decided'\)/.test(sql) && /TG_OP = 'INSERT'/.test(sql));
+  check('541 changes no existing row (no UPDATE ... SET on acc_decisions)', !/UPDATE\s+acc_decisions\s+SET/i.test(sql));
+  check('541: new rows are never decided by default', /ALTER COLUMN status SET DEFAULT 'pending_review'/.test(sql));
+  check('541 requires 540 in its checks file', /540_acc_decision_authority_columns\.sql/.test(fs.readFileSync(path.join(__dirname, '..', 'migrations', 'checks', '541_acc_decision_authority_guard.json'), 'utf8')));
+}
+
+console.log('\n3b. Written delegation is decision authority (routine vs not)');
+{
+  const LIB = '00000000-0000-0000-0000-0000000000d1';
+  const fence = { id: 'f2', status: 'pending_review', project_summary: 'Replace rear wood fence, 6 ft cedar, same location' };
+  const del = (extra = {}) => DA.ownerDecisionRecord(ED, { outcome: 'approved', authority_kind: 'written_delegation', authority_reference: 'Guidelines §1.4.4.1-1.4.4.2, p. 2: Committee delegation to the Managing Agent', authority_library_document_id: LIB, clearly_compliant: true, ...extra });
+  check('a routine, clearly compliant approval under the written delegation needs NO committee vote', DA.validateDecisionRecord(del(), fence).length === 0, DA.validateDecisionRecord(del(), fence).join('; '));
+  check('...its decision path is routine_delegated', DA.decisionPath(del(), [], DA.classifyDrivewayScope(fence.project_summary), fence) === 'routine_delegated');
+  check('a delegated approval must name the instrument on file', DA.validateDecisionRecord(del({ authority_library_document_id: '' }), fence).some((e) => /instrument/.test(e)));
+  check('a delegated approval must be attested clearly compliant', DA.validateDecisionRecord(del({ clearly_compliant: false }), fence).some((e) => /clearly meets every requirement/.test(e)));
+  check('a disapproval under the delegation is allowed ("all others shall be disapproved")', DA.validateDecisionRecord(del({ outcome: 'denied', clearly_compliant: false }), fence).length === 0);
+  check('a delegated "routine" approval of a paving expansion still needs the committee/Board decision', DA.validateDecisionRecord(del({ outcome: 'approved_with_conditions' }), BRIAN).some((e) => /committee or Board authorization is not documented/.test(e)));
+  const uncertain = { ...fence, compliance_evaluation: { ...COMPLETE_EVAL, confidence: 'medium' } };
+  check('an approval with material uncertainty is not routine: committee/Board needed', DA.validateDecisionRecord(del(), uncertain).some((e) => /committee or Board/.test(e)));
+  const annieDel = { ...del(), decided_by: 'annie', decided_by_email: null };
+  check('Annie may make a routine delegated approval with a complete evaluation', DA.validateDecisionRecord(annieDel, { ...fence, compliance_evaluation: COMPLETE_EVAL }).length === 0);
+  check('...but never without one', DA.validateDecisionRecord(annieDel, fence).some((e) => /complete compliance evaluation/.test(e)));
+  check('the screen says what an approval needs before anything is recorded',
+    /routine/.test(DA.authorityFor(fence).approval_requires) && /committee or Board/.test(DA.authorityFor(BRIAN).approval_requires));
 }
 
 console.log('\n4. Every improvement type: only Ed, Amanda or Annie decide');
@@ -205,6 +228,8 @@ console.log('\n6. Transport guard (lib/email/graph_send)');
     for (const ep of ['owner-review', 'decision-record']) {
       check(`${ep} is owner-only (isOwnerActor) and never sends`, /_accAuthorityWrite/.test(server) && new RegExp(`app\\.post\\('\\/acc-review\\/decisions\\/:id\\/${ep}'`).test(server) && /isOwnerActor\(actor\)/.test(server.slice(server.indexOf('async function _accAuthorityWrite'), server.indexOf('async function _accAuthorityWrite') + 800)));
     }
+    check('a cited instrument is verified as on file for the case\'s community (record endpoint and Send)',
+      (server.match(/_accResolveAuthorityDocument\(dec, rec\)/g) || []).length >= 2 && /doc\.community_id !== dec\.community_id/.test(server));
     const gs = fs.readFileSync(path.join(__dirname, '..', 'lib', 'email', 'graph_send.js'), 'utf8');
     check('graph_send sendAs runs the decision guard', /async function sendAs[\s\S]{0,700}accDecisionGuard\(/.test(gs));
     check('graph_send sendReplyAs runs the decision guard', /async function sendReplyAs[\s\S]{0,1400}accDecisionGuard\(/.test(gs));
