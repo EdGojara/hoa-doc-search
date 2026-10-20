@@ -1,0 +1,90 @@
+{
+  "migration": "539_reply_send_claims.sql",
+  "summary": "New table reply_send_claims: one atomic send claim per reply, shared by the Communications and Draft Queue send paths, so a simultaneous or repeated Send can never produce two replies. Service role only (RLS on, no policies, anon/authenticated revoked). Changes no existing row.",
+  "requires": [
+    "261_email_messages.sql",
+    "327_outbound_email_drafts.sql",
+    "490_amanda_auto_reply_receipts.sql"
+  ],
+  "preflight": [
+    {
+      "name": "reply_send_claims does not exist yet",
+      "sql": "SELECT count(*)::int FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'reply_send_claims'",
+      "expect": 0
+    },
+    {
+      "name": "the referenced tables exist (email_messages, outbound_email_drafts)",
+      "sql": "SELECT count(*)::int FROM information_schema.tables WHERE table_schema = 'public' AND table_name IN ('email_messages', 'outbound_email_drafts')",
+      "expect": 2
+    }
+  ],
+  "expected_changes": [
+    "New table reply_send_claims (reply_key PK with format CHECK, inbound_email_id FK email_messages RESTRICT, outbound_draft_id FK outbound_email_drafts RESTRICT, send_path CHECK communications|draft_queue, status CHECK sending|sent|failed, claim token, approved package sha256, audit columns).",
+    "Partial index on outbound_draft_id.",
+    "Row level security on with no policies; anon and authenticated have no privileges; service_role has SELECT, INSERT, UPDATE (no DELETE: claims are an audit trail).",
+    "No existing row changes."
+  ],
+  "objects": {
+    "added": [
+      "column:reply_send_claims.attempts",
+      "column:reply_send_claims.claim_token",
+      "column:reply_send_claims.claimed_at",
+      "column:reply_send_claims.claimed_by",
+      "column:reply_send_claims.error",
+      "column:reply_send_claims.finished_at",
+      "column:reply_send_claims.inbound_email_id",
+      "column:reply_send_claims.outbound_draft_id",
+      "column:reply_send_claims.package_sha256",
+      "column:reply_send_claims.reply_key",
+      "column:reply_send_claims.send_path",
+      "column:reply_send_claims.status",
+      "column:reply_send_claims.uncertain",
+      "constraint:reply_send_claims.reply_send_claims_attempts_check",
+      "constraint:reply_send_claims.reply_send_claims_inbound_email_id_fkey",
+      "constraint:reply_send_claims.reply_send_claims_outbound_draft_id_fkey",
+      "constraint:reply_send_claims.reply_send_claims_pkey",
+      "constraint:reply_send_claims.reply_send_claims_reply_key_check",
+      "constraint:reply_send_claims.reply_send_claims_send_path_check",
+      "constraint:reply_send_claims.reply_send_claims_status_check",
+      "index:idx_reply_send_claims_draft",
+      "index:reply_send_claims_pkey",
+      "table:reply_send_claims"
+    ],
+    "changed": [],
+    "removed": []
+  },
+  "row_changes": {},
+  "protected": [
+    {
+      "table": "outbound_email_drafts",
+      "order_by": "id"
+    }
+  ],
+  "verify": [
+    {
+      "name": "the table exists and is empty",
+      "sql": "SELECT count(*)::int FROM reply_send_claims",
+      "expect": 0
+    },
+    {
+      "name": "row level security is on with no policies",
+      "sql": "SELECT count(*)::int FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'public' AND c.relname = 'reply_send_claims' AND c.relrowsecurity AND NOT EXISTS (SELECT 1 FROM pg_policies p WHERE p.schemaname = 'public' AND p.tablename = 'reply_send_claims')",
+      "expect": 1
+    },
+    {
+      "name": "anon and authenticated hold no privilege",
+      "sql": "SELECT count(*)::int FROM information_schema.role_table_grants WHERE table_schema = 'public' AND table_name = 'reply_send_claims' AND grantee IN ('anon', 'authenticated')",
+      "expect": 0
+    },
+    {
+      "name": "the server role can select, insert and update (and not delete)",
+      "sql": "SELECT count(*)::int FROM information_schema.role_table_grants WHERE table_schema = 'public' AND table_name = 'reply_send_claims' AND grantee = 'service_role' AND privilege_type IN ('SELECT', 'INSERT', 'UPDATE')",
+      "expect": 3
+    },
+    {
+      "name": "the reply key is the primary key",
+      "sql": "SELECT count(*)::int FROM pg_constraint WHERE conrelid = 'public.reply_send_claims'::regclass AND contype = 'p'",
+      "expect": 1
+    }
+  ]
+}

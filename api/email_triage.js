@@ -33,6 +33,7 @@ async function quarantinedAddresses() {
   } catch (_) { return []; }
 }
 const graphSend = require('../lib/email/graph_send');
+const ReplyGuard = require('../lib/email/reply_guard');
 const graphIngest = require('../lib/email/graph_ingest');
 const { requireAdmin, getAuthedUser, OWNER_EMAIL } = require('./_require_admin');
 
@@ -255,13 +256,20 @@ function emailCapabilities(m) {
 // path if the queue grows large).
 async function withCapabilities(rows) {
   const { invoiceStanding } = require('../lib/ap/followup');
+  // A reply waiting in the Draft Queue owns its inbound email: Communications shows it
+  // with a link and does not offer a second reply. (Ed 2026-10-20, Hugh Durlam's email.)
+  let pending = {}; let pendingFailed = false;
+  try { pending = await ReplyGuard.activeDraftsFor(supabase, (rows || []).map((r) => r && r.id)); }
+  catch (e) { pendingFailed = true; console.error('[email_triage] waiting Draft Queue replies lookup failed:', e.message); }
   return Promise.all((rows || []).map(async (m) => {
     const caps = emailCapabilities(m);
     let standing = null;
     if (String(m && m.persona) === 'emma') {
       try { standing = await invoiceStanding(supabase, m); } catch (_) { standing = null; }
     }
-    return Object.assign({}, m, caps, { standing });
+    const w = m && pending[m.id];
+    const pendingReply = w ? { id: w.id, persona: w.persona, subject: w.subject, to_email: w.to_email, created_at: w.created_at, link: '/admin/draft-queue?id=' + w.id } : null;
+    return Object.assign({}, m, caps, { standing, pending_draft_queue_reply: pendingReply }, pendingFailed ? { pending_reply_lookup_failed: true } : {});
   }));
 }
 
@@ -1475,6 +1483,22 @@ router.post('/:id/send', express.json(), async (req, res) => {
       .eq('id', req.params.id).maybeSingle();
     if (error) throw error;
     if (!m) return res.status(404).json({ error: 'not_found' });
+    // One reply per inbound email. A reply waiting in the Draft Queue owns this email:
+    // refuse a second, conflicting reply from here. And never answer an email whose
+    // reply already went out (from either path). (Ed 2026-10-20.)
+    let waiting = null;
+    try { waiting = await ReplyGuard.activeDraftFor(supabase, req.params.id); }
+    catch (e) { return res.status(503).json({ error: 'draft_lookup_failed', message: 'Could not check the Draft Queue for a reply to this email. Nothing was sent; try again.', sent: false }); }
+    if (waiting) return res.status(409).json({ error: 'draft_queue_reply_pending', message: 'A reply to this email is waiting in the Draft Queue. Review and send it there. Nothing was sent.', draft_id: waiting.id, link: '/admin/draft-queue?id=' + waiting.id, sent: false });
+    const guardKey = ReplyGuard.replyKey({ inboundId: req.params.id });
+    const retryAfterUncertain = !!(req.body && req.body.confirm_after_uncertain === true);
+    try {
+      const blocked = ReplyGuard.blockedBy(await ReplyGuard.existingClaim(supabase, guardKey), { retryAfterUncertain });
+      if (blocked) return res.status(blocked.status).json({ error: blocked.error, message: blocked.message, needs_confirmation: blocked.needs_confirmation || undefined, sent: false });
+    } catch (e) {
+      if (e.code === 'send_guard_not_installed') return res.status(503).json({ error: 'send_guard_not_installed', message: 'Sending is paused until the send-safety guard is installed (migration 539). Nothing was sent.', sent: false });
+      throw e;
+    }
     // Stored persona (content routing) wins over the mailbox picker, so a Kat /
     // Amanda / Reese reply sends from the right address in the right voice.
     const persona = req.body.persona || m.persona || personaFor(m);
@@ -1753,21 +1777,34 @@ router.post('/:id/send', express.json(), async (req, res) => {
     } catch (_) { /* quoting best-effort — never block a send */ }
 
     let verifiedRecipients = null;
-    if (threaded && graphSend.sameMailbox(fromMailbox, replyFrom)) {
-      // Real threaded reply — Graph carries the actual Outlook quoted history and
-      // sets the In-Reply-To/References headers, so the recipient sees ONE growing
-      // thread instead of a fresh email each time (Melody Hess's ask, 2026-09-09).
-      // Graph adds the quote, so we send just our body (no reconstructed block).
-      const sent = await graphSend.sendReplyAs({ from: fromMailbox, sourceMailbox: m.mailbox, sourceGraphId: m.graph_id, to: recipient, cc: ccList || undefined, html, attachments });
-      if (sent && sent.recipients) verifiedRecipients = [...sent.recipients.to, ...sent.recipients.cc];
-    } else {
-      // No source message id, OR the message lives in another mailbox (shared inbox
-      // answered by a persona): a fresh message from the persona's own mailbox.
-      // Fallback: fresh message. The body already carries the inline quote
-      // (inlineQuote), so do NOT also append the reconstructed history block —
-      // that was the second copy. One history, from the inline quote.
-      await graphSend.sendAs({ from: fromMailbox, to: recipient, cc: ccList || undefined, subject: subj, html, attachments });
+    // The atomic claim, right before Graph (shared with the Draft Queue): a simultaneous
+    // or repeated Send for this email is refused, never sent twice.
+    const claim = await ReplyGuard.claim(supabase, { inboundId: req.params.id, path: 'communications', actor: reviewed_by || 'staff', retryAfterUncertain });
+    if (!claim.ok) return res.status(claim.status).json({ error: claim.error, message: claim.message, needs_confirmation: claim.needs_confirmation || undefined, sent: false });
+    let suppressed = null;   // the demo/outbound guard held it: nothing left, so the claim must not block a real reply
+    try {
+      if (threaded && graphSend.sameMailbox(fromMailbox, replyFrom)) {
+        // Real threaded reply — Graph carries the actual Outlook quoted history and
+        // sets the In-Reply-To/References headers, so the recipient sees ONE growing
+        // thread instead of a fresh email each time (Melody Hess's ask, 2026-09-09).
+        // Graph adds the quote, so we send just our body (no reconstructed block).
+        const sent = await graphSend.sendReplyAs({ from: fromMailbox, sourceMailbox: m.mailbox, sourceGraphId: m.graph_id, to: recipient, cc: ccList || undefined, html, attachments });
+        if (sent && sent.suppressed) suppressed = sent.reason || 'suppressed';
+        if (sent && sent.recipients) verifiedRecipients = [...sent.recipients.to, ...sent.recipients.cc];
+      } else {
+        // No source message id, OR the message lives in another mailbox (shared inbox
+        // answered by a persona): a fresh message from the persona's own mailbox.
+        // Fallback: fresh message. The body already carries the inline quote
+        // (inlineQuote), so do NOT also append the reconstructed history block —
+        // that was the second copy. One history, from the inline quote.
+        const sent = await graphSend.sendAs({ from: fromMailbox, to: recipient, cc: ccList || undefined, subject: subj, html, attachments });
+        if (sent && sent.suppressed) suppressed = sent.reason || 'suppressed';
+      }
+    } catch (e) {
+      await ReplyGuard.finish(supabase, { key: claim.key, token: claim.token, ok: false, err: e });
+      throw e;
     }
+    await ReplyGuard.finish(supabase, suppressed ? { key: claim.key, token: claim.token, ok: false, err: 'suppressed: ' + suppressed, uncertain: false } : { key: claim.key, token: claim.token, ok: true });
 
     // Mark the inbound handled + log the outbound reply on the record.
     await supabase.from('email_messages').update({ triage_status: 'handled', reviewed_by: reviewed_by || 'staff', reviewed_at: new Date().toISOString() }).eq('id', req.params.id);

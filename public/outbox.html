@@ -112,25 +112,26 @@ async function loadPersona(){
 }
 function draftCard(d){
   const cc = d.cc ? `<div class="kv"><b>Cc</b> ${esc(d.cc)}</div>` : '';
-  const att = (Array.isArray(d.attachments)&&d.attachments.length) ? `<div class="att">📎 ${d.attachments.map(a=>esc(a.name||'attachment')).join(', ')} — attached when sent</div>` : '';
+  const att = (Array.isArray(d.attachments)&&d.attachments.length) ? `<div class="att">📎 ${d.attachments.filter(a=>a&&a.storage_path).map((a,i)=>`<a href="/api/email-drafts/${encodeURIComponent(d.id)}/attachments/${i}" target="_blank" rel="noopener">${esc(a.name||'attachment')}</a>`).join(', ')} — attached when sent</div>` : '';
   const body = d.body_text ? `<div class="bodyprev">${esc(d.body_text)}</div>` : '';
   return `<div class="draft" id="d-${d.id}">
     <div class="subj">${esc(d.subject||'(no subject)')}</div>
     <div class="kv"><b>To</b> ${esc(d.to_name?d.to_name+' <'+d.to_email+'>':d.to_email||'')}</div>
     ${cc}${att}${body}
     <div class="row">
-      <button class="btn gold" onclick="sendDraft('${d.id}')">Send it</button>
+      <button class="btn gold" onclick="sendDraft('${d.id}','${esc(d.package_sha256||'')}')">Send it</button>
       <button class="btn ghost" onclick="discardDraft('${d.id}')">Discard</button>
       <span class="msg" id="m-${d.id}"></span>
     </div>
   </div>`;
 }
-async function sendDraft(id){
+async function sendDraft(id, pkg){
   const m=$('m-'+id); if(!confirm('Send this email now, from '+shortName(PERSONA)+'?')) return;
   if(m){ m.className='msg'; m.textContent='Sending…'; }
   try{
-    const r = await af('/api/email-drafts/'+id+'/send',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({approved_by:'owner'})});
-    const j = await r.json(); if(!r.ok) throw new Error(j.error||'failed');
+    // Send exactly the version shown on this card (its package fingerprint).
+    const r = await af('/api/email-drafts/'+id+'/send',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({approved_by:'owner', approved_package_sha256:pkg})});
+    const j = await r.json(); if(!r.ok) throw new Error(j.message||j.error||'failed');
     if(m){ m.className='msg ok'; m.textContent='✅ Sent to '+(j.to||''); }
     const el=$('d-'+id); if(el) setTimeout(()=>{ el.style.opacity=.5; loadPersona(); }, 1200);
   }catch(e){ if(m){ m.className='msg err'; m.textContent=esc(e.message); } }

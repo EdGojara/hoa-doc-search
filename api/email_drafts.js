@@ -14,6 +14,7 @@
 const express = require('express');
 const { createClient } = require('@supabase/supabase-js');
 const graphSend = require('../lib/email/graph_send');
+const ReplyGuard = require('../lib/email/reply_guard');
 const { buildAnnieEmail } = require('../lib/email/annie_signature');
 const { buildClaireEmail } = require('../lib/email/claire_signature');
 const { buildEmmaEmail } = require('../lib/email/emma_signature');
@@ -53,6 +54,9 @@ const PERSONA = {
 function personaMailbox(p, fallback) {
   return (PERSONA[p] && PERSONA[p].mailbox) || fallback || graphSend.CLAIRE_MAILBOX;
 }
+// Every draft a screen shows carries the fingerprint of exactly what is on screen;
+// Send must echo it back (lib/email/reply_guard.js packageHash).
+const withPackage = (d) => (d ? { ...d, package_sha256: ReplyGuard.packageHash(d) } : d);
 const esc = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 const fmtWhen = (d) => { try { return new Date(d).toLocaleString('en-US', { timeZone: 'America/Chicago', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }); } catch (_) { return String(d || ''); } }
 
@@ -60,7 +64,7 @@ const fmtWhen = (d) => { try { return new Date(d).toLocaleString('en-US', { time
 router.get('/', async (req, res) => {
   try {
     let q = supabase.from('outbound_email_drafts')
-      .select('id, community_id, community_name, persona, to_email, to_name, cc, subject, body_text, draft_kind, related_type, related_id, draft_reason, status, created_at, sent_at, send_error')
+      .select('id, community_id, community_name, persona, to_email, to_name, cc, subject, body_text, body_html, attachments, source_email_ref, draft_kind, related_type, related_id, draft_reason, status, created_at, sent_at, send_error')
       .order('created_at', { ascending: false }).limit(500);
     const status = (req.query.status || 'draft').toString();
     if (status !== 'all') q = q.eq('status', status);
@@ -74,7 +78,7 @@ router.get('/', async (req, res) => {
       if (_isMissingTable(error)) return res.json({ drafts: [], migration_pending: true });
       throw error;
     }
-    res.json({ drafts: data || [] });
+    res.json({ drafts: (data || []).map(withPackage) });
   } catch (err) {
     console.error('[email_drafts] list failed:', err.message);
     res.status(500).json({ error: safe(err) });
@@ -110,9 +114,33 @@ router.get('/:id', async (req, res) => {
     const { data, error } = await supabase.from('outbound_email_drafts').select('*').eq('id', req.params.id).maybeSingle();
     if (error) { if (_isMissingTable(error)) return res.status(404).json({ error: 'not_found' }); throw error; }
     if (!data) return res.status(404).json({ error: 'not_found' });
-    res.json({ draft: data });
+    res.json({ draft: withPackage(data) });
   } catch (err) {
     console.error('[email_drafts] get failed:', err.message);
+    res.status(500).json({ error: safe(err) });
+  }
+});
+
+// GET /api/email-drafts/:id/attachments/:index — the exact bytes that Send will attach,
+// so the person can open the document before approving. The stored checksum must
+// match the bytes; a mismatch is refused, never served as if it were the approved file.
+router.get('/:id/attachments/:index', async (req, res) => {
+  try {
+    const { data: d, error } = await supabase.from('outbound_email_drafts').select('id, attachments').eq('id', req.params.id).maybeSingle();
+    if (error) throw error;
+    const list = (d && Array.isArray(d.attachments) ? d.attachments : []).filter((a) => a && a.storage_path);
+    const a = list[Number(req.params.index)];
+    if (!a) return res.status(404).json({ error: 'attachment_not_found' });
+    const { data: blob, error: dErr } = await supabase.storage.from(a.bucket || 'documents').download(a.storage_path);
+    if (dErr || !blob) return res.status(502).json({ error: 'attachment_unavailable', message: 'The attached file could not be loaded from storage.' });
+    const buf = Buffer.from(await blob.arrayBuffer());
+    const got = ReplyGuard.sha256(buf);
+    if (a.sha256 && got !== a.sha256) return res.status(409).json({ error: 'attachment_changed', message: 'The stored file no longer matches the attached version.', expected: a.sha256, got });
+    const name = String(a.name || 'attachment').replace(/[^\w .()-]/g, '_');
+    res.set({ 'Content-Type': a.mime || 'application/octet-stream', 'Content-Disposition': `${req.query.download ? 'attachment' : 'inline'}; filename="${name}"`, 'X-Attachment-SHA256': got, 'Cache-Control': 'no-store' });
+    res.send(buf);
+  } catch (err) {
+    console.error('[email_drafts] attachment open failed:', err.message);
     res.status(500).json({ error: safe(err) });
   }
 });
@@ -129,10 +157,11 @@ router.put('/:id', async (req, res) => {
     }
     if (!Object.keys(patch).length) return res.status(400).json({ error: 'no_fields' });
     const { data, error } = await supabase.from('outbound_email_drafts')
-      .update(patch).eq('id', req.params.id).eq('status', 'draft').select('id').maybeSingle();
+      .update(patch).eq('id', req.params.id).eq('status', 'draft').select('*').maybeSingle();
     if (error) throw error;
     if (!data) return res.status(409).json({ error: 'not_editable' }); // already sent/discarded
-    res.json({ ok: true });
+    // The edited draft is what the person now approves: hand back its new fingerprint.
+    res.json({ ok: true, package_sha256: ReplyGuard.packageHash(data) });
   } catch (err) {
     console.error('[email_drafts] edit failed:', err.message);
     res.status(500).json({ error: safe(err) });
@@ -213,6 +242,26 @@ router.post('/:id/send', async (req, res) => {
     if (d.status === 'discarded') return res.status(409).json({ error: 'discarded' });
     if (!graphSend.isConfigured()) return res.status(400).json({ error: 'email not connected (Graph credentials missing)' });
 
+    // Send exactly what the person reviewed: the screen echoes the fingerprint of the
+    // draft it showed (sender, recipients, subject, body, attachment versions). Any
+    // change since then is refused; the person reopens it and reviews again.
+    const approved = String((req.body && req.body.approved_package_sha256) || '').trim();
+    const currentPackage = ReplyGuard.packageHash(d);
+    if (!approved) return res.status(409).json({ error: 'approval_package_required', message: 'This send did not say which version was reviewed. Reopen the draft and send it from the review screen. Nothing was sent.' });
+    if (approved !== currentPackage) return res.status(409).json({ error: 'stale_approval', message: 'This draft changed after it was reviewed (recipients, subject, body or attachments). Reopen it and review the current version. Nothing was sent.' });
+
+    // One reply per inbound email across both send paths (Communications and here).
+    const inboundId = ReplyGuard.inboundOf(d);
+    const guardKey = ReplyGuard.replyKey({ inboundId, draftId: d.id });
+    const retryAfterUncertain = !!(req.body && req.body.confirm_after_uncertain === true);
+    try {
+      const blocked = ReplyGuard.blockedBy(await ReplyGuard.existingClaim(supabase, guardKey), { retryAfterUncertain });
+      if (blocked) return res.status(blocked.status).json({ error: blocked.error, message: blocked.message, needs_confirmation: blocked.needs_confirmation || undefined });
+    } catch (e) {
+      if (e.code === 'send_guard_not_installed') return res.status(503).json({ error: 'send_guard_not_installed', message: 'Sending is paused until the send-safety guard is installed (migration 539). Nothing was sent.' });
+      throw e;
+    }
+
     // Re-render the branded wrapper from the (possibly edited) plain body, so
     // what Ed edits is what goes out — signature + logo applied at send.
     const p = PERSONA[d.persona];
@@ -234,15 +283,28 @@ router.post('/:id/send', async (req, res) => {
     // Pull any stored file attachments. Default bucket is 'documents'; an
     // attachment may name its own bucket (e.g. a violation letter lives in
     // 'violation-letters'), so honor a.bucket when set. (Ed 2026-08-01.)
+    // Fail closed: every attachment the person approved must load and match the
+    // version reviewed (stored sha256 / size), or nothing is sent. (Ed 2026-10-20.)
     const fileAttachments = [];
     for (const a of Array.isArray(d.attachments) ? d.attachments : []) {
       if (!a || !a.storage_path) continue;
+      let buf = null;
       try {
         const { data: blob, error: dErr } = await supabase.storage.from(a.bucket || 'documents').download(a.storage_path);
-        if (dErr) { console.warn('[email_drafts] attachment download failed:', a.storage_path, dErr.message); continue; }
-        const buf = Buffer.from(await blob.arrayBuffer());
-        fileAttachments.push({ '@odata.type': '#microsoft.graph.fileAttachment', name: a.name || 'attachment', contentType: a.mime || 'application/octet-stream', contentBytes: buf.toString('base64') });
-      } catch (e) { console.warn('[email_drafts] attachment error:', e.message); }
+        if (!dErr && blob) buf = Buffer.from(await blob.arrayBuffer());
+        else console.error('[email_drafts] attachment download failed:', a.storage_path, dErr && dErr.message);
+      } catch (e) { console.error('[email_drafts] attachment error:', a.storage_path, e.message); }
+      if (!buf) {
+        const why = `not sent: the attachment "${a.name || a.storage_path}" could not be loaded`;
+        await supabase.from('outbound_email_drafts').update({ send_error: why }).eq('id', d.id);
+        return res.status(502).json({ error: 'attachment_unavailable', message: `The attachment "${a.name || 'file'}" could not be loaded, so nothing was sent.` });
+      }
+      if ((a.sha256 && ReplyGuard.sha256(buf) !== a.sha256) || (a.size != null && Number(a.size) !== buf.length)) {
+        const why = `not sent: the attachment "${a.name || a.storage_path}" no longer matches the reviewed version`;
+        await supabase.from('outbound_email_drafts').update({ send_error: why }).eq('id', d.id);
+        return res.status(409).json({ error: 'attachment_changed', message: `The attachment "${a.name || 'file'}" no longer matches the version that was reviewed, so nothing was sent.` });
+      }
+      fileAttachments.push({ '@odata.type': '#microsoft.graph.fileAttachment', name: a.name || 'attachment', contentType: a.mime || 'application/octet-stream', contentBytes: buf.toString('base64') });
     }
 
     const from = personaMailbox(d.persona, d.from_mailbox);
@@ -291,22 +353,31 @@ router.post('/:id/send', async (req, res) => {
       const built = p.build(d.body_text, d.community_name, q);
       html = built.html; personaAttachments = built.attachments || [];
     }
+    // The atomic claim, right before Graph: a simultaneous or repeated Send for the same
+    // reply (from here or from Communications) is refused, never sent twice.
+    const claim = await ReplyGuard.claim(supabase, { inboundId, draftId: d.id, path: 'draft_queue', packageSha: currentPackage, actor: req.body.approved_by || 'staff', retryAfterUncertain });
+    if (!claim.ok) return res.status(claim.status).json({ error: claim.error, message: claim.message, needs_confirmation: claim.needs_confirmation || undefined });
     try {
+      // A threaded reply goes to exactly the recipients reviewed (never createReply's own pick).
       const sent = threaded
-        ? await graphSend.sendReplyAs({ from, sourceMailbox: replyTo.mailbox, sourceGraphId: replyTo.graph_id, cc: d.cc || undefined, html, attachments: [...personaAttachments, ...fileAttachments], communityId: d.community_id || null })
+        ? await graphSend.sendReplyAs({ from, sourceMailbox: replyTo.mailbox, sourceGraphId: replyTo.graph_id, to: d.to_email, cc: d.cc || undefined, html, attachments: [...personaAttachments, ...fileAttachments], communityId: d.community_id || null })
         : await graphSend.sendAs({ from, to: d.to_email, cc: d.cc || undefined, subject, html, attachments: [...personaAttachments, ...fileAttachments] });
       // sendAs RETURNS (does not throw) when the outbound guard suppresses a send.
       // That used to fall through and mark the draft 'sent' although nothing left.
       // Keep it a draft with the reason, so it stays visible as blocked. (Ed 2026-10-06.)
       if (sent && sent.suppressed) {
         const why = `blocked: outbound guard suppressed this send (${sent.reason || 'no reason given'})`;
+        await ReplyGuard.finish(supabase, { key: claim.key, token: claim.token, ok: false, err: why, uncertain: false });
         await supabase.from('outbound_email_drafts').update({ send_error: why }).eq('id', d.id);
         return res.status(409).json({ error: why, blocked: true });
       }
     } catch (e) {
+      const uncertain = ReplyGuard.failureIsUncertain(e);
+      await ReplyGuard.finish(supabase, { key: claim.key, token: claim.token, ok: false, err: e, uncertain });
       await supabase.from('outbound_email_drafts').update({ send_error: e.message }).eq('id', d.id);
-      return res.status(502).json({ error: `send failed: ${e.message}` });
+      return res.status(502).json({ error: `send failed: ${e.userMessage || e.message}`, uncertain: uncertain || undefined });
     }
+    await ReplyGuard.finish(supabase, { key: claim.key, token: claim.token, ok: true });
     await supabase.from('outbound_email_drafts').update({
       status: 'sent', sent_at: new Date().toISOString(), sent_from: from,
       approved_by: req.body.approved_by || 'staff', send_error: null,

@@ -445,7 +445,7 @@ function msgHtml(m){
         <div style="display:flex; gap:6px; flex-wrap:wrap; justify-content:flex-end;">
           ${m.standing&&m.standing.action==='add_to_payables'?`<button class="act" style="background:${m.standing.escalate?'#b91c1c':'#065f46'};color:#fff;" onclick="doFile('${m.id}','add-to-payables',this)" title="This bill isn't in Payables yet — add it as an urgent placeholder so it isn't missed; the approver verifies before paying">➕ Add to Payables${m.standing.escalate?' · URGENT':''}</button>`:''}${m.can_file_payables?`<button class="act" style="background:#065f46;color:#fff;" onclick="doFile('${m.id}','to-payables',this)">🧾 Send to Payables</button>`:''}${m.can_record_gl?`<button class="act" style="background:#1e3a8a;color:#fff;" onclick="doFile('${m.id}','to-gl',this)">📒 Record to GL</button>`:''}${m.persona==='emma'&&!m.can_record_gl?`<button class="act" style="background:#1e3a8a;color:#fff;" onclick="openGlEntry('${m.id}')" title="Record this bill to the GL by hand — pick the community, enter the amount and expense account. Use this for an autopay / auto-draft notice where nothing is left to pay but the books still need the entry.">📒 Record to GL&hellip;</button>`:''}
           ${canOweCredit(m) ? `<button class="act" style="background:#b91c1c;color:#fff;" onclick="flagCredit('${m.id}')" title="A vendor owes us money because of this. Puts a hold on their next invoice so we don't pay full.">💳 Credit owed</button>` : ''}
-          <button class="act draft" onclick="doDraft('${m.id}','${m.persona||'claire'}')" title="Reply to the sender — drafts a reply you review before sending">✉️ ${m.extracted&&m.extracted.draft?'Re-draft':'Reply'}</button>
+          ${m.pending_draft_queue_reply?`<a class="act draft" href="${esc(m.pending_draft_queue_reply.link)}" title="A reply to this email is waiting in the Draft Queue">✉️ Open reply in Draft Queue</a>`:`<button class="act draft" onclick="doDraft('${m.id}','${m.persona||'claire'}')" title="Reply to the sender — drafts a reply you review before sending">✉️ ${m.extracted&&m.extracted.draft?'Re-draft':'Reply'}</button>`}
           <button class="act" onclick="rowReplyAll('${m.id}','${m.persona||'claire'}')" title="Reply and copy everyone else on the thread (board members, the CM, etc.)">↩ Reply all</button>
           <button class="act" onclick="forwardPrompt('${m.id}','${esc(m.sender_email||'')}')" title="Forward to a teammate (or hand to an AI teammate) to check before we reply">↪ Forward</button>
           ${(m.persona==='annie' || m.classification==='acc_request' || /\barc\b|architectural|acc form|acc application/i.test(m.subject||''))?`<button class="act" style="background:#6d28d9;color:#fff;" onclick="fileToAcc('${m.id}',this)" title="File this architectural request into the ACC review queue as pending review (works even if the plan is in the email body, not an attachment)">🏗️ Send to ACC queue</button>`:''}
@@ -470,7 +470,7 @@ function msgHtml(m){
       <div class="link-row">${linkCell(m)}</div>
       <div id="glentry-${m.id}"></div>
       <div id="filemsg-${m.id}" class="result" style="margin-top:4px;"></div>
-      <div id="draft-${m.id}">${m.extracted&&m.extracted.draft?draftBoxHtml(m.id, m.extracted.draft.subject, m.extracted.draft.body, m.extracted.draft.careful, m.persona||'claire', null, m.extracted.draft.attachments, m.extracted.draft.to || m.sender_email, {restore:true}):''}</div>
+      <div id="draft-${m.id}">${m.pending_draft_queue_reply?pendingReplyHtml(m):m.extracted&&m.extracted.draft?draftBoxHtml(m.id, m.extracted.draft.subject, m.extracted.draft.body, m.extracted.draft.careful, m.persona||'claire', null, m.extracted.draft.attachments, m.extracted.draft.to || m.sender_email, {restore:true}):''}</div>
     </div>`;
 }
 // Positive Pay: Kat's match of each presented check against our register, and the BANK's decision,
@@ -652,6 +652,15 @@ function saveUnsent(id, v){ try { localStorage.setItem(UNSENT_KEY(id), JSON.stri
 function loadUnsent(id){ try { const v = JSON.parse(localStorage.getItem(UNSENT_KEY(id)) || 'null'); return v && typeof v.body === 'string' ? v : null; } catch(_){ return null; } }
 function clearUnsent(id){ try { localStorage.removeItem(UNSENT_KEY(id)); } catch(_){} }
 function discardUnsent(id){ clearUnsent(id); const n = document.getElementById('unsent-'+id); if(n) n.textContent = 'Saved edits discarded. Reload to see the original draft.'; }
+// A reply to this email is waiting in the Draft Queue (lib/email/reply_guard.js). Show it
+// with its status and a direct link; Communications does not offer a second reply, and
+// the server refuses one. (Ed 2026-10-20, Hugh Durlam's camera-proposal email.)
+function pendingReplyHtml(m){
+  const w = m.pending_draft_queue_reply || {};
+  const who = (PNAME[w.persona]||w.persona||'').split(' ')[0] || 'the AI team';
+  const when = w.created_at ? new Date(w.created_at).toLocaleString('en-US',{timeZone:'America/Chicago',month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}) : '';
+  return `<div class="draftbox" style="border-left:4px solid #0B1D34;background:#f8fafc;"><div class="note" style="font-size:13px;">✉️ <b>A reply to this email is waiting in the Draft Queue</b> (from ${esc(who)}${when?', prepared '+esc(when):''}, not sent yet): <i>${esc(w.subject||'')}</i> to ${esc(w.to_email||'')}.</div><div style="margin-top:8px;"><a href="${esc(w.link||'/admin/draft-queue')}" style="display:inline-block;background:#0B1D34;color:#fff;padding:7px 14px;border-radius:7px;font-weight:600;text-decoration:none;">Open the reply in the Draft Queue</a> <span class="note" style="margin-left:8px;">Review and send it there. Communications will not send a second reply.</span></div></div>`;
+}
 function draftBoxHtml(id, subject, body, careful, persona, covers, genAtts, sender, opts){
   persona = persona || 'claire';
   const unsent = (opts && opts.restore) ? loadUnsent(id) : null;
@@ -1233,7 +1242,8 @@ async function doSend(id, btn, careful, persona){
     // retried; also save it in this browser in case the page is closed first.
     saveUnsent(id, { body, to, cc, attach: manual });
     btn.disabled=false; btn.textContent='✅ Approve & send as '+who;
-    alert(j.message || j.detail || j.error || 'Send failed. Your message was not sent.');
+    if (j.error === 'draft_queue_reply_pending' && j.link) { if (confirm((j.message || 'A reply to this email is waiting in the Draft Queue.') + '\n\nOpen it now?')) location.href = j.link; }
+    else alert(j.message || j.detail || j.error || 'Send failed. Your message was not sent.');
   }
 }
 // ---- Forward to a teammate (loop someone in before replying) --------------
