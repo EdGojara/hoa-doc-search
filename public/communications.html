@@ -1250,6 +1250,12 @@ async function doSend(id, btn, careful, persona){
     r = await af(`${API}/${id}/send`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...payload, confirm_after_amanda:true})});
     j = await r.json();
   }
+  // An earlier send of this reply may have gone out (interrupted or failed mid-send). Only
+  // after the person checks Sent Items and confirms does it send again (reply_guard).
+  if(r.status===409 && j.needs_confirmation && confirm((j.message||'An earlier send may have gone out.')+'\n\nYou checked Sent Items and it did NOT go out. Send now?')){
+    r = await af(`${API}/${id}/send`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...payload, confirm_after_uncertain:true})});
+    j = await r.json();
+  }
   if(r.ok){
     const fu = j.followups||{};
     const fuMsg = (fu.queued&&fu.queued.length) ? `<div class="note" style="color:#166534;margin-top:4px;">✉️ Also queued a follow-up draft to ${fu.queued.map(q=>esc(q.name||q.email)).join(', ')} — review it in the <a href="/admin/draft-queue" style="color:#0B1D34;font-weight:600;">Draft Queue</a>.</div>` : '';

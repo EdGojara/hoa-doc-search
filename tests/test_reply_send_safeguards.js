@@ -237,6 +237,17 @@ check('a send that dropped mid-flight is UNCERTAIN: no resend until a person con
   assert.equal(calls.length, 0);
   assert.equal((await sendDQ({ confirm_after_uncertain: true })).status, 200); assert.equal(calls.length, 1);
 });
+check('a send interrupted mid-way (server restart): no resend until confirmed, then exactly one', async () => {
+  reset();
+  DB.reply_send_claims.push({ reply_key: 'email:' + HUGH, inbound_email_id: HUGH, outbound_draft_id: DRAFT, send_path: 'draft_queue', status: 'sending', claim_token: crypto.randomUUID(), claimed_at: new Date(Date.now() - 20 * 60 * 1000).toISOString(), attempts: 1 });
+  const blocked = await sendDQ();
+  assert.equal(blocked.status, 409); assert.equal(blocked.j.error, 'previous_send_unconfirmed'); assert.equal(calls.length, 0);
+  const fresh = DB.reply_send_claims[0]; fresh.claimed_at = new Date().toISOString();
+  assert.equal((await sendDQ({ confirm_after_uncertain: true })).j.error, 'send_in_progress', 'a LIVE send is never taken over, even with confirmation');
+  fresh.claimed_at = new Date(Date.now() - 20 * 60 * 1000).toISOString();
+  const ok = await sendDQ({ confirm_after_uncertain: true });
+  assert.equal(ok.status, 200, JSON.stringify(ok.j)); assert.equal(calls.length, 1); assert.equal(DB.reply_send_claims[0].status, 'sent'); assert.equal(DB.reply_send_claims[0].attempts, 2);
+});
 check('guard not installed (migration 539 not applied): sending pauses, nothing sent', async () => {
   reset(); claimsTableMissing = true;
   const r = await sendDQ();
