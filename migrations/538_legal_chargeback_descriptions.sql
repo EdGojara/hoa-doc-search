@@ -14,15 +14,22 @@
 -- attorney's actual invoice reference. Values were computed by that function
 -- from each posting's own invoice item and are listed literally below.
 --
--- Changes ONLY: homeowner_transactions.description, .raw_row_jsonb (keys added,
--- none removed), .tenure_id (only where NULL and equal to the posting's tenure,
--- which must still be the current owner); and the owning upload batch's
--- period_label (the label the batch list shows). Each update is guarded on the
--- exact old description and amount, so a re-run, or a row edited since review,
--- changes nothing.
+-- Changes ONLY three columns of these five homeowner_transactions rows:
+-- description, raw_row_jsonb (keys added, none removed) and tenure_id (filled
+-- where NULL with the owner the charge was approved against).
+--
+-- Owner link: tenure_id is set to the posting's tenure only when the approved
+-- allocation, the posting and the property's one current owner tenure are the
+-- same tenure for the same property, at the approved review revision and the
+-- same amount. Any mismatch leaves the row completely untouched, and the verify
+-- step (all five, or nothing) then refuses and rolls the migration back, so a
+-- mismatch is never half-applied. Each update is also guarded on the exact old
+-- description and amount, so a re-run changes nothing.
 --
 -- Never touches: amount_cents, running_balance_cents, transaction_date,
--- charge_category, txn_type, any journal entry, any posting/allocation row.
+-- charge_category, txn_type, contact_id, the upload batch (its internal
+-- period_label keeps the old wording; no reader shows it to owners), any
+-- journal entry, posting, allocation, review or ownership tenure.
 -- No row is inserted or deleted.
 --
 -- Record ownership: association_record (owner ledger); unchanged by this.
@@ -47,20 +54,9 @@ INSERT INTO _m538 VALUES
   ('5fce468b-9bc0-4109-8cf8-158ae5be7733', 'e8a7c83c-2c1b-4075-a929-ebecae812036', 55735,
    'Legal Fees - DRV Enforcement / PS-INV350881', 'Legal Fees - DRV Enforcement: Attorney services and court costs (Attorney Inv. PS-INV350881)', 'PS-INV350881', 'Attorney services and court costs');
 
--- The upload batch label first (it is matched on the still-old description).
-UPDATE transaction_upload_batches b
-   SET period_label = left(m.new_description, 60)
-  FROM homeowner_transactions h JOIN _m538 m ON m.ht_id = h.id
- WHERE b.id = h.source_batch_id
-   AND h.description = m.old_description AND h.amount_cents = m.amount_cents
-   AND b.period_label = left(m.old_description, 60);
-
 UPDATE homeowner_transactions h
    SET description = m.new_description,
-       -- the owner the charge was approved against, only while still the current owner
-       tenure_id = COALESCE(h.tenure_id, (SELECT t.id FROM ownership_tenures t
-                                           WHERE t.id = p.tenure_id AND t.property_id = h.property_id
-                                             AND t.kind = 'owner' AND t.end_date IS NULL)),
+       tenure_id = p.tenure_id,
        raw_row_jsonb = COALESCE(h.raw_row_jsonb, '{}'::jsonb) || jsonb_build_object(
          'legal_invoice_item_id', p.item_id,
          'legal_allocation_id', p.allocation_id,
@@ -71,11 +67,24 @@ UPDATE homeowner_transactions h
          'description_corrected_by', '538_legal_chargeback_descriptions',
          'previous_description', m.old_description)
   FROM _m538 m
-  JOIN legal_invoice_postings p ON p.id = m.posting_id
+  JOIN legal_invoice_postings p    ON p.id = m.posting_id
+  JOIN legal_invoice_allocations a ON a.id = p.allocation_id
+  JOIN legal_invoice_reviews r     ON r.id = p.review_id
+  JOIN ownership_tenures t         ON t.id = p.tenure_id
  WHERE h.id = m.ht_id
-   AND p.homeowner_transaction_id = h.id AND p.status = 'posted'
    AND h.raw_row_jsonb->>'source' = 'legal_invoice_review'
    AND h.description = m.old_description
-   AND h.amount_cents = m.amount_cents;
+   AND h.amount_cents = m.amount_cents
+   -- the posting that created this charge, as approved
+   AND p.homeowner_transaction_id = h.id AND p.status = 'posted'
+   AND p.property_id = h.property_id AND p.amount_cents = h.amount_cents
+   AND r.status = 'approved' AND p.review_revision = r.approved_revision
+   AND a.is_active AND a.revision = r.approved_revision
+   AND a.classification = 'homeowner_recoverable'
+   AND a.property_id = h.property_id AND a.amount_cents = h.amount_cents
+   -- the owner approved is the owner posted, and still the current owner
+   AND a.tenure_id = p.tenure_id
+   AND t.property_id = h.property_id AND t.kind = 'owner' AND t.end_date IS NULL
+   AND (h.tenure_id IS NULL OR h.tenure_id = p.tenure_id);
 
 COMMIT;
