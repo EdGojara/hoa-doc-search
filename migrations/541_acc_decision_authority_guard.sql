@@ -90,7 +90,7 @@ BEGIN
     paving := NEW.approval_gate = 'required'
       OR (COALESCE(NEW.approval_gate, '') <> 'not_required'
           AND ((scope_text ~* '(drive[ -]?way|apron|parking (pad|slab|area))'
-                AND scope_text ~* '(widen|wider|extend|extension|expan|enlarg|additional (concrete|parking|width)|replac|re-?pour)')
+                AND scope_text ~* '(widen|wider|extend|extension|expan|enlarg|additional (concrete|parking|width)|replac|pour|install|construct|new drive|[0-9] ?(ft|feet|foot|'') ?(wide|width))')
             OR (scope_text ~* '(walk[ -]?way|front walk|front (yard|lawn))'
                 AND scope_text ~* '(widen|wider|extend|extension|expan|enlarg|additional (concrete|pavers|paving|width))')));
     cb := rec->'committee_or_board';

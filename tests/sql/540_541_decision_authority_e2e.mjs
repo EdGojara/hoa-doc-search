@@ -140,6 +140,10 @@ if (s2.r && s2.r.status === 'applied') {
   check('refused: a paving-expansion approval with no committee/Board record, even routine-attested',
     /committee_authorization_required/.test(await decide(BRIAN, 'approved_with_conditions', rec({ outcome: 'approved_with_conditions', authority_basis: { kind: 'written_delegation', reference: 'Guidelines 1.4.4.1 delegation', library_document_id: LIB, clearly_compliant: true } })) || ''));
   const cb = { body: 'board', decision: 'approved_with_conditions', decided_on: '2026-10-19', approvers: 'Director A, Director B, Director C', evidence_type: 'email', evidence_reference: 'Board email thread 2026-10-19' };
+  await db.exec(`INSERT INTO acc_decisions (id, status, project_summary) VALUES ('00000000-0000-0000-0000-0000000000a4', 'pending_review', 'Pour a new 30-foot wide driveway')`);
+  check('refused at the DB: a "routine" delegated approval of a 30 ft driveway (no committee/Board)',
+    /committee_authorization_required/.test(await decide('00000000-0000-0000-0000-0000000000a4', 'approved', rec({ authority_basis: { kind: 'written_delegation', reference: 'Guidelines 1.4.4.1 delegation', library_document_id: LIB, clearly_compliant: true } })) || ''));
+  await db.exec(`DELETE FROM acc_decisions WHERE id = '00000000-0000-0000-0000-0000000000a4'`);
   check('refused: a granted deviation without the written deviation authorization',
     /committee_authorization_required/.test(await decide(BRIAN, 'approved_with_conditions', rec({ outcome: 'approved_with_conditions', committee_or_board: { ...cb, deviation_granted: true } })) || ''));
   const brianOk = await decide(BRIAN, 'approved_with_conditions', rec({ outcome: 'approved_with_conditions', committee_or_board: { ...cb, deviation_granted: true, deviation_statement: 'Board grants a width deviation under §2.1 size/location authority.' } }));

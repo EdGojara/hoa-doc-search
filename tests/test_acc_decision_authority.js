@@ -76,6 +76,19 @@ check('a walkway widening is an expansion', DA.classifyDrivewayScope('Widen the 
 check('new pavers in the front yard are an expansion', DA.classifyDrivewayScope('Install pavers in the front yard').required);
 check('same-footprint replacement is NOT escalated', DA.classifyDrivewayScope('Replace the existing driveway in the same footprint; no change to size.').category === 'same_footprint_replacement');
 check('a replacement with no footprint statement is escalated (ambiguous)', DA.classifyDrivewayScope('Driveway replacement - remove and replace cracked concrete').category === 'ambiguous_replacement');
+// The prescribed-width trap (Ed 2026-10-20): "shall be 18 feet" is not "at least
+// 18 feet". The screener cannot know a community's width, so a driveway being
+// built or sized is escalated; the evaluation engine compares the number.
+for (const t of ['Pour a new 30-foot wide driveway', 'Install a 30 ft wide concrete driveway', 'Driveway, 30\' width, broom finish', 'New driveway 25 feet wide']) {
+  check(`hypothetical: "${t}" is escalated, never routine`, DA.classifyDrivewayScope(t).required, JSON.stringify(DA.classifyDrivewayScope(t)));
+}
+{
+  const thirty = { id: 't30', status: 'pending_review', project_summary: 'Pour a new 30-foot wide driveway' };
+  const del30 = DA.ownerDecisionRecord(ED, { outcome: 'approved', authority_kind: 'written_delegation', authority_reference: 'Guidelines §1.4.4.1-1.4.4.2, p. 2', authority_library_document_id: '00000000-0000-0000-0000-0000000000d1', clearly_compliant: true });
+  check('hypothetical 30 ft driveway: a "routine" delegated approval is refused (committee/Board required)', DA.validateDecisionRecord(del30, thirty).some((e) => /committee or Board/.test(e)));
+  check('hypothetical 30 ft driveway: staff cannot approve it', DA.checkFinalDecision(thirty, { decisionType: 'approved', actor: STAFF, requireIssuer: true }).code === 'decision_not_authorized');
+}
+check('a same-footprint replacement that states its width stays routine', !DA.classifyDrivewayScope('Replace the existing 18 ft driveway in the same footprint, no change to size.').required);
 check('driveway crack repair is not escalated', !DA.classifyDrivewayScope('Driveway crack repair and sealing').required);
 check('a roof replacement that mentions parking in the driveway is not escalated', !DA.classifyDrivewayScope('Roof replacement with architectural shingles. The contractor will park in the driveway.').required);
 check('a back patio extension is not escalated as front paving', !DA.classifyDrivewayScope('Extend back patio slab 10 ft').required);
