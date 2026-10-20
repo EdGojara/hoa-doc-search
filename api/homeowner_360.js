@@ -21,6 +21,7 @@ const { route: aiRoute } = require('../lib/ai/router');
 const express = require('express');
 const multer = require('multer');
 const { createClient } = require('@supabase/supabase-js');
+const LedgerLine = require('../lib/ar/ledger_line');
 const { safeErrorMessage } = require('./_safe_error');
 const { evaluateAmenityAccess } = require('../lib/ar/amenity_access');
 const Anthropic = require('../lib/ai/anthropic');
@@ -615,7 +616,7 @@ Deed-restriction cases at attorney (STAFF-ONLY): ${d.at_attorney && d.at_attorne
 Payment plan: ${(d.paymentPlans || []).filter((p) => p.status === 'active').map((p) => `ACTIVE — ${p.installment_amount_cents ? money(p.installment_amount_cents) + '/' + (p.frequency || 'monthly') : 'installments'}${p.num_installments ? ' x' + p.num_installments : ''}${p.next_due_date ? ', next due ' + String(p.next_due_date).slice(0, 10) : ''}${p.terms_summary ? ' — ' + String(p.terms_summary).slice(0, 140) : ''}`).join(' | ') || 'none on file'}
 Open violations (${openV.length}): ${openV.map((v) => `${v.category} @ ${v.current_stage}, opened ${(v.opened_at || '').slice(0, 10)}`).join('; ') || 'none'}
 Violation history (${d.violations.length} total): ${d.violations.slice(0, 12).map((v) => `${v.category} [${v.open ? 'open ' + v.current_stage : 'resolved'}]`).join('; ')}
-Recent payments/charges: ${d.ar.transactions.slice(0, 8).map((t) => `${(t.transaction_date || '').slice(0, 10)} ${t.txn_type || ''} ${money(Number(t.amount_cents) || 0)}`).join('; ') || 'none'}
+Recent payments/charges: ${d.ar.transactions.slice(0, 8).map((t) => `${(t.transaction_date || '').slice(0, 10)} ${LedgerLine.label(t)} ${money(Number(t.amount_cents) || 0)}`).join('; ') || 'none'}
 ARC/ACC (${d.arc.length} on file): ${(() => {
   const pend = (d.arc || []).filter((a) => a.status === 'pending');
   const cond = (d.arc || []).filter((a) => a.status === 'decided' && a.conditions);
