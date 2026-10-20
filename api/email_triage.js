@@ -1469,7 +1469,8 @@ router.post('/:id/send', express.json(), async (req, res) => {
     // Proofread the operator's copy — fix spelling/typos before it sends (and
     // before it's captured as encode-Ed training). Conservative + fail-safe.
     let body = String(_rawBody == null ? '' : _rawBody).trim();
-    if (body) { try { const { proofreadEmailBody } = require('../lib/email/proofread'); body = (await proofreadEmailBody(body)).text; } catch (_) {} }
+    // Sent exactly as approved: spelling is checked BEFORE approval (POST /proofread,
+    // run by the Approve & send button), never rewritten during the send. (Ed 2026-10-20.)
     // Optional Cc — copy a teammate, the board, another owner on the reply.
     // Cc exactly as the person typed it: an entry that is not a valid address stops the send
     // (silently dropping it would send to a different set than the one approved).
@@ -1575,16 +1576,14 @@ router.post('/:id/send', express.json(), async (req, res) => {
         const { data: c } = await supabase.from('contacts').select('preferred_language').eq('id', m.resolved_contact_id).maybeSingle();
         pl = c && c.preferred_language;
       }
+      // The message sent must be the message approved, so nothing is translated during
+      // the send. A resident who prefers another language needs the translated reply
+      // prepared and reviewed first; until then this send is refused, nothing sent.
+      // (Ed 2026-10-20. No contact had a non-English preference when this changed.)
       if (pl && String(pl).toLowerCase() !== 'en') {
-        const { translateForResident } = require('../lib/email/translate');
-        const translated = await translateForResident(sendBody, pl);
-        if (translated && translated.trim() && translated.trim() !== sendBody) {
-          sendBody = translated.trim();
-          sentLanguage = String(pl).toLowerCase();
-          console.log(`[email-triage] reply translated to ${sentLanguage} for contact ${m.resolved_contact_id}`);
-        }
+        return res.status(409).json({ error: 'translation_review_required', message: `This homeowner prefers ${String(pl)}. A translated reply has to be prepared and reviewed before it is sent; nothing was translated or sent.`, language: String(pl).toLowerCase(), sent: false });
       }
-    } catch (e) { console.warn('[email-triage] resident translation skipped:', e.message); }
+    } catch (e) { return res.status(503).json({ error: 'language_check_failed', message: 'Could not check the homeowner\'s preferred language. Nothing was sent; try again.', sent: false }); }
 
     // Send in the right voice: Emma from emma@ for vendor/AP, Claire from claire@
     // otherwise. Both carry the branded logo + their own honest-AI signature.
@@ -1687,26 +1686,26 @@ router.post('/:id/send', express.json(), async (req, res) => {
     // sending a document nobody had looked at.
     const generated = ((m.extracted || {}).draft || {}).attachments || [];
     if (generated.length) {
+      let files = null;
       try {
         const { loadDraftAttachments } = require('../lib/email/draft_attachments');
-        const files = await loadDraftAttachments(generated);
-        if (files.length) attachments = [...(attachments || []), ...files];
-        if (files.length !== generated.length) {
-          console.warn(`[email_triage] generated attachments: ${files.length}/${generated.length} available at send`);
-        }
-      } catch (e) { console.warn('[email_triage] generated attachments skipped:', e.message); }
+        files = await loadDraftAttachments(generated);
+      } catch (e) { console.error('[email_triage] generated attachments failed:', e.message); }
+      // Fail closed: the draft's documents go with it or nothing goes. (Ed 2026-10-20.)
+      if (!files || files.length !== generated.length) return res.status(502).json({ error: 'attachment_unavailable', message: `${files ? files.length : 0} of ${generated.length} attached document(s) could be loaded, so nothing was sent.`, sent: false });
+      attachments = [...(attachments || []), ...files];
     }
 
     // Documents the operator picked to attach (any filed library doc).
     const attachDocIds = Array.isArray(req.body && req.body.attach_doc_ids) ? req.body.attach_doc_ids.filter(Boolean).slice(0, 6) : [];
     if (attachDocIds.length) {
-      try {
-        const { getDocAttachment } = require('../lib/email/doc_attachment');
-        for (const did of attachDocIds) {
-          const a = await getDocAttachment(did);
-          if (a && a.attachment) attachments = [...(attachments || []), a.attachment];
-        }
-      } catch (_) { /* best-effort */ }
+      const { getDocAttachment } = require('../lib/email/doc_attachment');
+      for (const did of attachDocIds) {
+        let a = null;
+        try { a = await getDocAttachment(did); } catch (e) { console.error('[email_triage] document attachment failed:', did, e.message); }
+        if (!a || !a.attachment) return res.status(502).json({ error: 'attachment_unavailable', message: 'An attached document could not be loaded, so nothing was sent.', sent: false });
+        attachments = [...(attachments || []), a.attachment];
+      }
     }
 
     // Files the operator drag-and-dropped from their computer (stashed via
@@ -1720,13 +1719,15 @@ router.post('/:id/send', express.json(), async (req, res) => {
     const strayUpload = attachUploads.find((u) => { const p = String(u.storage_path); return !p.startsWith(stashPrefix) || p.includes('..') || p.includes('\\') || p.slice(stashPrefix.length).includes('/'); });
     if (strayUpload) return res.status(400).json({ error: 'invalid_attachment', detail: 'An attachment was not uploaded for this email. Nothing was sent; attach the file again.' });
     for (const u of attachUploads) {
+      let buf = null;
       try {
         const { data: blob, error: dErr } = await supabase.storage.from('documents').download(u.storage_path);
-        if (dErr || !blob) { console.warn('[email_triage] dropped attachment missing:', u.storage_path, dErr && dErr.message); continue; }
-        const buf = Buffer.from(await blob.arrayBuffer());
-        if (buf.length > 15 * 1024 * 1024) continue;
-        attachments = [...(attachments || []), { '@odata.type': '#microsoft.graph.fileAttachment', name: String(u.name || 'attachment').slice(0, 150), contentType: u.mime || 'application/octet-stream', contentBytes: buf.toString('base64') }];
-      } catch (e) { console.warn('[email_triage] dropped attachment error:', e.message); }
+        if (!dErr && blob) buf = Buffer.from(await blob.arrayBuffer());
+        else console.error('[email_triage] attachment missing:', u.storage_path, dErr && dErr.message);
+      } catch (e) { console.error('[email_triage] attachment error:', u.storage_path, e.message); }
+      if (!buf) return res.status(502).json({ error: 'attachment_unavailable', message: `The attached file "${String(u.name || 'file')}" could not be loaded, so nothing was sent.`, sent: false });
+      if (buf.length > 15 * 1024 * 1024) return res.status(413).json({ error: 'attachment_too_large', message: `"${String(u.name || 'file')}" is over 15 MB, so nothing was sent.`, sent: false });
+      attachments = [...(attachments || []), { '@odata.type': '#microsoft.graph.fileAttachment', name: String(u.name || 'attachment').slice(0, 150), contentType: u.mime || 'application/octet-stream', contentBytes: buf.toString('base64') }];
     }
 
     // Quote the ORIGINAL message (and the prior thread) beneath the reply, so the
@@ -2282,6 +2283,22 @@ router.post('/pull', express.json(), async (req, res) => {
   }
 });
 
+// POST /proofread { body } — the spelling check that used to run inside Send, now run
+// BEFORE approval: returns the corrected text for the person to see; sends nothing.
+// The Approve & send buttons call it first and only send text that came back unchanged.
+router.post('/proofread', express.json({ limit: '256kb' }), async (req, res) => {
+  const body = String((req.body && req.body.body) || '');
+  try {
+    const { proofreadEmailBody } = require('../lib/email/proofread');
+    const out = await proofreadEmailBody(body);
+    const text = out && typeof out.text === 'string' ? out.text : body;
+    res.json({ text, changed: text !== body });
+  } catch (e) {
+    console.warn('[email_triage] proofread failed:', e.message);
+    res.json({ text: body, changed: false, unavailable: true });
+  }
+});
+
 // POST /compose — ADMIN ONLY (Ed). Compose and send a fresh email as Claire
 // straight from trustEd (not a reply to an inbound). Branded HTML + logo +
 // honest-AI signature, sent from claire@, logged as association-record
@@ -2305,7 +2322,7 @@ router.post('/compose', express.json(), async (req, res) => {
     if (!body.trim()) return res.status(400).json({ error: 'body_required' });
     // Proofread the operator's copy (spelling/typos only) before sending; leaves
     // any forwarded/quoted history untouched. Fail-safe. (Ed 2026-07-26.)
-    try { const { proofreadEmailBody } = require('../lib/email/proofread'); body = (await proofreadEmailBody(body)).text; } catch (_) {}
+    // Sent exactly as approved: spelling is checked before approval (POST /proofread), never during the send.
     if (!graphSend.isConfigured()) return res.status(400).json({ error: 'claire_not_connected', detail: 'AI-team email send is not wired yet — the Azure app (Mail.Send) + GRAPH_TENANT_ID / GRAPH_CLIENT_ID / GRAPH_CLIENT_SECRET must be set.' });
 
     const subj = (subject && String(subject).trim()) ? String(subject).trim() : '(no subject)';

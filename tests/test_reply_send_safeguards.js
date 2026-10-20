@@ -57,7 +57,9 @@ const storage = { from: (bucket) => ({ download: async (p) => {
 } }) };
 const realSB = require('@supabase/supabase-js');
 stub('@supabase/supabase-js', { ...realSB, createClient: () => ({ from: (t) => query(t), storage, rpc: async () => ({ data: null, error: null }) }) });
-stub('../lib/email/proofread', { proofreadEmailBody: async (t) => ({ text: t }) });
+// The proofreader fixes 'teh' -> 'the': if it ever ran during a send, the test would see it.
+stub('../lib/email/proofread', { proofreadEmailBody: async (t) => ({ text: String(t).replace(/\bteh\b/g, 'the') }) });
+stub('../lib/email/graph_attachments', { fetchMessageText: async () => '', fetchMessageRecipients: async () => ({ to: [], cc: [] }), fetchAllAttachmentBuffers: async () => [] });
 // Communications is admin-gated (router.use); the test signs in as Ed.
 const realAuth = require('../api/_require_admin');
 const ED = { user: { id: 'u1' }, role: 'admin', email: 'egojara@bedrocktx.com', full_name: 'Ed Gojara' };
@@ -241,6 +243,53 @@ check('guard not installed (migration 539 not applied): sending pauses, nothing 
   assert.equal(r.status, 503); assert.equal(r.j.error, 'send_guard_not_installed'); assert.equal(calls.length, 0);
 });
 
+// ---- Communications sends exactly what was approved (Ed 2026-10-20) ----
+const OTHER = '6b1f0c2e-1d2a-4b9c-9e1a-0c5d2f7a8b90';
+function addOtherEmail(extra) {
+  DB.email_messages.push({ id: OTHER, mailbox: 'claire@bedrocktx.com', graph_id: 'AAMk-other', direction: 'inbound', sender_email: 'owner@example.com', sender_name: 'A Homeowner', subject: 'Pool hours', persona: 'claire', triage_status: 'needs_review', received_at: '2026-10-20T12:00:00Z', recipients: ['claire@bedrocktx.com'], body_full: 'What are the pool hours?', extracted: {}, ...(extra || {}) });
+}
+const sendOther = (body, extra) => http('POST', `/api/email-triage/${OTHER}/send`, { body, to: 'owner@example.com', persona: 'claire', ...(extra || {}) });
+check('Communications sends the approved text verbatim: no spelling rewrite during Send', async () => {
+  reset(); addOtherEmail();
+  const r = await sendOther('Hi, teh pool opens at 9.');
+  assert.equal(r.status, 200, JSON.stringify(r.j));
+  assert.equal(calls.length, 1); assert.ok(calls[0].html.includes('teh pool opens'), 'the approved text, unchanged');
+  assert.equal(calls[0].to, 'owner@example.com'); assert.equal(calls[0].cc, undefined);
+  assert.equal(DB.reply_send_claims.find((c) => c.reply_key === 'email:' + OTHER).send_path, 'communications');
+  const again = await sendOther('Hi again.');
+  assert.equal(again.status, 409); assert.equal(again.j.error, 'already_replied'); assert.equal(calls.length, 1);
+});
+check('spelling is checked BEFORE approval: /proofread returns the correction and sends nothing; pages call it first', async () => {
+  reset();
+  const r = await http('POST', '/api/email-triage/proofread', { body: 'Hi, teh pool opens at 9.' });
+  assert.equal(r.status, 200); assert.equal(r.j.text, 'Hi, the pool opens at 9.'); assert.equal(r.j.changed, true);
+  assert.equal(calls.length, 0);
+  const fs = require('fs'); const p = (f) => fs.readFileSync(require('path').join(__dirname, '..', f), 'utf8');
+  const comms = p('public/communications.html');
+  const send = comms.slice(comms.indexOf('async function doSend('), comms.indexOf('async function doSend(') + 3000);
+  assert.ok(send.indexOf('proofreadBeforeSend(') > -1 && send.indexOf('proofreadBeforeSend(') < send.indexOf('/send`'), 'reply: proofread before the send call');
+  assert.ok(/_pf\.changed\)\{\s*_dt\.value = _pf\.text;[\s\S]{0,400}return;/.test(send), 'a correction is shown and nothing is sent');
+  assert.ok(/proofreadBeforeSend\(body\);\s*\n\s*if\(_pf\.changed\)\{ document\.getElementById\('nmBody'\)\.value=_pf\.text;/.test(comms), 'compose: same rule');
+  assert.ok(/email-triage\/proofread[\s\S]{0,400}ccBody[\s\S]{0,300}return;/.test(p('public/index.html')), 'legacy compose: same rule');
+  const api = p('api/email_triage.js');
+  assert.equal((api.match(/proofreadEmailBody\(/g) || []).length, 1, 'the only proofread call is the pre-approval /proofread endpoint');
+  assert.ok(!/translateForResident\(/.test(api), 'no translation during a send');
+});
+check('a homeowner who prefers another language: refused (translation must be reviewed first), nothing sent', async () => {
+  reset(); addOtherEmail({ resolved_contact_id: 'c-es' }); DB.contacts = [{ id: 'c-es', preferred_language: 'es' }];
+  const r = await sendOther('Hi, the pool opens at 9.');
+  assert.equal(r.status, 409); assert.equal(r.j.error, 'translation_review_required'); assert.equal(calls.length, 0);
+  assert.equal(DB.reply_send_claims.length, 0);
+});
+check('Communications attachments fail closed: a chosen file that cannot load stops the send', async () => {
+  reset(); addOtherEmail();
+  const r = await sendOther('Hi, the form is attached.', { attach_uploads: [{ name: 'form.pdf', storage_path: `email_outbound_attachments/${OTHER}/form.pdf`, mime: 'application/pdf' }] });
+  assert.equal(r.status, 502); assert.equal(r.j.error, 'attachment_unavailable'); assert.equal(calls.length, 0);
+  STORE[`documents/email_outbound_attachments/${OTHER}/form.pdf`] = Buffer.from('%PDF form');
+  const ok = await sendOther('Hi, the form is attached.', { attach_uploads: [{ name: 'form.pdf', storage_path: `email_outbound_attachments/${OTHER}/form.pdf`, mime: 'application/pdf' }] });
+  assert.equal(ok.status, 200, JSON.stringify(ok.j)); assert.ok(calls[0].attachments.some((a) => a.name === 'form.pdf'));
+});
+
 // ---- the REAL Graph reply sender: threading + attachments fail closed ----
 function graphStub(script) {
   const log = [];
@@ -251,7 +300,7 @@ function graphStub(script) {
     if (u.endsWith('/createReply')) return res(201, { id: 'draft-1', body: { content: '<div>quoted Oct 20 thread</div>' } });
     if (m === 'PATCH') { script.patched = JSON.parse(opt.body); return res(200, {}); }
     if (m === 'GET' && u.includes('$select=toRecipients')) return res(200, { toRecipients: (script.patched.toRecipients || []), ccRecipients: script.patched.ccRecipients || [] });
-    if (m === 'POST' && /\/attachments$/.test(u)) return res(script.attachStatus || 201, {});
+    if (m === 'POST' && /\/attachments$/.test(u)) { if (script.attachThrows) throw new Error('ETIMEDOUT'); return res(script.attachStatus || 201, {}); }
     if (m === 'GET' && u.includes('/attachments?')) return res(200, { value: script.listed || [] });
     if (m === 'DELETE') return res(204, {});
     if (u.endsWith('/send')) return res(202, {});
@@ -280,6 +329,11 @@ check('real reply sender: replies IN the thread, to the reviewed recipient, atta
 check('real reply sender: a failed attachment upload deletes the draft and never sends', async () => {
   const r = await realReply({ attachStatus: 500 });
   assert.ok(r.err && r.err.code === 'attachment_failed' && r.err.preSend === true);
+  assert.ok(r.log.some((l) => /^DELETE \/messages\/draft-1$/.test(l))); assert.ok(!r.log.some((l) => /\/send$/.test(l)));
+});
+check('real reply sender: no clear answer from Graph on an attachment (timeout) deletes the draft and never sends', async () => {
+  const r = await realReply({ attachThrows: true });
+  assert.ok(r.err && r.err.code === 'attachment_failed' && r.err.preSend === true, r.err && r.err.message);
   assert.ok(r.log.some((l) => /^DELETE \/messages\/draft-1$/.test(l))); assert.ok(!r.log.some((l) => /\/send$/.test(l)));
 });
 check('real reply sender: an attachment missing from the draft afterwards deletes it and never sends', async () => {

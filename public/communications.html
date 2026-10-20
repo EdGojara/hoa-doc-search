@@ -1195,6 +1195,17 @@ function websiteInquiryBannerHtml(m){
   if(w.verified) return `<div style="font-size:12px;margin-top:5px;background:#eef6ff;border:1px solid #bcdcff;border-radius:6px;padding:6px 9px;color:#0b4a8f;">🌐 <strong>Website inquiry</strong> (${esc(w.purpose||'')})${w.community?' · '+esc(w.community):''} · from ${who||'?'} · owner: ${esc(OWN[w.owner]||w.owner||'')}${m.extracted.ai_classification&&m.extracted.ai_classification!=='website_inquiry'?` · <span title="What the AI classifier said before the verified website origin overrode it">AI said: ${esc(m.extracted.ai_classification)}</span>`:''}</div>`;
   return `<div style="font-size:12px;margin-top:5px;background:#fdecec;border:1px solid #f3c0c0;border-radius:6px;padding:6px 9px;color:#7f1d1d;">⚠️ <strong>Unverified website inquiry.</strong> ${esc(w.warning||'Could not be verified.')}${w.reasons&&w.reasons.length?' ('+esc(w.reasons.join(', '))+')':''}</div>`;
 }
+// Spelling is checked BEFORE approval, never during the send (Ed 2026-10-20: the message
+// approved must be exactly the message sent). Returns the text to show; changed=true means
+// it was corrected and must be reviewed again before anything is sent.
+async function proofreadBeforeSend(text){
+  try{
+    const r = await af('/api/email-triage/proofread',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({body:text})});
+    const j = await r.json();
+    if(r.ok && typeof j.text==='string') return { text:j.text, changed: !!j.changed && j.text!==text };
+  }catch(_){}
+  return { text, changed:false };
+}
 async function doSend(id, btn, careful, persona){
   const who = (PNAME[persona]||'Claire').split(' ')[0];
   const covers = coversByMsg[id] || [];
@@ -1210,7 +1221,15 @@ async function doSend(id, btn, careful, persona){
   }
   // A file still uploading? Don't send without it. (Ed 2026-08-01.)
   if((attachByMsg[id]||[]).some(a=>a.upload&&a.uploading)){ alert('A file is still uploading — give it a second, then send.'); return; }
-  const body = document.getElementById('dt-'+id).value;
+  const _dt = document.getElementById('dt-'+id);
+  btn.disabled = true; btn.textContent = 'Checking spelling…';
+  const _pf = await proofreadBeforeSend(_dt.value);
+  if(_pf.changed){
+    _dt.value = _pf.text; btn.disabled=false; btn.textContent='✅ Approve & send as '+who;
+    alert('Spelling corrections were made in the reply. Review the text, then click Approve & send again. Nothing was sent.');
+    _dt.focus(); return;
+  }
+  const body = _dt.value;
   btn.disabled = true; btn.textContent = 'Sending…';
   const also_handle = covers.map(c=>c.id);
   // Auto attachments (the ARC form) attach server-side by classification. Split the
@@ -1502,6 +1521,9 @@ window.ncSend = async function(){
   const who=(COMPOSE_PERSONAS[ncP()]||COMPOSE_PERSONAS.claire).first;
   if(!to){ st.style.color='#b91c1c'; st.textContent='Enter at least one recipient email.'; return; }
   if(!body){ st.style.color='#b91c1c'; st.textContent='Write a message, or have '+who+' draft one.'; return; }
+  // Spelling checked before approval; a correction is shown, not sent.
+  const _pf = await proofreadBeforeSend(body);
+  if(_pf.changed){ document.getElementById('nmBody').value=_pf.text; st.style.color='#8a6d00'; st.textContent='Spelling corrections were made. Review the message, then click Send again. Nothing was sent.'; return; }
   btn.disabled=true; const o=btn.textContent; btn.textContent='Sending…'; st.style.color='#5a7390'; st.textContent='Sending as '+who+'…';
   try{
     const r=await af('/api/email-triage/compose',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({to,cc,subject,community_name,body,persona:ncP(),source_email_id:window._composeSourceId||null})});
