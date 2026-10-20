@@ -1144,11 +1144,22 @@ router.post('/:id/draft-reply', express.json(), async (req, res) => {
       } catch (e) { console.warn('[email_triage] ACC form read skipped:', e.message); }
     }
 
-    // Architectural request: if the community has a blank ARC application form,
-    // Claire tells them it's attached (the form itself is attached on send).
-    let arcFormTitle = null, autoAttachments = [];
-    if (m.classification === 'acc_request' && communityId) {
-      try { const { getArcApplicationForm } = require('../lib/email/arc_application'); const f = await getArcApplicationForm(communityId); if (f) { arcFormTitle = f.title; autoAttachments.push({ id: f.id, title: f.title, auto: true }); } } catch (_) {}
+    // Architectural request (Ed 2026-10-20): the form is decided BEFORE drafting and the draft is
+    // told the truth. A verified blank form is offered only to someone who has not just sent their
+    // application; when offered it is STAGED onto the stored draft below, so what the card shows is
+    // exactly what Send attaches. There is no display-only "auto" chip any more.
+    const accEmail = m.classification === 'acc_request' || (m.persona === 'annie' && m.classification === 'website_inquiry');
+    const draftClassification = (m.persona === 'annie' && m.classification === 'website_inquiry') ? 'acc_request' : m.classification;
+    let arcForm = null, arcFormTitle = null, arcFormUnavailable = false;
+    const autoAttachments = [];
+    if (accEmail && communityId) {
+      const ACCR = require('../lib/email/acc_reply_rules');
+      const submitted = ACCR.looksLikeSubmittedApplication({ bodyText: m.body_full || m.body_preview || '', hasAttachments: !!m.has_attachments });
+      if (!submitted) {
+        try { arcForm = await require('../lib/email/arc_application').getArcApplicationForm(communityId); } catch (e) { console.warn('[email_triage] ARC form lookup skipped:', e.message); }
+        arcFormTitle = arcForm ? arcForm.title : null;
+        arcFormUnavailable = !arcForm;
+      }
     }
 
     // Encode-Ed: pull how Ed edited this persona's past replies of this kind (this
@@ -1189,7 +1200,7 @@ router.post('/:id/draft-reply', express.json(), async (req, res) => {
 
     const draft = await draftReply({
       email: { subject: m.subject, body_preview: m.body_preview, body_full: m.body_full, conversation_id: m.conversation_id, sender_email: m.sender_email, graph_id: m.graph_id, mailbox: m.mailbox, has_attachments: m.has_attachments },
-      classification: m.classification,
+      classification: draftClassification,
       contactId: m.resolved_contact_id, propertyId, communityId,
       examples: replyExamples,
       paymentStatus, // vendor payment chase: the invoice's verified AP status
@@ -1199,6 +1210,7 @@ router.post('/:id/draft-reply', express.json(), async (req, res) => {
       contactName: greetingNameFor(m),
       communityName,
       arcFormTitle, // if set, tell them the ARC application is attached
+      arcFormUnavailable, // ACC with no verified form: never claim one; offer the team sending it
       force: true, // Ed clicked "Draft reply" explicitly — always produce a reply, even internal/spam
       notes, currentDraft, // reviewer steering (Rewrite with my notes)
       siblings, // cover the homeowner's other recent emails in one reply
@@ -1207,7 +1219,28 @@ router.post('/:id/draft-reply', express.json(), async (req, res) => {
       pendingApplications, // Annie: ACC applications already in our queue for this property
       persona: m.persona || 'claire', // draft AS the owning teammate, so a specialist answers in their own lane
     });
-    res.json({ ...draft, covers, auto_attachments: autoAttachments, community_id: communityId, ...recipientOut });
+    // Stage the form the draft was told about onto the STORED draft (the send path attaches
+    // extracted.draft.attachments), replacing any earlier ARC form; other files stay.
+    let attachments;
+    if (accEmail) {
+      const ARC_PREFIX = 'email_outbound_attachments/arc_forms/';
+      let staged = null;
+      if (arcForm && draft && draft.body && /\b(attach|application|the form)\b/i.test(draft.body)) {
+        try { staged = await require('../lib/email/arc_application').stageArcFormAttachment(communityId); } catch (e) { console.warn('[email_triage] ARC form staging skipped:', e.message); }
+        if (!staged) {
+          draft.careful = true;
+          draft.review_hint = ['\u26a0 The reply mentions the application form, but it could not be attached. Attach it or reword the reply before sending.', draft.review_hint].filter(Boolean).join(' ');
+        }
+      }
+      const { data: cur, error: curErr } = await supabase.from('email_messages').select('extracted').eq('id', req.params.id).maybeSingle();
+      if (curErr) throw curErr;
+      const ex0 = (cur && cur.extracted) || {};
+      const kept = ((ex0.draft && ex0.draft.attachments) || []).filter((a) => !(a && String(a.storage_path || '').startsWith(ARC_PREFIX)));
+      attachments = staged ? [...kept, staged] : kept;
+      const { error: upErr } = await supabase.from('email_messages').update({ extracted: { ...ex0, draft: { ...(ex0.draft || {}), attachments } } }).eq('id', req.params.id);
+      if (upErr) throw upErr;
+    }
+    res.json({ ...draft, covers, auto_attachments: autoAttachments, ...(attachments ? { attachments } : {}), community_id: communityId, ...recipientOut });
   } catch (err) {
     console.error('[email_triage] draft-reply failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });

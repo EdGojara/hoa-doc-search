@@ -154,6 +154,7 @@ const CHECKS = [
   'tests/test_legal_treatment.js',
   'tests/test_ledger_line.js',
   'tests/test_reply_send_safeguards.js',
+  'tests/test_acc_stabilization.js',
   'tests/test_accounting_ownership.js',
   'tests/test_legal_team.js',
   'tests/test_legal_team_e2e.js',
