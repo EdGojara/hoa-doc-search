@@ -85,7 +85,8 @@ function fakeDb(seed) {
       // atomic: validate every claim before writing any
       for (const p of a.p_postings) if (postings.some((x) => x.allocation_id === p.allocation_id && ['pending', 'posted'].includes(x.status))) return { data: null, error: { code: '23505', message: 'duplicate live allocation' } };
       Object.assign(r, { status: 'approved', approved_revision: r.revision, approved_by: a.p_actor, approved_at: new Date().toISOString() });
-      for (const p of a.p_postings) postings.push(Object.assign({ id: id('post'), review_id: r.id, ap_invoice_id: a.p_ap_invoice_id, community_id: r.community_id, review_revision: r.revision, status: 'pending', claim_token: null, claimed_at: null, created_at: new Date().toISOString() }, p));
+      for (const p of a.p_postings) postings.push(Object.assign({ id: id('post'), review_id: r.id, ap_invoice_id: a.p_ap_invoice_id, community_id: r.community_id, review_revision: r.revision, status: 'pending', claim_token: null, claimed_at: null, created_at: new Date().toISOString(),
+        item_id: (rowsOf('legal_invoice_allocations').find((x) => x.id === p.allocation_id) || {}).item_id || null }, p));   // 508 derives item_id from the allocation
       rowsOf('legal_invoice_review_events').push({ review_id: r.id, action: 'treatment_approved', actor: a.p_actor, summary: a.p_summary });
       return { data: { ok: true, review_id: r.id, revision: r.revision }, error: null };
     }
@@ -151,7 +152,7 @@ const item = (id, lineId, allocs) => ({ id, source_line_ids: [lineId], source_te
 const twoOwnersOneGeneral = () => invoice([item('it-1', LINE, [owner(141416, 'p-clear'), owner(105830, 'p-glen'), assoc(19027)])]);
 // allocations live in the DB too (the approve RPC and postClaim read them)
 function withAllocs(db, d) {
-  for (const it of d.saved.items) for (const a of it.allocations) db.tables.legal_invoice_allocations.push(Object.assign({ item_id: it.id, review_id: REV, revision: 3, is_active: true, legal_invoice_items: { matter_ref: it.matter_ref } }, a));
+  for (const it of d.saved.items) for (const a of it.allocations) db.tables.legal_invoice_allocations.push(Object.assign({ item_id: it.id, review_id: REV, revision: 3, is_active: true, legal_invoice_items: { matter_ref: it.matter_ref, source_text: it.source_text } }, a));
   return d;
 }
 
@@ -178,10 +179,11 @@ const approve = (db, d, P, extra) => T.approveTreatment(db, d, Object.assign({ a
 // ---- plan ------------------------------------------------------------------
 t('owner ledger wording: DRV reads DRV Enforcement, collections reads Collections, one reference, no repeated "Legal Fees"', async () => {
   const T = require('../lib/legal/treatment');
-  assert.strictEqual(T.homeownerDescription('attorney_fee_other', 'PS-INV350881'), 'Legal Fees - DRV Enforcement / PS-INV350881');
-  assert.strictEqual(T.homeownerDescription('attorney_fee', '4071915'), 'Legal Fees - Collections / 4071915');
-  assert.strictEqual(T.homeownerDescription(null, '123'), 'Legal Fees / 123');
-  assert.strictEqual(T.homeownerDescription('attorney_fee', null), 'Legal Fees - Collections');
+  // Ed 2026-10-20: category, a catalogue service phrase, and the invoice's own reference.
+  assert.strictEqual(T.homeownerDescription('attorney_fee_other', 'PS-INV350881'), 'Legal Fees - DRV Enforcement: Attorney services (Attorney Inv. PS-INV350881)');
+  assert.strictEqual(T.homeownerDescription('attorney_fee', '4071915', ['Smith - 1 Main St - Process Payment']), 'Legal Fees - Collections: Payment processing (Attorney Inv. 4071915)');
+  assert.strictEqual(T.homeownerDescription(null, '123'), 'Legal Fees: Attorney services (Attorney Inv. 123)');
+  assert.strictEqual(T.homeownerDescription('attorney_fee', null), 'Legal Fees - Collections: Attorney services', 'no reference shown, none invented');
 });
 t('plan: owner-specific lines bill back Dr 1300 / Cr the accrued 5870; the general matter posts nothing', async () => {
   const db = fakeDb(seed());
@@ -396,6 +398,91 @@ t('void/split guard: live postings on an invoice are counted; before 508 there a
   assert.strictEqual(await T.livePostingsForInvoice(db, INV), 2);
   const pre = fakeDb(seed()); pre.missing.add('legal_invoice_postings');
   assert.strictEqual(await T.livePostingsForInvoice(pre, INV), 0);
+});
+
+// ---- homeowner chargeback descriptions (Ed 2026-10-20) ----------------------
+// Category + a fixed service phrase + the attorney's own invoice reference. The
+// attorney's line text (owner names, addresses, case detail) never reaches the owner.
+const textItem = (id, text, allocs) => Object.assign(item(id, 'tl-' + id, allocs), { source_text: text });
+function textInvoice(items, num, over) {
+  const total = items.reduce((s, it) => s + it.amount_cents, 0);
+  return Object.assign(invoice([]), {
+    invoice: { id: INV, community_id: CG, vendor: 'Daughtry & Farine, P.C.', invoice_number: num, invoice_date: '2026-08-31', total_cents: total, accrued: true },
+    invoiceNumber: num,
+    lines: items.map((it, i) => ({ id: it.source_line_ids[0], line_number: i + 1, description: it.source_text, amount_cents: it.amount_cents })),
+    saved: { review: { id: REV, revision: 3, status: 'draft' }, items },
+  }, over || {});
+}
+// AP lines in the DB too (coded to 5870), so the plan finds the accrued account.
+function withLines(db, d) { for (const l of d.lines) db.tables.ap_invoice_lines.push({ id: l.id, invoice_id: INV, gl_account_id: 'a5870' }); return withAllocs(db, d); }
+// The invoice 283101 shape: one invoice, four owners, each line naming its owner.
+const fourOwners = (num = '283101') => textInvoice([
+  textItem('it-1', 'Keller, Ann - 19711 Bluff Canyon Way - Draft petition; docket review; defendant answers strategy call re settlement', [owner(100800, 'p-a')]),
+  textItem('it-2', 'Parks, Bo - 19718 Eagle Canyon Way - Payment plan set up; process payment', [owner(6800, 'p-b')]),
+  textItem('it-3', 'Lee, Cy - 6234 Clear Canyon Dr - Process Payment', [owner(3200, 'p-clear')]),
+  textItem('it-4', 'Diaz, Di - 19951 Big Canyon Dr - Process Payment', [owner(3200, 'p-glen')]),
+], num);
+const SENSITIVE = /Keller|Parks|Lee,|Diaz|Ann|Canyon|petition|docket|defendant|strategy|settlement|19711|6234/i;
+
+t('descriptions: each owner charge names the category, a service phrase and the real invoice reference, with internal links in raw', async () => {
+  const db = fakeDb(seed()); const d = withLines(db, fourOwners()); const P = posters(db);
+  const out = await approve(db, d, P); assert.ok(out.ok, JSON.stringify(out));
+  const by = Object.fromEntries(P.calls.charge.map((c) => [c.propertyId, c]));
+  assert.strictEqual(by['p-a'].description, 'Legal Fees - Collections: Court filings and documents (Attorney Inv. 283101)');
+  assert.strictEqual(by['p-b'].description, 'Legal Fees - Collections: Payment plan administration and payment processing (Attorney Inv. 283101)');
+  assert.strictEqual(by['p-clear'].description, 'Legal Fees - Collections: Payment processing (Attorney Inv. 283101)');
+  assert.deepStrictEqual(P.calls.charge.map((c) => c.amountCents).sort((a, b) => a - b), [3200, 3200, 6800, 100800], 'amounts unchanged');
+  for (const c of P.calls.charge) {
+    assert.strictEqual(c.raw.attorney_invoice_number, '283101'); assert.strictEqual(c.raw.attorney_reference_missing, false);
+    assert.strictEqual(c.raw.description_version, 2); assert.ok(c.raw.legal_allocation_id && c.raw.legal_invoice_item_id && c.raw.legal_posting_id);
+    assert.strictEqual(c.tenureId, 'ten-' + c.propertyId, 'stamped with the owner it was approved against');
+    assert.ok(/invoice 283101/.test(c.notes));
+  }
+});
+t('descriptions: privileged or identifying line text never reaches the owner, and no owner sees another owner', async () => {
+  const db = fakeDb(seed()); const d = withLines(db, fourOwners()); const P = posters(db);
+  await approve(db, d, P);
+  for (const c of P.calls.charge) assert.ok(!SENSITIVE.test(c.description), c.description);
+  const S = require('../lib/legal/review_suggest');
+  assert.strictEqual(S.servicePhrase(['Call with client re settlement strategy and weaknesses in our case']), 'Attorney services', 'unknown work gets the generic phrase, never the text');
+  assert.strictEqual(S.servicePhrase([null, undefined, '']), 'Attorney services');
+});
+t('descriptions: a missing or unusable invoice number shows no reference, invents none, and is flagged for staff', async () => {
+  for (const num of [null, '', '   ', 'per our call w/ Smith: see memo re lien strategy']) {
+    const db = fakeDb(seed()); const d = withLines(db, fourOwners(num)); const P = posters(db);
+    const out = await approve(db, d, P); assert.ok(out.ok, JSON.stringify(out));
+    for (const c of P.calls.charge) {
+      assert.ok(!/Inv\.|Smith|memo/.test(c.description), c.description);
+      assert.ok(/^Legal Fees - Collections: /.test(c.description));
+      assert.strictEqual(c.raw.attorney_invoice_number, null); assert.strictEqual(c.raw.attorney_reference_missing, true);
+      assert.ok(/STAFF REVIEW: the attorney invoice has no invoice number/.test(c.notes));
+    }
+  }
+});
+t('descriptions: DRV enforcement charges read as DRV Enforcement, court costs named as costs', async () => {
+  const db = fakeDb(seed());
+  const d = withLines(db, textInvoice([textItem('it-1', 'Roe - 5922 Spring Sunrise - Hearing prep; court filing fee; process server', [owner(55735, 'p-a', { charge_category: 'attorney_fee_other' })])], 'PS-INV350881'));
+  const P = posters(db); await approve(db, d, P);
+  assert.strictEqual(P.calls.charge[0].description, 'Legal Fees - DRV Enforcement: Attorney services and court costs (Attorney Inv. PS-INV350881)');
+});
+t('descriptions: repeat processing posts nothing new and the wording is deterministic', async () => {
+  const db = fakeDb(seed()); const d = withLines(db, fourOwners()); const P = posters(db);
+  await approve(db, d, P); const first = P.calls.charge.map((c) => c.description);
+  const again = await approve(db, d, P);
+  assert.ok(again.ok && again.already_approved && again.posted.length === 0);
+  assert.strictEqual(P.calls.charge.length, 4, 'one charge per owner, never a duplicate');
+  assert.strictEqual(db.tables.homeowner_transactions.length, 4);
+  const db2 = fakeDb(seed()); const P2 = posters(db2); await approve(db2, withLines(db2, fourOwners()), P2);
+  assert.deepStrictEqual(P2.calls.charge.map((c) => c.description), first, 'same invoice, same words');
+});
+t('postHomeownerCharge: stamps tenure_id only when given (other callers unchanged)', async () => {
+  const H = require('../lib/accounting/homeowner_charge');
+  const db = fakeDb({ transaction_upload_batches: [], homeowner_transactions: [], communities: [{ id: CG, management_company_id: 'mc' }], v_current_property_owners: [], v_homeowner_current_balance: [],
+    properties: [{ id: 'p-a', community_id: CG, vantaca_account_id: null }, { id: 'p-b', community_id: CG, vantaca_account_id: null }] });
+  await H.postHomeownerCharge(db, { communityId: CG, propertyId: 'p-a', transactionDate: '2026-09-01', description: 'x', chargeCategory: 'attorney_fee', amountCents: 100, tenureId: 'ten-p-a' });
+  await H.postHomeownerCharge(db, { communityId: CG, propertyId: 'p-b', transactionDate: '2026-09-01', description: 'y', chargeCategory: 'attorney_fee', amountCents: 100 });
+  const [a, b] = db.tables.homeowner_transactions;
+  assert.strictEqual(a.tenure_id, 'ten-p-a'); assert.ok(!('tenure_id' in b), 'no tenure key for callers that do not pass one');
 });
 
 // ---- former clients ---------------------------------------------------------

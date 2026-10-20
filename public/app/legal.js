@@ -189,7 +189,7 @@
       (it.allocations || []).forEach(function (a) {
         if (a.classification !== 'homeowner_recoverable') return;
         var k = a.property_id + '|' + a.charge_category;
-        var c = charges[k] || (charges[k] = { who: a.property_label || 'Homeowner', owners: (a.owner_names || []).join(', '), desc: S.ownerDescription(a.charge_category, d.invoice.invoice_number), cents: 0, limited: false });
+        var c = charges[k] || (charges[k] = { who: a.property_label || 'Homeowner', owners: (a.owner_names || []).join(', '), desc: S.ownerDescription(a.charge_category, d.invoice.invoice_number, [it.source_text]), cents: 0, limited: false });
         c.cents += Number(a.amount_cents || 0);
         var o = S.amandaOutcome(a); if (o && o.limitation) { c.limited = true; limits[o.limitation] = (limits[o.limitation] || 0) + 1; }
       });
