@@ -90,4 +90,43 @@ check('WIRING: Amanda passes evidence (no record, no attachment, no credential) 
   assert.ok(/evidence: ctx\.evidence \|\| null/.test(rf), 'enforceReplyFocus forwards evidence for future callers');
 });
 
+// ---- Ed's four categories (2026-10-20): only the middle two are gated -----------------
+check('CATEGORY 1, confirmed analysis of source documents: never flagged, even with no RFP record updated', () => {
+  for (const s of [
+    "Taylor's Digital Watchdog base bid totals $38,759.17 before tax.",
+    'I confirmed the 17 priced line items add up to $38,759.17.',
+    'I checked the tax: Taylor states $2,672.31 on materials, for a total of $41,431.48.',
+    'I verified the totals against both proposals.',
+    "Taylor's contract caps its liability at the contract amount and asks the Association to indemnify Taylor.",
+    'The proposal letter offers a 2-year labor warranty, while the contract terms say lifetime.',
+    'Neither proposal mentions cloud storage or remote access.',
+  ]) assert.deepEqual(codes(s), [], s);
+});
+check('CATEGORY 2, completed system actions: claimed only when the run persisted them', () => {
+  const s = "I've added both Taylor proposals to the RFP record and updated the comparison.";
+  assert.deepEqual([...new Set(codes(s))], ['unbacked_record_claim'], 'not persisted -> held');
+  assert.deepEqual(codes(s, { ...NONE, recorded: ['rfp_proposal', 'rfp_comparison'] }), [], 'persisted -> allowed');
+});
+check('CATEGORY 3, unverified external evidence: an insurance / license / bond / W-9 claim needs a document on record', () => {
+  assert.deepEqual(codes('Taylor\'s certificate of insurance is current.'), ['unverified_credential']);
+  assert.deepEqual(codes('Their bond is in place and verified.'), ['unverified_credential']);
+  assert.deepEqual(codes('The W-9 is on file.'), ['unverified_credential']);
+  assert.deepEqual(codes("Taylor's Texas security license certificate is included in the proposal."), [], 'describing what a document contains is analysis');
+});
+check('CATEGORY 4, future intentions: never flagged', () => {
+  for (const s of [
+    "Once you approve, I'll add both Taylor proposals to the RFP record and update the comparison.",
+    'Next, I will prepare the Board comparison document.',
+    'I plan to file the evaluation in the Canyon Gate records after Ed reviews it.',
+  ]) assert.deepEqual(codes(s), [], s);
+});
+check('HELD REASONS: plain English, one line per claim, quoting the sentence', () => {
+  const lines = f.claimReasons(f.checkActionClaims(HUGH_DRAFT, { evidence: NONE }));
+  assert.ok(lines.some((l) => /^Says work was saved to a record, but nothing was recorded: "I have both new Taylor/.test(l)), lines.join('\n'));
+  assert.ok(lines.some((l) => /^States insurance as on file or verified, with no document on record: "Insurance certificate/.test(l)));
+  assert.ok(lines.every((l) => !/unbacked_|unverified_credential/.test(l)), 'no internal codes in the reason');
+  const src = fs.readFileSync(path.join(__dirname, '..', 'lib/community/amanda_reply.js'), 'utf8');
+  assert.ok(/focus\.claimReasons\(focusDetail\)/.test(src), 'the hold reason uses the plain-English lines');
+});
+
 console.log(`\n${pass} passed, ${fail} failed`); process.exitCode = fail ? 1 : 0;
