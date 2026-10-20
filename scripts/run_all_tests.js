@@ -152,6 +152,7 @@ const CHECKS = [
   'tests/test_legal_billback.js',
   'tests/test_legal_evidence_store.js',
   'tests/test_legal_treatment.js',
+  'tests/test_ledger_line.js',
   'tests/test_accounting_ownership.js',
   'tests/test_legal_team.js',
   'tests/test_legal_team_e2e.js',

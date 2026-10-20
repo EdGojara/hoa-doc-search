@@ -6,6 +6,7 @@
 <title>Homeowner 360 — Bedrock</title>
 <link rel="stylesheet" href="/brand.css">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="/app/ledger-line.js"></script>
 <style>
   :root { --navy:#0B1D34; --gold:#D4AF37; --ink:#1a2230; --muted:#5a7390; --line:#e2e8f0; --bg:#f5f7fa; }
   * { box-sizing:border-box; }
@@ -331,7 +332,7 @@ async function openProfile(cid){
         <div style="font-size:18px;font-weight:700;margin-bottom:8px;" class="money">${money(d.ar.balance_cents)}</div>
         ${d.ar.balance_cents>0?`<button onclick="copyPaymentLink(this)" title="Generate a secure pay-my-balance link to email or text this homeowner — resolves the live balance at click time." style="background:#0B1D34;color:#C6A15B;border:none;border-radius:7px;padding:6px 12px;font-size:12px;font-weight:700;cursor:pointer;margin-bottom:8px;">🔗 Copy payment link</button>`:''}
         ${(am&&am.allowed===false)?`<div style="background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:8px 10px;margin-bottom:8px;font-size:12px;color:#991b1b;">🚫 <b>Amenity access restricted</b> — ${esc(am.reason)}</div>`:''}
-        ${(d.ar.transactions||[]).slice(0,8).map(t=>`<div class="li"><span class="t">${d10(t.transaction_date)}</span> · ${esc(t.txn_type||t.charge_category||'txn')} <span class="money" style="float:right;">${money(t.amount_cents)}</span></div>`).join('')||'<div class="empty">No transactions.</div>'}
+        ${(d.ar.transactions||[]).slice(0,8).map(t=>{const lbl=(typeof LedgerLine!=='undefined'&&LedgerLine)?LedgerLine.label(t):(t.description||t.txn_type||t.charge_category||'txn');return `<div class="li"><span class="money" style="float:right;margin-left:8px;">${money(t.amount_cents)}</span><span class="t">${d10(t.transaction_date)}</span> · ${esc(lbl)}</div>`;}).join('')||'<div class="empty">No transactions.</div>'}
         ${(d.ar.former_tenures||[]).length?`<div style="margin-top:10px;padding-top:8px;border-top:1px dashed #e2e8f0;font-size:12px;color:#64748b;"><b>From lots they previously owned</b> (not part of the balance above)${d.ar.former_tenures.map(f=>`<div class="li">${esc(f.vantaca_account_id||'')} <span class="money" style="float:right;">${money(f.balance_cents)}</span></div>`).join('')}</div>`:''}
       </div>
       ${colls.length?`<div class="card" style="border-left:4px solid #b45309; background:#fffdf7;">

@@ -906,6 +906,8 @@ app.get('/app/financial/legal', (req, res) => res.sendFile(require('path').join(
 app.get('/app/financial/cutoff', (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'app', 'cutoff.html')));
 // The review page reconciles with the SAME module the server uses (one rule set).
 app.get('/app/legal-suggest.js', (req, res) => res.type('application/javascript').sendFile(require('path').join(__dirname, 'lib', 'legal', 'review_suggest.js')));
+// Homeowner 360 labels ledger rows with the SAME rule the server's recap uses.
+app.get('/app/ledger-line.js', (req, res) => res.type('application/javascript').sendFile(require('path').join(__dirname, 'lib', 'ar', 'ledger_line.js')));
 
 // Static assets. HTML files (the staff app, portal pages) get `no-cache` so the
 // browser MUST revalidate against the server before reusing a copy — otherwise
