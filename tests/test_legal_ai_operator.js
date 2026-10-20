@@ -234,8 +234,21 @@ t('Kat: reconciles every line (open ones too), checks the accrual coding, flags 
   assert.ok(k.issues.some((i) => i.state === 'needs_information' && /Vantaca owner history/.test(i.text)), 'the conversion overlap is a specific information item');
   assert.strictEqual(k.state, 'needs_decision');
   assert.ok(k.accounting_ok);
-  assert.deepStrictEqual(k.charges.map((c) => [c.description, c.amount_cents]), [['Legal Fees - Collections / 278002', 3200]]);
+  assert.deepStrictEqual(k.charges.map((c) => [c.description, c.amount_cents]), [['Legal Fees - Collections: Attorney services (Attorney Inv. 278002)', 3200]]);
   assert.ok(k.charges[0].limitation);
+});
+t('Kat: an invoice with no usable invoice number is a staff information item; the preview shows no made-up reference', async () => {
+  const db = fakeDb({ journal_entry_lines: [
+    { journal_entry_id: 'je3', debit_cents: 3200, credit_cents: 0, chart_of_accounts: { account_number: '5870', account_name: 'Legal Fees - Collections/DRV' } },
+    { journal_entry_id: 'je3', debit_cents: 0, credit_cents: 3200, chart_of_accounts: { account_number: '2000', account_name: 'Accounts Payable' } }], communities: [{ id: 'c', gl_cutover_date: null }], homeowner_transactions: [] });
+  const items = [{ amount_cents: 3200, source_text: 'Jane Roe - 1 Oak Ct - Process Payment', allocations: [{ amount_cents: 3200, classification: 'homeowner_recoverable', property_id: 'p', tenure_match: 'current', charge_category: 'attorney_fee', confidence: 'high', suggested: true, evidence: [] }] }];
+  for (const num of [null, '', 'see memo: re Roe']) {
+    const d = { invoiceNumber: num, invoice: { id: 'i', community_id: 'c', invoice_number: num, invoice_date: '2026-09-30', total_cents: 3200 }, saved: { review: { revision: 1 }, items } };
+    const k = await KV.katDecision(db, d, { ready: true, blocking: [], accrual: { id: 'je3' }, postings: [], totals: { homeowner_cents: 3200, association_cents: 0, bedrock_cents: 0 } }, { verified: true, checks: [] });
+    assert.ok(k.issues.some((i) => i.state === 'needs_information' && /no usable invoice number/.test(i.text)), String(num));
+    assert.strictEqual(k.charges[0].description, 'Legal Fees - Collections: Payment processing');
+    assert.notStrictEqual(k.state, 'ready');
+  }
 });
 t('Kat: an invoice line coded outside legal expense is an accounting decision', async () => {
   const db = fakeDb({ journal_entry_lines: [

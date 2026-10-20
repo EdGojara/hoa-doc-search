@@ -1,0 +1,126 @@
+{
+  "migration": "538_legal_chargeback_descriptions.sql",
+  "summary": "Descriptive-metadata correction for the five homeowner legal chargebacks posted by Approve Treatment (Canyon Gate invoice 283101 x4, Waterview PS-INV350881 x1): the owner-facing description becomes category + catalogue service phrase + \"(Attorney Inv. <ref>)\", raw_row_jsonb gains the item/allocation links and the reference, tenure_id is stamped with the approved owner (still current), and each upload batch label follows. No amount, date, category, GL, posting or allocation changes; no rows added or removed.",
+  "requires": [
+    "195_homeowner_transactions.sql",
+    "456_ownership_tenures.sql",
+    "457_current_tenure_reader_views.sql",
+    "508_legal_review_approval.sql"
+  ],
+  "preflight": [
+    {
+      "name": "exactly five owner charges came from Approve Treatment",
+      "sql": "SELECT count(*)::int FROM homeowner_transactions WHERE raw_row_jsonb->>'source' = 'legal_invoice_review'",
+      "expect": 5
+    },
+    {
+      "name": "the five rows still carry their reviewed description and amount",
+      "sql": "SELECT count(*)::int FROM homeowner_transactions h JOIN (VALUES ('14286fec-5e96-4644-8f40-8c625403ae0b'::uuid, 100800, 'Legal Fees - Collections / 283101'), ('513cfe4b-0538-499f-bdf1-6b4e69ad8ee2'::uuid, 3200, 'Legal Fees - Collections / 283101'), ('e4c92b73-f31c-422a-9804-35edba863dbc'::uuid, 3200, 'Legal Fees - Collections / 283101'), ('e9195994-6fb8-41c5-b6d6-97f15e413516'::uuid, 6800, 'Legal Fees - Collections / 283101'), ('5fce468b-9bc0-4109-8cf8-158ae5be7733'::uuid, 55735, 'Legal Fees - DRV Enforcement / PS-INV350881')) v(id, amt, d) ON v.id = h.id AND v.amt = h.amount_cents AND v.d = h.description",
+      "expect": 5
+    },
+    {
+      "name": "the five total 169735 cents",
+      "sql": "SELECT COALESCE(sum(amount_cents), 0)::bigint FROM homeowner_transactions WHERE id IN ('14286fec-5e96-4644-8f40-8c625403ae0b'::uuid, '513cfe4b-0538-499f-bdf1-6b4e69ad8ee2'::uuid, 'e4c92b73-f31c-422a-9804-35edba863dbc'::uuid, 'e9195994-6fb8-41c5-b6d6-97f15e413516'::uuid, '5fce468b-9bc0-4109-8cf8-158ae5be7733'::uuid)",
+      "expect": 169735
+    },
+    {
+      "name": "each is linked from exactly one posted legal posting",
+      "sql": "SELECT count(*)::int FROM legal_invoice_postings WHERE status = 'posted' AND homeowner_transaction_id IN ('14286fec-5e96-4644-8f40-8c625403ae0b'::uuid, '513cfe4b-0538-499f-bdf1-6b4e69ad8ee2'::uuid, 'e4c92b73-f31c-422a-9804-35edba863dbc'::uuid, 'e9195994-6fb8-41c5-b6d6-97f15e413516'::uuid, '5fce468b-9bc0-4109-8cf8-158ae5be7733'::uuid)",
+      "expect": 5
+    },
+    {
+      "name": "none is stamped with a tenure yet",
+      "sql": "SELECT count(*)::int FROM homeowner_transactions WHERE id IN ('14286fec-5e96-4644-8f40-8c625403ae0b'::uuid, '513cfe4b-0538-499f-bdf1-6b4e69ad8ee2'::uuid, 'e4c92b73-f31c-422a-9804-35edba863dbc'::uuid, 'e9195994-6fb8-41c5-b6d6-97f15e413516'::uuid, '5fce468b-9bc0-4109-8cf8-158ae5be7733'::uuid) AND tenure_id IS NULL",
+      "expect": 5
+    },
+    {
+      "name": "each posting's owner is still the property's current owner",
+      "sql": "SELECT count(*)::int FROM homeowner_transactions h JOIN legal_invoice_postings p ON p.homeowner_transaction_id = h.id JOIN ownership_tenures t ON t.id = p.tenure_id AND t.property_id = h.property_id AND t.kind = 'owner' AND t.end_date IS NULL WHERE h.id IN ('14286fec-5e96-4644-8f40-8c625403ae0b'::uuid, '513cfe4b-0538-499f-bdf1-6b4e69ad8ee2'::uuid, 'e4c92b73-f31c-422a-9804-35edba863dbc'::uuid, 'e9195994-6fb8-41c5-b6d6-97f15e413516'::uuid, '5fce468b-9bc0-4109-8cf8-158ae5be7733'::uuid)",
+      "expect": 5
+    },
+    {
+      "name": "each shows once on the current-owner ledger today (unstamped fallback)",
+      "sql": "SELECT count(*)::int FROM v_current_owner_ledger WHERE id IN ('14286fec-5e96-4644-8f40-8c625403ae0b'::uuid, '513cfe4b-0538-499f-bdf1-6b4e69ad8ee2'::uuid, 'e4c92b73-f31c-422a-9804-35edba863dbc'::uuid, 'e9195994-6fb8-41c5-b6d6-97f15e413516'::uuid, '5fce468b-9bc0-4109-8cf8-158ae5be7733'::uuid) AND NOT stamped",
+      "expect": 5
+    },
+    {
+      "name": "each upload batch is labelled with the old description",
+      "sql": "SELECT count(*)::int FROM transaction_upload_batches b JOIN homeowner_transactions h ON h.source_batch_id = b.id WHERE h.id IN ('14286fec-5e96-4644-8f40-8c625403ae0b'::uuid, '513cfe4b-0538-499f-bdf1-6b4e69ad8ee2'::uuid, 'e4c92b73-f31c-422a-9804-35edba863dbc'::uuid, 'e9195994-6fb8-41c5-b6d6-97f15e413516'::uuid, '5fce468b-9bc0-4109-8cf8-158ae5be7733'::uuid) AND b.period_label = left(h.description, 60)",
+      "expect": 5
+    }
+  ],
+  "expected_changes": [
+    "homeowner_transactions: 5 rows updated (description, raw_row_jsonb keys added, tenure_id stamped). Amounts, dates, categories, running balances untouched.",
+    "transaction_upload_batches: the 5 owning batches get the new description as period_label (first 60 characters).",
+    "No inserts or deletes. No journal entry, legal posting, allocation or invoice item changes."
+  ],
+  "objects": {
+    "added": [],
+    "changed": [],
+    "removed": []
+  },
+  "row_changes": {
+    "homeowner_transactions": 0,
+    "transaction_upload_batches": 0
+  },
+  "protected": [
+    {
+      "table": "journal_entries",
+      "order_by": "id"
+    },
+    {
+      "table": "legal_invoice_postings",
+      "order_by": "id"
+    },
+    {
+      "table": "legal_invoice_allocations",
+      "order_by": "id"
+    },
+    {
+      "table": "legal_invoice_items",
+      "order_by": "id"
+    }
+  ],
+  "verify": [
+    {
+      "name": "the five carry the new wording at the same amounts",
+      "sql": "SELECT count(*)::int FROM homeowner_transactions h JOIN (VALUES ('14286fec-5e96-4644-8f40-8c625403ae0b'::uuid, 100800, 'Legal Fees - Collections: Court filings and documents (Attorney Inv. 283101)'), ('513cfe4b-0538-499f-bdf1-6b4e69ad8ee2'::uuid, 3200, 'Legal Fees - Collections: Payment processing (Attorney Inv. 283101)'), ('e4c92b73-f31c-422a-9804-35edba863dbc'::uuid, 3200, 'Legal Fees - Collections: Payment processing (Attorney Inv. 283101)'), ('e9195994-6fb8-41c5-b6d6-97f15e413516'::uuid, 6800, 'Legal Fees - Collections: Payment plan administration and payment processing (Attorney Inv. 283101)'), ('5fce468b-9bc0-4109-8cf8-158ae5be7733'::uuid, 55735, 'Legal Fees - DRV Enforcement: Attorney services and court costs (Attorney Inv. PS-INV350881)')) v(id, amt, d) ON v.id = h.id AND v.amt = h.amount_cents AND v.d = h.description",
+      "expect": 5
+    },
+    {
+      "name": "the five still total 169735 cents",
+      "sql": "SELECT COALESCE(sum(amount_cents), 0)::bigint FROM homeowner_transactions WHERE id IN ('14286fec-5e96-4644-8f40-8c625403ae0b'::uuid, '513cfe4b-0538-499f-bdf1-6b4e69ad8ee2'::uuid, 'e4c92b73-f31c-422a-9804-35edba863dbc'::uuid, 'e9195994-6fb8-41c5-b6d6-97f15e413516'::uuid, '5fce468b-9bc0-4109-8cf8-158ae5be7733'::uuid)",
+      "expect": 169735
+    },
+    {
+      "name": "no Approve Treatment charge keeps the old \"Category / ref\" wording",
+      "sql": "SELECT count(*)::int FROM homeowner_transactions WHERE raw_row_jsonb->>'source' = 'legal_invoice_review' AND description ~ '^Legal Fees[^:]* / '",
+      "expect": 0
+    },
+    {
+      "name": "each is stamped with the tenure its posting was approved against",
+      "sql": "SELECT count(*)::int FROM homeowner_transactions h JOIN legal_invoice_postings p ON p.homeowner_transaction_id = h.id WHERE h.id IN ('14286fec-5e96-4644-8f40-8c625403ae0b'::uuid, '513cfe4b-0538-499f-bdf1-6b4e69ad8ee2'::uuid, 'e4c92b73-f31c-422a-9804-35edba863dbc'::uuid, 'e9195994-6fb8-41c5-b6d6-97f15e413516'::uuid, '5fce468b-9bc0-4109-8cf8-158ae5be7733'::uuid) AND h.tenure_id = p.tenure_id",
+      "expect": 5
+    },
+    {
+      "name": "each still shows exactly once on the current-owner ledger, now stamped",
+      "sql": "SELECT count(*)::int FROM v_current_owner_ledger WHERE id IN ('14286fec-5e96-4644-8f40-8c625403ae0b'::uuid, '513cfe4b-0538-499f-bdf1-6b4e69ad8ee2'::uuid, 'e4c92b73-f31c-422a-9804-35edba863dbc'::uuid, 'e9195994-6fb8-41c5-b6d6-97f15e413516'::uuid, '5fce468b-9bc0-4109-8cf8-158ae5be7733'::uuid) AND stamped",
+      "expect": 5
+    },
+    {
+      "name": "no duplicate ledger rows for the five",
+      "sql": "SELECT count(*)::int FROM v_current_owner_ledger WHERE id IN ('14286fec-5e96-4644-8f40-8c625403ae0b'::uuid, '513cfe4b-0538-499f-bdf1-6b4e69ad8ee2'::uuid, 'e4c92b73-f31c-422a-9804-35edba863dbc'::uuid, 'e9195994-6fb8-41c5-b6d6-97f15e413516'::uuid, '5fce468b-9bc0-4109-8cf8-158ae5be7733'::uuid)",
+      "expect": 5
+    },
+    {
+      "name": "raw metadata gained the reference and links and kept the original keys",
+      "sql": "SELECT count(*)::int FROM homeowner_transactions WHERE id IN ('14286fec-5e96-4644-8f40-8c625403ae0b'::uuid, '513cfe4b-0538-499f-bdf1-6b4e69ad8ee2'::uuid, 'e4c92b73-f31c-422a-9804-35edba863dbc'::uuid, 'e9195994-6fb8-41c5-b6d6-97f15e413516'::uuid, '5fce468b-9bc0-4109-8cf8-158ae5be7733'::uuid) AND raw_row_jsonb->>'description_version' = '2' AND raw_row_jsonb->>'attorney_invoice_number' IS NOT NULL AND raw_row_jsonb ? 'legal_posting_id' AND raw_row_jsonb ? 'journal_entry_id' AND raw_row_jsonb ? 'legal_allocation_id' AND raw_row_jsonb ? 'previous_description'",
+      "expect": 5
+    },
+    {
+      "name": "each upload batch label follows the new description",
+      "sql": "SELECT count(*)::int FROM transaction_upload_batches b JOIN homeowner_transactions h ON h.source_batch_id = b.id WHERE h.id IN ('14286fec-5e96-4644-8f40-8c625403ae0b'::uuid, '513cfe4b-0538-499f-bdf1-6b4e69ad8ee2'::uuid, 'e4c92b73-f31c-422a-9804-35edba863dbc'::uuid, 'e9195994-6fb8-41c5-b6d6-97f15e413516'::uuid, '5fce468b-9bc0-4109-8cf8-158ae5be7733'::uuid) AND b.period_label = left(h.description, 60)",
+      "expect": 5
+    }
+  ]
+}
