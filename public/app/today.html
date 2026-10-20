@@ -652,7 +652,7 @@
     if (kind === 'send' && !confirm('Send this email from Amanda now?\n\nTo: ' + (d.to_email || '') + (d.cc ? '\nCC: ' + d.cc : '') + '\nSubject: ' + (d.subject || ''))) return;
     if (kind === 'discard' && !confirm('Discard this prepared email? It will not be sent.')) return;
     b.disabled = true;
-    var r = await TX.post('/api/email-drafts/' + encodeURIComponent(id) + '/' + (kind === 'send' ? 'send' : 'discard'), kind === 'send' ? { approved_by: user.email || 'staff' } : {});
+    var r = await TX.post('/api/email-drafts/' + encodeURIComponent(id) + '/' + (kind === 'send' ? 'send' : 'discard'), kind === 'send' ? { approved_by: user.email || 'staff', approved_package_sha256: d.package_sha256 } : {});
     if (!r.ok) { b.disabled = false; alert((kind === 'send' ? 'Not sent. ' : 'Not discarded. ') + (r.error || 'Something went wrong.') + (kind === 'send' ? '\n\nIt stays in the outbox with the reason.' : '')); }
     loadEmail();
   });

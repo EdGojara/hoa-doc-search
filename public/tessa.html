@@ -242,18 +242,19 @@ function renderTessaDraft(d){
     <div class="note"><b>To</b> ${esc(d.to_name?d.to_name+' <'+d.to_email+'>':d.to_email||'')}${cc}</div>
     ${att}${body}
     <div class="row" style="margin-top:10px;">
-      <button class="btn gold sm" onclick="sendTessaDraft('${d.id}')">Send it</button>
+      <button class="btn gold sm" onclick="sendTessaDraft('${d.id}','${esc(d.package_sha256||'')}')">Send it</button>
       <button class="btn ghost sm" onclick="discardTessaDraft('${d.id}')">Discard</button>
       <span id="dmsg-${d.id}" class="note"></span>
     </div>
   </div>`;
 }
-async function sendTessaDraft(id){
+async function sendTessaDraft(id, pkg){
   const m=$('dmsg-'+id); if(!confirm('Send this email now, from Tessa?')) return;
   if(m) m.textContent='Sending…';
   try{
-    const r=await af('/api/email-drafts/'+id+'/send',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({approved_by:'owner'})});
-    const j=await r.json(); if(!r.ok) throw new Error(j.error||'failed');
+    // Send exactly the version shown on this card (its package fingerprint).
+    const r=await af('/api/email-drafts/'+id+'/send',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({approved_by:'owner', approved_package_sha256:pkg})});
+    const j=await r.json(); if(!r.ok) throw new Error(j.message||j.error||'failed');
     if(m) m.innerHTML='<span class="ok">✅ Sent to '+esc(j.to||'')+'</span>';
     setTimeout(loadOutbox, 1400); try{ loadSent(); }catch(_){}
   }catch(e){ if(m) m.innerHTML='<span class="err">'+esc(e.message)+'</span>'; }

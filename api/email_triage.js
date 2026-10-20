@@ -33,6 +33,7 @@ async function quarantinedAddresses() {
   } catch (_) { return []; }
 }
 const graphSend = require('../lib/email/graph_send');
+const ReplyGuard = require('../lib/email/reply_guard');
 const graphIngest = require('../lib/email/graph_ingest');
 const { requireAdmin, getAuthedUser, OWNER_EMAIL } = require('./_require_admin');
 
@@ -255,13 +256,20 @@ function emailCapabilities(m) {
 // path if the queue grows large).
 async function withCapabilities(rows) {
   const { invoiceStanding } = require('../lib/ap/followup');
+  // A reply waiting in the Draft Queue owns its inbound email: Communications shows it
+  // with a link and does not offer a second reply. (Ed 2026-10-20, Hugh Durlam's email.)
+  let pending = {}; let pendingFailed = false;
+  try { pending = await ReplyGuard.activeDraftsFor(supabase, (rows || []).map((r) => r && r.id)); }
+  catch (e) { pendingFailed = true; console.error('[email_triage] waiting Draft Queue replies lookup failed:', e.message); }
   return Promise.all((rows || []).map(async (m) => {
     const caps = emailCapabilities(m);
     let standing = null;
     if (String(m && m.persona) === 'emma') {
       try { standing = await invoiceStanding(supabase, m); } catch (_) { standing = null; }
     }
-    return Object.assign({}, m, caps, { standing });
+    const w = m && pending[m.id];
+    const pendingReply = w ? { id: w.id, persona: w.persona, subject: w.subject, to_email: w.to_email, created_at: w.created_at, link: '/admin/draft-queue?id=' + w.id } : null;
+    return Object.assign({}, m, caps, { standing, pending_draft_queue_reply: pendingReply }, pendingFailed ? { pending_reply_lookup_failed: true } : {});
   }));
 }
 
@@ -1461,7 +1469,8 @@ router.post('/:id/send', express.json(), async (req, res) => {
     // Proofread the operator's copy — fix spelling/typos before it sends (and
     // before it's captured as encode-Ed training). Conservative + fail-safe.
     let body = String(_rawBody == null ? '' : _rawBody).trim();
-    if (body) { try { const { proofreadEmailBody } = require('../lib/email/proofread'); body = (await proofreadEmailBody(body)).text; } catch (_) {} }
+    // Sent exactly as approved: spelling is checked BEFORE approval (POST /proofread,
+    // run by the Approve & send button), never rewritten during the send. (Ed 2026-10-20.)
     // Optional Cc — copy a teammate, the board, another owner on the reply.
     // Cc exactly as the person typed it: an entry that is not a valid address stops the send
     // (silently dropping it would send to a different set than the one approved).
@@ -1475,6 +1484,22 @@ router.post('/:id/send', express.json(), async (req, res) => {
       .eq('id', req.params.id).maybeSingle();
     if (error) throw error;
     if (!m) return res.status(404).json({ error: 'not_found' });
+    // One reply per inbound email. A reply waiting in the Draft Queue owns this email:
+    // refuse a second, conflicting reply from here. And never answer an email whose
+    // reply already went out (from either path). (Ed 2026-10-20.)
+    let waiting = null;
+    try { waiting = await ReplyGuard.activeDraftFor(supabase, req.params.id); }
+    catch (e) { return res.status(503).json({ error: 'draft_lookup_failed', message: 'Could not check the Draft Queue for a reply to this email. Nothing was sent; try again.', sent: false }); }
+    if (waiting) return res.status(409).json({ error: 'draft_queue_reply_pending', message: 'A reply to this email is waiting in the Draft Queue. Review and send it there. Nothing was sent.', draft_id: waiting.id, link: '/admin/draft-queue?id=' + waiting.id, sent: false });
+    const guardKey = ReplyGuard.replyKey({ inboundId: req.params.id });
+    const retryAfterUncertain = !!(req.body && req.body.confirm_after_uncertain === true);
+    try {
+      const blocked = ReplyGuard.blockedBy(await ReplyGuard.existingClaim(supabase, guardKey), { retryAfterUncertain });
+      if (blocked) return res.status(blocked.status).json({ error: blocked.error, message: blocked.message, needs_confirmation: blocked.needs_confirmation || undefined, sent: false });
+    } catch (e) {
+      if (e.code === 'send_guard_not_installed') return res.status(503).json({ error: 'send_guard_not_installed', message: 'Sending is paused until the send-safety guard is installed (migration 539). Nothing was sent.', sent: false });
+      throw e;
+    }
     // Stored persona (content routing) wins over the mailbox picker, so a Kat /
     // Amanda / Reese reply sends from the right address in the right voice.
     const persona = req.body.persona || m.persona || personaFor(m);
@@ -1551,16 +1576,14 @@ router.post('/:id/send', express.json(), async (req, res) => {
         const { data: c } = await supabase.from('contacts').select('preferred_language').eq('id', m.resolved_contact_id).maybeSingle();
         pl = c && c.preferred_language;
       }
+      // The message sent must be the message approved, so nothing is translated during
+      // the send. A resident who prefers another language needs the translated reply
+      // prepared and reviewed first; until then this send is refused, nothing sent.
+      // (Ed 2026-10-20. No contact had a non-English preference when this changed.)
       if (pl && String(pl).toLowerCase() !== 'en') {
-        const { translateForResident } = require('../lib/email/translate');
-        const translated = await translateForResident(sendBody, pl);
-        if (translated && translated.trim() && translated.trim() !== sendBody) {
-          sendBody = translated.trim();
-          sentLanguage = String(pl).toLowerCase();
-          console.log(`[email-triage] reply translated to ${sentLanguage} for contact ${m.resolved_contact_id}`);
-        }
+        return res.status(409).json({ error: 'translation_review_required', message: `This homeowner prefers ${String(pl)}. A translated reply has to be prepared and reviewed before it is sent; nothing was translated or sent.`, language: String(pl).toLowerCase(), sent: false });
       }
-    } catch (e) { console.warn('[email-triage] resident translation skipped:', e.message); }
+    } catch (e) { return res.status(503).json({ error: 'language_check_failed', message: 'Could not check the homeowner\'s preferred language. Nothing was sent; try again.', sent: false }); }
 
     // Send in the right voice: Emma from emma@ for vendor/AP, Claire from claire@
     // otherwise. Both carry the branded logo + their own honest-AI signature.
@@ -1663,26 +1686,26 @@ router.post('/:id/send', express.json(), async (req, res) => {
     // sending a document nobody had looked at.
     const generated = ((m.extracted || {}).draft || {}).attachments || [];
     if (generated.length) {
+      let files = null;
       try {
         const { loadDraftAttachments } = require('../lib/email/draft_attachments');
-        const files = await loadDraftAttachments(generated);
-        if (files.length) attachments = [...(attachments || []), ...files];
-        if (files.length !== generated.length) {
-          console.warn(`[email_triage] generated attachments: ${files.length}/${generated.length} available at send`);
-        }
-      } catch (e) { console.warn('[email_triage] generated attachments skipped:', e.message); }
+        files = await loadDraftAttachments(generated);
+      } catch (e) { console.error('[email_triage] generated attachments failed:', e.message); }
+      // Fail closed: the draft's documents go with it or nothing goes. (Ed 2026-10-20.)
+      if (!files || files.length !== generated.length) return res.status(502).json({ error: 'attachment_unavailable', message: `${files ? files.length : 0} of ${generated.length} attached document(s) could be loaded, so nothing was sent.`, sent: false });
+      attachments = [...(attachments || []), ...files];
     }
 
     // Documents the operator picked to attach (any filed library doc).
     const attachDocIds = Array.isArray(req.body && req.body.attach_doc_ids) ? req.body.attach_doc_ids.filter(Boolean).slice(0, 6) : [];
     if (attachDocIds.length) {
-      try {
-        const { getDocAttachment } = require('../lib/email/doc_attachment');
-        for (const did of attachDocIds) {
-          const a = await getDocAttachment(did);
-          if (a && a.attachment) attachments = [...(attachments || []), a.attachment];
-        }
-      } catch (_) { /* best-effort */ }
+      const { getDocAttachment } = require('../lib/email/doc_attachment');
+      for (const did of attachDocIds) {
+        let a = null;
+        try { a = await getDocAttachment(did); } catch (e) { console.error('[email_triage] document attachment failed:', did, e.message); }
+        if (!a || !a.attachment) return res.status(502).json({ error: 'attachment_unavailable', message: 'An attached document could not be loaded, so nothing was sent.', sent: false });
+        attachments = [...(attachments || []), a.attachment];
+      }
     }
 
     // Files the operator drag-and-dropped from their computer (stashed via
@@ -1696,13 +1719,15 @@ router.post('/:id/send', express.json(), async (req, res) => {
     const strayUpload = attachUploads.find((u) => { const p = String(u.storage_path); return !p.startsWith(stashPrefix) || p.includes('..') || p.includes('\\') || p.slice(stashPrefix.length).includes('/'); });
     if (strayUpload) return res.status(400).json({ error: 'invalid_attachment', detail: 'An attachment was not uploaded for this email. Nothing was sent; attach the file again.' });
     for (const u of attachUploads) {
+      let buf = null;
       try {
         const { data: blob, error: dErr } = await supabase.storage.from('documents').download(u.storage_path);
-        if (dErr || !blob) { console.warn('[email_triage] dropped attachment missing:', u.storage_path, dErr && dErr.message); continue; }
-        const buf = Buffer.from(await blob.arrayBuffer());
-        if (buf.length > 15 * 1024 * 1024) continue;
-        attachments = [...(attachments || []), { '@odata.type': '#microsoft.graph.fileAttachment', name: String(u.name || 'attachment').slice(0, 150), contentType: u.mime || 'application/octet-stream', contentBytes: buf.toString('base64') }];
-      } catch (e) { console.warn('[email_triage] dropped attachment error:', e.message); }
+        if (!dErr && blob) buf = Buffer.from(await blob.arrayBuffer());
+        else console.error('[email_triage] attachment missing:', u.storage_path, dErr && dErr.message);
+      } catch (e) { console.error('[email_triage] attachment error:', u.storage_path, e.message); }
+      if (!buf) return res.status(502).json({ error: 'attachment_unavailable', message: `The attached file "${String(u.name || 'file')}" could not be loaded, so nothing was sent.`, sent: false });
+      if (buf.length > 15 * 1024 * 1024) return res.status(413).json({ error: 'attachment_too_large', message: `"${String(u.name || 'file')}" is over 15 MB, so nothing was sent.`, sent: false });
+      attachments = [...(attachments || []), { '@odata.type': '#microsoft.graph.fileAttachment', name: String(u.name || 'attachment').slice(0, 150), contentType: u.mime || 'application/octet-stream', contentBytes: buf.toString('base64') }];
     }
 
     // Quote the ORIGINAL message (and the prior thread) beneath the reply, so the
@@ -1753,21 +1778,34 @@ router.post('/:id/send', express.json(), async (req, res) => {
     } catch (_) { /* quoting best-effort — never block a send */ }
 
     let verifiedRecipients = null;
-    if (threaded && graphSend.sameMailbox(fromMailbox, replyFrom)) {
-      // Real threaded reply — Graph carries the actual Outlook quoted history and
-      // sets the In-Reply-To/References headers, so the recipient sees ONE growing
-      // thread instead of a fresh email each time (Melody Hess's ask, 2026-09-09).
-      // Graph adds the quote, so we send just our body (no reconstructed block).
-      const sent = await graphSend.sendReplyAs({ from: fromMailbox, sourceMailbox: m.mailbox, sourceGraphId: m.graph_id, to: recipient, cc: ccList || undefined, html, attachments });
-      if (sent && sent.recipients) verifiedRecipients = [...sent.recipients.to, ...sent.recipients.cc];
-    } else {
-      // No source message id, OR the message lives in another mailbox (shared inbox
-      // answered by a persona): a fresh message from the persona's own mailbox.
-      // Fallback: fresh message. The body already carries the inline quote
-      // (inlineQuote), so do NOT also append the reconstructed history block —
-      // that was the second copy. One history, from the inline quote.
-      await graphSend.sendAs({ from: fromMailbox, to: recipient, cc: ccList || undefined, subject: subj, html, attachments });
+    // The atomic claim, right before Graph (shared with the Draft Queue): a simultaneous
+    // or repeated Send for this email is refused, never sent twice.
+    const claim = await ReplyGuard.claim(supabase, { inboundId: req.params.id, path: 'communications', actor: reviewed_by || 'staff', retryAfterUncertain });
+    if (!claim.ok) return res.status(claim.status).json({ error: claim.error, message: claim.message, needs_confirmation: claim.needs_confirmation || undefined, sent: false });
+    let suppressed = null;   // the demo/outbound guard held it: nothing left, so the claim must not block a real reply
+    try {
+      if (threaded && graphSend.sameMailbox(fromMailbox, replyFrom)) {
+        // Real threaded reply — Graph carries the actual Outlook quoted history and
+        // sets the In-Reply-To/References headers, so the recipient sees ONE growing
+        // thread instead of a fresh email each time (Melody Hess's ask, 2026-09-09).
+        // Graph adds the quote, so we send just our body (no reconstructed block).
+        const sent = await graphSend.sendReplyAs({ from: fromMailbox, sourceMailbox: m.mailbox, sourceGraphId: m.graph_id, to: recipient, cc: ccList || undefined, html, attachments });
+        if (sent && sent.suppressed) suppressed = sent.reason || 'suppressed';
+        if (sent && sent.recipients) verifiedRecipients = [...sent.recipients.to, ...sent.recipients.cc];
+      } else {
+        // No source message id, OR the message lives in another mailbox (shared inbox
+        // answered by a persona): a fresh message from the persona's own mailbox.
+        // Fallback: fresh message. The body already carries the inline quote
+        // (inlineQuote), so do NOT also append the reconstructed history block —
+        // that was the second copy. One history, from the inline quote.
+        const sent = await graphSend.sendAs({ from: fromMailbox, to: recipient, cc: ccList || undefined, subject: subj, html, attachments });
+        if (sent && sent.suppressed) suppressed = sent.reason || 'suppressed';
+      }
+    } catch (e) {
+      await ReplyGuard.finish(supabase, { key: claim.key, token: claim.token, ok: false, err: e });
+      throw e;
     }
+    await ReplyGuard.finish(supabase, suppressed ? { key: claim.key, token: claim.token, ok: false, err: 'suppressed: ' + suppressed, uncertain: false } : { key: claim.key, token: claim.token, ok: true });
 
     // Mark the inbound handled + log the outbound reply on the record.
     await supabase.from('email_messages').update({ triage_status: 'handled', reviewed_by: reviewed_by || 'staff', reviewed_at: new Date().toISOString() }).eq('id', req.params.id);
@@ -2245,6 +2283,22 @@ router.post('/pull', express.json(), async (req, res) => {
   }
 });
 
+// POST /proofread { body } — the spelling check that used to run inside Send, now run
+// BEFORE approval: returns the corrected text for the person to see; sends nothing.
+// The Approve & send buttons call it first and only send text that came back unchanged.
+router.post('/proofread', express.json({ limit: '256kb' }), async (req, res) => {
+  const body = String((req.body && req.body.body) || '');
+  try {
+    const { proofreadEmailBody } = require('../lib/email/proofread');
+    const out = await proofreadEmailBody(body);
+    const text = out && typeof out.text === 'string' ? out.text : body;
+    res.json({ text, changed: text !== body });
+  } catch (e) {
+    console.warn('[email_triage] proofread failed:', e.message);
+    res.json({ text: body, changed: false, unavailable: true });
+  }
+});
+
 // POST /compose — ADMIN ONLY (Ed). Compose and send a fresh email as Claire
 // straight from trustEd (not a reply to an inbound). Branded HTML + logo +
 // honest-AI signature, sent from claire@, logged as association-record
@@ -2268,7 +2322,7 @@ router.post('/compose', express.json(), async (req, res) => {
     if (!body.trim()) return res.status(400).json({ error: 'body_required' });
     // Proofread the operator's copy (spelling/typos only) before sending; leaves
     // any forwarded/quoted history untouched. Fail-safe. (Ed 2026-07-26.)
-    try { const { proofreadEmailBody } = require('../lib/email/proofread'); body = (await proofreadEmailBody(body)).text; } catch (_) {}
+    // Sent exactly as approved: spelling is checked before approval (POST /proofread), never during the send.
     if (!graphSend.isConfigured()) return res.status(400).json({ error: 'claire_not_connected', detail: 'AI-team email send is not wired yet — the Azure app (Mail.Send) + GRAPH_TENANT_ID / GRAPH_CLIENT_ID / GRAPH_CLIENT_SECRET must be set.' });
 
     const subj = (subject && String(subject).trim()) ? String(subject).trim() : '(no subject)';

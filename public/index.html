@@ -55089,6 +55089,16 @@ ${questionsPage}
     if (!to) { status.style.color = '#b91c1c'; status.textContent = 'Enter at least one recipient email.'; return; }
     if (!body) { status.style.color = '#b91c1c'; status.textContent = 'Write a message, or have Claire draft one.'; return; }
     var pname = ccPersona() === 'emma' ? 'Emma' : 'Claire';
+    // Spelling is checked before approval, never during the send (Ed 2026-10-20).
+    try {
+      var pr = await window._authFetch('/api/email-triage/proofread', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ body: body }) });
+      var pj = await pr.json();
+      if (pr.ok && pj && pj.changed && typeof pj.text === 'string' && pj.text !== body) {
+        var bodyEl = document.getElementById('ccBody'); if (bodyEl) bodyEl.value = pj.text;
+        status.style.color = '#8a6d00'; status.textContent = 'Spelling corrections were made. Review the message, then click Send again. Nothing was sent.';
+        return;
+      }
+    } catch (_) {}
     btn.disabled = true; var orig = btn.textContent; btn.textContent = 'Sending…';
     status.style.color = '#5a7390'; status.textContent = 'Sending as ' + pname + '…';
     try {
