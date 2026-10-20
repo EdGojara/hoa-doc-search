@@ -24,8 +24,14 @@ const { buildReeseEmail } = require('../lib/email/reese_signature');
 const { buildPaigeEmail } = require('../lib/email/paige_signature');
 const { buildTessaEmail } = require('../lib/email/tessa_signature');
 
+const DAT = require('../lib/email/queued_attachments');
+
 const router = express.Router();
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
+
+// Attachment review (open / download / remove / replace) before Send:
+// /:id/attachments/:index. Signed-in staff only; see api/email_draft_attachments.js.
+router.use(require('./email_draft_attachments'));
 
 function safe(err) { return require('./_safe_error').safeErrorMessage ? require('./_safe_error').safeErrorMessage(err) : 'Something went wrong'; }
 function _isMissingTable(err) {
@@ -234,15 +240,27 @@ router.post('/:id/send', async (req, res) => {
     // Pull any stored file attachments. Default bucket is 'documents'; an
     // attachment may name its own bucket (e.g. a violation letter lives in
     // 'violation-letters'), so honor a.bucket when set. (Ed 2026-08-01.)
-    const fileAttachments = [];
-    for (const a of Array.isArray(d.attachments) ? d.attachments : []) {
-      if (!a || !a.storage_path) continue;
-      try {
-        const { data: blob, error: dErr } = await supabase.storage.from(a.bucket || 'documents').download(a.storage_path);
-        if (dErr) { console.warn('[email_drafts] attachment download failed:', a.storage_path, dErr.message); continue; }
-        const buf = Buffer.from(await blob.arrayBuffer());
-        fileAttachments.push({ '@odata.type': '#microsoft.graph.fileAttachment', name: a.name || 'attachment', contentType: a.mime || 'application/octet-stream', contentBytes: buf.toString('base64') });
-      } catch (e) { console.warn('[email_drafts] attachment error:', e.message); }
+    // All-or-nothing: the same loader the Draft Queue preview uses. If any listed
+    // file cannot be read, nothing is sent and the draft stays unsent with the
+    // reason. It used to warn and send without the file, so a reviewed
+    // attachment could silently drop. (Ed 2026-10-16.)
+    const loaded = await DAT.loadAllForSend(supabase, d.attachments);
+    if (!loaded.ok) {
+      const why = DAT.missingMessage(loaded.missing);
+      console.warn('[email_drafts] send refused, attachment unreadable:', JSON.stringify({ draft_id: d.id, missing: loaded.missing }));
+      await supabase.from('outbound_email_drafts').update({ send_error: why }).eq('id', d.id);
+      return res.status(409).json({ error: 'attachment_unavailable', message: why, missing: loaded.missing.map((m) => m.name) });
+    }
+    const fileAttachments = loaded.files;
+    // The reviewer may pass the sha256 of each attachment they opened. If a file
+    // changed since they looked at it, stop: they must review what goes out.
+    const reviewed = Array.isArray(req.body && req.body.reviewed_attachments) ? req.body.reviewed_attachments : [];
+    for (const rv of reviewed) {
+      const f = rv && Number.isInteger(rv.index) ? fileAttachments[rv.index] : null;
+      if (!f || !rv.sha256) continue;
+      if (DAT.sha256(Buffer.from(f.contentBytes, 'base64')) !== String(rv.sha256).toLowerCase()) {
+        return res.status(409).json({ error: 'attachment_changed', message: `"${f.name}" changed after you reviewed it. Open it again before sending.` });
+      }
     }
 
     const from = personaMailbox(d.persona, d.from_mailbox);
