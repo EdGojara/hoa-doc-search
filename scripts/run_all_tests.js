@@ -304,6 +304,7 @@ const CHECKS = [
   'tests/test_manager_phase1.js',
   'tests/test_amanda_decision_ready.js',
   'tests/test_amanda_reply_focus.js',
+  'tests/test_amanda_action_claims.js',
   'tests/test_reply_focus_shared_paths.js',
   'tests/test_board_facts.js',
   'tests/test_scheduled_agent_guardrails.js',
