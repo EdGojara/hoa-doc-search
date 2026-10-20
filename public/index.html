@@ -15432,6 +15432,7 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
           <div>
             <strong style="display:block; color:#5a7390; font-size:11px; text-transform:uppercase; letter-spacing:0.4px; margin-bottom:4px;">Status</strong>
             ${isQueue ? '<span class="acc-pill acc-pill-pending">⏳ In queue</span>' : '<span class="acc-pill acc-pill-approved">✓ Done</span>'}
+            ${a.authority && a.authority.label ? `<div style="margin-top:4px;"><span class="acc-pill" style="background:#fee2e2; color:#991b1b;" title="${accEsc((a.authority.triggers || []).join(', '))}">⚑ ${accEsc(a.authority.label)}</span></div>` : ''}
           </div>
           <div class="acc-age ${ageClass}">${ageTxt}</div>
         </div>`;
@@ -15456,6 +15457,7 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
       if (j.error) throw new Error(j.error);
       accCurrent = j.decision;
       window.accCurrentFinalization = j.finalization || null;
+      window.accCurrentAuthority = j.authority || null;
       accRenderDetail();
       accRenderStaleBanner();
     } catch (err) { alert('Load failed: ' + err.message); }
@@ -15548,6 +15550,8 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
 
       ${accDocumentsCard(a)}
 
+      ${accAuthorityCard(a)}
+
       ${a.current_review_text ? `
         <div class="acc-card acc-ai-card">
           <details ${isQueue ? 'open' : ''}>
@@ -15609,6 +15613,77 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
       </div>
     `;
   }
+
+  // Decision authority (Ed 2026-10-20). Only Ed, Amanda or Annie may approve or
+  // deny; the server enforces it on every path. This card says what is missing
+  // and lets Ed record his review / decision. Staff see why Send is blocked for
+  // an approval or denial, and can still draft and request more information.
+  async function accBearerHeaders(extra) {
+    const h = Object.assign({}, extra || {});
+    try { const { data: { session } } = await window.supa.auth.getSession(); if (session?.access_token) h.Authorization = 'Bearer ' + session.access_token; } catch (_) {}
+    return h;
+  }
+  function accAuthorityCard(a) {
+    const au = window.accCurrentAuthority;
+    if (!au) return '';
+    const open = a.status === 'pending_review' || a.status === 'awaiting_info';
+    const rec = au.record;
+    const color = au.record_valid ? '#166534' : (au.escalated ? '#991b1b' : '#92400e');
+    const bg = au.record_valid ? '#dcfce7' : (au.escalated ? '#fee2e2' : '#fef3c7');
+    const trig = (au.triggers || []).map((t) => t.replace(/_/g, ' ')).join(', ');
+    const recLine = rec ? `<div style="font-size:12.5px; margin-top:8px;"><b>Recorded decision:</b> ${accEsc(rec.outcome)} by ${accEsc(rec.decided_by === 'ed' ? (rec.decided_by_name || 'Ed') : rec.decided_by)} on ${accEsc(String(rec.decided_at || '').slice(0, 10))}<br><b>Authority:</b> ${accEsc((rec.authority_basis || {}).kind || '')}: ${accEsc((rec.authority_basis || {}).reference || '')}${rec.committee_or_board ? `<br><b>${accEsc(rec.committee_or_board.body)}:</b> ${accEsc(rec.committee_or_board.decision)} ${accEsc(rec.committee_or_board.decided_on)} (${accEsc(rec.committee_or_board.approvers)}); evidence: ${accEsc(rec.committee_or_board.evidence_type)} ${accEsc(rec.committee_or_board.evidence_reference)}${rec.committee_or_board.deviation_granted ? '<br><b>Deviation:</b> ' + accEsc(rec.committee_or_board.deviation_statement || '') : ''}` : ''}</div>` : '';
+    const errs = (au.record_errors || []).length ? `<div style="font-size:12px; color:#991b1b; margin-top:6px;">Still missing: ${accEsc(au.record_errors.join('; '))}</div>` : '';
+    const review = a.owner_review && a.owner_review.reviewed_at ? `<div style="font-size:12px; margin-top:6px;">Ed reviewed ${accEsc(String(a.owner_review.reviewed_at).slice(0, 16).replace('T', ' '))}${a.owner_review.notes ? ': ' + accEsc(a.owner_review.notes) : ''}</div>` : '';
+    const form = open && !au.record_valid ? `
+      <details style="margin-top:10px;"><summary style="cursor:pointer; font-size:12.5px; font-weight:700; color:#0B1D34;">Ed: review or record the decision</summary>
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:8px; font-size:12px;">
+          <label>Outcome<select id="acc-dr-outcome" style="width:100%;"><option value="approved_with_conditions">Approve with conditions</option><option value="approved">Approve</option><option value="denied">Deny</option></select></label>
+          <label>Authority basis<select id="acc-dr-kind" style="width:100%;"><option value="governing_document">Governing-document provision</option><option value="written_delegation">Written delegation</option></select></label>
+          <label style="grid-column:1/3;">Provision or delegation (document, section, page, or instrument and date)<input id="acc-dr-ref" style="width:100%;" placeholder="e.g. Declaration Art. II §2.01, p. 9; or Board resolution delegating ACC review, dated ..."></label>
+          <div style="grid-column:1/3; font-weight:700; margin-top:4px;">Committee / Board decision${au.escalated ? ' (required for a paving expansion or deviation approval)' : ' (if applicable)'}</div>
+          <label>Body<select id="acc-cb-body" style="width:100%;"><option value="">(none)</option><option value="committee">Committee</option><option value="board">Board</option></select></label>
+          <label>Their decision<select id="acc-cb-decision" style="width:100%;"><option value="approved_with_conditions">Approved with conditions</option><option value="approved">Approved</option><option value="denied">Denied</option></select></label>
+          <label>Date<input id="acc-cb-date" type="date" style="width:100%;"></label>
+          <label>Who decided (names)<input id="acc-cb-approvers" style="width:100%;"></label>
+          <label>Evidence type<select id="acc-cb-evtype" style="width:100%;"><option value="email">Email</option><option value="vote">Vote</option><option value="minutes">Minutes</option><option value="resolution">Resolution</option><option value="written_consent">Written consent</option></select></label>
+          <label>Evidence (where it is recorded)<input id="acc-cb-evref" style="width:100%;"></label>
+          <label style="grid-column:1/3;"><input id="acc-cb-dev" type="checkbox"> A deviation from a governing-document standard is granted</label>
+          <label style="grid-column:1/3;">Written deviation authorization<input id="acc-cb-devtext" style="width:100%;"></label>
+          <label style="grid-column:1/3;">Notes<input id="acc-dr-notes" style="width:100%;"></label>
+        </div>
+        <div style="display:flex; gap:8px; margin-top:8px;">
+          <button class="secondary-btn" style="font-size:12px;" onclick="accOwnerReview('${a.id}')">Record my review only</button>
+          <button class="acc-action-btn approve" style="font-size:12px;" onclick="accRecordDecision('${a.id}')">Record decision</button>
+        </div>
+        <div style="font-size:11px; color:#5a7390; margin-top:6px;">Recording does not send anything. Ed's review is a management check; it never replaces a required committee or Board decision.</div>
+      </details>` : '';
+    return `<div class="acc-card" style="border-left:4px solid ${color};">
+      <h3>⚖ Decision authority <span class="acc-pill" style="background:${bg}; color:${color}; margin-left:6px;">${accEsc(au.label)}</span></h3>
+      <div style="font-size:12.5px; color:#334155;">Only Ed, Amanda or Annie can approve or deny this application. Staff can enter, document, draft and request more information.${trig ? ' <b>Escalated to Ed:</b> ' + accEsc(trig) + '.' : ''}</div>
+      ${recLine}${review}${errs}<div id="acc-authority-status" style="font-size:12px; margin-top:6px;"></div>${form}
+    </div>`;
+  }
+  async function accAuthorityPost(id, path, payload) {
+    const st = document.getElementById('acc-authority-status');
+    try {
+      const r = await fetch('/acc-review/decisions/' + id + '/' + path, { method: 'POST', headers: await accBearerHeaders({ 'Content-Type': 'application/json' }), body: JSON.stringify(payload) });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
+      if (st) { st.textContent = '✓ Saved. Nothing was sent.'; st.style.color = '#15803d'; }
+      accOpenDetail(id);
+    } catch (e) { if (st) { st.textContent = '✗ ' + e.message; st.style.color = '#b91c1c'; } }
+  }
+  function accOwnerReview(id) { accAuthorityPost(id, 'owner-review', { notes: (document.getElementById('acc-dr-notes') || {}).value || '' }); }
+  function accRecordDecision(id) {
+    const v = (x) => ((document.getElementById(x) || {}).value || '').trim();
+    const body = v('acc-cb-body');
+    accAuthorityPost(id, 'decision-record', {
+      outcome: v('acc-dr-outcome'), authority_kind: v('acc-dr-kind'), authority_reference: v('acc-dr-ref'), notes: v('acc-dr-notes'),
+      committee_or_board: body ? { body, decision: v('acc-cb-decision'), decided_on: v('acc-cb-date'), approvers: v('acc-cb-approvers'), evidence_type: v('acc-cb-evtype'), evidence_reference: v('acc-cb-evref'), deviation_granted: !!(document.getElementById('acc-cb-dev') || {}).checked, deviation_statement: v('acc-cb-devtext') } : null,
+    });
+  }
+  window.accOwnerReview = accOwnerReview;
+  window.accRecordDecision = accRecordDecision;
 
   // Documents on the case, by their ORIGINAL names (migration 479 manifest; the
   // stored path's file name for older cases), plus any attachment that could not
@@ -15813,7 +15888,7 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
     if (!body_text.trim()) { if (status) { status.textContent = 'Nothing to download — the letter is empty. Redraft first.'; status.style.color = '#b91c1c'; } return; }
     try {
       const r = await fetch('/acc-review/render-letter', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: await accBearerHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ id: a.id, body_text, decision_type: decision, homeowner_name: a.homeowner_name, homeowner_address: a.homeowner_address, community: a.community_name, project_summary: a.project_summary, reference_number: a.reference_number, draft_basis_review_at: window.accDraftBasis || null }),
       });
       if (!r.ok) { const j = await r.json().catch(() => ({})); throw new Error(j.error || 'render failed'); }
@@ -35046,7 +35121,7 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
         accLastReview.decision_id = decisionId;
         if (packetBtn) packetBtn.style.display = 'inline-flex';
       }
-      status.innerHTML = '<span style="color:#15803d;">Downloaded ' + filename + ' &nbsp;·&nbsp; saved to ACC history</span>';
+      status.innerHTML = '<span style="color:#15803d;">Downloaded ' + filename + ' &nbsp;·&nbsp; saved as a DRAFT in the ACC queue. No decision is recorded until it is finalized there.</span>';
     } catch (e) {
       status.innerHTML = '<span style="color:#b91c1c;">' + (e.message || 'Failed') + '</span>';
     } finally {

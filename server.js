@@ -2692,6 +2692,27 @@ app.post('/acc-review/letter', upload.any(), async (req, res) => {
     // Use the auto-rewritten version for the PDF render
     body.body_text = bodyScreen.text;
 
+    // DECISION AUTHORITY (Ed 2026-10-20, lib/acc/decision_authority): rendering
+    // a letter never records a decision; the row it saves is a DRAFT
+    // (pending_review). An approval or denial letter PDF is produced only for a
+    // case with an authorized decision recorded, and only for Ed. A decided case
+    // is never rewritten here. Request-more-info / incomplete letters are open
+    // to staff.
+    const DA = require('./lib/acc/decision_authority');
+    let gateRow = null;
+    if (body.decision_id) {
+      const { data: gr, error: grErr } = await supabase.from('acc_decisions').select('*')
+        .eq('id', body.decision_id).eq('management_company_id', BEDROCK_MGMT_CO_ID).maybeSingle();
+      if (grErr) throw grErr;
+      if (gr && !DA.OPEN.includes(gr.status)) {
+        return res.status(409).json({ code: 'case_closed', error: `This application is already ${gr.status}. A decided record is never rewritten; nothing was generated.` });
+      }
+      gateRow = gr;
+    }
+    const gc = DA.checkFinalDecision(gateRow || { project_summary: body.project_summary, status: 'pending_review' },
+      { decisionType: body.decision_type, texts: [body.body_text, body.project_summary], actor, requireIssuer: true });
+    if (!gc.ok) return res.status(gc.status).json({ code: gc.code, error: gc.error, authority: gc.auth });
+
     // 1) Render the letter PDF first — if this fails, nothing else matters.
     const pdfBuffer = await renderLetterPdfBuffer(body);
 
@@ -2722,7 +2743,8 @@ app.post('/acc-review/letter', upload.any(), async (req, res) => {
       if (rErr && /finalization_id/.test(rErr.message || '')) ({ data: recent } = await recentQ('id, homeowner_address, project_summary, created_at, status'));
       // Never reuse (rewrite) a case finalized through "Send to homeowner": a
       // finalized record is immutable (Issue #14, migration 480).
-      const match = (recent || []).find((r) => r.status !== 'finalizing' && !r.finalization_id &&
+      // Only an OPEN case is reused: a decided one is never rewritten (Ed 2026-10-20).
+      const match = (recent || []).find((r) => DA.OPEN.includes(r.status) && r.status !== 'finalizing' && !r.finalization_id &&
         _nrm(r.homeowner_address) === _nrm(body.homeowner_address) &&
         _nrm(r.project_summary).slice(0, 60) === _nrm(body.project_summary).slice(0, 60));
       if (match) reuseId = match.id;
@@ -2744,19 +2766,21 @@ app.post('/acc-review/letter', upload.any(), async (req, res) => {
         reference_number: body.reference_number || null,
         decision_type: body.decision_type || null,
         letter_body: body.body_text || null,
-        // Per-user audit attribution. Null if the caller wasn't signed
-        // in via Microsoft (legacy staff-password sessions). After the
-        // shared-password gate is killed, every row gets a real FK.
-        decided_by_user_id: actor?.id || null,
+        // No decided_by here: rendering is drafting. The decider is stamped
+        // when an authorized decision is finalized (Ed 2026-10-20).
       };
       if (reuseId) {
+        // An open case only (checked above / in the match): never a decided one.
         const { error: updErr } = await supabase.from('acc_decisions')
-          .update({ ...fields, updated_at: new Date().toISOString() }).eq('id', reuseId);
+          .update({ ...fields, updated_at: new Date().toISOString() }).eq('id', reuseId)
+          .in('status', ['pending_review', 'awaiting_info']);
         if (updErr) throw updErr;
         decisionId = reuseId;
       } else {
+        // status set explicitly: the column default used to be 'decided', so
+        // every render recorded a decision (Ed 2026-10-20; migration 540).
         const { data: instance, error: insErr } = await supabase
-          .from('acc_decisions').insert(fields).select().single();
+          .from('acc_decisions').insert({ ...fields, status: 'pending_review' }).select().single();
         if (insErr) throw insErr;
         decisionId = instance.id;
       }
@@ -2780,18 +2804,13 @@ app.post('/acc-review/letter', upload.any(), async (req, res) => {
         if (aErr) console.warn('[acc-decision] application upload failed:', aErr.message);
       }
 
-      // Seal the finalized ACC decision letter + the submitted application into
-      // the immutable, hash-verified archive. These go to the homeowner; once
-      // finalized they must not change. Best-effort. (Ed 2026-07-18)
+      // Seal the submitted application into the immutable, hash-verified
+      // archive. The letter is NOT sealed here: rendering is drafting, and the
+      // final letter is sealed when an authorized decision is finalized (Ed
+      // 2026-10-20; previously a draft render was sealed with a "sent" time).
       try {
         const { sealFinalizedRecord } = require('./lib/record_archive');
-        const accCid = instance.community_id || null;
-        await sealFinalizedRecord(supabase, {
-          record_type: 'acc_letter', record_id: decisionId, community_id: accCid,
-          archive_path: `acc_decision/${accCid || 'unknown'}/${decisionId}-letter.pdf`,
-          buffer: pdfBuffer, sent_at: new Date().toISOString(),
-          metadata: { decision_type: instance.decision_type || body.decision_type || null },
-        });
+        const accCid = accCommunityId || null;
         if (applicationFile) {
           await sealFinalizedRecord(supabase, {
             record_type: 'acc_application', record_id: decisionId, community_id: accCid,
@@ -2891,7 +2910,14 @@ app.get('/acc-review/decisions', async (req, res) => {
       ({ data, error } = await run(BASE));
     }
     if (error) throw error;
-    res.json({ decisions: data || [] });
+    // Escalation badge (Ed 2026-10-20): a driveway / paving expansion shows
+    // "Owner Review Required" in the queue. Computed from the scope text.
+    const DA = require('./lib/acc/decision_authority');
+    const decisions = (data || []).map((r) => {
+      const a = DA.authorityFor(r);
+      return a.escalated && a.open ? { ...r, authority: { label: a.label, triggers: a.triggers } } : r;
+    });
+    res.json({ decisions });
   } catch (err) {
     console.error('[acc-review/decisions] failed:', err.message);
     res.status(500).json({ error: err.message });
@@ -2949,8 +2975,17 @@ app.post('/acc-review/decisions/:id/reply', express.json({ limit: '256kb' }), as
     if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(to)) return res.status(400).json({ error: 'A valid recipient email is required.' });
     if (!body) return res.status(400).json({ error: 'Write a message before sending.' });
     const { data: d } = await supabase.from('acc_decisions')
-      .select('id, reference_number, homeowner_address, community_id, community_name, acknowledged_at').eq('id', req.params.id).maybeSingle();
+      .select('*').eq('id', req.params.id).maybeSingle();
     if (!d) return res.status(404).json({ error: 'not_found' });
+    // A reply may ask for information or answer questions; it may not approve
+    // or deny (Ed 2026-10-20). A reply that does is held to the same authority
+    // check as a decision letter.
+    {
+      const DA = require('./lib/acc/decision_authority');
+      const actor = await getActingUser(req);
+      const chk = DA.checkFinalDecision(d, { texts: [body], actor, requireIssuer: true });
+      if (!chk.ok) return res.status(chk.status).json({ code: chk.code, error: chk.error });
+    }
     const graph = require('./lib/email/graph_send');
     if (!graph.isConfigured()) return res.status(400).json({ error: 'Email is not connected.' });
     const subject = String(b.subject || '').trim()
@@ -2960,7 +2995,7 @@ app.post('/acc-review/decisions/:id/reply', express.json({ limit: '256kb' }), as
     // inline logo instead of a hand-rolled variant.
     const { buildAnnieEmail } = require('./lib/email/annie_signature');
     const built = buildAnnieEmail(body, d.community_name);
-    await graph.sendAs({ from: graph.ANNIE_MAILBOX, to, subject, html: built.html, attachments: built.attachments || [] });
+    await graph.sendAs({ from: graph.ANNIE_MAILBOX, to, subject, html: built.html, attachments: built.attachments || [], accDecisionId: d.id });
     // Log it so the reply shows on the team board like any other outbound.
     try {
       await supabase.from('email_messages').insert({
@@ -2999,7 +3034,9 @@ app.get('/acc-review/decisions/:id/full', async (req, res) => {
     // The finalized record (exact email, hashes, documents), when there is one.
     let finalization = null;
     try { finalization = await require('./lib/acc/finalized').finalizationFor(supabase, data); } catch (_) {}
-    res.json({ decision: data, finalization });
+    // Who may decide this case and what is still missing (Ed 2026-10-20).
+    const authority = require('./lib/acc/decision_authority').authorityFor(data);
+    res.json({ decision: data, finalization, authority });
   } catch (err) {
     console.error('[acc-review/decisions/:id/full] failed:', err.message);
     res.status(500).json({ error: err.message });
@@ -3065,6 +3102,18 @@ app.get('/acc-review/decisions/:id/letter', async (req, res) => {
       .single();
     if (qErr || !dec) return res.status(404).json({ error: 'Decision not found' });
 
+    // An OPEN case's approval/denial letter is produced only for an authorized
+    // decision, and only for Ed (Ed 2026-10-20): a downloaded decision PDF can be
+    // emailed from Outlook, which is how 19919 Pemetic's approval went out. A
+    // decided case still serves its letter (that is the record).
+    {
+      const DA = require('./lib/acc/decision_authority');
+      if (DA.OPEN.includes(dec.status)) {
+        const chk = DA.checkFinalDecision(dec, { decisionType: dec.decision_type, texts: [dec.letter_body || dec.ai_letter_body], actor: await getActingUser(req), requireIssuer: true });
+        if (!chk.ok) return res.status(chk.status).json({ code: chk.code, error: chk.error });
+      }
+    }
+
     // A finalized case serves the SEALED letter that was sent (hash-checked),
     // never a regeneration (Issue #14).
     let pdfBuffer = await require('./lib/acc/finalized').sealedArtifact(supabase, dec, 'letter');
@@ -3129,7 +3178,17 @@ app.get('/acc-review/decisions/:id/packet', async (req, res) => {
     if (sealed) bytes = sealed;
     if (!bytes && dec.status === 'decided' && dec.packet_pdf_storage_path) bytes = await download(dec.packet_pdf_storage_path);
     if (!bytes) {
-      const pk = await require('./lib/acc/packet').buildAccPacket({ dec, download });
+      // An OPEN case's working packet carries a draft decision letter only when
+      // that decision is authorized and the caller is Ed; otherwise it is the
+      // application documents alone, so the committee/Board can review the
+      // record without an unissued approval or denial in it (Ed 2026-10-20).
+      let packetDec = dec;
+      if (dec.status !== 'decided') {
+        const DA = require('./lib/acc/decision_authority');
+        const chk = DA.checkFinalDecision(dec, { decisionType: dec.decision_type, texts: [dec.letter_body || dec.ai_letter_body], actor: await getActingUser(req), requireIssuer: true });
+        if (!chk.ok) { packetDec = { ...dec, letter_pdf_storage_path: null }; res.setHeader('X-Packet-Letter-Withheld', chk.code); }
+      }
+      const pk = await require('./lib/acc/packet').buildAccPacket({ dec: packetDec, download });
       if (!pk.ok) return res.status(422).json({ error: 'No document on this case could be included in a packet.', omitted: pk.omitted });
       bytes = pk.bytes;
       if (pk.omitted.length) res.setHeader('X-Packet-Omitted', String(pk.omitted.length));
@@ -3225,6 +3284,38 @@ app.post('/acc-review/decisions/:id/finalize', async (req, res) => {
     }
     bodyText = bodyScreen.text;
 
+    // DECISION AUTHORITY (Ed 2026-10-20, lib/acc/decision_authority). An
+    // approval or denial (by decision type OR by what the letter says) is issued
+    // only by Ed, only with an authorized decision record on the case, and for a
+    // driveway / paving expansion or deviation only with the committee/Board
+    // approval documented. Ed may record his decision here in the same step
+    // (body.decision_record), so an authorized decision is entered once.
+    // Requests for more information and incomplete notices are open to staff.
+    {
+      const DA = require('./lib/acc/decision_authority');
+      let decRow = dec;
+      if (body.decision_record && typeof body.decision_record === 'object') {
+        if (!DA.isOwnerActor(actor)) {
+          return res.status(403).json({ code: 'decision_not_authorized', error: 'Only Ed can record an ACC decision from this screen. Staff can draft and request more information.' });
+        }
+        const rec = DA.ownerDecisionRecord(actor, { ...body.decision_record, outcome: body.decision_record.outcome || decisionType });
+        decRow = { ...dec, decision_record: rec };
+      }
+      const authz = DA.checkFinalDecision(decRow, { decisionType, texts: [bodyText], actor, requireIssuer: true });
+      if (!authz.ok) return res.status(authz.status).json({ code: authz.code, error: authz.error, authority: authz.auth });
+      if (authz.final) {
+        const patch = { ...(DA.stampFor(authz.auth.gate) || {}) };
+        if (decRow !== dec) patch.decision_record = decRow.decision_record;
+        if (Object.keys(patch).length) {
+          const { error: pErr } = await supabase.from('acc_decisions').update(patch).eq('id', id).in('status', DA.OPEN);
+          if (pErr) {
+            const missing = /column|does not exist/i.test(pErr.message || '');
+            return res.status(missing ? 503 : 500).json({ code: 'decision_record_not_saved', error: `The decision record could not be saved (${pErr.message}). Nothing was sent or marked done.${missing ? ' Migration 540 must be applied first.' : ''}` });
+          }
+        }
+      }
+    }
+
     // Render the decision letter PDF.
     const pdfBuffer = await renderLetterPdfBuffer({
       community: dec.community_name,
@@ -3278,7 +3369,9 @@ app.post('/acc-review/decisions/:id/finalize', async (req, res) => {
         attachments: [...(built.attachments || []), pdfAtt],
         archive_attachments: [{ name: letterFileName, content_type: 'application/pdf', sha256: _sha256(pdfBuffer), bytes: pdfBuffer.length }] };
     };
-    const sendEmail = async (c) => { await graph.sendAs({ from: c.from, to: c.to, subject: c.subject, html: c.html, attachments: c.attachments }); };
+    // accDecisionId: graph_send re-verifies this case's authorized decision
+    // before any approval/denial email leaves (lib/acc/decision_authority).
+    const sendEmail = async (c) => { await graph.sendAs({ from: c.from, to: c.to, subject: c.subject, html: c.html, attachments: c.attachments, accDecisionId: id }); };
     // The exact final letter + the complete ACC record (letter, application,
     // every supporting document, every photo), sealed write-once with sha256s.
     // Attempt-scoped archive paths: a failed attempt can never collide with the
@@ -3622,6 +3715,61 @@ app.post('/acc-review/decisions/:id/redraft', express.json({ limit: '64kb' }), a
   }
 });
 
+// ── ACC decision authority (Ed 2026-10-20, lib/acc/decision_authority) ───────
+// Both endpoints are Ed-only (signed-in owner account, verified server-side)
+// and never send, finalize or change status. They write the record the
+// approval / letter / send paths check.
+//
+// POST /acc-review/decisions/:id/owner-review { notes }
+//   Ed's review of an escalated case (driveway / paving expansion, deviation,
+//   conflicts, incomplete evidence, uncertainty). A management check: it never
+//   substitutes for a required committee or Board decision.
+// POST /acc-review/decisions/:id/decision-record { outcome, authority_kind,
+//   authority_reference, committee_or_board?, conditions?, notes? }
+//   Ed's final decision, with the provision or written delegation that
+//   authorizes it and (for a paving expansion or deviation approval) the
+//   committee/Board decision with its evidence. Also counts as his review.
+async function _accAuthorityWrite(req, res, buildPatch) {
+  const DA = require('./lib/acc/decision_authority');
+  const actor = await getActingUser(req);
+  if (!DA.isOwnerActor(actor)) {
+    return res.status(403).json({ code: 'decision_not_authorized', error: 'Only Ed can review or record an ACC decision. Staff can enter applications, upload documents, draft and request more information.' });
+  }
+  const { data: dec, error } = await supabase.from('acc_decisions').select('*')
+    .eq('id', req.params.id).eq('management_company_id', BEDROCK_MGMT_CO_ID).maybeSingle();
+  if (error) return res.status(500).json({ error: error.message });
+  if (!dec) return res.status(404).json({ error: 'Decision not found' });
+  if (!DA.OPEN.includes(dec.status) || dec.status === 'finalizing') {
+    return res.status(409).json({ code: 'case_closed', error: `This application is ${dec.status}. Its record is not changed here.` });
+  }
+  const built = buildPatch(DA, actor, dec, req.body || {});
+  if (built.errors && built.errors.length) return res.status(400).json({ code: 'invalid', error: built.errors.join('; '), errors: built.errors });
+  const { data: upd, error: uErr } = await supabase.from('acc_decisions').update({ ...built.patch, updated_at: new Date().toISOString() })
+    .eq('id', dec.id).in('status', ['pending_review', 'awaiting_info']).select('*').maybeSingle();
+  if (uErr) {
+    const missing = /column|does not exist/i.test(uErr.message || '');
+    return res.status(missing ? 503 : 500).json({ error: missing ? 'Migration 540 must be applied before decisions can be recorded.' : uErr.message });
+  }
+  if (!upd) return res.status(409).json({ code: 'case_changed', error: 'The case changed while saving; reload and try again.' });
+  return res.json({ ok: true, authority: DA.authorityFor(upd) });
+}
+app.post('/acc-review/decisions/:id/owner-review', express.json({ limit: '32kb' }), (req, res) => _accAuthorityWrite(req, res, (DA, actor, dec, b) => {
+  const a = DA.authorityFor(dec);
+  return { patch: { owner_review: { reviewed_at: new Date().toISOString(), reviewed_by_user_id: actor.id, reviewed_by_email: String(actor.email).toLowerCase(), reviewed_by_name: actor.full_name || null, notes: String(b.notes || '').trim() || null, triggers: a.triggers } } };
+}).catch((e) => res.status(500).json({ error: e.message })));
+app.post('/acc-review/decisions/:id/decision-record', express.json({ limit: '64kb' }), (req, res) => _accAuthorityWrite(req, res, (DA, actor, dec, b) => {
+  const rec = DA.ownerDecisionRecord(actor, b);
+  const errors = DA.validateDecisionRecord(rec, { ...dec, decision_record: rec });
+  if (errors.length) return { errors };
+  const now = new Date().toISOString();
+  return { patch: {
+    decision_record: rec,
+    decision_type: rec.outcome,
+    owner_review: dec.owner_review || { reviewed_at: now, reviewed_by_user_id: actor.id, reviewed_by_email: String(actor.email).toLowerCase(), reviewed_by_name: actor.full_name || null, notes: 'Reviewed when recording the decision.', triggers: DA.authorityFor(dec).triggers },
+    ...(DA.stampFor(DA.authorityFor(dec).gate) || {}),
+  } };
+}).catch((e) => res.status(500).json({ error: e.message })));
+
 // POST /acc-review/render-letter — render a decision-letter PDF from the CURRENT
 // editor text WITHOUT saving. So "Download letter PDF" gives you the letter you
 // are looking at — including a fresh redraft that hasn't been sent yet — instead
@@ -3635,16 +3783,7 @@ app.post('/acc-review/render-letter', express.json({ limit: '256kb' }), async (r
     if (screen.blocks.length > 0) {
       return res.status(400).json({ error: 'Letter contains internal-only phrases that cannot go to a homeowner — edit them first. Blocked: ' + screen.blocks.map((x) => `"${x.matches.join('", "')}"`).join(', ') });
     }
-    const pdfBuffer = await renderLetterPdfBuffer({
-      community: b.community || b.community_name,
-      homeowner_name: b.homeowner_name,
-      homeowner_address: b.homeowner_address,
-      project_summary: b.project_summary,
-      reference_number: b.reference_number,
-      decision_type: b.decision_type,
-      body_text: screen.text,
-    });
-    // Persist what was rendered as a DRAFT on the decision (best-effort) so
+    // Persist the editor text as a DRAFT on the decision (best-effort) so
     // downloaded work isn't lost on reload — the trap Ed hit (Download used to
     // save nothing). Draft only: status stays pending_review; the decision is
     // NOT recorded until Send/Mark-done. GET .../letter falls back to letter_body,
@@ -3665,6 +3804,30 @@ app.post('/acc-review/render-letter', express.json({ limit: '256kb' }), async (r
         if (dr.error) console.warn('[acc-render-letter] draft save skipped:', dr.error.message);
       } catch (e) { console.warn('[acc-render-letter] draft save skipped:', e.message); }
     }
+    // The text draft is saved for anyone; an approval/denial letter PDF is
+    // produced only for an authorized decision, and only for Ed (Ed 2026-10-20).
+    {
+      const DA = require('./lib/acc/decision_authority');
+      let row = { project_summary: b.project_summary, status: 'pending_review' };
+      if (b.id) {
+        const { data: gr, error: grErr } = await supabase.from('acc_decisions').select('*').eq('id', b.id).eq('management_company_id', BEDROCK_MGMT_CO_ID).maybeSingle();
+        if (grErr) throw grErr;
+        if (gr) row = gr;
+      }
+      // Every status: rendering NEW decision text for a decided case is not its
+      // record (GET .../letter serves the stored one), so it is held to the same check.
+      const chk = DA.checkFinalDecision(row, { decisionType: b.decision_type, texts: [screen.text, b.project_summary], actor: await getActingUser(req), requireIssuer: true });
+      if (!chk.ok) return res.status(chk.status).json({ code: chk.code, draft_saved: !!b.id && DA.OPEN.includes(row.status), error: (b.id && DA.OPEN.includes(row.status) ? 'Your draft was saved. ' : '') + chk.error });
+    }
+    const pdfBuffer = await renderLetterPdfBuffer({
+      community: b.community || b.community_name,
+      homeowner_name: b.homeowner_name,
+      homeowner_address: b.homeowner_address,
+      project_summary: b.project_summary,
+      reference_number: b.reference_number,
+      decision_type: b.decision_type,
+      body_text: screen.text,
+    });
     const stem = (b.homeowner_address || b.homeowner_name || b.community || 'decision').toString().replace(/[^A-Za-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'decision';
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `inline; filename="${stem}_ACC_decision.pdf"`);
