@@ -35,7 +35,9 @@ const express = require('express');
 const ROOT = path.resolve(__dirname, '..');
 let passed = 0, failed = 0;
 const ok = (cond, msg, extra) => {
-  if (cond) { passed++; console.log(`  ✓ ${msg}`); }
+  const t = ok.timed && ok.lastMs != null ? `  [${ok.lastMs} ms]` : '';
+  ok.lastMs = null;
+  if (cond) { passed++; console.log(`  ✓ ${msg}${t}`); }
   else { failed++; console.log(`  ✗ ${msg}${extra ? `  — ${extra}` : ''}`); }
 };
 
@@ -78,6 +80,7 @@ function send(port, urlPath, chunks, { chunked = false, timeoutMs = 30000 } = {}
       res.on('end', () => {
         clearTimeout(timer);
         let json = null; try { json = JSON.parse(body); } catch (_) {}
+        ok.lastMs = Date.now() - t0;
         resolve({ status: res.statusCode, json, body, type: res.headers['content-type'] || '', ms: Date.now() - t0 });
       });
     });
@@ -133,6 +136,7 @@ const MB = 1024 * 1024;
     ['Master plan POST /api/master-plan-submissions/public', MPS, 'files', { fileSize: 40 * MB, files: 6, total: 150 * MB, missing: 'community_slug' }],
   ]) {
     console.log(`\n${label}`);
+    ok.timed = true;
 
     // Normal upload: passes the upload layer and reaches the handler, which
     // answers with ITS OWN required-field 400 (so no DB is touched).
@@ -180,6 +184,7 @@ const MB = 1024 * 1024;
     ok(r.status === 400 && r.json && new RegExp(cfg.missing).test(r.json.error), 'a %0D%0A filename still parses (control chars are stripped before the handler)', show(r));
   }
 
+  ok.timed = false;
   // ---- control characters never reach the handler -----------------------
   console.log('\nfilename hygiene (helper, as wired into the routes)');
   {
@@ -208,8 +213,9 @@ const MB = 1024 * 1024;
   // ---- every public multer route uses the helper ------------------------
   console.log('\npublic allowlist guard');
   const found = publicMulterRoutes();
-  ok(found.routes.length >= 5, `found ${found.routes.length} multer routes on the public allowlist (expected ≥ 5)`);
-  for (const rt of found.routes) ok(rt.usesHelper, `${rt.method} ${rt.path} → ${rt.instance} is a publicUpload()`, `api/${rt.file} uses a raw multer() instance`);
+  ok(found.unmapped.length === 0, `all ${found.uses} upload middleware uses in server.js + api/ map to a mounted route`, found.unmapped.join(', '));
+  ok(found.routes.length >= 6, `found ${found.routes.length} upload routes reachable without login (expected ≥ 6)`);
+  for (const rt of found.routes) ok(rt.usesHelper, `${rt.method} ${rt.path} → ${rt.instance} is a publicUpload()${rt.beforeGate ? ' (before the staff gate)' : ''}`, `${rt.file} uses a raw multer() instance`);
 
   ok(unhandled.length === 0, 'no unhandled rejection or uncaught exception during the run', unhandled.join('; '));
 
@@ -218,32 +224,54 @@ const MB = 1024 * 1024;
   process.exit(failed ? 1 : 0);
 })().catch((e) => { console.error(e); process.exit(1); });
 
-// Map multer-guarded routes in api/*.js to their mounted path and test them
-// against server.js's _STAFF_GATE_PUBLIC allowlist.
+
+// Every multer / publicUpload middleware use in server.js and api/*.js, mapped
+// to its mounted path. A route is "no login" when its path is on server.js's
+// _STAFF_GATE_PUBLIC allowlist or it is registered before the staff gate.
 function publicMulterRoutes() {
   const server = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
   const start = server.indexOf('const _STAFF_GATE_PUBLIC = [');
   const allowSrc = server.slice(start, server.indexOf('\n];', start));
   const allow = [...allowSrc.matchAll(/^\s*(\/\^.*?\/)\s*,/gm)].map((m) => new Function(`return ${m[1]}`)());
+  const lineOf = (src, idx) => src.slice(0, idx).split('\n').length;
+  const gateLine = lineOf(server, server.indexOf('if (_gateIsPublicPath(req.path)) return next();'));
   const routerFile = {};
   for (const m of server.matchAll(/const\s+(?:\{\s*router:\s*)?(\w+)\s*\}?\s*=\s*require\('\.\/api\/([\w_]+)'\)/g)) routerFile[m[1]] = m[2] + '.js';
+  for (const m of server.matchAll(/const\s+\{[^}]*router:\s*(\w+)[^}]*\}\s*=\s*require\('\.\/api\/([\w_]+)'\)/g)) routerFile[m[1]] = m[2] + '.js';
   const mounts = [];
-  for (const m of server.matchAll(/app\.use\('([^']+)',\s*(?:[\w.]+,\s*)*(\w+)\)/g)) if (routerFile[m[2]]) mounts.push([m[1], routerFile[m[2]]]);
-  const routes = [];
-  for (const f of fs.readdirSync(path.join(ROOT, 'api'))) {
-    const src = fs.readFileSync(path.join(ROOT, 'api', f), 'utf8');
+  for (const m of server.matchAll(/app\.use\(\s*'([^']+)'\s*,\s*([^)]*)\)/g)) {
+    for (const a of m[2].split(',').map((x) => x.trim())) {
+      const inline = a.match(/^require\('\.\/api\/([\w_]+)'/);
+      const file = routerFile[a] || (inline && inline[1] + '.js');
+      if (file) mounts.push({ mount: m[1], file: 'api/' + file, line: lineOf(server, m.index) });
+    }
+  }
+  const files = ['server.js', ...fs.readdirSync(path.join(ROOT, 'api')).filter((x) => x.endsWith('.js')).map((x) => 'api/' + x)];
+  const routes = [], unmapped = [];
+  let uses = 0;
+  for (const rel of files) {
+    const src = fs.readFileSync(path.join(ROOT, rel), 'utf8');
     const kinds = {};
-    for (const m of src.matchAll(/const\s+(\w+)\s*=\s*multer\(/g)) kinds[m[1]] = 'multer';
-    for (const m of src.matchAll(/const\s+(\w+)\s*=\s*publicUpload\(/g)) kinds[m[1]] = 'publicUpload';
+    for (const m of src.matchAll(/const\s+(\w+)\s*=\s*(multer|publicUpload)\(/g)) kinds[m[1]] = m[2];
     const names = Object.keys(kinds);
     if (!names.length) continue;
-    const re = new RegExp("router\\.(post|put|patch)\\('([^']+)',\\s*(?:[\\w.]+\\s*,\\s*)*(" + names.join('|') + ")\\.(?:single|array|fields|any)\\(", 'g');
-    for (const m of src.matchAll(re)) {
-      for (const [mount] of mounts.filter(([, fl]) => fl === f)) {
-        const sample = (mount + m[2]).replace(/:slug/g, 'canyon-gate').replace(/:\w+/g, '0d3c5a8e-0000-4000-8000-000000000000');
-        if (allow.some((a) => a.test(sample))) routes.push({ method: m[1].toUpperCase(), path: mount + m[2], instance: m[3], file: f, usesHelper: kinds[m[3]] === 'publicUpload' });
+    for (const m of src.matchAll(new RegExp(`\\b(${names.join('|')})\\.(single|array|fields|any)\\(`, 'g'))) {
+      uses++;
+      const line = lineOf(src, m.index);
+      const r = [...src.slice(Math.max(0, m.index - 400), m.index).matchAll(/\b(router|app)\.(post|put|patch|get|delete|use)\(\s*'([^']+)'/g)].pop();
+      if (!r) { unmapped.push(`${rel}:${line}`); continue; }
+      const targets = r[1] === 'app'
+        ? [{ full: r[3], mountLine: line }]
+        : mounts.filter((x) => x.file === rel).map((x) => ({ full: x.mount + r[3], mountLine: x.line }));
+      if (!targets.length) unmapped.push(`${rel}:${line} (router not mounted)`);
+      for (const t of targets) {
+        const sample = t.full.replace(/:slug/g, 'canyon-gate').replace(/:\w+/g, '0d3c5a8e-0000-4000-8000-000000000000');
+        const beforeGate = t.mountLine < gateLine;
+        if (beforeGate || allow.some((a) => a.test(sample))) {
+          routes.push({ method: r[2].toUpperCase(), path: t.full, instance: m[1], file: rel, beforeGate, usesHelper: kinds[m[1]] === 'publicUpload' });
+        }
       }
     }
   }
-  return { routes };
+  return { routes, unmapped, uses };
 }
