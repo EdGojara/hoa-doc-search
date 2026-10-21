@@ -265,6 +265,17 @@ const ticks = (from, to, phase) => { const out = []; for (let t = from + phase *
     ok(r3.code === 0 && r3.outcome === 'superseded' && w3.issues.length === 0, 'an older merge\'s run that times out after main moved on defers to the newer run (exit 0, no issue)', r3.outcome);
   }
 
+  {
+    // Supply chain (Ed 2026-10-21): every third-party action is pinned to an immutable
+    // 40-character commit hash, never a moving tag like @v4; and the job token is minimal.
+    const fs = require('fs'); const path = require('path');
+    const wf = fs.readFileSync(path.join(__dirname, '..', '.github', 'workflows', 'deploy-verify.yml'), 'utf8');
+    const uses = [...wf.matchAll(/^\s*-?\s*uses:\s*([^\s#]+)/gm)].map((m) => m[1]);
+    ok(uses.length > 0 && uses.every((u) => /^[\w.-]+\/[\w.-]+@[0-9a-f]{40}$/.test(u)), `all ${uses.length} actions pinned to commit hashes`, uses.join(', '));
+    const perms = ((wf.match(/^permissions:\r?\n((?:[ \t]+\S.*\r?\n)+)/m) || [])[1] || '').trim().split(/\r?\n/).map((l) => l.trim());
+    ok(perms.length === 2 && perms.includes('contents: read') && perms.includes('issues: write'), 'job token permissions are exactly contents: read + issues: write', perms.join(' | '));
+  }
+
   console.log(`\n${passed} passed, ${failed} failed`);
   process.exit(failed ? 1 : 0);
 })().catch((e) => { console.error(e); process.exit(1); });
