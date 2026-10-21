@@ -31,7 +31,7 @@ const graphSend = require('../lib/email/graph_send');
 const { buildPersonaEmail } = require('../lib/email/persona_signature');
 const { renderAchAuthorizationPdf } = require('../lib/ach/authorization_pdf');
 const crypto = require('crypto');
-const multer = require('multer');
+const { publicUpload } = require('../lib/uploads/public_upload');
 
 const router = express.Router();
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
@@ -40,9 +40,12 @@ const DOCS_BUCKET = 'documents'; // same private, server-gated bucket the docume
 
 // Accept a supporting file (voided check / signed ACH form) and a W-9: images
 // or PDF, <= 10MB each.
-const upload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: 10 * 1024 * 1024, files: 2 },
+// Public (token link, no login): parsed before the token is checked.
+const upload = publicUpload({
+  route: 'ach.form',
+  fileSize: 10 * 1024 * 1024,
+  files: 2,
+  maxTotalBytes: 25 * 1024 * 1024,
 });
 const OK_UPLOAD_MIME = new Set(['application/pdf', 'image/png', 'image/jpeg', 'image/jpg', 'image/heic', 'image/webp']);
 

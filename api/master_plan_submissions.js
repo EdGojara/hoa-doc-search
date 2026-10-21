@@ -24,7 +24,7 @@
 // ============================================================================
 
 const express = require('express');
-const multer = require('multer');
+const { publicUpload } = require('../lib/uploads/public_upload');
 const router = express.Router();
 const { createClient } = require('@supabase/supabase-js');
 const { safeErrorMessage } = require('./_safe_error');
@@ -36,9 +36,12 @@ const { BEDROCK_MGMT_CO_ID } = require('../lib/company');
 
 // Master plan PDFs are larger than per-lot PDFs (full plan set with all
 // elevations, often 40-150 pages, can be 12+ MB). Generous limits.
-const upload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: 40 * 1024 * 1024, files: 6 },
+// Public (no-login) builder intake.
+const upload = publicUpload({
+  route: 'master-plan-submissions.public',
+  fileSize: 40 * 1024 * 1024,
+  files: 6,
+  maxTotalBytes: 150 * 1024 * 1024,
 });
 
 // ----------------------------------------------------------------------------
