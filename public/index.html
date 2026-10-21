@@ -27786,9 +27786,9 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
                   style="width:100%; padding:7px; background:transparent; color:${fc ? '#15803d' : '#cbd5e1'}; border:1px solid ${fc ? '#86efac' : '#e2e8f0'}; border-radius:6px; font-size:11.5px; font-weight:600; cursor:${fc ? 'pointer' : 'not-allowed'}; margin-bottom:5px;">
             ${fc ? '✉️ Send via Lob (auto-mail)' : ''}
           </button>
-          <button onclick="inspMailQueueDownload('first_class_mail')" ${fc === 0 ? 'disabled' : ''}
+          <button onclick="inspMailQueuePreview('first_class_mail', this)" ${fc === 0 ? 'disabled' : ''}
                   style="width:100%; padding:5px; background:transparent; color:${fc ? '#94a3b8' : '#cbd5e1'}; border:1px solid ${fc ? '#e2e8f0' : '#e2e8f0'}; border-radius:6px; font-size:10.5px; cursor:${fc ? 'pointer' : 'not-allowed'};">
-            ${fc ? 'Skip lock · download PDFs' : ''}
+            ${fc ? '👁 Preview letters (no status change)' : ''}
           </button>
         </div>
         <!-- Certified batch -->
@@ -27808,9 +27808,9 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
                   style="width:100%; padding:7px; background:transparent; color:${cm ? '#0B1D34' : '#cbd5e1'}; border:1px solid ${cm ? '#cbd5e1' : '#e2e8f0'}; border-radius:6px; font-size:11.5px; font-weight:600; cursor:${cm ? 'pointer' : 'not-allowed'}; margin-bottom:5px;">
             ${cm ? '🔒 Lock + print PDFs (manual mail)' : ''}
           </button>
-          <button onclick="inspMailQueueDownload('certified_mail')" ${cm === 0 ? 'disabled' : ''}
+          <button onclick="inspMailQueuePreview('certified_mail', this)" ${cm === 0 ? 'disabled' : ''}
                   style="width:100%; padding:5px; background:transparent; color:${cm ? '#94a3b8' : '#cbd5e1'}; border:1px solid ${cm ? '#e2e8f0' : '#e2e8f0'}; border-radius:6px; font-size:10.5px; cursor:${cm ? 'pointer' : 'not-allowed'};">
-            ${cm ? 'Skip lock · download PDFs' : ''}
+            ${cm ? '👁 Preview letters (no status change)' : ''}
           </button>
         </div>
       </div>
@@ -27844,6 +27844,7 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
             <button onclick="inspMailQueueRedownload('${b.delivery_method}','${b.printed_at}')" style="flex:1; min-width:120px; padding:7px; background:#0B1D34; color:#fff; border:none; border-radius:6px; font-size:12px; font-weight:600; cursor:pointer;">⬇ Re-download this batch</button>
             <button onclick="inspMailQueueConfirmMailed('${b.delivery_method}','${b.printed_at}')" style="flex:1; min-width:120px; padding:7px; background:#15803d; color:#fff; border:none; border-radius:6px; font-size:12px; font-weight:600; cursor:pointer;">✓ Confirm this batch mailed</button>
             </div>
+            ${b.postmark_date ? '' : `<div style="margin-top:6px; padding:6px 9px; background:#fef2f2; border:1px solid #fecaca; color:#991b1b; border-radius:6px; font-size:11.5px;">⚠ ON HOLD: printed without a lock (no postmark date). Do not mail these letters and do not confirm this batch; ask Ed. Confirming will not mark them mailed.</div>`}
             <div style="margin-top:6px;"><button onclick="inspMailQueueBatchManifest('${b.delivery_method}','${b.printed_at}','${batchKey}')" id="mfbtn-${batchKey}" style="background:none; border:1px solid #cbd5e1; color:#0B1D34; padding:4px 11px; border-radius:6px; font-size:11.5px; font-weight:600; cursor:pointer;">👁 Show these ${b.count} letters</button></div>
             <div id="mf-${batchKey}" style="display:none; margin-top:8px;"></div>
           </div>`;
@@ -27952,7 +27953,8 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
       });
       const j = await r.json();
       if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
-      alert(`✓ ${j.confirmed} letter${j.confirmed === 1 ? '' : 's'} confirmed mailed.`);
+      alert(`✓ ${j.confirmed} letter${j.confirmed === 1 ? '' : 's'} confirmed mailed.`
+        + (j.not_postmarked ? `\n\n⚠ ${j.not_postmarked} letter${j.not_postmarked === 1 ? ' was' : 's were'} NOT marked mailed: printed without a lock (no postmark date). Do not mail ${j.not_postmarked === 1 ? 'it' : 'them'}; ask Ed.` : ''));
       await inspMailQueueLoad();
     } catch (e) { alert('Confirm failed: ' + e.message); }
   }
@@ -27975,7 +27977,7 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
     let msg = `Confirm ${boxes.length} selected batch${boxes.length === 1 ? '' : 'es'} were printed and physically mailed?\n\nThis marks their letters mailed and clears them from “awaiting confirmation.” Only do this once they're actually in the mail.`;
     if (hasCert) msg += '\n\n⚠ Your selection includes CERTIFIED §209 letters — only confirm those if they truly went out certified.';
     if (!confirm(msg)) return;
-    let confirmed = 0, held = 0, failed = 0;
+    let confirmed = 0, held = 0, failed = 0, notPm = 0;
     for (const b of boxes) {
       try {
         const r = await window._authFetch('/api/enforcement/mail-queue/confirm-mailed', {
@@ -27984,11 +27986,12 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
         });
         const j = await r.json();
         if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
-        confirmed += (j.confirmed || 0); held += (j.held || 0);
+        confirmed += (j.confirmed || 0); held += (j.held || 0); notPm += (j.not_postmarked || 0);
       } catch (e) { failed++; console.warn('[mail-queue.confirm-selected]', e.message); }
     }
     alert(`✓ ${confirmed} letter${confirmed === 1 ? '' : 's'} confirmed mailed`
       + (held ? ` · ${held} held (stale / on a voided case — not mailed)` : '')
+      + (notPm ? ` · ${notPm} NOT marked mailed (printed without a lock, no postmark): do not mail, ask Ed` : '')
       + (failed ? ` · ${failed} batch(es) failed` : '') + '.');
     await inspMailQueueLoad();
   }
@@ -28221,37 +28224,44 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
     }
   }
 
-  async function inspMailQueueDownload(deliveryMethod) {
+  // Read-only preview of what "Lock dates + print PDFs" would print: one combined
+  // letter per envelope, dated today, stamped PREVIEW. Changes NOTHING: no status,
+  // no print stamp, nothing moves to Locked. (Replaced "Skip lock · download PDFs",
+  // which stamped letters printed with no postmark. Ed 2026-10-21.)
+  async function inspMailQueuePreview(deliveryMethod, btn) {
     const cid = inspMailQueueResolveCommunity();
     if (cid === false) return;
-    const label = deliveryMethod === 'certified_mail' ? 'CERTIFIED' : 'first-class';
-    if (!confirm(`Download all pending ${label} letters as one PDF?\n\nThis will:\n• Merge every approved letter into a single multi-page PDF\n• Mark them all as "printed" so they don't appear in the next batch\n• Download immediately to your computer\n\nProceed?`)) return;
+    const origLabel = btn ? btn.innerHTML : '';
+    if (btn) { btn.disabled = true; btn.innerHTML = '⏳ Building preview…'; }
     try {
-      const r = await window._authFetch('/api/enforcement/mail-queue/batch-pdf', {
+      const r = await window._authFetch('/api/enforcement/mail-queue/preview', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ delivery_method: deliveryMethod, community_id: cid || undefined }),
       });
       if (!r.ok) {
         const j = await r.json().catch(() => ({}));
-        throw new Error(j.error || `HTTP ${r.status}`);
+        const probs = (j.problems || []).map((p) => '• ' + p.reason).join('\n');
+        throw new Error((j.error || `HTTP ${r.status}`) + (probs ? '\n\n' + probs : ''));
       }
-      const blob = await r.blob();
-      const included = r.headers.get('X-Bedrock-Included');
-      const url = URL.createObjectURL(blob);
+      let problems = [];
+      try { problems = JSON.parse(decodeURIComponent(r.headers.get('X-Bedrock-Preview-Problems') || '%5B%5D')); } catch (_) {}
+      const url = URL.createObjectURL(await r.blob());
+      // A download, not window.open: a popup opened after an await is often blocked.
       const a = document.createElement('a');
-      a.href = url;
-      a.download = `bedrock-mail-batch-${label}-${new Date().toISOString().slice(0,10)}.pdf`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      setTimeout(() => URL.revokeObjectURL(url), 60000);
-      setTimeout(() => alert(`✓ ${included || ''} letters downloaded as one batch PDF. They're now marked as printed.`), 200);
-      await inspMailQueueLoad();
+      a.href = url; a.download = `PREVIEW-${deliveryMethod === 'certified_mail' ? 'certified' : 'first-class'}-${new Date().toISOString().slice(0, 10)}.pdf`;
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 120000);
+      if (problems.length) {
+        alert(`Preview downloaded. ${problems.length} envelope${problems.length === 1 ? '' : 's'} could NOT be built and would be held at lock:\n\n` + problems.map((p) => '• ' + p.reason).join('\n') + '\n\nFix these before locking. Nothing was changed.');
+      }
     } catch (e) {
-      alert('Download failed: ' + e.message);
+      alert('Preview failed (nothing was changed): ' + e.message);
+    } finally {
+      if (btn) { btn.disabled = false; btn.innerHTML = origLabel; }
     }
   }
+  window.inspMailQueuePreview = inspMailQueuePreview;
 
   // ============================================================
   // FINE QUEUE (Phase 7c)
