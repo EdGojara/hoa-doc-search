@@ -66,7 +66,7 @@ check('identity: face v2 is the reference, the excluded high-resolution set is n
 });
 check('the persona image map owns amanda.jpg; every mapped photo exists; no other teammate is mapped', () => {
   const map = JSON.parse(fs.readFileSync(path.join(ROOT, 'lib', 'team', 'persona_images.json'), 'utf8'));
-  assert.deepStrictEqual(Object.keys(map).filter((k) => !k.startsWith('_')), ['amanda']);
+  assert.deepStrictEqual(Object.keys(map).filter((k) => !k.startsWith('_')), ['amanda', 'paige']);
   assert.strictEqual(map.amanda.canonical_square.out, 'public/assets/presentations/team/amanda.jpg');
   for (const k of Object.keys(map.amanda.photos)) assert.ok(fs.existsSync(path.join(ROOT, map.amanda.dir, k + '.jpg')), k);
 });
@@ -97,8 +97,35 @@ check('old-face video posters use the legacy portrait (poster matches the video)
   assert.match(story, /poster: '\/assets\/presentations\/team\/amanda_legacy_v1\.jpg', video_topic: 'clma_amanda_management'/);
   assert.ok(!/team\/amanda\.jpg', video_topic/.test(story), 'no old-face video poster on amanda.jpg');
   const resolve = fs.readFileSync(path.join(ROOT, 'lib', 'presentations', 'resolve.js'), 'utf8');
-  assert.match(resolve, /LEGACY_VIDEO_POSTER = \{ amanda: 'amanda_legacy_v1' \}/);
+  assert.match(resolve, /LEGACY_VIDEO_POSTER = \{ amanda: 'amanda_legacy_v1', paige: 'paige_legacy_v1' \}/);
   assert.match(resolve, /LEGACY_VIDEO_POSTER\[seg\.persona\] \|\| seg\.persona/);
+});
+
+// ---- Paige (Ed 2026-10-21): new photos of the SAME woman; production face kept for video ----
+const PAIGE_V1_SHA = '81984853868b1718c09bb4bac7e92132ffa0cbc2bef69052c0df0d5effa55bd1';   // registry: 640px derivative of canon bbc6c052
+const PAIGE_CURRENT_SHA = '5f06ec32de3db24db0cc7bb5f210ed067a082202589455b1179d028ebb0e40c6';
+check('paige.jpg is the 2026-10-21 headshot (640x640), and v1 is preserved byte-identical as paige_legacy_v1.jpg', () => {
+  assert.strictEqual(sha(path.join(TEAM, 'paige.jpg')), PAIGE_CURRENT_SHA, 'a deliberate replacement updates this test');
+  assert.deepStrictEqual(jpegSize(path.join(TEAM, 'paige.jpg')), { w: 640, h: 640 });
+  assert.strictEqual(sha(path.join(TEAM, 'paige_legacy_v1.jpg')), PAIGE_V1_SHA);
+});
+check('Paige video posters show her production face (the face the videos show)', () => {
+  const story = fs.readFileSync(path.join(ROOT, 'lib', 'presentations', 'story.js'), 'utf8');
+  assert.ok(!/team\/paige\.jpg/.test(story), 'no Paige video poster on paige.jpg');
+  assert.strictEqual((story.match(/team\/paige_legacy_v1\.jpg/g) || []).length, 3);
+});
+check('Paige: nothing upscaled; identity reference is the production original; HeyGen and M365 unchanged', () => {
+  const map = JSON.parse(fs.readFileSync(path.join(ROOT, 'lib', 'team', 'persona_images.json'), 'utf8')).paige;
+  assert.match(map.identity_reference.authority, /bbc6c052/);
+  assert.strictEqual(map.placements.heygen_avatar.photo, 'unchanged');
+  assert.strictEqual(map.placements.microsoft_365.photo, 'unchanged');
+  const dir = path.join(ROOT, map.dir);
+  const names = Object.keys(map.photos).sort((x, y) => y.length - x.length);
+  for (const f of fs.readdirSync(dir).filter((x) => x.endsWith('.jpg'))) {
+    const owner = names.find((n) => f.startsWith(n)); assert.ok(owner, f);
+    const [w, h] = map.photos[owner].native_px; const d = jpegSize(path.join(dir, f));
+    assert.ok(d.w <= w && d.h <= h, `${f} ${d.w}x${d.h} > ${w}x${h}`);
+  }
 });
 
 (async () => {

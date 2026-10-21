@@ -1,5 +1,5 @@
 {
-  "_about": "THE persona image map (Ed 2026-10-21, issue #241). One entry per AI teammate whose approved photo set is managed here. To update: put the approved PNGs in a folder and run `node scripts/build_persona_images.js <persona> <folder>`; it writes every derived file below. The canonical square at public/assets/presentations/team/<persona>.jpg is what every surface reads (email signature headshot, Ask Amanda, board portal, presentations, training, proposals, outbox) and what scripts/set_team_photos.js pushes to Microsoft 365. Teammates not listed here are unchanged.",
+  "_about": "THE persona image map (Ed 2026-10-21, issue #241). One entry per AI teammate whose approved photo set is managed here. To update: put the approved PNGs in a folder and run `node scripts/build_persona_images.js <persona> <folder>`; it writes every derived file below. The canonical square at public/assets/presentations/team/<persona>.jpg is what every surface reads (email signature headshot, Ask Amanda, board portal, presentations, training, proposals, outbox) and what scripts/set_team_photos.js pushes to Microsoft 365. Teammates not listed here are unchanged. Each entry's identity_reference is the face every photo must match.",
   "amanda": {
     "name": "Amanda Albright",
     "approved": "2026-10-21",
@@ -146,5 +146,132 @@
       ],
       "rule": "A photo is used only if it is visibly the same woman. Photos of a different-looking woman are excluded even at higher resolution."
     }
+  },
+  "paige": {
+    "name": "Paige Chandler",
+    "approved": "PENDING Ed's approval (prepared 2026-10-21)",
+    "identity_reference": {
+      "authority": "Paige's original production portrait (Ed 2026-10-21): character-canon sha256 bbc6c05239b6d3ac..., 1254x1254, the file uploaded to HeyGen 2026-08-18; public/assets/presentations/team/paige_legacy_v1.jpg is its 640px derivative and stays the HeyGen and video-poster face.",
+      "must_match": [
+        "apparent age 27 to 33",
+        "round, soft face, full cheeks, rounded chin",
+        "dark brown eyes, soft arched dark brows, short straight nose with a soft tip",
+        "her wide, gentle closed-lip smile",
+        "near-black brunette hair in a relaxed high bun with face-framing strands",
+        "small gold hoop earrings and the round gold \"P\" initial pendant",
+        "light natural freckles, real skin texture"
+      ],
+      "rule": "A photo is used only if it is visibly the same woman. Hair and jewelry alone never qualify a photo."
+    },
+    "source_note": "Two individual photos generated from the reference 2026-10-21. Both read the same woman; both render the hair lighter and warmer (dark brown with copper highlights) than the near-black reference: noted as a correction for future generations, not a different face.",
+    "dir": "public/assets/personas/paige",
+    "canonical_square": {
+      "from": "paige-direct-camera",
+      "out": "public/assets/presentations/team/paige.jpg",
+      "region": {
+        "x": 210,
+        "y": 45,
+        "size": 800
+      },
+      "width": 640,
+      "alt": "Paige Chandler, Bedrock board operations"
+    },
+    "photos": {
+      "paige-direct-camera": {
+        "use": "professional headshot, direct eye contact: profile, greetings, email signature and avatar reference",
+        "alt": "Paige Chandler, Bedrock board operations",
+        "source": "Warm Professional Office Portrait.png (sha256 8866d23f279956e5...)",
+        "native_px": [
+          1254,
+          1254
+        ],
+        "widths": [
+          480,
+          960
+        ]
+      },
+      "paige-gentle-smile": {
+        "use": "warm, welcoming portrait: board-facing greeting, website team introduction",
+        "alt": "Paige Chandler smiling at her desk",
+        "source": "Warm Office Portrait with Gentle Smile.png (sha256 2aa1ac414108ad44...)",
+        "native_px": [
+          1369,
+          1149
+        ],
+        "widths": [
+          480,
+          960
+        ],
+        "square_region": {
+          "x": 200,
+          "y": 60,
+          "size": 800
+        },
+        "square_widths": [
+          240,
+          480
+        ]
+      }
+    },
+    "placements": {
+      "_about": "Small placements read team/paige.jpg. Video posters keep the production face while the videos show it.",
+      "email_signature": {
+        "photo": "canonical_square",
+        "display_px": 64,
+        "embedded_px": 120
+      },
+      "communication_avatars": {
+        "photo": "canonical_square",
+        "display_px": "46-58",
+        "surfaces": [
+          "outbox / Draft Queue"
+        ]
+      },
+      "team_presentation_and_training": {
+        "photo": "canonical_square",
+        "display_px": "96-112",
+        "surfaces": [
+          "presentation team screen",
+          "training grid",
+          "management proposal"
+        ]
+      },
+      "profile": {
+        "photo": "paige-direct-camera",
+        "note": "no dedicated profile page exists today"
+      },
+      "board_portal_and_ask_paige": {
+        "photo": "paige-gentle-smile-square",
+        "status": "recommendation only: no Ask Paige interface and no Paige element in the board portal exist today; adding one is a new placement for Ed's approval"
+      },
+      "website_team_introduction": {
+        "photo": "paige-gentle-smile",
+        "status": "designated; not placed on the website (separate decision). Sharp to about 680px wide; not a full-width hero."
+      },
+      "video_posters": {
+        "photo": "paige_legacy_v1",
+        "surfaces": [
+          "story: Meet the platform (bedrock_ai)",
+          "clma_welcome_paige",
+          "clma_close_paige"
+        ],
+        "note": "the videos show the production face, so their posters must too"
+      },
+      "heygen_avatar": {
+        "photo": "unchanged",
+        "status": "original production portrait remains the avatar reference until Ed approves a change"
+      },
+      "microsoft_365": {
+        "photo": "unchanged",
+        "status": "not modified; needs separate authorization"
+      }
+    },
+    "excluded": [
+      "Thoughtful Smile in a Warm Office.png and Candid Office Portrait Collage.png (2026-10-21 08:45): a different woman (older, angular face, hazel-green eyes)",
+      "Professional Office Portrait Contact Sheet.png: same woman, but collage crops (~384px): expression and pose reference only, never a high-resolution asset"
+    ],
+    "backups": [
+      "public/assets/presentations/team/paige_legacy_v1.jpg (byte-identical production paige.jpg before this change)"
+    ]
   }
 }
