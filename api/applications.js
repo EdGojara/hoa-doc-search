@@ -26,7 +26,7 @@
 const { route: aiRoute, executedModel: aiExecuted, modelId: aiModelId } = require('../lib/ai/router');
 const crypto = require('crypto');
 const express = require('express');
-const multer = require('multer');
+const { publicUpload } = require('../lib/uploads/public_upload');
 const { createClient } = require('@supabase/supabase-js');
 const Anthropic = require('../lib/ai/anthropic');
 const OpenAI = require('openai');
@@ -286,7 +286,13 @@ function homeownerReceiptFromAssessment(parsed, holdForReview) {
   };
 }
 
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
+// Public (no-login) ARC submit. apply.html caps at 15 documents + 15 photos.
+const upload = publicUpload({
+  route: 'applications.public.submit',
+  fileSize: 20 * 1024 * 1024,
+  files: 30,
+  maxTotalBytes: 100 * 1024 * 1024,
+});
 const router = express.Router();
 
 // ----------------------------------------------------------------------------
