@@ -37,19 +37,32 @@ check('amanda.jpg is the approved 2026-10-21 photo (378x378 square, never upscal
 check('the v2 portrait is preserved byte-identical as amanda_legacy_v2.jpg', () => {
   assert.strictEqual(sha(path.join(TEAM, 'amanda_legacy_v2.jpg')), V2_PORTRAIT_SHA);
 });
-check('nothing is upscaled: every stored Amanda photo is at or below the approved 378x506 crops', () => {
-  const dir = path.join(ROOT, 'public', 'assets', 'personas', 'amanda');
+check('nothing is upscaled: every stored Amanda file is at or below its approved source (378x506 crops; office portrait 1360x1157)', () => {
+  const map = JSON.parse(fs.readFileSync(path.join(ROOT, 'lib', 'team', 'persona_images.json'), 'utf8')).amanda;
+  const dir = path.join(ROOT, map.dir);
+  const names = Object.keys(map.photos).sort((x, y) => y.length - x.length);
   for (const f of fs.readdirSync(dir).filter((x) => x.endsWith('.jpg'))) {
+    const owner = names.find((n) => f.startsWith(n));
+    assert.ok(owner, `${f} belongs to no mapped photo`);
+    const [w, h] = map.photos[owner].native_px || [378, 506];
     const d = jpegSize(path.join(dir, f));
-    assert.ok(d && d.w <= 378 && d.h <= 506, `${f} is ${d && d.w}x${d && d.h}`);
+    assert.ok(d && d.w <= w && d.h <= h, `${f} is ${d && d.w}x${d && d.h}, source ${w}x${h}`);
   }
+});
+check('the approved office portrait is stored at native 1360x1157 and designated for profile + website introduction only', () => {
+  const map = JSON.parse(fs.readFileSync(path.join(ROOT, 'lib', 'team', 'persona_images.json'), 'utf8')).amanda;
+  assert.deepStrictEqual(jpegSize(path.join(ROOT, map.dir, 'amanda-office-portrait.jpg')), { w: 1360, h: 1157 });
+  assert.strictEqual(map.placements.profile.photo, 'amanda-office-portrait-square');
+  assert.strictEqual(map.placements.website_introduction.photo, 'amanda-office-portrait');
+  assert.strictEqual(map.placements.email_signature.photo, 'canonical_square');
+  assert.strictEqual(map.placements.chat_avatar.photo, 'amanda-direct-camera-square');
 });
 check('identity: face v2 is the reference, the excluded high-resolution set is not used, and M365 is untouched', () => {
   const map = JSON.parse(fs.readFileSync(path.join(ROOT, 'lib', 'team', 'persona_images.json'), 'utf8')).amanda;
   assert.match(map.identity_reference.authority, /amanda_legacy_v2\.jpg/);
   assert.match(map.high_resolution_review.result, /^EXCLUDED/);
   assert.strictEqual(map.placements.microsoft_365.photo, 'unchanged');
-  for (const k of ['website_introduction', 'about_us_team', 'informational']) assert.strictEqual(map.placements[k].photo, null, k);
+  for (const k of ['about_us_team', 'informational']) assert.strictEqual(map.placements[k].photo, null, k);
 });
 check('the persona image map owns amanda.jpg; every mapped photo exists; no other teammate is mapped', () => {
   const map = JSON.parse(fs.readFileSync(path.join(ROOT, 'lib', 'team', 'persona_images.json'), 'utf8'));

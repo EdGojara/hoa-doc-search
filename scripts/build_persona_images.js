@@ -45,6 +45,12 @@ async function jpeg(src, { square = false, top = 0, crop = null, width = null } 
     if (!fs.existsSync(src)) throw new Error(`missing approved photo ${src}`);
     fs.writeFileSync(path.join(dir, `${name}.jpg`), await jpeg(src, { crop: p.crop || null }));
     if (p.square_crop_top_px != null) fs.writeFileSync(path.join(dir, `${name}-square.jpg`), await jpeg(src, { square: true, top: p.square_crop_top_px, crop: p.crop || null }));
+    // A headshot square from a named region of a larger photo: { x, y, size }.
+    if (p.square_region) {
+      const r = p.square_region;
+      fs.writeFileSync(path.join(dir, `${name}-square.jpg`), await jpeg(src, { crop: { x: r.x, y: r.y, w: r.size, h: r.size } }));
+      for (const w of (p.square_widths || []).filter((x) => x < r.size)) fs.writeFileSync(path.join(dir, `${name}-square-${w}.jpg`), await jpeg(src, { crop: { x: r.x, y: r.y, w: r.size, h: r.size }, width: w }));
+    }
     // Responsive widths for large placements (website, profile): only widths
     // below the source's own width are written.
     const extra = [];
@@ -52,7 +58,7 @@ async function jpeg(src, { square = false, top = 0, crop = null, width = null } 
     for (const w of (p.widths || []).filter((x) => x < srcW)) {
       fs.writeFileSync(path.join(dir, `${name}-${w}.jpg`), await jpeg(src, { crop: p.crop || null, width: w })); extra.push(w);
     }
-    console.log(`  ${m.dir}/${name}.jpg${p.square_crop_top_px != null ? ' (+ square)' : ''}${extra.length ? ` (+ ${extra.join('/')}w)` : ''}`);
+    console.log(`  ${m.dir}/${name}.jpg${p.square_crop_top_px != null || p.square_region ? ' (+ square)' : ''}${extra.length ? ` (+ ${extra.join('/')}w)` : ''}`);
   }
   const cs = m.canonical_square;
   const out = path.join(ROOT, cs.out);

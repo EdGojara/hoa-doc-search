@@ -46,6 +46,29 @@
       "amanda-working": {
         "use": "candid, working at her desk",
         "alt": "Amanda Albright working at her desk"
+      },
+      "amanda-office-portrait": {
+        "use": "profile and future website introduction (approved by Ed 2026-10-21)",
+        "alt": "Amanda Albright, Bedrock community manager, at her desk",
+        "source": "Warm Modern Office Portrait (1).png, 1360x1157, sha256 3a9694c3112c6940...; saved as amanda-office-portrait.png in the source folder",
+        "native_px": [
+          1360,
+          1157
+        ],
+        "widths": [
+          480,
+          960
+        ],
+        "square_region": {
+          "x": 270,
+          "y": 60,
+          "size": 760
+        },
+        "square_widths": [
+          240,
+          480
+        ],
+        "identity_review": "Ed 2026-10-21: same woman as face v2 and the approved eight (face shape, nose, smile, age, freckles, hair, hoops, disc pendant). Minor: brows flatter, eyes slightly larger and greener, lips slightly fuller."
       }
     },
     "backups": [
@@ -78,13 +101,14 @@
         ]
       },
       "profile": {
-        "photo": "canonical_square",
-        "display_px": 112,
-        "note": "upgrade to a high-resolution professional portrait once one of the approved face exists"
+        "photo": "amanda-office-portrait-square",
+        "sizes": "760px headshot square (+240, 480); office portrait at 480/960/1360 for a profile page",
+        "note": "designated by Ed 2026-10-21; no existing surface is switched to it (email signature, chat avatars, dashboards, M365 and the video are unchanged)"
       },
       "website_introduction": {
-        "photo": null,
-        "status": "pending: needs a high-resolution professional office portrait of the approved face (suburban office, no skyline)"
+        "photo": "amanda-office-portrait",
+        "sizes": "480 / 960 / native 1360 wide",
+        "status": "designated for the future website introduction; not placed on the website (a separate decision). Sharp up to about 680px displayed width; NOT for a full-width hero (needs 2048px+)."
       },
       "about_us_team": {
         "photo": null,
@@ -108,7 +132,8 @@
         "Confident Woman in a Modern Office.png (1024x1536, compliant office; duplicate -1 identical)",
         "Confident Executive in a Modern Office-2.png (1024x1536, compliant office)",
         "Amanda_ Confident Corporate Portrait Collage.png (1536x1024 collage; rendered TrustEd logo in one panel)"
-      ]
+      ],
+      "approved_addition": "amanda-office-portrait (Warm Modern Office Portrait (1).png), approved by Ed 2026-10-21. The collages ('Six Moments in a Modern Office-1', 'Warm Office Portrait Series-2', 'Amanda_ Confident Corporate Portrait Collage') are never used as high-resolution assets."
     },
     "identity_reference": {
       "authority": "face v2 (Ed 2026-10-21): public/assets/presentations/team/amanda_legacy_v2.jpg, the production portrait and Microsoft 365 photo since 2026-10-04",
