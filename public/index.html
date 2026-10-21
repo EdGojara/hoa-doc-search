@@ -15432,6 +15432,7 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
           <div>
             <strong style="display:block; color:#5a7390; font-size:11px; text-transform:uppercase; letter-spacing:0.4px; margin-bottom:4px;">Status</strong>
             ${isQueue ? '<span class="acc-pill acc-pill-pending">⏳ In queue</span>' : '<span class="acc-pill acc-pill-approved">✓ Done</span>'}
+            ${a.authority && a.authority.label ? `<div style="margin-top:4px;"><span class="acc-pill" style="background:#fee2e2; color:#991b1b;" title="${accEsc((a.authority.triggers || []).join(', '))}">⚑ ${accEsc(a.authority.label)}</span></div>` : ''}
           </div>
           <div class="acc-age ${ageClass}">${ageTxt}</div>
         </div>`;
@@ -15456,6 +15457,7 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
       if (j.error) throw new Error(j.error);
       accCurrent = j.decision;
       window.accCurrentFinalization = j.finalization || null;
+      window.accCurrentAuthority = j.authority || null;
       accRenderDetail();
       accRenderStaleBanner();
     } catch (err) { alert('Load failed: ' + err.message); }
@@ -15548,6 +15550,8 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
 
       ${accDocumentsCard(a)}
 
+      ${accAuthorityCard(a)}
+
       ${a.current_review_text ? `
         <div class="acc-card acc-ai-card">
           <details ${isQueue ? 'open' : ''}>
@@ -15609,6 +15613,107 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
       </div>
     `;
   }
+
+  // Decision authority (Ed 2026-10-20). Approvals and denials are decided by Ed,
+  // the Architectural Committee or Board (documented), or, within delegated
+  // authority, Annie or Amanda; staff never decide. Staff may record a committee
+  // or Board decision and send a decision once it is recorded; the server
+  // enforces it on every path and records who evaluated, decided, recorded and
+  // issued it. This card says what is missing and holds the recording form.
+  async function accBearerHeaders(extra) {
+    const h = Object.assign({}, extra || {});
+    try { const { data: { session } } = await window.supa.auth.getSession(); if (session?.access_token) h.Authorization = 'Bearer ' + session.access_token; } catch (_) {}
+    return h;
+  }
+  function accAuthorityCard(a) {
+    const au = window.accCurrentAuthority;
+    if (!au) return '';
+    const open = a.status === 'pending_review' || a.status === 'awaiting_info';
+    const rec = au.record;
+    const color = au.record_valid ? '#166534' : (au.escalated ? '#991b1b' : '#92400e');
+    const bg = au.record_valid ? '#dcfce7' : (au.escalated ? '#fee2e2' : '#fef3c7');
+    const trig = (au.triggers || []).map((t) => t.replace(/_/g, ' ')).join(', ');
+    const who = { ed: rec && (rec.decided_by_name || 'Ed'), committee: 'the Architectural Committee', board: 'the Board', annie: 'Annie', amanda: 'Amanda' };
+    const recLine = rec ? `<div style="font-size:12.5px; margin-top:8px;"><b>Recorded decision:</b> ${accEsc(rec.outcome)}, decided by ${accEsc(who[rec.decided_by] || rec.decided_by)} on ${accEsc(String(rec.decided_at || '').slice(0, 10))}${rec.evaluated_by ? ' · evaluated by ' + accEsc(rec.evaluated_by === 'annie' ? 'Annie' : 'Amanda') : ''}${rec.recorded_by ? ' · recorded by ' + accEsc(rec.recorded_by.name || rec.recorded_by.email) : ''}${rec.issued_by ? ' · issued by ' + accEsc(rec.issued_by.name || rec.issued_by.email) : ''}<br><b>Authority:</b> ${accEsc((rec.authority_basis || {}).kind || '')}${(rec.authority_basis || {}).library_document_title ? ' (' + accEsc(rec.authority_basis.library_document_title) + ')' : ''}: ${accEsc((rec.authority_basis || {}).reference || '')}${au.decision_path ? ' · ' + accEsc(au.decision_path.replace(/_/g, ' ')) : ''}${rec.committee_or_board ? `<br><b>${accEsc(rec.committee_or_board.body)}:</b> ${accEsc(rec.committee_or_board.decision)} ${accEsc(rec.committee_or_board.decided_on)} (${accEsc(rec.committee_or_board.approvers)}); evidence: ${accEsc(rec.committee_or_board.evidence_type)} ${accEsc(rec.committee_or_board.evidence_reference)}${rec.committee_or_board.deviation_granted ? '<br><b>Deviation:</b> ' + accEsc(rec.committee_or_board.deviation_statement || '') : ''}` : ''}</div>` : '';
+    const errs = (au.record_errors || []).length ? `<div style="font-size:12px; color:#991b1b; margin-top:6px;">Still missing: ${accEsc(au.record_errors.join('; '))}</div>` : '';
+    const review = a.owner_review && a.owner_review.reviewed_at ? `<div style="font-size:12px; margin-top:6px;">Ed reviewed ${accEsc(String(a.owner_review.reviewed_at).slice(0, 16).replace('T', ' '))}${a.owner_review.notes ? ': ' + accEsc(a.owner_review.notes) : ''}</div>` : '';
+    const form = open && !au.record_valid ? `
+      <details style="margin-top:10px;"><summary style="cursor:pointer; font-size:12.5px; font-weight:700; color:#0B1D34;">Record the decision (Ed's own, or the Committee's or Board's)</summary>
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:8px; font-size:12px;">
+          <label style="grid-column:1/3;">Decided by<select id="acc-dr-by" style="width:100%;"><option value="committee">The Architectural Committee (staff may record it, with its evidence below)</option><option value="board">The Board (staff may record it, with its evidence below)</option><option value="ed">Ed (only Ed can record his own decision)</option></select></label>
+          <label>Outcome<select id="acc-dr-outcome" style="width:100%;"><option value="approved_with_conditions">Approve with conditions</option><option value="approved">Approve</option><option value="denied">Deny</option></select></label>
+          <label>Authority basis<select id="acc-dr-kind" style="width:100%;"><option value="written_delegation" ${(au.default_basis || {}).kind !== 'governing_document' ? 'selected' : ''}>Written delegation</option><option value="governing_document" ${(au.default_basis || {}).kind === 'governing_document' ? 'selected' : ''}>Governing-document provision</option></select></label>
+          <label>Instrument on file<select id="acc-dr-doc" style="width:100%;"><option value="">(choose)</option>${(au.documents || []).map((d) => `<option value="${accEsc(d.id)}" ${((au.default_basis || {}).library_document_id === d.id) ? 'selected' : ''}>${accEsc(d.title)}</option>`).join('')}</select></label>
+          <label style="grid-column:1/3;">Provision (section and page)<input id="acc-dr-ref" style="width:100%;" value="${accEsc((au.default_basis || {}).reference || '')}" placeholder="e.g. Guidelines §1.4.4.1-1.4.4.2, p. 2 (Committee delegation to the Managing Agent)"></label>
+          <label style="grid-column:1/3;"><input id="acc-dr-clear" type="checkbox"> Routine: the application clearly meets every requirement (needed for an approval under a written delegation; anything else needs the committee or Board decision)</label>
+          <label style="grid-column:1/3;"><input id="acc-dr-discretion" type="checkbox"> The cited delegation covers discretionary decisions (appearance, color, finish). Never paving, deviations or conflicting provisions.</label>
+          <div style="grid-column:1/3; color:#5a7390;">An approval of this case needs ${accEsc(au.approval_requires || '')}.</div>
+          <div style="grid-column:1/3; font-weight:700; margin-top:4px;">Committee / Board decision (required when the Committee or Board decided${au.escalated ? ', and for a paving expansion or deviation approval' : ''})</div>
+          <label>Body<select id="acc-cb-body" style="width:100%;"><option value="">(none)</option><option value="committee">Committee</option><option value="board">Board</option></select></label>
+          <label>Their decision<select id="acc-cb-decision" style="width:100%;"><option value="approved_with_conditions">Approved with conditions</option><option value="approved">Approved</option><option value="denied">Denied</option></select></label>
+          <label>Date<input id="acc-cb-date" type="date" style="width:100%;"></label>
+          <label>Who decided (names)<input id="acc-cb-approvers" style="width:100%;"></label>
+          <label>Evidence type<select id="acc-cb-evtype" style="width:100%;"><option value="email">Email</option><option value="vote">Vote</option><option value="minutes">Minutes</option><option value="resolution">Resolution</option><option value="written_consent">Written consent</option></select></label>
+          <label>Evidence (where it is recorded)<input id="acc-cb-evref" style="width:100%;"></label>
+          <label style="grid-column:1/3;"><input id="acc-cb-dev" type="checkbox"> A deviation from a governing-document standard is granted</label>
+          <label style="grid-column:1/3;">Written deviation authorization<input id="acc-cb-devtext" style="width:100%;"></label>
+          <label style="grid-column:1/3;">Notes<input id="acc-dr-notes" style="width:100%;"></label>
+        </div>
+        <div style="display:flex; gap:8px; margin-top:8px;">
+          <button class="secondary-btn" style="font-size:12px;" onclick="accOwnerReview('${a.id}')">Ed: record my review only</button>
+          <button class="acc-action-btn approve" style="font-size:12px;" onclick="accRecordDecision('${a.id}')">Record decision</button>
+        </div>
+        <div style="font-size:11px; color:#5a7390; margin-top:6px;">Recording does not send anything. Staff never decide: record only a decision the Committee or Board actually made, with its evidence. Escalated cases and denials need Ed's review before they are issued; Ed's review never replaces a required committee or Board decision.</div>
+      </details>` : '';
+    return `<div class="acc-card" style="border-left:4px solid ${color};">
+      <h3>⚖ Decision authority <span class="acc-pill" style="background:${bg}; color:${color}; margin-left:6px;">${accEsc(au.label)}</span></h3>
+      <div style="font-size:12.5px; color:#334155;">Approved or denied only by Ed, the Architectural Committee or Board, or (within delegated authority) Annie or Amanda. Staff can enter, document, request more information, record a committee or Board decision, and send a decision once it is recorded.${trig ? ' <b>Escalated to Ed:</b> ' + accEsc(trig) + '.' : ''}</div>
+      ${(au.judgments || []).length ? `<div style="font-size:12.5px; margin-top:6px;"><b>Judgment needed:</b><ul style="margin:4px 0 0 18px;">${au.judgments.map((j) => `<li>${accEsc(j)}</li>`).join('')}</ul></div>` : ''}
+      ${accEvaluationPanel(a, au)}
+      ${recLine}${review}${errs}<div id="acc-authority-status" style="font-size:12px; margin-top:6px;"></div>${form}
+    </div>`;
+  }
+  // The structured evaluation (written by the evaluation engine): applicable
+  // provisions, evidence, results, unresolved questions and Annie's
+  // recommendation, plus the route the autonomy policy gives it.
+  function accEvaluationPanel(a, au) {
+    const ev = a.compliance_evaluation;
+    const routeLabel = { eligible_for_ai_approval: 'Eligible for AI approval', owner_review_required: 'Owner Review Required', owner_review_noncompliance: 'Owner review: noncompliant (no automatic denial)', request_more_info: 'Request more information', no_approval_required: 'No approval required', evaluation_required: 'Evaluation required' }[au.route] || au.route;
+    if (!ev) return `<div style="font-size:12px; color:#5a7390; margin-top:6px;">Route: ${accEsc(routeLabel)}. No structured evaluation yet, so Annie and Amanda cannot decide this case.</div>`;
+    const rows = (ev.requirements || []).map((r) => `<tr><td style="padding:3px 6px;">${accEsc(r.requirement || '')}</td><td style="padding:3px 6px;">${accEsc([(r.citation || {}).document, (r.citation || {}).section, (r.citation || {}).page ? 'p. ' + r.citation.page : ''].filter(Boolean).join(', '))}${r.citation && r.citation.quote ? '<div style="color:#5a7390;">"' + accEsc(r.citation.quote) + '"</div>' : ''}</td><td style="padding:3px 6px;">${accEsc(r.proposed || '')}${(r.evidence || []).length ? '<div style="color:#5a7390;">' + accEsc(r.evidence.join('; ')) + '</div>' : ''}</td><td style="padding:3px 6px; font-weight:600;">${accEsc(String(r.finding || '').replace(/_/g, ' '))}</td></tr>`).join('');
+    const list = (label, arr) => (arr || []).length ? `<div style="margin-top:4px;"><b>${label}:</b> ${accEsc(arr.map((x) => (typeof x === 'string' ? x : (x.what || x.item || JSON.stringify(x)))).join('; '))}</div>` : '';
+    return `<div style="font-size:12px; margin-top:8px; padding:8px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:6px;">
+      <div><b>Route:</b> ${accEsc(routeLabel)}${au.route_detail ? ' (' + accEsc(au.route_detail) + ')' : ''}</div>
+      ${rows ? `<table style="width:100%; border-collapse:collapse; margin-top:6px;"><tr style="text-align:left; color:#5a7390;"><th style="padding:3px 6px;">Requirement</th><th style="padding:3px 6px;">Provision</th><th style="padding:3px 6px;">Proposed / evidence</th><th style="padding:3px 6px;">Result</th></tr>${rows}</table>` : ''}
+      ${list('Missing evidence', ev.missing_evidence)}${list('Conflicts', ev.conflicts)}${list('Unresolved questions', ev.uncertainties)}
+      <div style="margin-top:4px;"><b>Annie recommends:</b> ${accEsc(String(ev.recommendation || 'none').replace(/_/g, ' '))}</div>
+    </div>`;
+  }
+  async function accAuthorityPost(id, path, payload) {
+    const st = document.getElementById('acc-authority-status');
+    try {
+      const r = await fetch('/acc-review/decisions/' + id + '/' + path, { method: 'POST', headers: await accBearerHeaders({ 'Content-Type': 'application/json' }), body: JSON.stringify(payload) });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
+      if (st) { st.textContent = '✓ Saved. Nothing was sent.'; st.style.color = '#15803d'; }
+      accOpenDetail(id);
+    } catch (e) { if (st) { st.textContent = '✗ ' + e.message; st.style.color = '#b91c1c'; } }
+  }
+  function accOwnerReview(id) { accAuthorityPost(id, 'owner-review', { notes: (document.getElementById('acc-dr-notes') || {}).value || '' }); }
+  function accRecordDecision(id) {
+    const v = (x) => ((document.getElementById(x) || {}).value || '').trim();
+    const by = v('acc-dr-by') || 'committee';
+    const body = by === 'ed' ? v('acc-cb-body') : by;
+    accAuthorityPost(id, 'decision-record', {
+      decided_by: by,
+      outcome: v('acc-dr-outcome'), authority_kind: v('acc-dr-kind'), authority_reference: v('acc-dr-ref'), notes: v('acc-dr-notes'),
+      authority_library_document_id: v('acc-dr-doc'), clearly_compliant: !!(document.getElementById('acc-dr-clear') || {}).checked,
+      covers_discretion: !!(document.getElementById('acc-dr-discretion') || {}).checked,
+      committee_or_board: body ? { body, decision: v('acc-cb-decision'), decided_on: v('acc-cb-date'), approvers: v('acc-cb-approvers'), evidence_type: v('acc-cb-evtype'), evidence_reference: v('acc-cb-evref'), deviation_granted: !!(document.getElementById('acc-cb-dev') || {}).checked, deviation_statement: v('acc-cb-devtext') } : null,
+    });
+  }
+  window.accOwnerReview = accOwnerReview;
+  window.accRecordDecision = accRecordDecision;
 
   // Documents on the case, by their ORIGINAL names (migration 479 manifest; the
   // stored path's file name for older cases), plus any attachment that could not
@@ -15813,7 +15918,7 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
     if (!body_text.trim()) { if (status) { status.textContent = 'Nothing to download — the letter is empty. Redraft first.'; status.style.color = '#b91c1c'; } return; }
     try {
       const r = await fetch('/acc-review/render-letter', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: await accBearerHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ id: a.id, body_text, decision_type: decision, homeowner_name: a.homeowner_name, homeowner_address: a.homeowner_address, community: a.community_name, project_summary: a.project_summary, reference_number: a.reference_number, draft_basis_review_at: window.accDraftBasis || null }),
       });
       if (!r.ok) { const j = await r.json().catch(() => ({})); throw new Error(j.error || 'render failed'); }
@@ -35046,7 +35151,7 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
         accLastReview.decision_id = decisionId;
         if (packetBtn) packetBtn.style.display = 'inline-flex';
       }
-      status.innerHTML = '<span style="color:#15803d;">Downloaded ' + filename + ' &nbsp;·&nbsp; saved to ACC history</span>';
+      status.innerHTML = '<span style="color:#15803d;">Downloaded ' + filename + ' &nbsp;·&nbsp; saved as a DRAFT in the ACC queue. No decision is recorded until it is finalized there.</span>';
     } catch (e) {
       status.innerHTML = '<span style="color:#b91c1c;">' + (e.message || 'Failed') + '</span>';
     } finally {

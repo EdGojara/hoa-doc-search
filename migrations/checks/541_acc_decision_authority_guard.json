@@ -1,0 +1,62 @@
+{
+  "migration": "541_acc_decision_authority_guard.sql",
+  "summary": "ACC decision authority, step 2 of 2 (Ed 2026-10-20). Apply ONLY after the decision-authority code (PR #239) is deployed and verified. Changes acc_decisions.status default to pending_review and adds trigger trg_acc_decisions_decision_authority: a row created as or moving into finalizing/decided with an approval or denial needs an authorized decision record: decided by Ed, the committee or Board (documented, same body, matching outcome), or Annie/Amanda; never staff; names who recorded it; cites a governing provision or written delegation instrument; committee/Board approval for a paving expansion or deviation; Ed's review for any denial and for a committee/Board approval of a paving expansion or deviation; a delegated approval must be routine and clearly compliant; agents never deny and need a compliance evaluation. Rows already decided are untouched; no row changes.",
+  "requires": [
+    "540_acc_decision_authority_columns.sql"
+  ],
+  "preflight": [
+    {
+      "name": "540 columns are present",
+      "sql": "SELECT count(*)::int FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'acc_decisions' AND column_name IN ('approval_gate','owner_review','decision_record','compliance_evaluation')",
+      "expect": 4
+    },
+    {
+      "name": "the guard trigger does not exist yet",
+      "sql": "SELECT count(*)::int FROM pg_trigger WHERE tgname = 'trg_acc_decisions_decision_authority'",
+      "expect": 0
+    },
+    {
+      "name": "no case is mid-finalization",
+      "sql": "SELECT count(*)::int FROM acc_decisions WHERE status = 'finalizing'",
+      "expect": 0
+    }
+  ],
+  "expected_changes": [
+    "acc_decisions.status DEFAULT changes from 'decided' to 'pending_review'.",
+    "Creates function acc_decisions_decision_authority_guard() + trigger trg_acc_decisions_decision_authority (BEFORE INSERT OR UPDATE).",
+    "No row changes; existing decided rows keep their status and data."
+  ],
+  "objects": {
+    "added": [
+      "function:acc_decisions_decision_authority_guard",
+      "trigger:acc_decisions.trg_acc_decisions_decision_authority"
+    ],
+    "changed": [
+      "column:acc_decisions.status"
+    ],
+    "removed": []
+  },
+  "row_changes": {
+    "acc_decisions": 0
+  },
+  "protected": [
+    {
+      "table": "acc_decisions",
+      "order_by": "id"
+    }
+  ],
+  "verify": [
+    {
+      "name": "trigger present",
+      "sql": "SELECT count(*)::int FROM pg_trigger WHERE tgname = 'trg_acc_decisions_decision_authority'",
+      "expect": 1
+    },
+    {
+      "name": "status default is pending_review",
+      "sql": "SELECT count(*)::int FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'acc_decisions' AND column_name = 'status' AND column_default LIKE '%pending_review%'",
+      "expect": 1
+    }
+  ],
+  "api_checks": [],
+  "reload_schema": true
+}

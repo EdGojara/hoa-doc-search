@@ -64,6 +64,10 @@ stub('../lib/email/graph_attachments', { fetchMessageText: async () => '', fetch
 const realAuth = require('../api/_require_admin');
 const ED = { user: { id: 'u1' }, role: 'admin', email: 'egojara@bedrocktx.com', full_name: 'Ed Gojara' };
 stub('../api/_require_admin', { ...realAuth, getAuthedUser: async () => ED, requireAdmin: async () => ED, requireOwner: async () => ED, requireStaff: async () => ED });
+// The Draft Queue approver comes from the session token, never the request body.
+const SESSIONS = { 'test-ed': { id: 'u1', email: 'egojara@bedrocktx.com', full_name: 'Ed Gojara', role: 'admin', is_active: true }, 'test-staff': { id: 'u2', email: 'staffer@bedrocktx.com', full_name: 'A Staffer', role: 'staff', is_active: true } };
+stub('../api/_acting_user', { getActingUser: async (req) => SESSIONS[String((req.headers && req.headers.authorization) || '').replace(/^Bearer /, '')] || null });
+let session = 'test-ed';
 
 // ---- Graph: record every send; scriptable failures and delay ----
 const realGS = require('../lib/email/graph_send');
@@ -102,7 +106,7 @@ function reset() {
 }
 const draftRow = () => DB.outbound_email_drafts.find((d) => d.id === DRAFT);
 async function http(method, path, body) {
-  const r = await fetch(base + path, { method, headers: { 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
+  const r = await fetch(base + path, { method, headers: { 'Content-Type': 'application/json', ...(session ? { Authorization: `Bearer ${session}` } : {}) }, body: body ? JSON.stringify(body) : undefined });
   const ct = r.headers.get('content-type') || ''; const j = ct.includes('json') ? await r.json() : Buffer.from(await r.arrayBuffer());
   return { status: r.status, j, headers: r.headers };
 }
@@ -144,6 +148,24 @@ check('approved send: ONE threaded reply in Hugh\'s thread, to Hugh only, no Cc,
   assert.equal(draftRow().status, 'sent'); assert.equal(DB.email_messages.find((m) => m.id === HUGH).triage_status, 'handled');
   const claim = DB.reply_send_claims.find((x) => x.reply_key === 'email:' + HUGH);
   assert.equal(claim.status, 'sent'); assert.equal(claim.send_path, 'draft_queue'); assert.equal(claim.package_sha256, ReplyGuard.packageHash(draftRow()));
+});
+check('Draft Queue records the SIGNED-IN approver; a browser-supplied name is ignored', async () => {
+  reset(); session = 'test-staff';
+  try {
+    const r = await sendDQ({ approved_by: 'owner' });
+    assert.strictEqual(r.status, 200, JSON.stringify(r.j));
+    assert.strictEqual(draftRow().approved_by, 'staffer@bedrocktx.com');
+    assert.strictEqual(DB.email_messages[0].reviewed_by, 'staffer@bedrocktx.com');
+  } finally { session = 'test-ed'; }
+});
+check('Draft Queue with no signed-in session: refused, nothing sent', async () => {
+  reset(); session = null;
+  try {
+    const r = await sendDQ();
+    assert.strictEqual(r.status, 401);
+    assert.strictEqual(calls.length, 0);
+    assert.strictEqual(draftRow().status, 'draft');
+  } finally { session = 'test-ed'; }
 });
 check('repeat Send (either path) after it went out: refused, nothing sent again', async () => {
   reset();
