@@ -1,0 +1,59 @@
+{
+  "migration": "540_acc_decision_authority_columns.sql",
+  "summary": "ACC decision authority, step 1 of 2 (Ed 2026-10-20). ADDITIVE ONLY and safe before the code that uses it: adds nullable acc_decisions.approval_gate (+ CHECK required|not_required), approval_gate_reason, owner_review, decision_record and compliance_evaluation. No default, constraint or trigger on an existing column changes; no row changes. Step 2 (541: status default + trigger) is applied only after the code is deployed.",
+  "requires": [
+    "480_acc_finalization_record.sql"
+  ],
+  "preflight": [
+    {
+      "name": "the new columns do not exist yet",
+      "sql": "SELECT count(*)::int FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'acc_decisions' AND column_name IN ('approval_gate','approval_gate_reason','owner_review','decision_record','compliance_evaluation')",
+      "expect": 0
+    }
+  ],
+  "expected_changes": [
+    "Adds acc_decisions.approval_gate (text, CHECK required|not_required), approval_gate_reason (text), owner_review, decision_record, compliance_evaluation (jsonb), all nullable, no defaults.",
+    "No change to any existing column, default, constraint or trigger.",
+    "No row changes."
+  ],
+  "objects": {
+    "added": [
+      "column:acc_decisions.approval_gate",
+      "column:acc_decisions.approval_gate_reason",
+      "column:acc_decisions.compliance_evaluation",
+      "column:acc_decisions.decision_record",
+      "column:acc_decisions.owner_review",
+      "constraint:acc_decisions.acc_decisions_approval_gate_check"
+    ],
+    "changed": [],
+    "removed": []
+  },
+  "row_changes": {
+    "acc_decisions": 0
+  },
+  "protected": [
+    {
+      "table": "acc_decisions",
+      "order_by": "id"
+    }
+  ],
+  "verify": [
+    {
+      "name": "all five columns present",
+      "sql": "SELECT count(*)::int FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'acc_decisions' AND column_name IN ('approval_gate','approval_gate_reason','owner_review','decision_record','compliance_evaluation')",
+      "expect": 5
+    },
+    {
+      "name": "no row carries a value in the new columns",
+      "sql": "SELECT count(*)::int FROM acc_decisions WHERE decision_record IS NOT NULL OR owner_review IS NOT NULL OR approval_gate IS NOT NULL OR compliance_evaluation IS NOT NULL",
+      "expect": 0
+    },
+    {
+      "name": "status default is unchanged (still decided until 541)",
+      "sql": "SELECT count(*)::int FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'acc_decisions' AND column_name = 'status' AND column_default LIKE '%decided%'",
+      "expect": 1
+    }
+  ],
+  "api_checks": [],
+  "reload_schema": true
+}
