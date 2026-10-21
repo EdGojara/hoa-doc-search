@@ -15642,6 +15642,7 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
           <label>Instrument on file<select id="acc-dr-doc" style="width:100%;"><option value="">(choose)</option>${(au.documents || []).map((d) => `<option value="${accEsc(d.id)}" ${((au.default_basis || {}).library_document_id === d.id) ? 'selected' : ''}>${accEsc(d.title)}</option>`).join('')}</select></label>
           <label style="grid-column:1/3;">Provision (section and page)<input id="acc-dr-ref" style="width:100%;" value="${accEsc((au.default_basis || {}).reference || '')}" placeholder="e.g. Guidelines §1.4.4.1-1.4.4.2, p. 2 (Committee delegation to the Managing Agent)"></label>
           <label style="grid-column:1/3;"><input id="acc-dr-clear" type="checkbox"> Routine: the application clearly meets every requirement (needed for an approval under a written delegation; anything else needs the committee or Board decision)</label>
+          <label style="grid-column:1/3;"><input id="acc-dr-discretion" type="checkbox"> The cited delegation covers discretionary decisions (appearance, color, finish). Never paving, deviations or conflicting provisions.</label>
           <div style="grid-column:1/3; color:#5a7390;">An approval of this case needs ${accEsc(au.approval_requires || '')}.</div>
           <div style="grid-column:1/3; font-weight:700; margin-top:4px;">Committee / Board decision${au.escalated ? ' (required for a paving expansion or deviation approval)' : ' (if applicable)'}</div>
           <label>Body<select id="acc-cb-body" style="width:100%;"><option value="">(none)</option><option value="committee">Committee</option><option value="board">Board</option></select></label>
@@ -15663,7 +15664,25 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
     return `<div class="acc-card" style="border-left:4px solid ${color};">
       <h3>⚖ Decision authority <span class="acc-pill" style="background:${bg}; color:${color}; margin-left:6px;">${accEsc(au.label)}</span></h3>
       <div style="font-size:12.5px; color:#334155;">Only Ed, Amanda or Annie can approve or deny this application. Staff can enter, document, draft and request more information.${trig ? ' <b>Escalated to Ed:</b> ' + accEsc(trig) + '.' : ''}</div>
+      ${(au.judgments || []).length ? `<div style="font-size:12.5px; margin-top:6px;"><b>Judgment needed:</b><ul style="margin:4px 0 0 18px;">${au.judgments.map((j) => `<li>${accEsc(j)}</li>`).join('')}</ul></div>` : ''}
+      ${accEvaluationPanel(a, au)}
       ${recLine}${review}${errs}<div id="acc-authority-status" style="font-size:12px; margin-top:6px;"></div>${form}
+    </div>`;
+  }
+  // The structured evaluation (written by the evaluation engine): applicable
+  // provisions, evidence, results, unresolved questions and Annie's
+  // recommendation, plus the route the autonomy policy gives it.
+  function accEvaluationPanel(a, au) {
+    const ev = a.compliance_evaluation;
+    const routeLabel = { eligible_for_ai_approval: 'Eligible for AI approval', owner_review_required: 'Owner Review Required', owner_review_noncompliance: 'Owner review: noncompliant (no automatic denial)', request_more_info: 'Request more information', no_approval_required: 'No approval required', evaluation_required: 'Evaluation required' }[au.route] || au.route;
+    if (!ev) return `<div style="font-size:12px; color:#5a7390; margin-top:6px;">Route: ${accEsc(routeLabel)}. No structured evaluation yet, so Annie and Amanda cannot decide this case.</div>`;
+    const rows = (ev.requirements || []).map((r) => `<tr><td style="padding:3px 6px;">${accEsc(r.requirement || '')}</td><td style="padding:3px 6px;">${accEsc([(r.citation || {}).document, (r.citation || {}).section, (r.citation || {}).page ? 'p. ' + r.citation.page : ''].filter(Boolean).join(', '))}${r.citation && r.citation.quote ? '<div style="color:#5a7390;">"' + accEsc(r.citation.quote) + '"</div>' : ''}</td><td style="padding:3px 6px;">${accEsc(r.proposed || '')}${(r.evidence || []).length ? '<div style="color:#5a7390;">' + accEsc(r.evidence.join('; ')) + '</div>' : ''}</td><td style="padding:3px 6px; font-weight:600;">${accEsc(String(r.finding || '').replace(/_/g, ' '))}</td></tr>`).join('');
+    const list = (label, arr) => (arr || []).length ? `<div style="margin-top:4px;"><b>${label}:</b> ${accEsc(arr.map((x) => (typeof x === 'string' ? x : (x.what || x.item || JSON.stringify(x)))).join('; '))}</div>` : '';
+    return `<div style="font-size:12px; margin-top:8px; padding:8px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:6px;">
+      <div><b>Route:</b> ${accEsc(routeLabel)}${au.route_detail ? ' (' + accEsc(au.route_detail) + ')' : ''}</div>
+      ${rows ? `<table style="width:100%; border-collapse:collapse; margin-top:6px;"><tr style="text-align:left; color:#5a7390;"><th style="padding:3px 6px;">Requirement</th><th style="padding:3px 6px;">Provision</th><th style="padding:3px 6px;">Proposed / evidence</th><th style="padding:3px 6px;">Result</th></tr>${rows}</table>` : ''}
+      ${list('Missing evidence', ev.missing_evidence)}${list('Conflicts', ev.conflicts)}${list('Unresolved questions', ev.uncertainties)}
+      <div style="margin-top:4px;"><b>Annie recommends:</b> ${accEsc(String(ev.recommendation || 'none').replace(/_/g, ' '))}</div>
     </div>`;
   }
   async function accAuthorityPost(id, path, payload) {
@@ -15683,6 +15702,7 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
     accAuthorityPost(id, 'decision-record', {
       outcome: v('acc-dr-outcome'), authority_kind: v('acc-dr-kind'), authority_reference: v('acc-dr-ref'), notes: v('acc-dr-notes'),
       authority_library_document_id: v('acc-dr-doc'), clearly_compliant: !!(document.getElementById('acc-dr-clear') || {}).checked,
+      covers_discretion: !!(document.getElementById('acc-dr-discretion') || {}).checked,
       committee_or_board: body ? { body, decision: v('acc-cb-decision'), decided_on: v('acc-cb-date'), approvers: v('acc-cb-approvers'), evidence_type: v('acc-cb-evtype'), evidence_reference: v('acc-cb-evref'), deviation_granted: !!(document.getElementById('acc-cb-dev') || {}).checked, deviation_statement: v('acc-cb-devtext') } : null,
     });
   }

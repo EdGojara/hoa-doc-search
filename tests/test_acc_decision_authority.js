@@ -142,6 +142,9 @@ console.log('\n3b. Written delegation is decision authority (routine vs not)');
   const fence = { id: 'f2', status: 'pending_review', project_summary: 'Replace rear wood fence, 6 ft cedar, same location' };
   const del = (extra = {}) => DA.ownerDecisionRecord(ED, { outcome: 'approved', authority_kind: 'written_delegation', authority_reference: 'Guidelines §1.4.4.1-1.4.4.2, p. 2: Committee delegation to the Managing Agent', authority_library_document_id: LIB, clearly_compliant: true, ...extra });
   check('a routine, clearly compliant approval under the written delegation needs NO committee vote', DA.validateDecisionRecord(del(), fence).length === 0, DA.validateDecisionRecord(del(), fence).join('; '));
+  const issue = DA.checkFinalDecision({ ...fence, decision_record: del() }, { decisionType: 'approved', actor: ED, requireIssuer: true });
+  check('Ed can ISSUE a properly authorized routine decision (send / mark done) without any bypass', issue.ok && issue.final === true, issue.error);
+  check('...but staff cannot issue that same authorized decision', DA.checkFinalDecision({ ...fence, decision_record: del() }, { decisionType: 'approved', actor: STAFF, requireIssuer: true }).code === 'decision_not_authorized');
   check('...its decision path is routine_delegated', DA.decisionPath(del(), [], DA.classifyDrivewayScope(fence.project_summary), fence) === 'routine_delegated');
   check('a delegated approval must name the instrument on file', DA.validateDecisionRecord(del({ authority_library_document_id: '' }), fence).some((e) => /instrument/.test(e)));
   check('a delegated approval must be attested clearly compliant', DA.validateDecisionRecord(del({ clearly_compliant: false }), fence).some((e) => /clearly meets every requirement/.test(e)));
@@ -150,8 +153,12 @@ console.log('\n3b. Written delegation is decision authority (routine vs not)');
   const uncertain = { ...fence, compliance_evaluation: { ...COMPLETE_EVAL, confidence: 'medium' } };
   check('an approval with material uncertainty is not routine: committee/Board needed', DA.validateDecisionRecord(del(), uncertain).some((e) => /committee or Board/.test(e)));
   const annieDel = { ...del(), decided_by: 'annie', decided_by_email: null };
-  check('Annie may make a routine delegated approval with a complete evaluation', DA.validateDecisionRecord(annieDel, { ...fence, compliance_evaluation: COMPLETE_EVAL }).length === 0);
+  check('AI decisions are OFF by default: Annie cannot decide even a routine case', DA.validateDecisionRecord(annieDel, { ...fence, compliance_evaluation: COMPLETE_EVAL }).some((e) => /AI decisions are off/.test(e)));
+  process.env.ACC_AI_DECISIONS_ENABLED = 'true';
+  check('once enabled, Annie may make a routine delegated approval with a complete evaluation', DA.validateDecisionRecord(annieDel, { ...fence, compliance_evaluation: COMPLETE_EVAL }).length === 0,
+    DA.validateDecisionRecord(annieDel, { ...fence, compliance_evaluation: COMPLETE_EVAL }).join('; '));
   check('...but never without one', DA.validateDecisionRecord(annieDel, fence).some((e) => /complete compliance evaluation/.test(e)));
+  delete process.env.ACC_AI_DECISIONS_ENABLED;
   check('the screen says what an approval needs before anything is recorded',
     /routine/.test(DA.authorityFor(fence).approval_requires) && /committee or Board/.test(DA.authorityFor(BRIAN).approval_requires));
 }
@@ -165,24 +172,30 @@ console.log('\n4. Every improvement type: only Ed, Amanda or Annie decide');
   const bedrockOnly = DA.checkFinalDecision({ ...fence, decision_record: edRecord({ outcome: 'approved', authority_kind: 'written_delegation', authority_reference: 'communities.arc_approval_workflow = bedrock_only' }) }, { decisionType: 'approved', actor: ED, requireIssuer: true });
   check('a system setting (bedrock_only) is never authority', !bedrockOnly.ok && /system setting is not authority/.test(bedrockOnly.error));
   const edFence = DA.checkFinalDecision({ ...fence, decision_record: edRecord({ outcome: 'approved' }) }, { decisionType: 'approved', actor: ED, requireIssuer: true });
-  check('Ed with a governing-document authority basis may approve a fence (no committee needed)', edFence.ok);
-  const mismatch = DA.checkFinalDecision({ ...fence, decision_record: edRecord({ outcome: 'approved' }) }, { decisionType: 'denied', actor: ED, requireIssuer: true });
-  check('a denial cannot be issued on an approval record', !mismatch.ok && mismatch.code === 'decision_outcome_mismatch');
+  check('no inferred authority: a governing-document citation alone does not let Bedrock approve', !edFence.ok && /governing-document citation alone/.test(edFence.error));
+  const edFenceCb = DA.checkFinalDecision({ ...fence, decision_record: edRecord({ outcome: 'approved', committee_or_board: { ...COMMITTEE_APPROVAL, decision: 'approved' } }) }, { decisionType: 'approved', actor: ED, requireIssuer: true });
+  check('...with the committee/Board decision documented, Ed may issue it', edFenceCb.ok, edFenceCb.error);
+  const delFence = (o) => DA.ownerDecisionRecord(ED, { outcome: 'approved', authority_kind: 'written_delegation', authority_reference: 'Guidelines §1.4.4.1, p. 2', authority_library_document_id: '00000000-0000-0000-0000-0000000000d1', clearly_compliant: true, ...o });
+  const mismatch = DA.checkFinalDecision({ ...fence, decision_record: delFence() }, { decisionType: 'denied', actor: ED, requireIssuer: true });
+  check('a denial cannot be issued on an approval record', !mismatch.ok && mismatch.code === 'decision_outcome_mismatch', mismatch.code);
   const forged = { ...edRecord({ outcome: 'approved' }), decided_by_email: 'staffer@bedrocktx.com' };
   check('a record attributed to Ed but not from the owner account is invalid', DA.validateDecisionRecord(forged, fence).some((e) => /owner account/.test(e)));
   const staffRec = { ...edRecord({ outcome: 'approved' }), decided_by: 'martha' };
   check('a record by anyone other than ed/annie/amanda is invalid', DA.validateDecisionRecord(staffRec, fence).some((e) => /not authorized/.test(e)));
   const annieNoEval = { decided_by: 'annie', outcome: 'approved', decided_at: new Date().toISOString(), authority_basis: { kind: 'governing_document', reference: 'Declaration Article II §2.01, p. 9' } };
   check('Annie without a complete compliance evaluation cannot decide', DA.validateDecisionRecord(annieNoEval, fence).some((e) => /complete compliance evaluation/.test(e)));
-  check('Annie with a complete evaluation and no escalation may decide', DA.validateDecisionRecord(annieNoEval, { ...fence, compliance_evaluation: COMPLETE_EVAL }).length === 0);
+  process.env.ACC_AI_DECISIONS_ENABLED = 'true';
+  check('Annie citing only a governing provision cannot decide (written delegation required)', DA.validateDecisionRecord(annieNoEval, { ...fence, compliance_evaluation: COMPLETE_EVAL }).some((e) => /written delegation/.test(e)));
+  const annieDelRec = { ...delFence(), decided_by: 'annie', decided_by_email: null };
+  check('Annie with a complete evaluation, routine and delegated, may approve', DA.validateDecisionRecord(annieDelRec, { ...fence, compliance_evaluation: COMPLETE_EVAL }).length === 0);
   const evNoPage = { ...COMPLETE_EVAL, requirements: [{ ...COMPLETE_EVAL.requirements[0], citation: { document: 'Declaration', section: '2.10' } }] };
   check('an evaluation citation without a page is incomplete', DA.validateEvaluation(evNoPage).some((e) => /page/.test(e)));
-  const annieDrive = { ...annieNoEval, decided_at: new Date().toISOString() };
   const driveRow = { ...BRIAN, compliance_evaluation: COMPLETE_EVAL };
-  check('Annie on an escalated case without Ed\'s review cannot decide', DA.validateDecisionRecord(annieDrive, driveRow).some((e) => /Ed must review/.test(e)));
+  check('Annie never decides an escalated case (paving expansion is Ed\'s)', DA.validateDecisionRecord(annieDelRec, driveRow).some((e) => /owner review required/.test(e)));
   const reviewed = { ...driveRow, owner_review: { reviewed_at: new Date(Date.now() - 60000).toISOString() } };
-  check('...and with Ed\'s review still needs the committee/Board decision', DA.validateDecisionRecord(annieDrive, reviewed).some((e) => /committee or Board/.test(e)));
-  check('...and with both, Annie may decide', DA.validateDecisionRecord({ ...annieDrive, committee_or_board: COMMITTEE_APPROVAL }, reviewed).length === 0);
+  check('...not even with Ed\'s review and a committee/Board record (Ed records it)', DA.validateDecisionRecord({ ...annieDelRec, committee_or_board: COMMITTEE_APPROVAL }, reviewed).length > 0);
+  check('Annie never denies', DA.validateDecisionRecord({ ...annieDelRec, outcome: 'denied' }, { ...fence, compliance_evaluation: COMPLETE_EVAL }).some((e) => /never denies/.test(e)));
+  delete process.env.ACC_AI_DECISIONS_ENABLED;
   const conflictRow = { ...fence, compliance_evaluation: { ...COMPLETE_EVAL, conflicts: [{ what: 'two width sentences' }] } };
   check('conflicting documents escalate to Ed', DA.escalationTriggers(conflictRow).includes('conflicting_documents'));
   const uncertain = { ...fence, compliance_evaluation: { ...COMPLETE_EVAL, confidence: 'medium' } };
@@ -190,6 +203,51 @@ console.log('\n4. Every improvement type: only Ed, Amanda or Annie decide');
   check('incomplete notices and requests for more information stay open to staff',
     DA.checkFinalDecision(fence, { decisionType: 'incomplete', actor: STAFF, requireIssuer: true }).ok
     && DA.checkFinalDecision(fence, { decisionType: 'request_more_info', actor: STAFF, requireIssuer: true }).ok);
+}
+
+console.log('\n4b. Autonomy policy (Ed 2026-10-20): AI approves only the clearly compliant and objective');
+{
+  const cite = (document, section, page, quote) => ({ document, section, page, quote });
+  const base = { ...COMPLETE_EVAL, missing_evidence: [], conflicts: [], nonconformities: [], uncertainties: [] };
+  // Karen Deaver (LOPF): black front door. Black is not prohibited; whether it
+  // suits her home is a judgment the documents leave to the committee.
+  const karen = { id: 'karen', status: 'pending_review', community_name: 'Lakes of Pine Forest', project_summary: 'Paint front door black',
+    compliance_evaluation: { ...base, requirements: [
+      { requirement: 'Color change needs written ARC approval', category: 'procedural', modality: 'required', finding: 'complies', citation: cite('Master Declaration', 'Art. VI §3', '15-16', 'painting or staining of any exterior surface a different color than the one previously approved') },
+      { requirement: 'Bold primary colors prohibited', category: 'color', modality: 'prohibited', finding: 'complies', proposed: 'black (not a primary color)', citation: cite('Builder Guidelines', '§2.3', '16', 'Bold primary colors are prohibited.') },
+      { requirement: 'Soft subdued colors; avoid high-contrast trim', category: 'aesthetic', modality: 'discretionary', finding: 'judgment_required', citation: cite('Builder Guidelines', '§2.3', '16', 'High contrast trim or material variation should be avoided') },
+    ], recommendation: 'approved' } };
+  const rk = DA.routeEvaluation(karen);
+  check('Karen\'s black door -> Owner Review Required (discretionary aesthetic review)', rk.route === 'owner_review_required' && rk.triggers.includes('aesthetic_judgment'), JSON.stringify(rk));
+  check('...the screen explains the judgment needed (harmony / appearance on this home)', DA.authorityFor(karen).judgments.some((j) => /harmony or appearance/.test(j)));
+  process.env.ACC_AI_DECISIONS_ENABLED = 'true';
+  const annieKaren = { ...DA.ownerDecisionRecord(ED, { outcome: 'approved', authority_kind: 'written_delegation', authority_reference: 'hypothetical delegation for the test', authority_library_document_id: '00000000-0000-0000-0000-0000000000d1', clearly_compliant: true }), decided_by: 'annie', decided_by_email: null };
+  check('...and Annie cannot approve it, even with AI decisions on', DA.validateDecisionRecord(annieKaren, karen).some((e) => /owner review required/.test(e)));
+  // Brian Decker: driveway extension.
+  const rb = DA.routeEvaluation({ ...BRIAN, compliance_evaluation: base });
+  check('Brian\'s driveway extension -> Owner Review Required', rb.route === 'owner_review_required' && rb.triggers.includes('driveway_or_paving_expansion'), JSON.stringify(rb));
+  // Same-color repaint: the documents require no approval.
+  const repaint = { id: 'rp', status: 'pending_review', project_summary: 'Repaint front door the same color as previously approved',
+    compliance_evaluation: { ...base, requirements: [], no_approval_required: { applies: true, citation: cite('Master Declaration', 'Art. VI §3', '16', 'repaint or restore the exterior … with the same color which has been previously approved') } } };
+  check('fully compliant same-color repaint -> no approval required (routine processing)', DA.routeEvaluation(repaint).route === 'no_approval_required');
+  const info = DA.checkFinalDecision(repaint, { decisionType: 'no_approval_required', texts: ['No application is needed to repaint your door the same color previously approved.'], actor: STAFF, requireIssuer: true });
+  check('...staff can send that informational answer (it is not a decision)', info.ok && info.final === false);
+  // Fully compliant objective application.
+  const objective = { id: 'obj', status: 'pending_review', project_summary: 'Replace rear wood fence, 6 ft cedar, same location', compliance_evaluation: base };
+  check('fully compliant objective application -> eligible for AI approval', DA.routeEvaluation(objective).route === 'eligible_for_ai_approval');
+  check('...and Annie may approve it once enabled, under the delegation', DA.validateDecisionRecord(annieKaren, objective).length === 0, DA.validateDecisionRecord(annieKaren, objective).join('; '));
+  // Unambiguous noncompliance.
+  const noncompliant = { id: 'nc', status: 'pending_review', project_summary: 'Install 8 ft rear fence',
+    compliance_evaluation: { ...base, requirements: [{ requirement: 'Rear fence height', category: 'dimensional', modality: 'maximum', mandatory: true, finding: 'does_not_comply', proposed: '8 ft', citation: cite('Declaration', '§2.25', '17', 'No side or rear fence … shall be more than six feet (6\') in height') }], recommendation: 'denied' } };
+  check('unambiguous noncompliance -> owner review (no automatic denial)', DA.routeEvaluation(noncompliant).route === 'owner_review_noncompliance');
+  check('...Annie cannot approve it', DA.validateDecisionRecord(annieKaren, noncompliant).length > 0);
+  check('...Annie cannot deny it', DA.validateDecisionRecord({ ...annieKaren, outcome: 'denied' }, noncompliant).some((e) => /never denies/.test(e)));
+  check('...staff cannot deny it', DA.checkFinalDecision(noncompliant, { decisionType: 'denied', actor: STAFF, requireIssuer: true }).code === 'decision_not_authorized');
+  delete process.env.ACC_AI_DECISIONS_ENABLED;
+  // Incomplete -> request information, not approval.
+  const incomplete = { id: 'inc', status: 'pending_review', project_summary: 'Replace rear wood fence', compliance_evaluation: { ...base, completeness: { complete: false, items: ['survey'] } } };
+  check('incomplete application -> request more information', DA.routeEvaluation(incomplete).route === 'request_more_info');
+  check('no evaluation at all -> evaluation required (nobody AI-decides)', DA.routeEvaluation({ id: 'x', status: 'pending_review', project_summary: 'Patio cover' }).route === 'evaluation_required');
 }
 
 console.log('\n5. Decision language in letters and emails');
@@ -249,6 +307,16 @@ console.log('\n6. Transport guard (lib/email/graph_send)');
     const apps = fs.readFileSync(path.join(__dirname, '..', 'api', 'applications.js'), 'utf8');
     check('portal: ARC finalize still refuses (decided only in the ACC queue)', /svc\.service_type === 'arc'[\s\S]{0,200}status\(409\)/.test(apps));
     check('portal: ARC send-decision still refuses', /app\.service_type === 'arc'[\s\S]{0,200}status\(409\)/.test(apps));
+    // AI decisions are impossible until the engine lands: no production code
+    // records an Annie/Amanda decision or writes a compliance evaluation, and
+    // the only decision-record builder hardcodes Ed.
+    const walk = (dir) => fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => (e.name === 'node_modules' || e.name === 'tests' || e.name.startsWith('.')) ? [] : e.isDirectory() ? walk(path.join(dir, e.name)) : (/\.js$/.test(e.name) ? [path.join(dir, e.name)] : []));
+    const prod = [path.join(__dirname, '..', 'server.js'), ...walk(path.join(__dirname, '..', 'lib')), ...walk(path.join(__dirname, '..', 'api'))];
+    const agentWriters = prod.filter((f) => /decided_by:\s*['"](?:annie|amanda)['"]/.test(fs.readFileSync(f, 'utf8')));
+    const evalWriters = prod.filter((f) => /[{,]\s*compliance_evaluation\s*:/.test(fs.readFileSync(f, 'utf8')));
+    check('no production code records an Annie/Amanda decision', agentWriters.length === 0, agentWriters.join(', '));
+    check('no production code writes a compliance evaluation yet (engine not landed)', evalWriters.length === 0, evalWriters.join(', '));
+    check('AI decisions default OFF (ACC_AI_DECISIONS_ENABLED unset)', !DA.aiDecisionsEnabled());
     // Background writers never set a final status.
     for (const f of ['lib/acc/pending_intake.js', 'lib/applications/email_intake.js', 'lib/acc/match_open_application.js', 'lib/acc/documents.js']) {
       const src = fs.readFileSync(path.join(__dirname, '..', f), 'utf8');

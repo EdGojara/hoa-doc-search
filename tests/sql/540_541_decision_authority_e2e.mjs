@@ -133,8 +133,10 @@ if (s2.r && s2.r.status === 'applied') {
   const delegatedDenial = await decide(FENCE, 'denied', rec({ outcome: 'denied', authority_basis: { kind: 'written_delegation', reference: 'Guidelines 1.4.4.2: all others shall be disapproved', library_document_id: LIB } }));
   check('ALLOWED: a disapproval under the written delegation', delegatedDenial === null, delegatedDenial);
   await reset(FENCE);
-  const govdoc = await decide(FENCE, 'approved', rec({}));
-  check('ALLOWED: Ed approving a routine application under a cited governing provision', govdoc === null, govdoc);
+  check('refused: a governing-document citation alone (no delegation, no committee/Board record) is not authority',
+    /decision_authority_missing/.test(await decide(FENCE, 'approved', rec({})) || ''));
+  const govdocCb = await decide(FENCE, 'approved', rec({ committee_or_board: { body: 'committee', decision: 'approved', decided_on: '2026-10-19', approvers: 'Member A, Member B', evidence_type: 'vote', evidence_reference: 'ARC vote record 2026-10-19' } }));
+  check('ALLOWED: Ed issuing a routine approval the committee documented', govdocCb === null, govdocCb);
   await reset(FENCE);
 
   check('refused: a paving-expansion approval with no committee/Board record, even routine-attested',
@@ -145,15 +147,25 @@ if (s2.r && s2.r.status === 'applied') {
     /committee_authorization_required/.test(await decide('00000000-0000-0000-0000-0000000000a4', 'approved', rec({ authority_basis: { kind: 'written_delegation', reference: 'Guidelines 1.4.4.1 delegation', library_document_id: LIB, clearly_compliant: true } })) || ''));
   await db.exec(`DELETE FROM acc_decisions WHERE id = '00000000-0000-0000-0000-0000000000a4'`);
   check('refused: a granted deviation without the written deviation authorization',
-    /committee_authorization_required/.test(await decide(BRIAN, 'approved_with_conditions', rec({ outcome: 'approved_with_conditions', committee_or_board: { ...cb, deviation_granted: true } })) || ''));
+    /committee_authorization_required|decision_authority_missing/.test(await decide(BRIAN, 'approved_with_conditions', rec({ outcome: 'approved_with_conditions', committee_or_board: { ...cb, deviation_granted: true } })) || ''));
   const brianOk = await decide(BRIAN, 'approved_with_conditions', rec({ outcome: 'approved_with_conditions', committee_or_board: { ...cb, deviation_granted: true, deviation_statement: 'Board grants a width deviation under §2.1 size/location authority.' } }));
   check('ALLOWED: the paving expansion with the Board approval and written deviation', brianOk === null, brianOk);
   await reset(BRIAN);
-  check('refused: Annie deciding without a compliance evaluation', /evaluation_required/.test(await decide(FENCE, 'approved', rec({ decided_by: 'annie' })) || ''));
+  const annieDel = (o) => rec({ decided_by: 'annie', decided_by_email: null, authority_basis: { kind: 'written_delegation', reference: 'Guidelines 1.4.4.1 delegation', library_document_id: LIB, clearly_compliant: true }, ...o });
+  check('refused: Annie deciding without a compliance evaluation', /evaluation_required/.test(await decide(FENCE, 'approved', annieDel({})) || ''));
+  check('refused: Annie denying (never; Ed reviews noncompliance)', /agent_denial_refused/.test(await decide(FENCE, 'denied', annieDel({ outcome: 'denied' })) || ''));
+  await db.query(`UPDATE acc_decisions SET compliance_evaluation = '{"conflicts": [], "deviation_requested": false}'::jsonb WHERE id = $1`, [FENCE]);
+  const annieOk = await decide(FENCE, 'approved', annieDel({}));
+  check('ALLOWED at the DB: Annie\'s routine delegated approval with an evaluation (the app also requires AI enabled + a complete evaluation)', annieOk === null, annieOk);
+  await reset(FENCE);
+  check('refused: Annie approving a paving expansion, even with a committee/Board record (Ed\'s case)',
+    /owner_review_required/.test(await (async () => { await db.query(`UPDATE acc_decisions SET compliance_evaluation = '{"conflicts": []}'::jsonb WHERE id = $1`, [BRIAN]); return decide(BRIAN, 'approved_with_conditions', annieDel({ outcome: 'approved_with_conditions', committee_or_board: cb })); })() || ''));
+  await reset(BRIAN);
   check('ALLOWED: requests for more information and incomplete notices need no record',
     (await decide(FENCE, 'request_more_info', null)) === null && (await reset(FENCE), (await decide(FENCE, 'incomplete', null)) === null));
   await reset(FENCE);
-  await db.query(`UPDATE acc_decisions SET status = 'finalizing', decision_type = 'approved', decision_record = $1::jsonb WHERE id = $2`, [rec({}), FENCE]);
+  await db.query(`UPDATE acc_decisions SET status = 'finalizing', decision_type = 'approved', decision_record = $1::jsonb WHERE id = $2`,
+    [rec({ authority_basis: { kind: 'written_delegation', reference: 'Guidelines 1.4.4.1 delegation', library_document_id: LIB, clearly_compliant: true } }), FENCE]);
   check('finalizing -> decided passes (the record was checked on the way into finalizing)', (await tryErr(`UPDATE acc_decisions SET status = 'decided' WHERE id = '${FENCE}'`)) === null);
   const rows = await q1(`SELECT count(*)::int n FROM acc_decisions`);
   check('no row was created or deleted by either migration', rows.n === 4, JSON.stringify(rows));
