@@ -1,0 +1,77 @@
+# Confirms every merge to main reaches production, and alerts when it doesn't.
+#
+# - push to main: wait for https://my.bedrocktxai.com/version to report the
+#   merge commit (or a later one that contains it). Not there in 20 minutes →
+#   open/update the "Production is behind main" issue (label deploy-drift) and
+#   fail the run. GitHub emails the issue and the failed run to Ed.
+# - every 30 minutes: backstop for when the push run itself is delayed or never
+#   fires (GitHub Actions and webhooks degrade together). Same issue, closed
+#   automatically once production catches up. Fails only when it raises
+#   something new, so an open (or deliberately closed) drift doesn't email
+#   every 30 minutes.
+#
+# Behaviour is locked by tests/test_verify_deploy.js (simulated clock,
+# /version and GitHub).
+#
+# Read-only toward production: this never deploys anything. Logic lives in
+# scripts/verify_deploy.js. Third-party actions are pinned to immutable commit
+# hashes (the tag in the comment is what that commit was released as); bump them
+# deliberately, never by a moving tag.
+name: Deploy verify
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '*/30 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+env:
+  PROD_URL: https://my.bedrocktxai.com
+  DEPLOY_TIMEOUT_MIN: '20'
+  DRIFT_GRACE_MIN: '30'
+
+jobs:
+  wait-for-deploy:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # A newer merge supersedes an older one still waiting.
+    concurrency:
+      group: deploy-verify-push
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          sparse-checkout: scripts/verify_deploy.js
+          sparse-checkout-cone-mode: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '20'
+      - run: node scripts/verify_deploy.js wait
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  drift-check:
+    if: github.event_name != 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # Never two backstop runs at once (a late schedule tick queues behind).
+    concurrency:
+      group: deploy-verify-check
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          sparse-checkout: scripts/verify_deploy.js
+          sparse-checkout-cone-mode: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '20'
+      - run: node scripts/verify_deploy.js check
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
