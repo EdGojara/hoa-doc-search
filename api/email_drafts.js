@@ -15,6 +15,7 @@ const express = require('express');
 const { createClient } = require('@supabase/supabase-js');
 const graphSend = require('../lib/email/graph_send');
 const ReplyGuard = require('../lib/email/reply_guard');
+const { getActingUser } = require('./_acting_user');
 const { buildAnnieEmail } = require('../lib/email/annie_signature');
 const { buildClaireEmail } = require('../lib/email/claire_signature');
 const { buildEmmaEmail } = require('../lib/email/emma_signature');
@@ -231,6 +232,13 @@ async function logSentDraftToTimeline(d, from, subject) {
 
 router.post('/:id/send', async (req, res) => {
   try {
+    // The approver is the signed-in person, verified from the session token,
+    // never a name the browser supplies (Ed 2026-10-20: two of his approvals
+    // were recorded as "staff" because the screen sent no name). No session,
+    // no send.
+    const approver = await getActingUser(req);
+    if (!approver || approver.is_active === false || !approver.email) return res.status(401).json({ error: 'not_authenticated', message: 'Sign in to approve and send. Nothing was sent.' });
+    const approvedBy = String(approver.email).toLowerCase();
     const { data: d, error } = await supabase.from('outbound_email_drafts').select('*').eq('id', req.params.id).maybeSingle();
     if (error) throw error;
     if (!d) return res.status(404).json({ error: 'not_found' });
@@ -355,7 +363,7 @@ router.post('/:id/send', async (req, res) => {
     }
     // The atomic claim, right before Graph: a simultaneous or repeated Send for the same
     // reply (from here or from Communications) is refused, never sent twice.
-    const claim = await ReplyGuard.claim(supabase, { inboundId, draftId: d.id, path: 'draft_queue', packageSha: currentPackage, actor: req.body.approved_by || 'staff', retryAfterUncertain });
+    const claim = await ReplyGuard.claim(supabase, { inboundId, draftId: d.id, path: 'draft_queue', packageSha: currentPackage, actor: approvedBy, retryAfterUncertain });
     if (!claim.ok) return res.status(claim.status).json({ error: claim.error, message: claim.message, needs_confirmation: claim.needs_confirmation || undefined });
     try {
       // A threaded reply goes to exactly the recipients reviewed (never createReply's own pick).
@@ -380,13 +388,13 @@ router.post('/:id/send', async (req, res) => {
     await ReplyGuard.finish(supabase, { key: claim.key, token: claim.token, ok: true });
     await supabase.from('outbound_email_drafts').update({
       status: 'sent', sent_at: new Date().toISOString(), sent_from: from,
-      approved_by: req.body.approved_by || 'staff', send_error: null,
+      approved_by: approvedBy, send_error: null,
       record_ownership: 'association_record',
     }).eq('id', d.id);
     if (replyTo) {
       // The inbound is answered: mark it handled so Communications and Amanda's inbox agree.
       const { error: hErr } = await supabase.from('email_messages')
-        .update({ triage_status: 'handled', reviewed_by: req.body.approved_by || 'staff', reviewed_at: new Date().toISOString() })
+        .update({ triage_status: 'handled', reviewed_by: approvedBy, reviewed_at: new Date().toISOString() })
         .eq('id', replyTo.id);
       if (hErr) console.warn('[email_drafts] reply sent but inbound not marked handled:', hErr.message);
     }

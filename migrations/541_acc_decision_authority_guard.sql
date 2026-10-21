@@ -20,7 +20,14 @@
 --   * Trigger trg_acc_decisions_decision_authority (BEFORE INSERT OR UPDATE):
 --     a row created as, or moving into, 'finalizing' / 'decided' with an
 --     approval or denial decision_type is refused unless decision_record
---       - names an authorized decider (ed | annie | amanda);
+--       - names an authorized decider: ed, the committee or board (its
+--         documented decision, same body, matching outcome), or annie/amanda;
+--         staff are never the decider (Ed 2026-10-20);
+--       - names who recorded it (recorded_by.user_id) for a human-entered
+--         decision (ed, committee, board);
+--       - for a denial, or a committee/Board approval of a paving expansion or
+--         deviation, decided by someone other than Ed: carries Ed's review
+--         (owner_review by the owner account);
 --       - has an outcome matching decision_type (approval vs denial);
 --       - cites a written delegation on file (library_document_id), or carries
 --         the documented committee/Board decision (a governing-document citation
@@ -60,6 +67,8 @@ DECLARE
   scope_text text;
   paving boolean := false;
   deviation boolean := false;
+  decider text;
+  ed_reviewed boolean;
 BEGIN
   entering := NEW.status IN ('finalizing', 'decided')
     AND (TG_OP = 'INSERT' OR (OLD.status IS DISTINCT FROM NEW.status AND OLD.status NOT IN ('finalizing', 'decided')));
@@ -69,10 +78,19 @@ BEGIN
   is_approval := NOT is_denial AND dt ~* 'approv';
   IF NOT (is_approval OR is_denial) THEN RETURN NEW; END IF;
 
-  IF rec IS NULL OR COALESCE(rec->>'decided_by', '') NOT IN ('ed', 'annie', 'amanda') THEN
-    RAISE EXCEPTION 'decision_not_authorized: only Ed, Amanda or Annie may approve or deny an ACC application; no authorized decision_record (acc_decisions %)', NEW.id
+  decider := COALESCE(rec->>'decided_by', '');
+  IF rec IS NULL OR decider NOT IN ('ed', 'committee', 'board', 'annie', 'amanda') THEN
+    RAISE EXCEPTION 'decision_not_authorized: an ACC approval or denial must be decided by Ed, the Architectural Committee or Board, or Annie/Amanda within delegated authority (staff never decide); no authorized decision_record (acc_decisions %)', NEW.id
       USING ERRCODE = 'check_violation';
   END IF;
+  IF decider IN ('ed', 'committee', 'board') AND COALESCE(rec#>>'{recorded_by,user_id}', '') = '' THEN
+    RAISE EXCEPTION 'recorder_missing: the decision_record must name the signed-in user who recorded it (acc_decisions %)', NEW.id
+      USING ERRCODE = 'check_violation';
+  END IF;
+  -- Ed's review: Ed decided, or the owner account reviewed the case.
+  ed_reviewed := decider = 'ed'
+    OR (NEW.owner_review IS NOT NULL AND COALESCE(NEW.owner_review->>'reviewed_at', '') <> ''
+        AND lower(COALESCE(NEW.owner_review->>'reviewed_by_email', '')) = 'egojara@bedrocktx.com');
   IF COALESCE(rec->>'outcome', '') NOT IN ('approved', 'approved_with_conditions', 'denied')
      OR (is_approval AND rec->>'outcome' = 'denied')
      OR (is_denial AND rec->>'outcome' <> 'denied') THEN
@@ -98,6 +116,17 @@ BEGIN
     AND NOT (COALESCE(cb->>'deviation_granted', 'false') = 'true' AND length(COALESCE(cb->>'deviation_statement', '')) < 10);
   cb_ok := cb_valid AND ((is_approval AND cb->>'decision' IN ('approved', 'approved_with_conditions')) OR (is_denial AND cb->>'decision' = 'denied'));
 
+  -- A committee or Board decision carries that body's documented decision.
+  IF decider IN ('committee', 'board') AND NOT (cb_ok AND cb->>'body' = decider) THEN
+    RAISE EXCEPTION 'committee_decision_undocumented: a % decision needs its documented decision (same body, matching outcome, date, who decided, evidence) (acc_decisions %)', decider, NEW.id
+      USING ERRCODE = 'check_violation';
+  END IF;
+  -- Every denial goes to Ed.
+  IF is_denial AND NOT ed_reviewed AND decider NOT IN ('annie', 'amanda') THEN  -- agents: refused below (never deny)
+    RAISE EXCEPTION 'owner_review_required: a denial needs Ed''s review recorded before it is issued (acc_decisions %)', NEW.id
+      USING ERRCODE = 'check_violation';
+  END IF;
+
   -- No inferred authority: a governing-document citation alone does not let
   -- Bedrock decide; it needs the documented committee/Board decision.
   IF rec#>>'{authority_basis,kind}' = 'governing_document' AND NOT cb_ok THEN
@@ -117,6 +146,10 @@ BEGIN
       OR COALESCE(NEW.compliance_evaluation->>'deviation_requested', 'false') = 'true';
     IF (paving OR deviation) AND NOT cb_ok THEN
       RAISE EXCEPTION 'committee_authorization_required: a driveway/paving expansion or deviation approval needs the committee or Board approval documented (acc_decisions %)', NEW.id
+        USING ERRCODE = 'check_violation';
+    END IF;
+    IF (paving OR deviation) AND decider IN ('committee', 'board') AND NOT ed_reviewed THEN
+      RAISE EXCEPTION 'owner_review_required: a % approval of a paving expansion or deviation needs Ed''s review recorded before it is issued (acc_decisions %)', decider, NEW.id
         USING ERRCODE = 'check_violation';
     END IF;
     IF rec#>>'{authority_basis,kind}' = 'written_delegation'

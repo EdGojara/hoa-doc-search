@@ -114,15 +114,18 @@ if (s2.r && s2.r.status === 'applied') {
   await db.exec(`INSERT INTO acc_decisions (project_summary) VALUES ('default probe')`);
   check('a new row is never decided by default (pending_review)', (await q1(`SELECT status FROM acc_decisions WHERE project_summary = 'default probe'`)).status === 'pending_review');
 
+  const ED_REC = { user_id: 'ed-uuid', email: 'egojara@bedrocktx.com', name: 'Ed Gojara', at: new Date().toISOString() };
+  const STAFF_REC = { user_id: 'staff-uuid', email: 'staffer@bedrocktx.com', name: 'A Staffer', at: new Date().toISOString() };
   const rec = (o) => JSON.stringify(Object.assign({ decided_by: 'ed', decided_by_email: 'egojara@bedrocktx.com', outcome: 'approved', decided_at: new Date().toISOString(),
-    authority_basis: { kind: 'governing_document', reference: 'Declaration Article II §2.1, p. 4 of 47' } }, o));
+    recorded_by: ED_REC, authority_basis: { kind: 'governing_document', reference: 'Declaration Article II §2.1, p. 4 of 47' } }, o));
   const decide = (id, dt, r) => tryErr(`UPDATE acc_decisions SET status = 'decided', decision_type = $1, decision_record = $2::jsonb WHERE id = $3`, [dt, r, id]);
   const reset = (id) => db.query(`UPDATE acc_decisions SET status = 'pending_review', decision_type = NULL, decision_record = NULL WHERE id = $1`, [id]).catch(() => {});
 
   check('refused: inserting a decided approval with no record (the old Generate Letter bug)',
     /decision_not_authorized/.test(await tryErr(`INSERT INTO acc_decisions (status, decision_type, project_summary) VALUES ('decided', 'approved', 'Paint front door')`) || ''));
   check('refused: approving with no decision record', /decision_not_authorized/.test(await decide(FENCE, 'approved', null) || ''));
-  check('refused: a decider other than ed/annie/amanda', /decision_not_authorized/.test(await decide(FENCE, 'approved', rec({ decided_by: 'martha' })) || ''));
+  check('refused: a staff member as the decider', /decision_not_authorized/.test(await decide(FENCE, 'approved', rec({ decided_by: 'martha' })) || ''));
+  check('refused: a human-entered decision that does not say who recorded it', /recorder_missing/.test(await decide(FENCE, 'approved', rec({ recorded_by: null, authority_basis: { kind: 'written_delegation', reference: 'Guidelines 1.4.4.1 delegation to the Managing Agent', library_document_id: LIB, clearly_compliant: true } })) || ''));
   check('refused: a denial issued on an approval record', /decision_outcome_mismatch/.test(await decide(FENCE, 'denied', rec({ outcome: 'approved' })) || ''));
   check('refused: bedrock_only as authority', /decision_authority_missing/.test(await decide(FENCE, 'approved', rec({ authority_basis: { kind: 'written_delegation', reference: 'arc_approval_workflow = bedrock_only', library_document_id: LIB } })) || ''));
   check('refused: a written delegation that names no instrument', /decision_authority_missing/.test(await decide(FENCE, 'approved', rec({ authority_basis: { kind: 'written_delegation', reference: 'Guidelines 1.4.4.1 delegation to the Managing Agent' } })) || ''));
@@ -131,8 +134,29 @@ if (s2.r && s2.r.status === 'applied') {
   check('ALLOWED: a routine, clearly compliant approval under the written delegation, no committee vote', routine === null, routine);
   await reset(FENCE);
   const delegatedDenial = await decide(FENCE, 'denied', rec({ outcome: 'denied', authority_basis: { kind: 'written_delegation', reference: 'Guidelines 1.4.4.2: all others shall be disapproved', library_document_id: LIB } }));
-  check('ALLOWED: a disapproval under the written delegation', delegatedDenial === null, delegatedDenial);
+  check('ALLOWED: Ed\'s disapproval under the written delegation', delegatedDenial === null, delegatedDenial);
   await reset(FENCE);
+  // Staff record a committee/Board decision; the body is the decider.
+  const ARC = { body: 'committee', decision: 'approved', decided_on: '2026-10-15', approvers: 'Member A, Member B, Member C', evidence_type: 'minutes', evidence_reference: 'ARC minutes 2026-10-15, item 4' };
+  const crec = (o) => rec({ decided_by: 'committee', decided_by_email: null, recorded_by: STAFF_REC, authority_basis: { kind: 'governing_document', reference: 'Declaration Art. VI §2-3, pp. 15-16' }, committee_or_board: ARC, ...o });
+  const committeeOk = await decide(FENCE, 'approved', crec({}));
+  check('ALLOWED: a routine committee approval recorded by staff (no Ed involvement)', committeeOk === null, committeeOk);
+  await reset(FENCE);
+  check('refused: a committee decision whose documented decision is the Board\'s', /committee_decision_undocumented/.test(await decide(FENCE, 'approved', crec({ committee_or_board: { ...ARC, body: 'board' } })) || ''));
+  check('refused: a committee decision with no evidence', /committee_decision_undocumented/.test(await decide(FENCE, 'approved', crec({ committee_or_board: { ...ARC, evidence_reference: '' } })) || ''));
+  check('refused: a committee denial before Ed has reviewed it', /owner_review_required/.test(await decide(FENCE, 'denied', crec({ outcome: 'denied', committee_or_board: { ...ARC, decision: 'denied' } })) || ''));
+  await db.query(`UPDATE acc_decisions SET owner_review = $1::jsonb WHERE id = $2`, [JSON.stringify({ reviewed_at: new Date().toISOString(), reviewed_by_email: 'egojara@bedrocktx.com' }), FENCE]);
+  const cDenyOk = await decide(FENCE, 'denied', crec({ outcome: 'denied', committee_or_board: { ...ARC, decision: 'denied' } }));
+  check('ALLOWED: the committee denial once Ed has reviewed it', cDenyOk === null, cDenyOk);
+  await db.query(`UPDATE acc_decisions SET status = 'pending_review', decision_type = NULL, decision_record = NULL, owner_review = NULL WHERE id = $1`, [FENCE]);
+  const brianC = crec({ outcome: 'approved_with_conditions', committee_or_board: { ...ARC, decision: 'approved_with_conditions' } });
+  check('refused: a committee approval of a paving expansion before Ed has reviewed it', /owner_review_required/.test(await decide(BRIAN, 'approved_with_conditions', brianC) || ''));
+  await db.query(`UPDATE acc_decisions SET owner_review = $1::jsonb WHERE id = $2`, [JSON.stringify({ reviewed_at: new Date().toISOString(), reviewed_by_email: 'staffer@bedrocktx.com' }), BRIAN]);
+  check('refused: a "review" by someone other than Ed does not count', /owner_review_required/.test(await decide(BRIAN, 'approved_with_conditions', brianC) || ''));
+  await db.query(`UPDATE acc_decisions SET owner_review = $1::jsonb WHERE id = $2`, [JSON.stringify({ reviewed_at: new Date().toISOString(), reviewed_by_email: 'egojara@bedrocktx.com' }), BRIAN]);
+  const brianCOk = await decide(BRIAN, 'approved_with_conditions', brianC);
+  check('ALLOWED: the committee\'s paving-expansion approval once Ed has reviewed it', brianCOk === null, brianCOk);
+  await db.query(`UPDATE acc_decisions SET status = 'pending_review', decision_type = NULL, decision_record = NULL, owner_review = NULL WHERE id = $1`, [BRIAN]);
   check('refused: a governing-document citation alone (no delegation, no committee/Board record) is not authority',
     /decision_authority_missing/.test(await decide(FENCE, 'approved', rec({})) || ''));
   const govdocCb = await decide(FENCE, 'approved', rec({ committee_or_board: { body: 'committee', decision: 'approved', decided_on: '2026-10-19', approvers: 'Member A, Member B', evidence_type: 'vote', evidence_reference: 'ARC vote record 2026-10-19' } }));

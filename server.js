@@ -3296,19 +3296,20 @@ app.post('/acc-review/decisions/:id/finalize', async (req, res) => {
 
     // DECISION AUTHORITY (Ed 2026-10-20, lib/acc/decision_authority). An
     // approval or denial (by decision type OR by what the letter says) is issued
-    // only by Ed, only with an authorized decision record on the case, and for a
-    // driveway / paving expansion or deviation only with the committee/Board
-    // approval documented. Ed may record his decision here in the same step
-    // (body.decision_record), so an authorized decision is entered once.
+    // only for an authorized decision recorded on the case: Ed's, the
+    // Architectural Committee's or Board's (documented), or, once enabled, Annie's
+    // or Amanda's within delegated authority. Any signed-in staff member may send
+    // it once recorded; the record names who evaluated, decided, recorded and
+    // issued it. A decision may be recorded here in the same step
+    // (body.decision_record): Ed's own, or a committee/Board decision staff enter.
     // Requests for more information and incomplete notices are open to staff.
     {
       const DA = require('./lib/acc/decision_authority');
       let decRow = dec;
       if (body.decision_record && typeof body.decision_record === 'object') {
-        if (!DA.isOwnerActor(actor)) {
-          return res.status(403).json({ code: 'decision_not_authorized', error: 'Only Ed can record an ACC decision from this screen. Staff can draft and request more information.' });
-        }
-        const rec = DA.ownerDecisionRecord(actor, { ...body.decision_record, outcome: body.decision_record.outcome || decisionType });
+        const built = DA.recordDecision(actor, { ...body.decision_record, outcome: body.decision_record.outcome || decisionType }, dec);
+        if (built.error) return res.status(403).json({ code: 'decision_not_authorized', error: `${built.error}. Nothing was sent or marked done.` });
+        const rec = built.rec;
         const docErr = await _accResolveAuthorityDocument(dec, rec);
         if (docErr) return res.status(409).json({ code: 'decision_record_invalid', error: `Decision record incomplete: ${docErr}. Nothing was sent or marked done.` });
         decRow = { ...dec, decision_record: rec };
@@ -3316,9 +3317,9 @@ app.post('/acc-review/decisions/:id/finalize', async (req, res) => {
       const authz = DA.checkFinalDecision(decRow, { decisionType, texts: [bodyText], actor, requireIssuer: true });
       if (!authz.ok) return res.status(authz.status).json({ code: authz.code, error: authz.error, authority: authz.auth });
       if (authz.final) {
-        const patch = { ...(DA.stampFor(authz.auth.gate) || {}) };
-        if (decRow !== dec) patch.decision_record = decRow.decision_record;
-        if (Object.keys(patch).length) {
+        // Who issued it: the signed-in sender, on the record itself.
+        const patch = { ...(DA.stampFor(authz.auth.gate) || {}), decision_record: { ...decRow.decision_record, issued_by: DA.actorStamp(actor) } };
+        {
           const { error: pErr } = await supabase.from('acc_decisions').update(patch).eq('id', id).in('status', DA.OPEN);
           if (pErr) {
             const missing = /column|does not exist/i.test(pErr.message || '');
@@ -3728,19 +3729,19 @@ app.post('/acc-review/decisions/:id/redraft', express.json({ limit: '64kb' }), a
 });
 
 // ── ACC decision authority (Ed 2026-10-20, lib/acc/decision_authority) ───────
-// Both endpoints are Ed-only (signed-in owner account, verified server-side)
-// and never send, finalize or change status. They write the record the
-// approval / letter / send paths check.
+// Neither endpoint sends, finalizes or changes status. They write the record the
+// approval / letter / send paths check. The signed-in user is verified
+// server-side and recorded; a browser-supplied name is never trusted.
 //
-// POST /acc-review/decisions/:id/owner-review { notes }
-//   Ed's review of an escalated case (driveway / paving expansion, deviation,
-//   conflicts, incomplete evidence, uncertainty). A management check: it never
+// POST /acc-review/decisions/:id/owner-review { notes }      Ed only
+//   Ed's review of an escalated case or a denial. A management check: it never
 //   substitutes for a required committee or Board decision.
-// POST /acc-review/decisions/:id/decision-record { outcome, authority_kind,
-//   authority_reference, committee_or_board?, conditions?, notes? }
-//   Ed's final decision, with the provision or written delegation that
-//   authorizes it and (for a paving expansion or deviation approval) the
-//   committee/Board decision with its evidence. Also counts as his review.
+// POST /acc-review/decisions/:id/decision-record { decided_by, outcome,
+//   authority_kind, authority_reference, committee_or_board?, conditions?, notes? }
+//   decided_by 'ed': Ed records his own decision (also counts as his review).
+//   decided_by 'committee' | 'board': any signed-in staff member records the
+//   body's decision with its evidence (who, when, vote/minutes/email). Staff
+//   are never the decider.
 // The governing instruments on file for a community: what a decision may cite
 // as its authority (a delegation, a declaration, guidelines, a resolution).
 const _ACC_AUTHORITY_CATEGORIES = ['declaration_ccrs', 'design_document', 'rules_and_regulations', 'resolutions_and_policies', 'bylaws', 'management_agreement'];
@@ -3763,11 +3764,12 @@ async function _accResolveAuthorityDocument(dec, rec) {
   ab.library_document_title = doc.title;
   return null;
 }
-async function _accAuthorityWrite(req, res, buildPatch) {
+async function _accAuthorityWrite(req, res, buildPatch, { ownerOnly = true } = {}) {
   const DA = require('./lib/acc/decision_authority');
   const actor = await getActingUser(req);
-  if (!DA.isOwnerActor(actor)) {
-    return res.status(403).json({ code: 'decision_not_authorized', error: 'Only Ed can review or record an ACC decision. Staff can enter applications, upload documents, draft and request more information.' });
+  if (!DA.isHumanActor(actor)) return res.status(401).json({ code: 'not_authenticated', error: 'Sign in to review or record an ACC decision.' });
+  if (ownerOnly && !DA.isOwnerActor(actor)) {
+    return res.status(403).json({ code: 'decision_not_authorized', error: 'Only Ed can review an escalated ACC case. Staff can enter applications, upload documents, record a committee or Board decision and request more information.' });
   }
   const { data: dec, error } = await supabase.from('acc_decisions').select('*')
     .eq('id', req.params.id).eq('management_company_id', BEDROCK_MGMT_CO_ID).maybeSingle();
@@ -3792,7 +3794,9 @@ app.post('/acc-review/decisions/:id/owner-review', express.json({ limit: '32kb' 
   return { patch: { owner_review: { reviewed_at: new Date().toISOString(), reviewed_by_user_id: actor.id, reviewed_by_email: String(actor.email).toLowerCase(), reviewed_by_name: actor.full_name || null, notes: String(b.notes || '').trim() || null, triggers: a.triggers } } };
 }).catch((e) => res.status(500).json({ error: e.message })));
 app.post('/acc-review/decisions/:id/decision-record', express.json({ limit: '64kb' }), (req, res) => _accAuthorityWrite(req, res, async (DA, actor, dec, b) => {
-  const rec = DA.ownerDecisionRecord(actor, b);
+  const built = DA.recordDecision(actor, b, dec);
+  if (built.error) return { errors: [built.error] };
+  const rec = built.rec;
   const docErr = await _accResolveAuthorityDocument(dec, rec);
   const errors = DA.validateDecisionRecord(rec, { ...dec, decision_record: rec });
   if (docErr) errors.unshift(docErr);
@@ -3801,10 +3805,10 @@ app.post('/acc-review/decisions/:id/decision-record', express.json({ limit: '64k
   return { patch: {
     decision_record: rec,
     decision_type: rec.outcome,
-    owner_review: dec.owner_review || { reviewed_at: now, reviewed_by_user_id: actor.id, reviewed_by_email: String(actor.email).toLowerCase(), reviewed_by_name: actor.full_name || null, notes: 'Reviewed when recording the decision.', triggers: DA.authorityFor(dec).triggers },
+    ...(rec.decided_by === 'ed' ? { owner_review: dec.owner_review || { reviewed_at: now, reviewed_by_user_id: actor.id, reviewed_by_email: String(actor.email).toLowerCase(), reviewed_by_name: actor.full_name || null, notes: 'Reviewed when recording the decision.', triggers: DA.authorityFor(dec).triggers } } : {}),
     ...(DA.stampFor(DA.authorityFor(dec).gate) || {}),
   } };
-}).catch((e) => res.status(500).json({ error: e.message })));
+}, { ownerOnly: false }).catch((e) => res.status(500).json({ error: e.message })));
 
 // POST /acc-review/render-letter — render a decision-letter PDF from the CURRENT
 // editor text WITHOUT saving. So "Download letter PDF" gives you the letter you
