@@ -1,0 +1,31 @@
+{
+  "_about": "THE persona image map (Ed 2026-10-21, issue #241). One entry per AI teammate whose approved photo set is managed here. To update: put the approved PNGs in a folder and run `node scripts/build_persona_images.js <persona> <folder>`; it writes every derived file below. The canonical square at public/assets/presentations/team/<persona>.jpg is what every surface reads (email signature headshot, Ask Amanda, board portal, presentations, training, proposals, outbox) and what scripts/set_team_photos.js pushes to Microsoft 365. Teammates not listed here are unchanged.",
+  "amanda": {
+    "name": "Amanda Albright",
+    "approved": "2026-10-21",
+    "approved_by": "Ed Gojara",
+    "source_package": "TrustEd_Amanda_Approved_Photos_2026-10-21.zip",
+    "source_note": "Crops of a 1536x1024 eight-photo sheet, about 378x506 each. Not high-resolution: never upscaled; fine for avatars, signatures and cards (displayed at 120px or less). Large website placements, the Microsoft 365 photo (shown up to 648px) and any video avatar need native single-photo originals.",
+    "dir": "public/assets/personas/amanda",
+    "canonical_square": {
+      "from": "amanda-professional-email",
+      "out": "public/assets/presentations/team/amanda.jpg",
+      "crop_top_px": 30,
+      "alt": "Amanda Albright, Bedrock community manager"
+    },
+    "photos": {
+      "amanda-professional-email": { "use": "primary professional portrait: profile, email, signature", "alt": "Amanda Albright, Bedrock community manager" },
+      "amanda-direct-camera": { "use": "friendly greeting: chat and Ask Amanda", "alt": "Amanda Albright smiling", "square_crop_top_px": 40 },
+      "amanda-laughing": { "use": "candid, website / team page", "alt": "Amanda Albright laughing in the office" },
+      "amanda-listening": { "use": "candid, listening in a meeting", "alt": "Amanda Albright listening in a meeting" },
+      "amanda-meeting": { "use": "candid, board or homeowner meeting", "alt": "Amanda Albright in a meeting" },
+      "amanda-phone": { "use": "candid, on a call with a homeowner", "alt": "Amanda Albright on the phone" },
+      "amanda-reading": { "use": "candid, reviewing a document", "alt": "Amanda Albright reviewing a document" },
+      "amanda-working": { "use": "candid, working at her desk", "alt": "Amanda Albright working at her desk" }
+    },
+    "backups": [
+      "public/assets/presentations/team/amanda_legacy_v1.jpg (face v1; poster for videos rendered with the v1 face)",
+      "public/assets/presentations/team/amanda_legacy_v2.jpg (face v2, in use 2026-10-04 to 2026-10-21)"
+    ]
+  }
+}

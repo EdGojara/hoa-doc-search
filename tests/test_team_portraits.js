@@ -10,6 +10,9 @@ const crypto = require('crypto');
 const ROOT = path.join(__dirname, '..');
 const TEAM = path.join(ROOT, 'public', 'assets', 'presentations', 'team');
 const sha = (f) => crypto.createHash('sha256').update(fs.readFileSync(f)).digest('hex');
+// Ed 2026-10-21 (issue #241): amanda.jpg is the approved photo (lib/team/persona_images.json);
+// the v2 portrait is kept byte-identical as amanda_legacy_v2.jpg.
+const CURRENT_SHA = '60688c5c973c2fedcd6677ba6107e3a5641f1b09c1a478f49b768327a8e33241';   // 378px square of amanda-professional-email
 const V2_PORTRAIT_SHA = 'e25ef24e07ba4fb1b4e1fca4786da1bdd35ab538c01c7d28bbf577a8ce7e0ddb';   // 640px crop of master 601c6d92…
 const V1_PORTRAIT_SHA = '7ad707acfc137b2eb161d48d81d82d2f5e34eb7f6ba8fe7631b62f1a7df7d2cf';   // registry character_assets, face v1 derived
 const tests = []; const check = (n, fn) => tests.push([n, fn]);
@@ -25,11 +28,20 @@ function jpegSize(file) {   // read SOF0/SOF2 dimensions without an image librar
   return null;
 }
 
-check('amanda.jpg is the face-v2 portrait (640x640 JPEG), never the old v1 headshot', () => {
+check('amanda.jpg is the approved 2026-10-21 photo (378x378 square, never upscaled), not v1 or v2', () => {
   const f = path.join(TEAM, 'amanda.jpg');
-  assert.strictEqual(sha(f), V2_PORTRAIT_SHA, 'amanda.jpg must be the v2 portrait; a deliberate replacement updates this test');
-  assert.notStrictEqual(sha(f), V1_PORTRAIT_SHA);
-  assert.deepStrictEqual(jpegSize(f), { w: 640, h: 640 });
+  assert.strictEqual(sha(f), CURRENT_SHA, 'amanda.jpg must be the approved photo; a deliberate replacement updates this test');
+  assert.notStrictEqual(sha(f), V1_PORTRAIT_SHA); assert.notStrictEqual(sha(f), V2_PORTRAIT_SHA);
+  assert.deepStrictEqual(jpegSize(f), { w: 378, h: 378 });
+});
+check('the v2 portrait is preserved byte-identical as amanda_legacy_v2.jpg', () => {
+  assert.strictEqual(sha(path.join(TEAM, 'amanda_legacy_v2.jpg')), V2_PORTRAIT_SHA);
+});
+check('the persona image map owns amanda.jpg; every mapped photo exists; no other teammate is mapped', () => {
+  const map = JSON.parse(fs.readFileSync(path.join(ROOT, 'lib', 'team', 'persona_images.json'), 'utf8'));
+  assert.deepStrictEqual(Object.keys(map).filter((k) => !k.startsWith('_')), ['amanda']);
+  assert.strictEqual(map.amanda.canonical_square.out, 'public/assets/presentations/team/amanda.jpg');
+  for (const k of Object.keys(map.amanda.photos)) assert.ok(fs.existsSync(path.join(ROOT, map.amanda.dir, k + '.jpg')), k);
 });
 
 check('the old face is preserved byte-identical as amanda_legacy_v1.jpg', () => {
