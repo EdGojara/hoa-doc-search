@@ -75,7 +75,8 @@
     "test:refunds": "node tests/test_refund_routing.js",
     "test:autopay": "node tests/test_autopay.js",
     "test:posted-je": "node tests/test_posted_je_immutable.js",
-    "test:posted-lines": "node scripts/check_posted_lines_immutable.js"
+    "test:posted-lines": "node scripts/check_posted_lines_immutable.js",
+    "test:verify-deploy": "node tests/test_verify_deploy.js"
   },
   "keywords": [],
   "author": "",

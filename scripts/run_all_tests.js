@@ -55,6 +55,7 @@ const CHECKS = [
   'lib/ai/shadow/evidence_conflict.test.js',
   'evals/evaluator-check.js',
   'tests/test_vantaca_extraction.js',
+  'tests/test_verify_deploy.js',
   'tests/test_retrieval_regression.js',
   'tests/test_fact_fastpath.js',
   'tests/test_completion_thanks.js',
