@@ -62,7 +62,11 @@ async function jpeg(src, { square = false, top = 0, crop = null, width = null } 
   }
   const cs = m.canonical_square;
   const out = path.join(ROOT, cs.out);
-  const next = await jpeg(path.join(srcDir, `${cs.from}.png`), { square: true, top: cs.crop_top_px });
+  // region: { x, y, size } frames the face in a larger photo; width downsizes
+  // (e.g. 640, the size every surface was built for). Never upscales.
+  const next = cs.region
+    ? await jpeg(path.join(srcDir, `${cs.from}.png`), { crop: { x: cs.region.x, y: cs.region.y, w: cs.region.size, h: cs.region.size }, width: cs.width || null })
+    : await jpeg(path.join(srcDir, `${cs.from}.png`), { square: true, top: cs.crop_top_px, width: cs.width || null });
   if (fs.existsSync(out)) {
     const cur = fs.readFileSync(out);
     const teamDir = path.dirname(out);
