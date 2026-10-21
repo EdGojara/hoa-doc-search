@@ -829,6 +829,12 @@ only gate, and "it renders" is not "it's correct."
   with a live check that no approved application can fail). DRV letters,
   estoppels, and assessment statements still don't.
 
+### Upload routes reachable without login must use `publicUpload()`
+
+**Scar**: 2026-10-21 (PR #250). Six upload routes accept requests without login, and multer parses the whole upload into memory **before** the route handler runs. On multer 2.1.1 with no field limits, one ~200-byte anonymous request (`a[4294967294]=x`, `a[b]=y`) pinned the Node process for more than 60 seconds, taking trustEd down for everyone. Upgrading multer alone did not fix it: the 2.4.0 protections apply only when `fieldArrayIndexLimit` / `fieldNestingDepth` are set, and they default to unlimited.
+
+**Rule**: every upload route reachable without login (on `_STAFF_GATE_PUBLIC`, or registered before the staff gate) uses `lib/uploads/public_upload.js` `publicUpload({ route, fileSize, files, maxTotalBytes })`, never a bare `multer(...)`. It sets every field limit, caps the total body before parsing, and returns JSON 400/413. **ENFORCED**: `tests/test_public_upload_limits.js` (in `npm test`) maps every upload middleware in `server.js` + `api/*.js` to its route and fails the build if a no-login route uses anything else. Open follow-up: rate limiting on these routes, which needs `trust proxy` first. Deployment record: `docs/AI_HANDOFF.md` 2026-10-21.
+
 ### Never destructure `data` without `error` — a broken query looks exactly like "no results"
 
 **Scar**: 2026-07-15, hit **four times in one session** while diagnosing live
