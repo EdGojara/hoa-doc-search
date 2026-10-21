@@ -130,7 +130,10 @@ check('Paige: nothing upscaled; identity reference is the production original; H
 
 // ---- Phoebe (Ed 2026-10-21): two logo-corrected photos added; production photo untouched ----
 const PHOEBE_ORIGINAL_SHA = '11d41bd3378f6ed6c8e2d8c7b871c5fddf285a9d1b408100126c1dce77b10b95';   // HeyGen group source
-const LOCKUP_SVG_SHA = '62465d4ef5a9c97a81986e5b9ae3cdaff66d098e0879d053aba5630fed7171ff';
+// The SVG is text: git may check it out with CRLF on Windows, so it is hashed with line endings
+// normalized to LF, which equals the bytes stored in git and served in production.
+const LOCKUP_SVG_SHA = '3fa0b7e9f1bfbe8a953afc67db018d54fb2234bfddde8b098690e3223341c536';
+const shaText = (f) => crypto.createHash('sha256').update(fs.readFileSync(f).toString('latin1').replace(/\r\n/g, '\n'), 'latin1').digest('hex');
 check('phoebe.jpg is still her original production portrait (byte-identical)', () => {
   assert.strictEqual(sha(path.join(TEAM, 'phoebe.jpg')), PHOEBE_ORIGINAL_SHA);
 });
@@ -151,7 +154,7 @@ check('Phoebe: photos stored at or below native size; profile, HeyGen and M365 u
   }
 });
 check('brand: the approved lockup is unchanged; the light-on-dark versions exist and are registered in lib/brand.js', () => {
-  assert.strictEqual(sha(path.join(ROOT, 'public', 'brand-assets', 'bedrock-lockup.svg')), LOCKUP_SVG_SHA);
+  assert.strictEqual(shaText(path.join(ROOT, 'public', 'brand-assets', 'bedrock-lockup.svg')), LOCKUP_SVG_SHA);
   const brand = require(path.join(ROOT, 'lib', 'brand.js'));
   const logos = (brand.BRAND || brand).logos || brand.logos;
   assert.strictEqual(logos.fullLockup, '/brand-assets/bedrock-lockup.svg');
