@@ -1,0 +1,66 @@
+# Confirms every merge to main reaches production, and alerts when it doesn't.
+#
+# - push to main: wait for https://my.bedrocktxai.com/version to report the
+#   merge commit (or a later one that contains it). Not there in 20 minutes →
+#   open/update the "Production is behind main" issue (label deploy-drift) and
+#   fail the run. GitHub emails the issue and the failed run to Ed.
+# - every 30 minutes: backstop for when the push run itself is delayed or never
+#   fires (GitHub Actions and webhooks degrade together). Same issue, closed
+#   automatically once production catches up.
+#
+# Read-only toward production: this never deploys anything. Logic lives in
+# scripts/verify_deploy.js.
+name: Deploy verify
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '*/30 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+env:
+  PROD_URL: https://my.bedrocktxai.com
+  DEPLOY_TIMEOUT_MIN: '20'
+  DRIFT_GRACE_MIN: '30'
+
+jobs:
+  wait-for-deploy:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # A newer merge supersedes an older one still waiting.
+    concurrency:
+      group: deploy-verify-push
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: scripts/verify_deploy.js
+          sparse-checkout-cone-mode: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: node scripts/verify_deploy.js wait
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  drift-check:
+    if: github.event_name != 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: scripts/verify_deploy.js
+          sparse-checkout-cone-mode: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: node scripts/verify_deploy.js check
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
