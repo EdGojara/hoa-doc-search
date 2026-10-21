@@ -2707,9 +2707,20 @@ router.get('/transactions', async (req, res) => {
     // The CURRENT OWNER's tenure only (committed batches, on the lot's current
     // account), newest first with a deterministic tiebreak. A prior owner's
     // rows and legacy accounts never appear here.
-    const { currentOwnerActivity, currentOwnerBalance } = require('../lib/ar/current_owner_ledger');
-    const visibleTxns = await currentOwnerActivity(supabase, prop.id, { ascending: false, limit });
-    const balance = await currentOwnerBalance(supabase, prop.id);
+    const { currentOwnerActivity } = require('../lib/ar/current_owner_ledger');
+    const { ownerBalance } = require('../lib/ar/owner_balance');
+    const ledgerTxns = await currentOwnerActivity(supabase, prop.id, { ascending: false, limit });
+    // THE homeowner balance (ledger + native charges). Charges billed in trustEd
+    // (e.g. a certified-letter fee) are listed with the ledger rows so the
+    // homeowner sees every charge their balance includes.
+    const ob = await ownerBalance(supabase, prop.id, { communityId: prop.community_id });
+    const balance = ob ? { balance_cents: ob.net_due_cents, most_recent_txn_date: ob.most_recent_txn_date } : null;
+    const nativeTxns = (ob ? ob.native_charges : []).map((c) => ({
+      id: c.id, transaction_date: String(c.charge_date || c.due_date || '').slice(0, 10), description: c.description,
+      txn_type: 'charge', amount_cents: Number(c.balance_remaining_cents), running_balance_cents: null,
+    }));
+    const visibleTxns = ledgerTxns.concat(nativeTxns)
+      .sort((a, b) => String(b.transaction_date).localeCompare(String(a.transaction_date))).slice(0, limit);
 
     // Freshness disclosure
     let freshness = null;

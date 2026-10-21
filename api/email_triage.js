@@ -118,8 +118,9 @@ async function katFinancialContext({ propertyId } = {}) {
   if (!propertyId) return null;
   const lines = [];
   try {
-    const { data: bal } = await supabase.from('v_homeowner_current_balance')
-      .select('balance_cents, most_recent_txn_date').eq('property_id', propertyId).maybeSingle();
+    // THE homeowner balance: current owner only, ledger + native charges.
+    const ob = await require('../lib/ar/owner_balance').ownerBalance(supabase, propertyId);
+    const bal = ob ? { balance_cents: ob.net_due_cents, most_recent_txn_date: ob.most_recent_txn_date } : null;
     if (bal) {
       const c = Number(bal.balance_cents) || 0;
       const amt = '$' + (Math.abs(c) / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });

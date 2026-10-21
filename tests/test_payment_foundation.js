@@ -30,7 +30,7 @@ function fakeSupabase(tables) {
   for (const k of ['payments']) db[k] = db[k] || [];
   let seq = 0;
   function builder(table) {
-    const filters = []; let op = 'select'; let payload = null; let limitN = null; let single = null;
+    const filters = []; let op = 'select'; let payload = null; let limitN = null; let single = null; let rangeAt = null;
     const run = () => {
       const rows = db[table] || [];
       const match = rows.filter((r) => filters.every((f) => f(r)));
@@ -41,6 +41,7 @@ function fakeSupabase(tables) {
       }
       if (op === 'update') { match.forEach((r) => Object.assign(r, payload)); return { data: match, error: null }; }
       let out = limitN != null ? match.slice(0, limitN) : match;
+      if (rangeAt) out = out.slice(rangeAt[0], rangeAt[1] + 1);
       if (single === 'maybe') return { data: out[0] || null, error: null };
       if (single === 'one') return out.length === 1 ? { data: out[0], error: null } : { data: null, error: { message: 'not single' } };
       return { data: out, error: null };
@@ -52,6 +53,7 @@ function fakeSupabase(tables) {
       in(c, vs) { filters.push((r) => vs.map(String).includes(String(r[c]))); return b; },
       not(c, _op, _v) { filters.push((r) => r[c] != null); return b; },
       limit(n) { limitN = n; return b; },
+      range(a, z) { rangeAt = [a, z]; return b; },
       maybeSingle() { single = 'maybe'; return b; },
       single() { single = 'one'; return b; },
       insert(rows) { op = 'insert'; payload = rows; return b; },
@@ -71,7 +73,9 @@ function world({ tenureId = SELLER, balance = 25000, trusted = '1004384184', san
     communities: [{ id: C, name: demo ? 'Drama Creek Estates' : 'Lakes of Pine Forest', slug: demo ? 'drama-creek' : 'lopf', stripe_connected_account_id: 'acct_test_1', gl_cutover_date: '2026-08-01', is_demo: demo }],
     ownership_tenures: [{ id: tenureId, community_id: C, property_id: P1, kind: 'owner', end_date: null, start_date: '2026-08-27' }],
     property_ownerships: [{ tenure_id: tenureId, contact_id: 'contact-owner', is_primary: true, start_date: '2026-08-27' }],
-    v_current_owner_balance: [{ tenure_id: tenureId, balance_cents: balance }],
+    // THE homeowner balance (lib/ar/owner_balance.js) reads the current owner's ledger rows.
+    v_current_property_owners: [{ property_id: P1, community_id: C, tenure_id: tenureId }],
+    v_current_owner_ledger: [{ id: 'l1', property_id: P1, community_id: C, tenure_id: tenureId, transaction_date: '2026-08-01', txn_type: 'charge', amount_cents: balance, description: 'Assessment' }],
   });
 }
 function fakeStripe() {

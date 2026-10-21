@@ -19,7 +19,8 @@ function fakeSupabase(tables) {
       const rows = tables[table] || [];
       const q = {
         select() { return q; }, eq() { return q; }, order() { return q; }, limit() { return q; },
-        lte() { return q; }, gt() { return q; },
+        lte() { return q; }, gt() { return q; }, in() { return q; },
+        range() { return Promise.resolve({ data: rows, error: null }); },
         maybeSingle() { return Promise.resolve({ data: rows[0] || null, error: null }); },
         then(res, rej) { return Promise.resolve({ data: rows, error: null }).then(res, rej); },
       };
@@ -55,7 +56,12 @@ function fakeSupabase(tables) {
   await t('resolver: a property reads the CURRENT OWNER tenure balance', async () => {
     const sb = fakeSupabase({
       properties: [{ vantaca_account_id: '2012345', community_id: 'c1' }],
-      v_current_owner_balance: [{ property_id: 'p1', tenure_id: 't1', balance_cents: 7500, most_recent_txn_date: '2026-08-15', txn_count: 2 }],
+      // THE homeowner balance (lib/ar/owner_balance.js) reads the current owner's ledger rows.
+      v_current_property_owners: [{ property_id: 'p1', tenure_id: 't1' }],
+      v_current_owner_ledger: [
+        { property_id: 'p1', tenure_id: 't1', transaction_date: '2026-07-31', txn_type: 'balance_brought_forward', amount_cents: 10000, description: 'Opening balance (Assessment)' },
+        { property_id: 'p1', tenure_id: 't1', transaction_date: '2026-08-15', txn_type: 'payment', amount_cents: -2500, description: 'Payment' },
+      ],
       // the account-keyed view must NOT be consulted when a property is given
       v_homeowner_current_balance: [{ balance_cents: 999999, most_recent_txn_date: '2026-01-01' }],
     });
