@@ -31,6 +31,7 @@
 const { route: aiRoute } = require('../lib/ai/router');
 const express = require('express');
 const multer = require('multer');
+const { publicUpload } = require('../lib/uploads/public_upload');
 const { createClient } = require('@supabase/supabase-js');
 const OpenAI = require('openai');
 const { safeErrorMessage } = require('./_safe_error');
@@ -1024,7 +1025,14 @@ router.post('/', express.json({ limit: '2mb' }), async (req, res) => {
 // Multipart upload. Fields: kind (form field per file via fieldname),
 //   files attached as 'files'. kind values per migration 080 CHECK constraint.
 // ============================================================================
-router.post('/:id/attachments', upload.array('files', 12), async (req, res) => {
+// Public allowlisted (builder portal); the builder pages send one file per request.
+const publicAttachmentsUpload = publicUpload({
+  route: 'builder-applications.attachments',
+  fileSize: 50 * 1024 * 1024,
+  files: 12,
+  maxTotalBytes: 100 * 1024 * 1024,
+});
+router.post('/:id/attachments', publicAttachmentsUpload.array('files', 12), async (req, res) => {
   try {
     const { data: app, error } = await supabase
       .from('builder_applications')

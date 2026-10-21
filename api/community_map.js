@@ -39,7 +39,7 @@
 
 const express = require('express');
 const crypto = require('crypto');
-const multer = require('multer');
+const { publicUpload } = require('../lib/uploads/public_upload');
 const { createClient } = require('@supabase/supabase-js');
 const { safeErrorMessage } = require('./_safe_error');
 const { getActingUser, actorDisplayName } = require('./_acting_user');
@@ -634,7 +634,13 @@ router.get('/property/:propertyId', async (req, res) => {
 // photo. Lands in board_map_reports for staff to triage (migration 393). This
 // is the "instead of emailing the manager, tap the house and report it" path.
 // ----------------------------------------------------------------------------
-const reportUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 12 * 1024 * 1024 } });
+// /property/:id/report is on the public allowlist; multer parses before any check.
+const reportUpload = publicUpload({
+  route: 'community-map.report',
+  fileSize: 12 * 1024 * 1024,
+  files: 1,
+  maxTotalBytes: 15 * 1024 * 1024,
+});
 router.post('/property/:propertyId/report', reportUpload.single('photo'), async (req, res) => {
   try {
     const propertyId = req.params.propertyId;

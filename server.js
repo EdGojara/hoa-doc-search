@@ -7,6 +7,7 @@ const OpenAI = require('openai');
 const BRAND = require('./lib/brand');
 
 const multer = require('multer');
+const { publicUpload } = require('./lib/uploads/public_upload');
 // Audit 2026-06-04: prior config had no `limits` set, so a single 200MB phone
 // video drag-drop could OOM the process before shrinkImageForAnthropic ran.
 // Cap at 20MB/file (more than enough for raw photo) and 10 files/request.
@@ -10188,7 +10189,14 @@ app.get('/api/nominations/public/:slug', async (req, res) => {
 // optional scanned-form files travel with the JSON-ish text fields. Plain
 // JSON requests (no files) still work because multer leaves req.body
 // populated from form-data text fields.
-app.post('/api/nominations/public/:slug/submit', upload.fields([
+// Public (no-login) form: its own hardened upload, not the shared staff `upload`.
+const nominationUpload = publicUpload({
+  route: 'nominations.public.submit',
+  fileSize: 20 * 1024 * 1024,
+  files: 2,
+  maxTotalBytes: 45 * 1024 * 1024,
+});
+app.post('/api/nominations/public/:slug/submit', nominationUpload.fields([
   { name: 'nominee_photo', maxCount: 1 },
   { name: 'scanned_form',  maxCount: 1 },
 ]), async (req, res) => {

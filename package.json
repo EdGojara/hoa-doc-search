@@ -76,7 +76,8 @@
     "test:autopay": "node tests/test_autopay.js",
     "test:posted-je": "node tests/test_posted_je_immutable.js",
     "test:posted-lines": "node scripts/check_posted_lines_immutable.js",
-    "test:verify-deploy": "node tests/test_verify_deploy.js"
+    "test:verify-deploy": "node tests/test_verify_deploy.js",
+    "test:public-uploads": "node tests/test_public_upload_limits.js"
   },
   "keywords": [],
   "author": "",
@@ -95,7 +96,7 @@
     "jszip": "^3.10.2",
     "mailparser": "^3.9.8",
     "mammoth": "^1.12.0",
-    "multer": "^2.1.1",
+    "multer": "^2.4.0",
     "openai": "^7.15.0",
     "pdf-lib": "^1.17.1",
     "pdf-parse": "^1.1.1",
