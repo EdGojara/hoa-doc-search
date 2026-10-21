@@ -439,6 +439,23 @@ function _openChargesFromRows(txns) {
   return open;
 }
 
+// WHERE THE AR LIVES, for every per-owner balance screen (the rule AR aging has
+// used since Ed 2026-10-08). A community whose receivables were migrated into
+// the native table (source 'vantaca_migration', Quail Ridge) keeps its AR in
+// ar_charges. Every other community keeps its AR in the migrated homeowner
+// ledger, and charges trustEd bills natively there (certified-letter fees,
+// posted to GL 1300 but not mirrored into the ledger) are added ON TOP.
+// Found 2026-10-21: owner search and the collections list switched the WHOLE
+// community to ar_charges as soon as one native charge existed, so every other
+// owner showed $0 (Waterview and Still Creek since 2026-08-27, Canyon Gate since
+// 2026-10-13); the account page and statement did the same per property.
+async function _arNativeIsRecord(cid) {
+  const { data, error } = await supabase.from('ar_charges').select('id')
+    .eq('community_id', cid).eq('source_module', 'vantaca_migration').limit(1);
+  if (error) throw error;
+  return (data || []).length > 0;
+}
+
 // A GL account's balance (debit +) as of a date: counted entries only (posted,
 // or voided with its reversal), the same rule as the trial balance. null when the
 // community has no such account.
@@ -749,14 +766,10 @@ router.get('/:communityId/owners/search', async (req, res) => {
     const charges = (await _fetchAll('ar_charges', 'property_id, tenure_id, balance_remaining_cents', { community_id: cid, status: 'open' }))
       .filter((c) => !c.tenure_id || c.tenure_id === curT[c.property_id]);
     const balByProp = {};
-    if (charges.length) {
-      for (const c of charges) balByProp[c.property_id] = (balByProp[c.property_id] || 0) + Number(c.balance_remaining_cents);
-    } else {
-      // Migrated community — balances live in the subledger, not ar_charges.
-      // Use the SAME computation as AR Aging so every AR screen agrees.
-      const openTx = await _openChargesFromTransactions(cid);
-      for (const c of openTx) balByProp[c.property_id] = (balByProp[c.property_id] || 0) + Number(c.balance_remaining_cents);
-    }
+    // Ledger balance + native charges on top (or ar_charges alone where it is
+    // the AR of record): the same computation as AR Aging.
+    const ledgerOpen = (await _arNativeIsRecord(cid)) ? [] : await _openChargesFromTransactions(cid);
+    for (const c of ledgerOpen.concat(charges)) balByProp[c.property_id] = (balByProp[c.property_id] || 0) + Number(c.balance_remaining_cents);
     const coll = await _fetchAll('ar_account_collections', 'property_id, collection_status', { community_id: cid });
     const collByProp = Object.fromEntries(coll.map((c) => [c.property_id, c.collection_status]));
     const matched = (q
@@ -781,14 +794,15 @@ router.get('/:communityId/owners/:propertyId/account', async (req, res) => {
       'charge_date, due_date, description, original_amount_cents, balance_remaining_cents, tenure_id, ar_charge_types:charge_type_id(category, display_name)',
       { community_id: cid, property_id: pid, status: 'open' }))
       .filter((c) => Number(c.balance_remaining_cents) > 0 && (!c.tenure_id || !owner || c.tenure_id === owner.tenure_id));
-    if (!charges.length) {
-      // Migrated community — derive this owner's open charges from the subledger.
+    if (!(await _arNativeIsRecord(cid))) {
+      // Ledger community: this owner's open charges from the subledger, with any
+      // native charges (e.g. certified-letter fees) added on top.
       charges = (await _openChargesFromTransactions(cid, pid)).map((c) => ({
         charge_date: c.due_date, due_date: c.due_date,
         description: (c.ar_charge_types && c.ar_charge_types.display_name) || 'Charge',
         original_amount_cents: c.balance_remaining_cents, balance_remaining_cents: c.balance_remaining_cents,
         ar_charge_types: c.ar_charge_types,
-      }));
+      })).concat(charges);
     }
     const byCategory = {}; const buckets = _emptyBuckets(); let total = 0;
     const rows = charges.map((c) => {
@@ -857,11 +871,11 @@ router.get('/:communityId/owners/:propertyId/statement', async (req, res) => {
       'due_date, charge_date, balance_remaining_cents, tenure_id, ar_charge_types:charge_type_id(display_name)',
       { community_id: cid, property_id: pid, status: 'open' }))
       .filter((c) => Number(c.balance_remaining_cents) > 0 && (!c.tenure_id || c.tenure_id === owner.tenure_id));
-    if (!charges.length) {
+    if (!(await _arNativeIsRecord(cid))) {
       charges = (await _openChargesFromTransactions(cid, pid)).map((c) => ({
         due_date: c.due_date, charge_date: c.due_date, balance_remaining_cents: c.balance_remaining_cents,
         ar_charge_types: { display_name: (c.ar_charge_types && c.ar_charge_types.display_name) || 'Charge' },
-      }));
+      })).concat(charges);
     }
     const byCategory = {}; const buckets = _emptyBuckets(); let total = 0;
     for (const c of charges) {
@@ -1063,14 +1077,8 @@ router.get('/:communityId/collections', async (req, res) => {
     const charges = (await _fetchAll('ar_charges', 'property_id, tenure_id, balance_remaining_cents', { community_id: cid, status: 'open' }))
       .filter((c) => !c.tenure_id || c.tenure_id === curT[c.property_id]);
     const balByProp = {};
-    if (charges.length) {
-      for (const c of charges) balByProp[c.property_id] = (balByProp[c.property_id] || 0) + Number(c.balance_remaining_cents);
-    } else {
-      // Migrated community — balances live in the subledger, not ar_charges.
-      // Use the SAME computation as AR Aging so every AR screen agrees.
-      const openTx = await _openChargesFromTransactions(cid);
-      for (const c of openTx) balByProp[c.property_id] = (balByProp[c.property_id] || 0) + Number(c.balance_remaining_cents);
-    }
+    const ledgerOpen = (await _arNativeIsRecord(cid)) ? [] : await _openChargesFromTransactions(cid);
+    for (const c of ledgerOpen.concat(charges)) balByProp[c.property_id] = (balByProp[c.property_id] || 0) + Number(c.balance_remaining_cents);
     const owners = await _fetchAll('v_current_property_owners', 'property_id, street_address, owner_name', { community_id: cid });
     const ownerByProp = Object.fromEntries(owners.map((o) => [o.property_id, o]));
     const rows = active.map((c) => ({
@@ -1093,4 +1101,4 @@ router.computeArAging = computeArAging;
 router.computeApAging = computeApAging;
 
 module.exports = router;
-module.exports._test = { computeArAging, _openChargesFromTransactions, _openChargesFromRows };
+module.exports._test = { computeArAging, _openChargesFromTransactions, _openChargesFromRows, _arNativeIsRecord };
