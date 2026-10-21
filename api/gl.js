@@ -9,7 +9,8 @@
 // ============================================================================
 const express = require('express');
 const { loadOpenApAsOf } = require('../lib/accounting/ap_as_of');
-const { currentOwnerActivity, currentOwnerLedgerForCommunity, formerOwnerBalances } = require('../lib/ar/current_owner_ledger');
+const { currentOwnerActivity, formerOwnerBalances } = require('../lib/ar/current_owner_ledger');
+const { ownerBalance, ownerBalances, ownerBalancesDetailed } = require('../lib/ar/owner_balance');
 const router = express.Router();
 const { createClient } = require('@supabase/supabase-js');
 const { safeErrorMessage } = require('./_safe_error');
@@ -346,11 +347,16 @@ function _agingBucket(dueDate, asOf) {
 const _emptyBuckets = () => Object.fromEntries(AGING_BUCKETS.map((b) => [b, 0]));
 const _today = () => new Date().toISOString().slice(0, 10);
 
-async function _fetchAll(table, cols, filters) {
+// orderBy defaults to the first selected column. A '*' select must name its
+// order column: order('*') fails the whole query ("failed to parse order"),
+// which took the owner account page and statement down from 2026-07-19.
+async function _fetchAll(table, cols, filters, orderBy = null) {
+  const first = String(cols).split(',')[0].trim().split(' ')[0];
+  if (!orderBy && (!first || first === '*')) throw new Error(`_fetchAll(${table}): a '*' select needs an explicit orderBy`);
   const out = [];
   let from = 0;
   while (true) {
-    let q = supabase.from(table).select(cols).order(String(cols).split(',')[0].trim().split(" ")[0] || 'id').range(from, from + 999);
+    let q = supabase.from(table).select(cols).order(orderBy || first).range(from, from + 999);
     for (const [k, v] of Object.entries(filters || {})) q = q.eq(k, v);
     const { data, error } = await q;
     if (error) throw error;
@@ -359,101 +365,6 @@ async function _fetchAll(table, cols, filters) {
     from += 1000;
   }
   return out;
-}
-
-// property_id -> the lot's CURRENT ownership tenure (mig 456/457).
-async function _currentTenureMap(cid) {
-  const rows = await _fetchAll('v_current_property_owners', 'property_id, tenure_id', { community_id: cid });
-  return Object.fromEntries(rows.map((r) => [r.property_id, r.tenure_id]));
-}
-
-// Categorize a Vantaca transaction description into an AR category + label +
-// Texas Property Code §209.0063 payment-application priority (lower = applied
-// first): assessments → assessment-related attorney/collection fees → fines →
-// everything else (interest, late fees, certified fees, admin, NSF).
-function _categorizeVantacaCharge(desc) {
-  const d = String(desc || '');
-  if (/assessment/i.test(d) && !/late/i.test(d))            return { category: 'assessment', label: 'Assessment', priority: 1 };
-  if (/(prior balance|balance forward)/i.test(d) && !/(interest|fine|legal|admin|fee)/i.test(d)) return { category: 'assessment', label: 'Prior Balance', priority: 1 };
-  if (/(legal|attorney|collection)/i.test(d))               return { category: 'attorney_fee', label: 'Legal / Collections', priority: 3 };
-  if (/fine/i.test(d))                                       return { category: 'fine', label: 'Fine', priority: 5 };
-  if (/certified/i.test(d))                                  return { category: 'certified', label: 'Certified Fee', priority: 6 };
-  if (/interest/i.test(d))                                   return { category: 'interest', label: 'Interest', priority: 6 };
-  if (/late fee/i.test(d))                                   return { category: 'late_fee', label: 'Late Fee', priority: 6 };
-  if (/(nsf|bank return|stop payment)/i.test(d))             return { category: 'nsf_fee', label: 'NSF / Returned', priority: 6 };
-  if (/payment plan/i.test(d))                              return { category: 'other', label: 'Payment Plan Fee', priority: 6 };
-  if (/admin/i.test(d))                                      return { category: 'other', label: 'Administrative Fee', priority: 6 };
-  return { category: 'other', label: (d.split(/[-:]/)[0] || 'Other').trim().slice(0, 30) || 'Other', priority: 9 };
-}
-
-// Compute open AR charges from the migrated Vantaca subledger
-// (homeowner_transactions) for communities that don't use the native ar_charges
-// table. Applies each owner's payments/credits in §209.0063 order (priority,
-// then oldest first) and returns the still-open charges shaped like ar_charges
-// rows so the aging endpoint's aggregation is identical for both sources.
-// Scope: current owners only (property_id present) — the aging screen is the
-// live roster; sold/inactive stale balances are a separate write-off track.
-async function _openChargesFromTransactions(cid, propertyId = null, asOf = null) {
-  return _openChargesFromRows(await _currentOwnerRows(cid, propertyId, asOf));
-}
-// The CURRENT OWNER's tenure only (v_current_owner_ledger: committed batches,
-// on the lot's current tenure and current account), in a stable order. A
-// prior owner's rows and legacy accounts are former-owner money and appear
-// only in the former-owner section, never in a current owner's aging.
-// propertyId narrows to one owner (fast path for the account-detail screen).
-// asOf (optional) keeps only rows dated on or before it, so an aging as of a
-// past date ages that date's ledger and can tie to the GL as of that date.
-async function _currentOwnerRows(cid, propertyId = null, asOf = null) {
-  const txns = await currentOwnerLedgerForCommunity(supabase, cid, propertyId);
-  return asOf ? txns.filter((t) => String(t.transaction_date || '').slice(0, 10) <= asOf) : txns;
-}
-function _openChargesFromRows(txns) {
-  const byOwner = new Map();
-  for (const t of txns) {
-    if (!t.property_id) continue; // current-owner roster only
-    if (!byOwner.has(t.property_id)) byOwner.set(t.property_id, { charges: [], credit: 0 });
-    const o = byOwner.get(t.property_id);
-    const amt = Number(t.amount_cents) || 0;
-    if (amt > 0 && t.txn_type !== 'payment') {
-      const c = _categorizeVantacaCharge(t.description);
-      o.charges.push({ ...c, date: (t.transaction_date || '').slice(0, 10), amount: amt });
-    } else {
-      o.credit += Math.abs(amt); // payments + negative credits reduce the balance
-    }
-  }
-  const open = [];
-  for (const [propertyId, o] of byOwner) {
-    o.charges.sort((a, b) => (a.priority - b.priority) || String(a.date).localeCompare(String(b.date)));
-    let left = o.credit;
-    for (const ch of o.charges) { const applied = Math.min(ch.amount, Math.max(0, left)); ch.remaining = ch.amount - applied; left -= applied; }
-    for (const ch of o.charges) {
-      if (ch.remaining <= 0) continue;
-      open.push({
-        property_id: propertyId,
-        balance_remaining_cents: ch.remaining,
-        due_date: ch.date,
-        ar_charge_types: { category: ch.category, display_name: ch.label },
-      });
-    }
-  }
-  return open;
-}
-
-// WHERE THE AR LIVES, for every per-owner balance screen (the rule AR aging has
-// used since Ed 2026-10-08). A community whose receivables were migrated into
-// the native table (source 'vantaca_migration', Quail Ridge) keeps its AR in
-// ar_charges. Every other community keeps its AR in the migrated homeowner
-// ledger, and charges trustEd bills natively there (certified-letter fees,
-// posted to GL 1300 but not mirrored into the ledger) are added ON TOP.
-// Found 2026-10-21: owner search and the collections list switched the WHOLE
-// community to ar_charges as soon as one native charge existed, so every other
-// owner showed $0 (Waterview and Still Creek since 2026-08-27, Canyon Gate since
-// 2026-10-13); the account page and statement did the same per property.
-async function _arNativeIsRecord(cid) {
-  const { data, error } = await supabase.from('ar_charges').select('id')
-    .eq('community_id', cid).eq('source_module', 'vantaca_migration').limit(1);
-  if (error) throw error;
-  return (data || []).length > 0;
 }
 
 // A GL account's balance (debit +) as of a date: counted entries only (posted,
@@ -481,38 +392,14 @@ async function _glBalanceAsOf(cid, accountNumber, asOf) {
 // ----------------------------------------------------------------------------
 async function computeArAging(cid, asOf) {
     asOf = asOf || _today();
-    const charges = (await _fetchAll('ar_charges',
-      'property_id, tenure_id, charge_type_id, balance_remaining_cents, due_date, charge_date, status, source_module, ar_charge_types:charge_type_id(category, display_name)',
-      { community_id: cid, status: 'open' }))
-      .filter((c) => !asOf || String(c.charge_date || c.due_date || '').slice(0, 10) <= asOf);
-    // Current owner's tenure only (an unstamped charge is on the lot's current
-    // owner until the writers stamp tenure_id).
-    const owners0 = await _fetchAll('v_current_property_owners', 'property_id, tenure_id', { community_id: cid });
-    const curTenure = Object.fromEntries(owners0.map((o) => [o.property_id, o.tenure_id]));
-    let open = charges.filter((c) => Number(c.balance_remaining_cents) > 0
-      && (!c.tenure_id || c.tenure_id === curTenure[c.property_id]));
-    // Migrated communities keep their AR in the Vantaca subledger
-    // (homeowner_transactions) + the GL, not the native ar_charges table. When
-    // ar_charges is empty, compute the aging from that migrated subledger so the
-    // AR that's already reconciled to the GL actually shows.
-    // WHERE THE AR LIVES (Ed 2026-10-08). A community whose receivables were
-    // migrated into the native table (source 'vantaca_migration', Quail Ridge)
-    // ages ar_charges. Every other community keeps its receivables in the migrated
-    // homeowner ledger; charges trustEd bills natively there (e.g. certified-letter
-    // fees, posted to GL 1300 but not mirrored into the ledger) are aged ON TOP of
-    // it. Before this, a handful of native charges made the aging ignore the
-    // ledger entirely (Waterview showed $350 against $273k in GL 1300).
-    let ar_source = 'ar_charges';
-    let ledgerRows = null; let nativeOpenCents = 0;
-    if (!open.some((c) => c.source_module === 'vantaca_migration')) {
-      ledgerRows = await _currentOwnerRows(cid, null, asOf);
-      const fromTxns = _openChargesFromRows(ledgerRows);
-      if (fromTxns.length || ledgerRows.length) {
-        nativeOpenCents = open.reduce((s, c) => s + Number(c.balance_remaining_cents), 0);
-        open = fromTxns.concat(open);
-        ar_source = nativeOpenCents ? 'homeowner_transactions+ar_charges' : 'homeowner_transactions';
-      }
-    }
+    // THE homeowner balance (lib/ar/owner_balance.js, Ed 2026-10-21): the
+    // current owner's ledger plus charges billed natively in trustEd, with every
+    // payment and credit applied across both in §209.0063 order. The aging ages
+    // what is still open; owners in credit appear in the reconciliation below.
+    const { balances, ledgerRows, nativeCharges } = await ownerBalancesDetailed(supabase, cid, { asOf });
+    const open = [];
+    for (const b of Object.values(balances)) for (const c of b.open_charges) open.push({ ...c, property_id: b.property_id });
+    const ar_source = nativeCharges.length ? 'homeowner_transactions+ar_charges' : 'homeowner_transactions';
 
     const categories = new Set();
     const byCategory = {};       // category -> { label, total, buckets }
@@ -586,21 +473,14 @@ async function computeArAging(cid, asOf) {
     const glAr = await _glBalanceAsOf(cid, '1300', asOf);
     const glPrepaid = await _glBalanceAsOf(cid, '2400', asOf);
     let reconciliation;
-    if (ledgerRows && ar_source !== 'ar_charges') {
+    {
       const { reconcileAgingToGl } = require('../lib/ar/aging_reconciliation');
-      reconciliation = reconcileAgingToGl({ rows: ledgerRows, asOf, agingOpenCents: grandTotal, nativeOpenCents,
+      reconciliation = reconcileAgingToGl({ rows: ledgerRows, nativeCharges, asOf, agingOpenCents: grandTotal,
         glArCents: glAr, glPrepaidCents: glPrepaid == null ? null : -glPrepaid });
       for (const o of reconciliation.owners_in_credit) {
         const w = ownerByProp[o.property_id] || {};
         o.street_address = w.street_address || '—'; o.owner_name = w.owner_name || '—';
       }
-    } else {
-      // Native ar_charges: the open charges are compared with GL 1300 as they stand;
-      // a difference is shown (credits held as unapplied payments are not netted here).
-      const diff = glAr == null ? null : grandTotal - glAr;
-      reconciliation = { as_of: asOf, lines: [{ key: 'open_charges', label: 'Open charges aged', cents: grandTotal }],
-        gl_ar_cents: glAr, difference_cents: diff, tied: diff === 0, aging_matches_ledger: null, owners_in_credit: [],
-        note: 'Open native charges compared with GL 1300; any difference is shown, not explained here.' };
     }
 
     return {
@@ -631,11 +511,8 @@ router.get('/:communityId/ar-aging', async (req, res) => {
 router.get('/:communityId/ar-aging/property/:propertyId', async (req, res) => {
   try {
     const asOf = req.query.as_of || _today();
-    const curT = await _currentTenureMap(req.params.communityId);
-    const charges = (await _fetchAll('ar_charges',
-      'id, charge_date, due_date, description, original_amount_cents, balance_remaining_cents, tenure_id, ar_charge_types:charge_type_id(category, display_name)',
-      { community_id: req.params.communityId, property_id: req.params.propertyId, status: 'open' }))
-      .filter((c) => !c.tenure_id || c.tenure_id === curT[c.property_id || req.params.propertyId]);
+    const bal = await ownerBalance(supabase, req.params.propertyId, { communityId: req.params.communityId, asOf });
+    const charges = bal ? bal.open_charges.map((c) => ({ ...c, charge_date: c.due_date })) : [];
     // Collection state for this account (status + bankruptcy petition data).
     // Defensive against the pre-migration window (see ar-aging above).
     let collRow = null;
@@ -664,14 +541,14 @@ router.get('/:communityId/ar-aging/property/:propertyId', async (req, res) => {
       };
     }).sort((a, b) => (a.due_date || '').localeCompare(b.due_date || ''));
 
-    const total_cents = rows.reduce((s, r) => s + r.balance_cents, 0);
+    const total_cents = rows.reduce((s, r) => s + r.balance_cents, 0);   // open charges aged
     // When in bankruptcy, split the ledger into the two legally-distinct buckets.
     const bankruptcy_split = petition ? {
       petition_date: petition,
       pre_petition_cents: rows.filter((r) => r.petition_phase === 'pre_petition').reduce((s, r) => s + r.balance_cents, 0),
       post_petition_cents: rows.filter((r) => r.petition_phase === 'post_petition').reduce((s, r) => s + r.balance_cents, 0),
     } : null;
-    res.json({ charges: rows, total_cents, collection, bankruptcy_split });
+    res.json({ charges: rows, total_cents, net_due_cents: bal ? bal.net_due_cents : 0, credit_cents: bal ? bal.credit_cents : 0, collection, bankruptcy_split });
   } catch (err) {
     console.error('[gl] ar-aging property failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
@@ -762,21 +639,14 @@ router.get('/:communityId/owners/search', async (req, res) => {
     const q = (req.query.q || '').trim().toLowerCase();
     const owners = await _fetchAll('v_current_property_owners',
       'property_id, street_address, owner_name, owner_email, owner_phone, vantaca_account_id, trusted_account_number', { community_id: cid });
-    const curT = await _currentTenureMap(cid);   // current owner's tenure only
-    const charges = (await _fetchAll('ar_charges', 'property_id, tenure_id, balance_remaining_cents', { community_id: cid, status: 'open' }))
-      .filter((c) => !c.tenure_id || c.tenure_id === curT[c.property_id]);
-    const balByProp = {};
-    // Ledger balance + native charges on top (or ar_charges alone where it is
-    // the AR of record): the same computation as AR Aging.
-    const ledgerOpen = (await _arNativeIsRecord(cid)) ? [] : await _openChargesFromTransactions(cid);
-    for (const c of ledgerOpen.concat(charges)) balByProp[c.property_id] = (balByProp[c.property_id] || 0) + Number(c.balance_remaining_cents);
+    const bal = await ownerBalances(supabase, cid);   // THE homeowner balance (lib/ar/owner_balance.js)
     const coll = await _fetchAll('ar_account_collections', 'property_id, collection_status', { community_id: cid });
     const collByProp = Object.fromEntries(coll.map((c) => [c.property_id, c.collection_status]));
     const matched = (q
       ? owners.filter((o) => (o.owner_name || '').toLowerCase().includes(q) || (o.street_address || '').toLowerCase().includes(q)
           || (o.vantaca_account_id || '').toLowerCase().includes(q) || (o.trusted_account_number || '').toLowerCase().includes(q))
       : owners)
-      .map((o) => ({ ...o, balance_cents: balByProp[o.property_id] || 0, collection_status: collByProp[o.property_id] || 'none' }))
+      .map((o) => { const b = bal[o.property_id] || {}; return { ...o, balance_cents: b.net_due_cents || 0, open_charges_cents: b.open_charges_cents || 0, credit_cents: b.credit_cents || 0, collection_status: collByProp[o.property_id] || 'none' }; })
       .sort((a, b) => (a.street_address || '').localeCompare(b.street_address || ''))
       .slice(0, 100);
     res.json({ owners: matched, count: matched.length });
@@ -789,21 +659,9 @@ router.get('/:communityId/owners/search', async (req, res) => {
 router.get('/:communityId/owners/:propertyId/account', async (req, res) => {
   try {
     const cid = req.params.communityId, pid = req.params.propertyId, asOf = _today();
-    const owner = (await _fetchAll('v_current_property_owners', '*', { community_id: cid, property_id: pid }))[0] || null;
-    let charges = (await _fetchAll('ar_charges',
-      'charge_date, due_date, description, original_amount_cents, balance_remaining_cents, tenure_id, ar_charge_types:charge_type_id(category, display_name)',
-      { community_id: cid, property_id: pid, status: 'open' }))
-      .filter((c) => Number(c.balance_remaining_cents) > 0 && (!c.tenure_id || !owner || c.tenure_id === owner.tenure_id));
-    if (!(await _arNativeIsRecord(cid))) {
-      // Ledger community: this owner's open charges from the subledger, with any
-      // native charges (e.g. certified-letter fees) added on top.
-      charges = (await _openChargesFromTransactions(cid, pid)).map((c) => ({
-        charge_date: c.due_date, due_date: c.due_date,
-        description: (c.ar_charge_types && c.ar_charge_types.display_name) || 'Charge',
-        original_amount_cents: c.balance_remaining_cents, balance_remaining_cents: c.balance_remaining_cents,
-        ar_charge_types: c.ar_charge_types,
-      })).concat(charges);
-    }
+    const owner = (await _fetchAll('v_current_property_owners', '*', { community_id: cid, property_id: pid }, 'property_id'))[0] || null;
+    const bal = await ownerBalance(supabase, pid, { communityId: cid });   // THE homeowner balance
+    const charges = bal ? bal.open_charges.map((c) => ({ ...c, charge_date: c.due_date })) : [];
     const byCategory = {}; const buckets = _emptyBuckets(); let total = 0;
     const rows = charges.map((c) => {
       const cat = (c.ar_charge_types && c.ar_charge_types.display_name) || 'other';
@@ -847,7 +705,11 @@ router.get('/:communityId/owners/:propertyId/account', async (req, res) => {
       });
     }
     res.json({
-      owner, as_of: asOf, total_cents: total,
+      owner, as_of: asOf,
+      // total_cents = net balance due (negative = credit). The open charges below
+      // are what is still owed after payments and credits; credit_cents is credit
+      // left over after every charge. open_charges_cents - credit_cents = total.
+      total_cents: bal ? bal.net_due_cents : 0, open_charges_cents: total, credit_cents: bal ? bal.credit_cents : 0,
       by_category: Object.entries(byCategory).map(([category, cents]) => ({ category, cents })).sort((a, b) => b.cents - a.cents),
       buckets, charges: rows, collection: collRow || { collection_status: 'none' }, bankruptcy_split,
       ledger, ledger_through: ledger.length ? ledger[ledger.length - 1].entry_date : null,
@@ -866,17 +728,9 @@ router.get('/:communityId/owners/:propertyId/statement', async (req, res) => {
     const puppeteer = require('puppeteer');
 
     const { data: comm } = await supabase.from('communities').select('name, legal_name').eq('id', cid).maybeSingle();
-    const owner = (await _fetchAll('v_current_property_owners', '*', { community_id: cid, property_id: pid }))[0] || {};
-    let charges = (await _fetchAll('ar_charges',
-      'due_date, charge_date, balance_remaining_cents, tenure_id, ar_charge_types:charge_type_id(display_name)',
-      { community_id: cid, property_id: pid, status: 'open' }))
-      .filter((c) => Number(c.balance_remaining_cents) > 0 && (!c.tenure_id || c.tenure_id === owner.tenure_id));
-    if (!(await _arNativeIsRecord(cid))) {
-      charges = (await _openChargesFromTransactions(cid, pid)).map((c) => ({
-        due_date: c.due_date, charge_date: c.due_date, balance_remaining_cents: c.balance_remaining_cents,
-        ar_charge_types: { display_name: (c.ar_charge_types && c.ar_charge_types.display_name) || 'Charge' },
-      })).concat(charges);
-    }
+    const owner = (await _fetchAll('v_current_property_owners', '*', { community_id: cid, property_id: pid }, 'property_id'))[0] || {};
+    const bal = await ownerBalance(supabase, pid, { communityId: cid });   // THE homeowner balance
+    const charges = bal ? bal.open_charges : [];
     const byCategory = {}; const buckets = _emptyBuckets(); let total = 0;
     for (const c of charges) {
       const cat = (c.ar_charge_types && c.ar_charge_types.display_name) || 'Other';
@@ -894,7 +748,7 @@ router.get('/:communityId/owners/:propertyId/statement', async (req, res) => {
     }
 
     const html = renderStatementHTML({
-      owner, communityName: comm ? (comm.legal_name || comm.name) : '', statementDate: asOf, total_cents: total,
+      owner, communityName: comm ? (comm.legal_name || comm.name) : '', statementDate: asOf, total_cents: bal ? bal.net_due_cents : 0,
       by_category: Object.entries(byCategory).map(([category, cents]) => ({ category, cents })).sort((a, b) => b.cents - a.cents),
       buckets, ledger, ledgerThrough: asOf,
     });
@@ -1073,17 +927,14 @@ router.get('/:communityId/collections', async (req, res) => {
       'property_id, collection_status, status_since, bankruptcy_petition_date, bankruptcy_chapter, bankruptcy_case_number, notes',
       { community_id: cid });
     const active = coll.filter((c) => c.collection_status && c.collection_status !== 'none');
-    const curT = await _currentTenureMap(cid);   // current owner's tenure only
-    const charges = (await _fetchAll('ar_charges', 'property_id, tenure_id, balance_remaining_cents', { community_id: cid, status: 'open' }))
-      .filter((c) => !c.tenure_id || c.tenure_id === curT[c.property_id]);
-    const balByProp = {};
-    const ledgerOpen = (await _arNativeIsRecord(cid)) ? [] : await _openChargesFromTransactions(cid);
-    for (const c of ledgerOpen.concat(charges)) balByProp[c.property_id] = (balByProp[c.property_id] || 0) + Number(c.balance_remaining_cents);
+    const bal = await ownerBalances(supabase, cid);   // THE homeowner balance (lib/ar/owner_balance.js)
     const owners = await _fetchAll('v_current_property_owners', 'property_id, street_address, owner_name', { community_id: cid });
     const ownerByProp = Object.fromEntries(owners.map((o) => [o.property_id, o]));
     const rows = active.map((c) => ({
       ...c,
-      balance_cents: balByProp[c.property_id] || 0,
+      balance_cents: (bal[c.property_id] || {}).net_due_cents || 0,
+      open_charges_cents: (bal[c.property_id] || {}).open_charges_cents || 0,
+      credit_cents: (bal[c.property_id] || {}).credit_cents || 0,
       street_address: (ownerByProp[c.property_id] || {}).street_address || '—',
       owner_name: (ownerByProp[c.property_id] || {}).owner_name || '—',
     })).sort((a, b) => b.balance_cents - a.balance_cents);
@@ -1101,4 +952,4 @@ router.computeArAging = computeArAging;
 router.computeApAging = computeApAging;
 
 module.exports = router;
-module.exports._test = { computeArAging, _openChargesFromTransactions, _openChargesFromRows, _arNativeIsRecord };
+module.exports._test = { computeArAging };
