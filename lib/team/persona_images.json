@@ -14,18 +14,112 @@
       "alt": "Amanda Albright, Bedrock community manager"
     },
     "photos": {
-      "amanda-professional-email": { "use": "primary professional portrait: profile, email, signature", "alt": "Amanda Albright, Bedrock community manager" },
-      "amanda-direct-camera": { "use": "friendly greeting: chat and Ask Amanda", "alt": "Amanda Albright smiling", "square_crop_top_px": 40 },
-      "amanda-laughing": { "use": "candid, website / team page", "alt": "Amanda Albright laughing in the office" },
-      "amanda-listening": { "use": "candid, listening in a meeting", "alt": "Amanda Albright listening in a meeting" },
-      "amanda-meeting": { "use": "candid, board or homeowner meeting", "alt": "Amanda Albright in a meeting" },
-      "amanda-phone": { "use": "candid, on a call with a homeowner", "alt": "Amanda Albright on the phone" },
-      "amanda-reading": { "use": "candid, reviewing a document", "alt": "Amanda Albright reviewing a document" },
-      "amanda-working": { "use": "candid, working at her desk", "alt": "Amanda Albright working at her desk" }
+      "amanda-professional-email": {
+        "use": "primary professional portrait: profile, email, signature",
+        "alt": "Amanda Albright, Bedrock community manager"
+      },
+      "amanda-direct-camera": {
+        "use": "friendly greeting: chat and Ask Amanda",
+        "alt": "Amanda Albright smiling",
+        "square_crop_top_px": 40
+      },
+      "amanda-laughing": {
+        "use": "candid, website / team page",
+        "alt": "Amanda Albright laughing in the office"
+      },
+      "amanda-listening": {
+        "use": "candid, listening in a meeting",
+        "alt": "Amanda Albright listening in a meeting"
+      },
+      "amanda-meeting": {
+        "use": "candid, board or homeowner meeting",
+        "alt": "Amanda Albright in a meeting"
+      },
+      "amanda-phone": {
+        "use": "candid, on a call with a homeowner",
+        "alt": "Amanda Albright on the phone"
+      },
+      "amanda-reading": {
+        "use": "candid, reviewing a document",
+        "alt": "Amanda Albright reviewing a document"
+      },
+      "amanda-working": {
+        "use": "candid, working at her desk",
+        "alt": "Amanda Albright working at her desk"
+      }
     },
     "backups": [
       "public/assets/presentations/team/amanda_legacy_v1.jpg (face v1; poster for videos rendered with the v1 face)",
       "public/assets/presentations/team/amanda_legacy_v2.jpg (face v2, in use 2026-10-04 to 2026-10-21)"
-    ]
+    ],
+    "placements": {
+      "_about": "Which photo each placement uses. Small placements use the approved eight-photo set (378x506, sharp at 120px and below). Large placements need native high-resolution originals of the SAME approved face; until those exist they keep what they show today (nothing is upscaled).",
+      "email_signature": {
+        "photo": "canonical_square",
+        "display_px": 64,
+        "embedded_px": 120
+      },
+      "chat_avatar": {
+        "photo": "amanda-direct-camera-square",
+        "display_px": 50,
+        "surfaces": [
+          "public/ask-amanda.html",
+          "public/board-portal.html"
+        ]
+      },
+      "dashboard_icons_and_notifications": {
+        "photo": "canonical_square",
+        "display_px": "46-112",
+        "surfaces": [
+          "outbox",
+          "presentations team screen",
+          "training grid",
+          "management proposal"
+        ]
+      },
+      "profile": {
+        "photo": "canonical_square",
+        "display_px": 112,
+        "note": "upgrade to a high-resolution professional portrait once one of the approved face exists"
+      },
+      "website_introduction": {
+        "photo": null,
+        "status": "pending: needs a high-resolution professional office portrait of the approved face (suburban office, no skyline)"
+      },
+      "about_us_team": {
+        "photo": null,
+        "status": "pending: needs a high-resolution standing portrait of the approved face"
+      },
+      "informational": {
+        "photo": null,
+        "status": "pending: needs a high-resolution relaxed office portrait of the approved face"
+      },
+      "microsoft_365": {
+        "photo": "unchanged",
+        "status": "mailbox shows face v2 at 648x648 (verified 2026-10-21); v2 is the same identity line as the approved set. Change only on Ed's explicit authorization, from a 648px+ original."
+      }
+    },
+    "high_resolution_review": {
+      "reviewed": "2026-10-21",
+      "result": "EXCLUDED (Ed 2026-10-21): the five high-resolution photos supplied 2026-10-21 08:11-08:16 show a visibly different woman (pearl studs, solitaire pendant, younger and smoother face, different face shape) from face v2 and the approved eight. Two also show downtown skylines; the collage includes a rendered TrustEd sign. Not committed; archived with the originals.",
+      "files": [
+        "Warm Executive Office Portrait.png (1360x1157, skyline)",
+        "Warm Modern Office Portrait.png (1536x1024, skyline at left edge)",
+        "Confident Woman in a Modern Office.png (1024x1536, compliant office; duplicate -1 identical)",
+        "Confident Executive in a Modern Office-2.png (1024x1536, compliant office)",
+        "Amanda_ Confident Corporate Portrait Collage.png (1536x1024 collage; rendered TrustEd logo in one panel)"
+      ]
+    },
+    "identity_reference": {
+      "authority": "face v2 (Ed 2026-10-21): public/assets/presentations/team/amanda_legacy_v2.jpg, the production portrait and Microsoft 365 photo since 2026-10-04",
+      "must_match": [
+        "warm brunette, layered, copper and caramel highlights, past the shoulders",
+        "small gold hoop earrings",
+        "small round gold disc pendant",
+        "light freckles and fine lines at the eyes",
+        "apparent age about 50"
+      ],
+      "rule": "A photo is used only if it is visibly the same woman. Photos of a different-looking woman are excluded even at higher resolution."
+    }
   }
 }
