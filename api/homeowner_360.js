@@ -202,13 +202,25 @@ async function assemble(contactId) {
   // AR: this person's CURRENT tenures only (sum across the lots they own now)
   // + their recent transactions, newest first, deterministic tiebreak. A prior
   // owner's rows and legacy accounts on these lots are never counted here.
-  const balRows = propIds.length ? await safe(() => supabase.from('v_current_owner_balance').select('balance_cents, property_id, most_recent_txn_date').in('property_id', propIds)) : [];
-  const balance_cents = balRows.reduce((s, r) => s + (Number(r.balance_cents) || 0), 0);
-  const txns = propIds.length ? await safe(() => supabase.from('v_current_owner_ledger')
+  // THE homeowner balance (lib/ar/owner_balance.js): ledger + native charges.
+  let balance_cents = 0; let nativeTxns = [];
+  try {
+    const { ownerBalancesForProperties } = require('../lib/ar/owner_balance');
+    const bals = propIds.length ? await ownerBalancesForProperties(supabase, propIds) : {};
+    balance_cents = Object.values(bals).reduce((s, r) => s + (Number(r.net_due_cents) || 0), 0);
+    // Charges billed in trustEd (e.g. certified-letter fees) are part of the
+    // balance, so they are listed with the ledger rows.
+    nativeTxns = Object.values(bals).flatMap((b) => b.native_charges).map((c) => ({
+      transaction_date: String(c.charge_date || c.due_date || '').slice(0, 10), description: c.description,
+      amount_cents: Number(c.balance_remaining_cents), txn_type: 'charge', charge_category: (c.ar_charge_types || {}).category || null, running_balance_cents: null,
+    }));
+  } catch (e) { console.warn('[homeowner_360] balance failed:', e.message); }
+  const txns = (propIds.length ? await safe(() => supabase.from('v_current_owner_ledger')
     .select('transaction_date, description, amount_cents, txn_type, charge_category, running_balance_cents')
     .in('property_id', propIds)
     .order('transaction_date', { ascending: false }).order('created_at', { ascending: false }).order('id', { ascending: false })
-    .limit(25)) : [];
+    .limit(25)) : []).concat(nativeTxns)
+    .sort((a, b) => String(b.transaction_date).localeCompare(String(a.transaction_date))).slice(0, 25);
   // Former-owner context: balances left on tenures this person USED to hold
   // (lots they sold). Shown separately; never part of the current balance.
   const endedTenures = await safe(() => supabase.from('property_ownerships')
