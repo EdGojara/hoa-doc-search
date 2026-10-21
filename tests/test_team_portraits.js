@@ -66,7 +66,7 @@ check('identity: face v2 is the reference, the excluded high-resolution set is n
 });
 check('the persona image map owns amanda.jpg; every mapped photo exists; no other teammate is mapped', () => {
   const map = JSON.parse(fs.readFileSync(path.join(ROOT, 'lib', 'team', 'persona_images.json'), 'utf8'));
-  assert.deepStrictEqual(Object.keys(map).filter((k) => !k.startsWith('_')), ['amanda', 'paige']);
+  assert.deepStrictEqual(Object.keys(map).filter((k) => !k.startsWith('_')), ['amanda', 'paige', 'phoebe']);
   assert.strictEqual(map.amanda.canonical_square.out, 'public/assets/presentations/team/amanda.jpg');
   for (const k of Object.keys(map.amanda.photos)) assert.ok(fs.existsSync(path.join(ROOT, map.amanda.dir, k + '.jpg')), k);
 });
@@ -125,6 +125,42 @@ check('Paige: nothing upscaled; identity reference is the production original; H
     const owner = names.find((n) => f.startsWith(n)); assert.ok(owner, f);
     const [w, h] = map.photos[owner].native_px; const d = jpegSize(path.join(dir, f));
     assert.ok(d.w <= w && d.h <= h, `${f} ${d.w}x${d.h} > ${w}x${h}`);
+  }
+});
+
+// ---- Phoebe (Ed 2026-10-21): two logo-corrected photos added; production photo untouched ----
+const PHOEBE_ORIGINAL_SHA = '11d41bd3378f6ed6c8e2d8c7b871c5fddf285a9d1b408100126c1dce77b10b95';   // HeyGen group source
+// The SVG is text: git may check it out with CRLF on Windows, so it is hashed with line endings
+// normalized to LF, which equals the bytes stored in git and served in production.
+const LOCKUP_SVG_SHA = '3fa0b7e9f1bfbe8a953afc67db018d54fb2234bfddde8b098690e3223341c536';
+const shaText = (f) => crypto.createHash('sha256').update(fs.readFileSync(f).toString('latin1').replace(/\r\n/g, '\n'), 'latin1').digest('hex');
+check('phoebe.jpg is still her original production portrait (byte-identical)', () => {
+  assert.strictEqual(sha(path.join(TEAM, 'phoebe.jpg')), PHOEBE_ORIGINAL_SHA);
+});
+check('Phoebe: photos stored at or below native size; profile, HeyGen and M365 unchanged; logo correction documented', () => {
+  const map = JSON.parse(fs.readFileSync(path.join(ROOT, 'lib', 'team', 'persona_images.json'), 'utf8')).phoebe;
+  assert.strictEqual(map.canonical_square, null);
+  for (const k of ['profile_and_avatars', 'heygen_avatar', 'microsoft_365']) assert.strictEqual(map.placements[k].photo, 'unchanged', k);
+  const dir = path.join(ROOT, map.dir);
+  const names = Object.keys(map.photos).sort((x, y) => y.length - x.length);
+  for (const f of fs.readdirSync(dir).filter((x) => x.endsWith('.jpg'))) {
+    const owner = names.find((n) => f.startsWith(n)); assert.ok(owner, f);
+    const [w, h] = map.photos[owner].native_px; const d = jpegSize(path.join(dir, f));
+    assert.ok(d.w <= w && d.h <= h, `${f} ${d.w}x${d.h} > ${w}x${h}`);
+  }
+  for (const p of Object.values(map.photos)) {
+    assert.match(p.logo_correction, /bedrock-lockup-reversed-compact\.png/);
+    assert.ok(fs.existsSync(path.join(ROOT, 'public', 'brand-assets', 'bedrock-lockup-reversed-compact.png')));
+  }
+});
+check('brand: the approved lockup is unchanged; the light-on-dark versions exist and are registered in lib/brand.js', () => {
+  assert.strictEqual(shaText(path.join(ROOT, 'public', 'brand-assets', 'bedrock-lockup.svg')), LOCKUP_SVG_SHA);
+  const brand = require(path.join(ROOT, 'lib', 'brand.js'));
+  const logos = (brand.BRAND || brand).logos || brand.logos;
+  assert.strictEqual(logos.fullLockup, '/brand-assets/bedrock-lockup.svg');
+  for (const k of ['fullLockupReversed', 'fullLockupReversedCompact']) {
+    assert.ok(logos[k], k);
+    assert.ok(fs.existsSync(path.join(ROOT, 'public', logos[k])), logos[k]);
   }
 });
 

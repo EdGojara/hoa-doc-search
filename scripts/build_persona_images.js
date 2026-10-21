@@ -61,6 +61,9 @@ async function jpeg(src, { square = false, top = 0, crop = null, width = null } 
     console.log(`  ${m.dir}/${name}.jpg${p.square_crop_top_px != null || p.square_region ? ' (+ square)' : ''}${extra.length ? ` (+ ${extra.join('/')}w)` : ''}`);
   }
   const cs = m.canonical_square;
+  // No canonical_square: the teammate's production square (team/<persona>.jpg) is not
+  // managed here yet and is left exactly as it is.
+  if (!cs) { console.log(`  team/${persona}.jpg left unchanged (no canonical_square in the map)`); return; }
   const out = path.join(ROOT, cs.out);
   // region: { x, y, size } frames the face in a larger photo; width downsizes
   // (e.g. 640, the size every surface was built for). Never upscales.
