@@ -4,7 +4,65 @@ Shared state between Ed and the AI engineers (Claude, ChatGPT). Update before en
 
 ---
 
-## 2026-09-28 (latest): Issue #3 LIVE + line fix merged (fix/ap-staff-directed-lines merged per Ed's chat approval); Ownership History merged main 978e49c7, deployed 23:48Z
+## 2026-10-21 (latest): Security fix PR #250 DEPLOYED: no-login upload routes hardened (multer 2.4.0 + limits)
+
+**Status: complete** (Ed accepted the production verification 2026-10-21).
+
+**Production commit:** `dc1a4147be6c4b8517aa24944712d0ff860be56d`.
+- Merged 17:04:48 UTC; production booted on it 17:05:47 UTC (Render auto-deploy).
+- Confirmed from production `/version`, not from the merge.
+- The same deploy also released #247 (Paige photo files, additive).
+
+**The risk it closed:**
+- Multer parses an upload into memory before the route handler runs.
+- On multer 2.1.1 with no field limits, one ~200-byte anonymous request (`a[4294967294]=x`, `a[b]=y`) pinned the Node process for more than 60 s, taking trustEd down for everyone.
+- Upgrading multer alone did not fix it: the 2.4.0 protections only apply when `fieldArrayIndexLimit` / `fieldNestingDepth` are set, and both default to unlimited.
+
+**Routes reachable without login.** All six now use `lib/uploads/publicUpload()`:
+
+| Route | Per file | Files | Total |
+|---|---|---|---|
+| `POST /api/applications/public/:slug/submit` (ARC/ACC) | 20 MB | 30 | 100 MB |
+| `POST /api/master-plan-submissions/public` | 40 MB | 6 | 150 MB |
+| `POST /api/builder-applications/:id/attachments` | 50 MB | 12 | 100 MB |
+| `POST /api/ach/form/:token` | 10 MB | 2 | 25 MB |
+| `POST /api/community-map/property/:id/report` | 12 MB | 1 | 15 MB |
+| `POST /api/nominations/public/:slug/submit` | 20 MB | 2 | 45 MB |
+
+- **Every route** also has: 50 fields, field name ≤ 100 chars, field value ≤ 1 MB, nesting depth 2, array index ≤ 100, and a total-body cap checked before parsing (declared or chunked).
+- **Refused uploads** return JSON `{ error, code }` with 400/413, not an HTML 500.
+- **Staff (logged-in) upload limits** are unchanged on all 110 staff routes. The one exception is the map asset-report photo, which shares the map instance and gained a 15 MB total cap.
+
+**Tests:**
+- `tests/test_public_upload_limits.js`: 38/38 (rerun independently on `5f81837a`).
+  - 48/48 attack requests refused in 1–129 ms.
+  - The GHSA-535w payload is refused in 1–2 ms.
+  - 40 aborted uploads: memory back to baseline.
+  - All 115 upload middleware uses map to routes; the six no-login ones must use the helper.
+- Legitimate end-to-end uploads (local): 24/24 stored byte-for-byte.
+- Full suite matches the main baseline. One pre-existing test bug was found: `test_cutoff_bs_presentation`'s `%PDF` check fails only when Chrome is installed, because puppeteer returns a Uint8Array.
+
+**Production smoke tests (2026-10-21, after deploy):**
+- Security payload: HTTP 400 `LIMIT_FIELD_ARRAY_INDEX` in 91 ms.
+- 35.5 MB photo: HTTP 413 `"too-big-test-photo.jpg" is larger than 20 MB. Please attach a smaller file.`, with nothing stored.
+- `/version` answered in 76–82 ms after every test.
+- All 51 served image / brand files match git.
+
+**NOT performed: a legitimate end-to-end production ACC submission.**
+- The test was aimed at the demo community (Drama Creek). The public ACC route serves only Bedrock-managed communities, so it answered 404 "Community not found", which is pre-existing behaviour.
+- That 404 came from the route handler, so the upload passed the new limits in production. Storing a real application in production was not exercised.
+- Ed decided (2026-10-21) not to create a test application in a live community for this.
+
+**Remaining risk / follow-ups:**
+- **Rate limiting on the six public upload routes (open).** It needs Express `trust proxy` set first, because `req.ip` is currently Render's proxy address.
+- An ARC/ACC submission over 100 MB in total (11+ full-size phone photos) is now refused with a clear message. The cap is one number in `api/applications.js`.
+- **Rollback re-opens the exposure:** Render → trustEd web service → Events → previous deploy → Rollback, then check Settings → Build & Deploy → Auto-Deploy.
+
+**Standing rule (Ed 2026-10-21):** every approved PR's deploy includes post-deploy verification. Production `/version` must report the merge commit, then smoke checks run. A merge alone is not a deploy.
+
+---
+
+## 2026-09-28: Issue #3 LIVE + line fix merged (fix/ap-staff-directed-lines merged per Ed's chat approval); Ownership History merged main 978e49c7, deployed 23:48Z
 
 - **Replay** (Ed authorized on #3 + confirmed in chat) → payable ae09b28c-b3c0-4225-a645-a49c7f95c057:
   - $35.72, LOPF, 5900 Community Events (staff_directive);
