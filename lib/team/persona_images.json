@@ -1,0 +1,150 @@
+{
+  "_about": "THE persona image map (Ed 2026-10-21, issue #241). One entry per AI teammate whose approved photo set is managed here. To update: put the approved PNGs in a folder and run `node scripts/build_persona_images.js <persona> <folder>`; it writes every derived file below. The canonical square at public/assets/presentations/team/<persona>.jpg is what every surface reads (email signature headshot, Ask Amanda, board portal, presentations, training, proposals, outbox) and what scripts/set_team_photos.js pushes to Microsoft 365. Teammates not listed here are unchanged.",
+  "amanda": {
+    "name": "Amanda Albright",
+    "approved": "2026-10-21",
+    "approved_by": "Ed Gojara",
+    "source_package": "TrustEd_Amanda_Approved_Photos_2026-10-21.zip",
+    "source_note": "Crops of a 1536x1024 eight-photo sheet, about 378x506 each. Not high-resolution: never upscaled; fine for avatars, signatures and cards (displayed at 120px or less). Large website placements, the Microsoft 365 photo (shown up to 648px) and any video avatar need native single-photo originals.",
+    "dir": "public/assets/personas/amanda",
+    "canonical_square": {
+      "from": "amanda-professional-email",
+      "out": "public/assets/presentations/team/amanda.jpg",
+      "crop_top_px": 30,
+      "alt": "Amanda Albright, Bedrock community manager"
+    },
+    "photos": {
+      "amanda-professional-email": {
+        "use": "primary professional portrait: profile, email, signature",
+        "alt": "Amanda Albright, Bedrock community manager"
+      },
+      "amanda-direct-camera": {
+        "use": "friendly greeting: chat and Ask Amanda",
+        "alt": "Amanda Albright smiling",
+        "square_crop_top_px": 40
+      },
+      "amanda-laughing": {
+        "use": "candid, website / team page",
+        "alt": "Amanda Albright laughing in the office"
+      },
+      "amanda-listening": {
+        "use": "candid, listening in a meeting",
+        "alt": "Amanda Albright listening in a meeting"
+      },
+      "amanda-meeting": {
+        "use": "candid, board or homeowner meeting",
+        "alt": "Amanda Albright in a meeting"
+      },
+      "amanda-phone": {
+        "use": "candid, on a call with a homeowner",
+        "alt": "Amanda Albright on the phone"
+      },
+      "amanda-reading": {
+        "use": "candid, reviewing a document",
+        "alt": "Amanda Albright reviewing a document"
+      },
+      "amanda-working": {
+        "use": "candid, working at her desk",
+        "alt": "Amanda Albright working at her desk"
+      },
+      "amanda-office-portrait": {
+        "use": "profile and future website introduction (approved by Ed 2026-10-21)",
+        "alt": "Amanda Albright, Bedrock community manager, at her desk",
+        "source": "Warm Modern Office Portrait (1).png, 1360x1157, sha256 3a9694c3112c6940...; saved as amanda-office-portrait.png in the source folder",
+        "native_px": [
+          1360,
+          1157
+        ],
+        "widths": [
+          480,
+          960
+        ],
+        "square_region": {
+          "x": 270,
+          "y": 60,
+          "size": 760
+        },
+        "square_widths": [
+          240,
+          480
+        ],
+        "identity_review": "Ed 2026-10-21: same woman as face v2 and the approved eight (face shape, nose, smile, age, freckles, hair, hoops, disc pendant). Minor: brows flatter, eyes slightly larger and greener, lips slightly fuller."
+      }
+    },
+    "backups": [
+      "public/assets/presentations/team/amanda_legacy_v1.jpg (face v1; poster for videos rendered with the v1 face)",
+      "public/assets/presentations/team/amanda_legacy_v2.jpg (face v2, in use 2026-10-04 to 2026-10-21)"
+    ],
+    "placements": {
+      "_about": "Which photo each placement uses. Small placements use the approved eight-photo set (378x506, sharp at 120px and below). Large placements need native high-resolution originals of the SAME approved face; until those exist they keep what they show today (nothing is upscaled).",
+      "email_signature": {
+        "photo": "canonical_square",
+        "display_px": 64,
+        "embedded_px": 120
+      },
+      "chat_avatar": {
+        "photo": "amanda-direct-camera-square",
+        "display_px": 50,
+        "surfaces": [
+          "public/ask-amanda.html",
+          "public/board-portal.html"
+        ]
+      },
+      "dashboard_icons_and_notifications": {
+        "photo": "canonical_square",
+        "display_px": "46-112",
+        "surfaces": [
+          "outbox",
+          "presentations team screen",
+          "training grid",
+          "management proposal"
+        ]
+      },
+      "profile": {
+        "photo": "amanda-office-portrait-square",
+        "sizes": "760px headshot square (+240, 480); office portrait at 480/960/1360 for a profile page",
+        "note": "designated by Ed 2026-10-21; no existing surface is switched to it (email signature, chat avatars, dashboards, M365 and the video are unchanged)"
+      },
+      "website_introduction": {
+        "photo": "amanda-office-portrait",
+        "sizes": "480 / 960 / native 1360 wide",
+        "status": "designated for the future website introduction; not placed on the website (a separate decision). Sharp up to about 680px displayed width; NOT for a full-width hero (needs 2048px+)."
+      },
+      "about_us_team": {
+        "photo": null,
+        "status": "pending: needs a high-resolution standing portrait of the approved face"
+      },
+      "informational": {
+        "photo": null,
+        "status": "pending: needs a high-resolution relaxed office portrait of the approved face"
+      },
+      "microsoft_365": {
+        "photo": "unchanged",
+        "status": "mailbox shows face v2 at 648x648 (verified 2026-10-21); v2 is the same identity line as the approved set. Change only on Ed's explicit authorization, from a 648px+ original."
+      }
+    },
+    "high_resolution_review": {
+      "reviewed": "2026-10-21",
+      "result": "EXCLUDED (Ed 2026-10-21): the five high-resolution photos supplied 2026-10-21 08:11-08:16 show a visibly different woman (pearl studs, solitaire pendant, younger and smoother face, different face shape) from face v2 and the approved eight. Two also show downtown skylines; the collage includes a rendered TrustEd sign. Not committed; archived with the originals.",
+      "files": [
+        "Warm Executive Office Portrait.png (1360x1157, skyline)",
+        "Warm Modern Office Portrait.png (1536x1024, skyline at left edge)",
+        "Confident Woman in a Modern Office.png (1024x1536, compliant office; duplicate -1 identical)",
+        "Confident Executive in a Modern Office-2.png (1024x1536, compliant office)",
+        "Amanda_ Confident Corporate Portrait Collage.png (1536x1024 collage; rendered TrustEd logo in one panel)"
+      ],
+      "approved_addition": "amanda-office-portrait (Warm Modern Office Portrait (1).png), approved by Ed 2026-10-21. The collages ('Six Moments in a Modern Office-1', 'Warm Office Portrait Series-2', 'Amanda_ Confident Corporate Portrait Collage') are never used as high-resolution assets."
+    },
+    "identity_reference": {
+      "authority": "face v2 (Ed 2026-10-21): public/assets/presentations/team/amanda_legacy_v2.jpg, the production portrait and Microsoft 365 photo since 2026-10-04",
+      "must_match": [
+        "warm brunette, layered, copper and caramel highlights, past the shoulders",
+        "small gold hoop earrings",
+        "small round gold disc pendant",
+        "light freckles and fine lines at the eyes",
+        "apparent age about 50"
+      ],
+      "rule": "A photo is used only if it is visibly the same woman. Photos of a different-looking woman are excluded even at higher resolution."
+    }
+  }
+}

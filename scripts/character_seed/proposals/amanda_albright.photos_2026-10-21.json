@@ -1,0 +1,19 @@
+{
+  "character_slug": "amanda_albright",
+  "component": "face",
+  "parent_version_no": 2,
+  "status": "PROPOSED: Ed approved the photographs 2026-10-21 (issue #241); recording them as canon is a separate ingest Ed runs (scripts/ingest_character_canon.js).",
+  "change_reason": "Ed 2026-10-21: approved photographic package replaces Amanda's portrait everywhere TrustEd shows her. Eight crops from one approved sheet; the managed map is lib/team/persona_images.json.",
+  "spec_observed": {
+    "hair": "long, layered brunette with copper and caramel highlights, past the shoulders",
+    "wardrobe": "black blazer over a white top (professional set); cream knit cardigan (candid set)",
+    "distinguishing": ["small gold hoop earrings", "small round gold disc pendant", "fine lines at the eyes", "light freckles"],
+    "note": "Descriptors are what the approved photos show at 378x506; eye colour and skin undertone are not asserted at this resolution."
+  },
+  "assets": [
+    { "file": "amanda-approved-contact-sheet.png", "role": "canonical", "origin": "chatgpt", "origin_ref": "TrustEd_Amanda_Approved_Photos_2026-10-21.zip (1536x1024, eight photos); archived in Documents/TrustEd_session_backup_2026-10-20/amanda_photos_2026-10-21" },
+    { "repo": "public/assets/presentations/team/amanda.jpg", "role": "derived", "origin": "repo", "origin_ref": "378x378 square of amanda-professional-email (crop top 30px), built by scripts/build_persona_images.js" },
+    { "repo": "public/assets/personas/amanda/", "role": "derived", "origin": "repo", "origin_ref": "the eight approved photos at native 378x506 + amanda-direct-camera-square.jpg" },
+    { "repo": "public/assets/presentations/team/amanda_legacy_v2.jpg", "role": "derived", "origin": "repo", "origin_ref": "byte-identical backup of team/amanda.jpg before 2026-10-21 (face v2)" }
+  ]
+}
