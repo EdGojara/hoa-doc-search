@@ -287,5 +287,78 @@
     "backups": [
       "public/assets/presentations/team/paige_legacy_v1.jpg (byte-identical production paige.jpg before this change)"
     ]
+  },
+  "phoebe": {
+    "name": "Phoebe Hart",
+    "approved": "Photos approved by Ed 2026-10-21 (after logo correction); PR pending his review",
+    "identity_reference": {
+      "authority": "Phoebe's original portrait: public/assets/presentations/team/phoebe.jpg (640x640, character-canon sha256 11d41bd3...), the HeyGen avatar group source. The 1254x1254 high-resolution canon (sha256 6f029bad..., face v2, approved 2026-09-26) is the same face and the detail reference; the 640 original wins any disagreement.",
+      "must_match": [
+        "apparent age 28 to 34",
+        "soft, rounded face, full rosy cheeks, gently rounded chin",
+        "clear blue eyes",
+        "soft light-brown brows",
+        "small straight nose with a softly rounded tip",
+        "big, open, bright smile",
+        "fair, warm, rosy skin (not tanned)",
+        "honey blonde hair, loosely pinned up with face-framing strands (or down in natural waves)",
+        "small gold hoops and a small round gold disc pendant"
+      ],
+      "rule": "A photo is used only if it is visibly the same woman. Hair, jewelry or a smile alone never qualify a photo."
+    },
+    "dir": "public/assets/personas/phoebe",
+    "canonical_square": null,
+    "photos": {
+      "phoebe-office-hallway": {
+        "use": "standing / walking portrait in the office: website and TrustEd storytelling (placement to be decided)",
+        "alt": "Phoebe Hart walking through the Bedrock office",
+        "native_px": [
+          1024,
+          1536
+        ],
+        "widths": [
+          480,
+          960
+        ],
+        "source": "Friendly Professional in the Office Hallway.png (2026-10-21 10:48, sha256 4487debb503432e9...), polo logo corrected",
+        "logo_correction": "AI-drawn logo replaced with public/brand-assets/bedrock-lockup-reversed-compact.png (the approved lockup, cream lettering for navy, tagline omitted); only a 174x59px chest patch changed (0.52% of pixels); original archived."
+      },
+      "phoebe-community-fountain": {
+        "use": "community portrait (HOA fountain, entry monument): website and community storytelling (placement to be decided)",
+        "alt": "Phoebe Hart walking through a Sugar Land community by the fountain",
+        "native_px": [
+          1374,
+          1145
+        ],
+        "widths": [
+          480,
+          960
+        ],
+        "source": "Smiling Community Manager by the Fountain.png (2026-10-21 11:03, sha256 3a852db502064d71...), polo logo corrected",
+        "logo_correction": "AI-drawn logo replaced with public/brand-assets/bedrock-lockup-reversed-compact.png; only a 172x56px chest patch changed (0.50% of pixels); original archived."
+      }
+    },
+    "placements": {
+      "_about": "No surface uses these photos yet. Website and TrustEd placements are Ed's decision.",
+      "profile_and_avatars": {
+        "photo": "unchanged",
+        "status": "team/phoebe.jpg (production original) stays on every surface"
+      },
+      "heygen_avatar": {
+        "photo": "unchanged",
+        "status": "the 640 original remains the avatar source"
+      },
+      "microsoft_365": {
+        "photo": "unchanged",
+        "status": "needs separate authorization"
+      }
+    },
+    "excluded": [
+      "Warm Professional Office Portrait (1).png (2026-10-21 10:03): a different woman (older, green-hazel eyes, tanned, angular), low neckline, Paige's set",
+      "Friendly Professional in the Office Hallway (1)/(2).png: byte-identical duplicates of the reviewed hallway photo"
+    ],
+    "originals": [
+      "Uncorrected originals (with the AI-drawn logo) archived in Documents/TrustEd_session_backup_2026-10-20/phoebe_photos_2026-10-21; never published"
+    ]
   }
 }
