@@ -916,6 +916,7 @@ router.get('/invoices/:id', async (req, res) => {
         vendorName: (invoice.vendors && invoice.vendors.name) || invoice.vendor_name || null,
         communityId: invoice.community_id,
         totalCents: invoice.total_cents,
+        lines: lines || [], accountNumber: invoice.account_number || null, excludeInvoiceId: invoice.id, excludeJournalEntryId: invoice.posting_journal_entry_id || null,
       });
     } catch (e) { console.warn('[ap] recurrence profile skipped:', e.message); }
     // Does this vendor owe this community a credit? Asked HERE, at the moment of
@@ -1114,10 +1115,11 @@ router.post('/invoices/:id/approve', express.json(), async (req, res) => {
     if (solo) {
       try {
         const { getRecurrenceProfile } = require('../lib/ap/recurring');
-        const { data: full } = await supabase.from('ap_invoices').select('vendor_id, community_id, total_cents, vendors(name)').eq('id', id).maybeSingle();
+        const { data: full } = await supabase.from('ap_invoices').select('vendor_id, community_id, total_cents, account_number, posting_journal_entry_id, vendors(name), ap_invoice_lines(description, amount_cents)').eq('id', id).maybeSingle();
         const rec = await getRecurrenceProfile({
           vendorId: full && full.vendor_id, vendorName: full && full.vendors && full.vendors.name,
           communityId: full && full.community_id, totalCents: full && full.total_cents,
+          lines: (full && full.ap_invoice_lines) || [], accountNumber: (full && full.account_number) || null, excludeInvoiceId: id, excludeJournalEntryId: (full && full.posting_journal_entry_id) || null,
         });
         policy = require('../lib/ap/approval_policy').approvalPath(rec);
       } catch (e) { console.warn('[ap] release policy note skipped:', e.message); }
@@ -1556,11 +1558,11 @@ router.post('/invoices/:id/lines/:lineId/code', express.json(), async (req, res)
 // the split into one lump. Idempotent if already posted. (Ed 2026-08-29 — the
 // split bill showed a misleading single-account "Apply & post"; staff shouldn't
 // have to guess. Toward: Emma posts, Kat reviews.)
-router.post('/invoices/:id/post-coded', async (req, res) => {
+router.post('/invoices/:id/post-coded', express.json(), async (req, res) => {
   try {
     const { id } = req.params;
     const { data: inv, error: invErr } = await supabase.from('ap_invoices')
-      .select('id, status, community_id, vendor_id, total_cents, tax_cents, invoice_date, vendor_invoice_number, source_storage_path, posting_journal_entry_id, vendors(name)')
+      .select('id, status, community_id, vendor_id, total_cents, tax_cents, invoice_date, vendor_invoice_number, source_storage_path, posting_journal_entry_id, vendors(name, is_legal_counsel)')
       .eq('id', id).maybeSingle();
     if (invErr) { console.error('[ap] post-coded load failed:', invErr.message); return res.status(500).json({ error: safeErrorMessage(invErr) }); }
     if (!inv) return res.status(404).json({ error: 'not_found' });
@@ -1572,17 +1574,47 @@ router.post('/invoices/:id/post-coded', async (req, res) => {
     const uncoded = lines.filter((l) => !l.gl_account_id);
     if (uncoded.length) return res.status(400).json({ error: 'lines_uncoded', detail: `${uncoded.length} line(s) still need an account before this can post.` });
 
+    // Unstated (derived) sales tax posts only when a PERSON confirms it, naming
+    // the exact amount they saw (a stale confirmation can't post a different
+    // number). Never for an attorney's bill. (PR #207 review.)
+    const { reconcileLines } = require('../lib/ap/line_reconcile');
+    const strict = reconcileLines({ lineCents: lines.map((l) => l.amount_cents), totalCents: inv.total_cents, statedTaxCents: inv.tax_cents || 0 });
+    const body = req.body || {};
+    let allowDerivedTax = false, confirmedBy = null;
+    if (!strict.ok && strict.kind === 'derived_tax') {
+      if (inv.vendors && inv.vendors.is_legal_counsel) return res.status(409).json({ error: 'lines_do_not_add_up', detail: `${strict.message.replace(/ Not posted:.*$/, '')} Attorney bills are never posted with unstated tax: correct the lines against the invoice.` });
+      if (body.confirm_tax_cents == null) return res.status(409).json({ error: 'derived_tax_unconfirmed', tax_cents: strict.tax_cents, rate: strict.rate, detail: strict.message });
+      if (Number(body.confirm_tax_cents) !== strict.tax_cents) return res.status(409).json({ error: 'derived_tax_changed', tax_cents: strict.tax_cents, detail: 'The amount you confirmed no longer matches the bill. Re-open it and confirm again.' });
+      const { resolveUserRole } = require('./users');
+      const ctx = await resolveUserRole(req);
+      if (!ctx || !ctx.supabaseUserId) return res.status(401).json({ error: 'sign_in_required' });
+      confirmedBy = (ctx.user && (ctx.user.full_name || ctx.user.email)) || 'Staff';
+      allowDerivedTax = true;
+    }
+
     const { postAccrualForInvoice } = require('../lib/ap/intake');
     const jeId = await postAccrualForInvoice({
       invoiceId: id, communityId: inv.community_id, vendorId: inv.vendor_id,
       glLines: lines.map((l) => ({ accountId: l.gl_account_id, cents: l.amount_cents, memo: l.description })),
-      totalCents: inv.total_cents, taxCents: inv.tax_cents, invoiceDate: inv.invoice_date,
+      totalCents: inv.total_cents, taxCents: inv.tax_cents, invoiceDate: inv.invoice_date, allowDerivedTax,
       vendorInvoiceNumber: inv.vendor_invoice_number, vendorName: (inv.vendors && inv.vendors.name) || null,
       sourceDocumentPath: inv.source_storage_path || null,
-      classificationReason: `Posted as coded — ${lines.length} line(s) across ${new Set(lines.map((l) => l.gl_account_id)).size} account(s).`,
+      classificationReason: `Posted as coded — ${lines.length} line(s) across ${new Set(lines.map((l) => l.gl_account_id)).size} account(s).${confirmedBy ? ` Unstated sales tax of $${(strict.tax_cents / 100).toFixed(2)} confirmed by ${confirmedBy}.` : ''}`,
     });
+    if (jeId && confirmedBy) {
+      const { error: audErr } = await supabase.from('ap_invoice_approvals').insert({ invoice_id: id, action: 'recoded', user_name: confirmedBy, amount_at_time_cents: inv.total_cents,
+        notes: `Confirmed the $${(strict.tax_cents / 100).toFixed(2)} gap as sales tax (${(strict.rate * 100).toFixed(3).replace(/0+$/, '')}% of the lines) and posted as coded.` });
+      if (audErr) console.error('[ap] post-coded tax confirmation audit failed:', audErr.message);
+    }
     const biggest = lines.filter((l) => l.amount_cents > 0).sort((a, b) => b.amount_cents - a.amount_cents)[0];
     await supabase.from('ap_invoices').update({ coded_gl_account_id: biggest ? biggest.gl_account_id : null, posting_journal_entry_id: jeId || null, updated_at: new Date().toISOString() }).eq('id', id);
+    if (!jeId) {
+      // Say WHY it did not post. "ok" with nothing on the books is how two
+      // Canyon Gate bills sat unbooked through September. (Ed 2026-10-15.)
+      const recon = reconcileLines({ lineCents: lines.map((l) => l.amount_cents), totalCents: inv.total_cents, statedTaxCents: inv.tax_cents || 0, allowDerived: allowDerivedTax });
+      return res.status(409).json({ error: recon.ok ? 'not_posted' : 'lines_do_not_add_up',
+        detail: recon.ok ? 'The journal entry did not post (no open period for the invoice date, no A/P account, or the bill is waiting on its GL cutover review). Nothing was booked.' : recon.message });
+    }
     res.json({ ok: true, posting_journal_entry_id: jeId, posted: !!jeId, accounts: new Set(lines.map((l) => l.gl_account_id)).size });
   } catch (err) { console.error('[ap] post-coded failed:', err); res.status(500).json({ error: safeErrorMessage(err) }); }
 });

@@ -1,0 +1,1077 @@
+{
+ "community": "Canyon Gate at Cinco Ranch",
+ "as_of": "2026-10-15",
+ "note": "ap_invoices (not voided) 2026-05-01..2026-10-15 and vendor_contracts, as on file 2026-10-15. Vendor ids kept so series group as in production.",
+ "legal_vendor_ids": [
+  "35f76d51-0753-4f9f-b46d-df3c73d6092a"
+ ],
+ "contracts": [
+  {
+   "vendor_id": "f5ebd1db-578a-491d-87de-b1e1bee9de73",
+   "status": "active",
+   "end_date": "2026-12-31",
+   "periodic_frequency": null
+  },
+  {
+   "vendor_id": "283255c2-f99e-49be-996b-f8780df95d21",
+   "status": "active",
+   "end_date": "2027-06-18",
+   "periodic_frequency": "monthly"
+  },
+  {
+   "vendor_id": "b26c81e4-a4e2-49fa-9c33-f90affbc9a2b",
+   "status": "active",
+   "end_date": "2028-12-31",
+   "periodic_frequency": null
+  },
+  {
+   "vendor_id": "9b8e8d84-a4e0-478c-978f-13af24cd4a1e",
+   "status": "active",
+   "end_date": "2027-02-28",
+   "periodic_frequency": null
+  },
+  {
+   "vendor_id": "b53d9b72-effb-4a04-8f12-abf9d4005713",
+   "status": "active",
+   "end_date": null,
+   "periodic_frequency": "monthly"
+  }
+ ],
+ "bills": [
+  {
+   "vendor_id": "2b8c1266-15f6-4608-94cc-f8903748995b",
+   "vendor_name": "Gexa Energy",
+   "account_number": null,
+   "invoice_date": "2026-05-04",
+   "service_period_start": null,
+   "service_period_end": null,
+   "total_cents": 77843
+  },
+  {
+   "vendor_id": "9b8e8d84-a4e0-478c-978f-13af24cd4a1e",
+   "vendor_name": "Aegis Aquatics, LLC",
+   "account_number": null,
+   "invoice_date": "2026-06-10",
+   "service_period_start": null,
+   "service_period_end": null,
+   "total_cents": 6712
+  },
+  {
+   "vendor_id": "816262d3-51df-4744-9f38-232ba18bf8e1",
+   "vendor_name": "GymTech360",
+   "account_number": null,
+   "invoice_date": "2026-06-11",
+   "service_period_start": null,
+   "service_period_end": null,
+   "total_cents": 12824
+  },
+  {
+   "vendor_id": "d3d3d18b-b153-4a8f-92db-38b46d6db07d",
+   "vendor_name": "Saifee Signs & Graphics",
+   "account_number": null,
+   "invoice_date": "2026-06-23",
+   "service_period_start": null,
+   "service_period_end": null,
+   "total_cents": 1500113
+  },
+  {
+   "vendor_id": "e254e558-9285-4a02-9b35-7ea66d07ec91",
+   "vendor_name": "Bedrock Association Management, LLC",
+   "account_number": null,
+   "invoice_date": "2026-06-30",
+   "service_period_start": null,
+   "service_period_end": null,
+   "total_cents": 21000
+  },
+  {
+   "vendor_id": "9b8e8d84-a4e0-478c-978f-13af24cd4a1e",
+   "vendor_name": "Aegis Aquatics, LLC",
+   "account_number": null,
+   "invoice_date": "2026-07-01",
+   "service_period_start": "2026-08-01",
+   "service_period_end": "2026-08-31",
+   "total_cents": 435850
+  },
+  {
+   "vendor_id": "e254e558-9285-4a02-9b35-7ea66d07ec91",
+   "vendor_name": "Bedrock Association Management, LLC",
+   "account_number": null,
+   "invoice_date": "2026-07-01",
+   "service_period_start": null,
+   "service_period_end": null,
+   "total_cents": 535000
+  },
+  {
+   "vendor_id": "283255c2-f99e-49be-996b-f8780df95d21",
+   "vendor_name": "Earthcare Management, Inc.",
+   "account_number": null,
+   "invoice_date": "2026-07-01",
+   "service_period_start": "2026-07-01",
+   "service_period_end": "2026-07-31",
+   "total_cents": 776431
+  },
+  {
+   "vendor_id": "9b8e8d84-a4e0-478c-978f-13af24cd4a1e",
+   "vendor_name": "Aegis Aquatics, LLC",
+   "account_number": "9330",
+   "invoice_date": "2026-07-06",
+   "service_period_start": null,
+   "service_period_end": null,
+   "total_cents": 20459
+  },
+  {
+   "vendor_id": "a3dea309-a4cc-4f2f-a892-193cc4cf94f9",
+   "vendor_name": "Star Protection Agency LLC",
+   "account_number": null,
+   "invoice_date": "2026-07-13",
+   "service_period_start": "2026-07-05",
+   "service_period_end": "2026-07-11",
+   "total_cents": 11691
+  },
+  {
+   "vendor_id": "a3dea309-a4cc-4f2f-a892-193cc4cf94f9",
+   "vendor_name": "Star Protection Agency LLC",
+   "account_number": null,
+   "invoice_date": "2026-07-13",
+   "service_period_start": "2026-07-05",
+   "service_period_end": "2026-07-11",
+   "total_cents": 427743
+  },
+  {
+   "vendor_id": "a898f2ec-ba75-444d-b6d4-4962a4a1203e",
+   "vendor_name": "AAA Awning Co., Inc.",
+   "account_number": null,
+   "invoice_date": "2026-07-14",
+   "service_period_start": null,
+   "service_period_end": null,
+   "total_cents": 427588
+  },
+  {
+   "vendor_id": "024fd3bb-2bea-4d0a-bad8-51b334aa82bf",
+   "vendor_name": "Max Roof Repirs",
+   "account_number": null,
+   "invoice_date": "2026-07-17",
+   "service_period_start": null,
+   "service_period_end": null,
+   "total_cents": 250000
+  },
+  {
+   "vendor_id": "a3dea309-a4cc-4f2f-a892-193cc4cf94f9",
+   "vendor_name": "Star Protection Agency LLC",
+   "account_number": null,
+   "invoice_date": "2026-07-20",
+   "service_period_start": "2026-07-12",
+   "service_period_end": "2026-07-18",
+   "total_cents": 427743
+  },
+  {
+   "vendor_id": "b456b011-615f-4d0c-9d38-c717555d8ede",
+   "vendor_name": "Texas Access Works LLC",
+   "account_number": null,
+   "invoice_date": "2026-07-21",
+   "service_period_start": null,
+   "service_period_end": null,
+   "total_cents": 63868
+  },
+  {
+   "vendor_id": "7be30529-8907-4ef3-ba28-f4ec33f114db",
+   "vendor_name": "CINCO M.U.D. No. 8",
+   "account_number": "733623",
+   "invoice_date": "2026-07-22",
+   "service_period_start": "2026-06-09",
+   "service_period_end": "2026-07-10",
+   "total_cents": 3900
+  },
+  {
+   "vendor_id": "7be30529-8907-4ef3-ba28-f4ec33f114db",
+   "vendor_name": "CINCO M.U.D. No. 8",
+   "account_number": "728699",
+   "invoice_date": "2026-07-22",
+   "service_period_start": "2026-06-09",
+   "service_period_end": "2026-07-10",
+   "total_cents": 8403
+  },
+  {
+   "vendor_id": "7be30529-8907-4ef3-ba28-f4ec33f114db",
+   "vendor_name": "CINCO M.U.D. No. 8",
+   "account_number": "728700",
+   "invoice_date": "2026-07-22",
+   "service_period_start": "2026-06-09",
+   "service_period_end": "2026-07-10",
+   "total_cents": 13613
+  },
+  {
+   "vendor_id": "7be30529-8907-4ef3-ba28-f4ec33f114db",
+   "vendor_name": "CINCO M.U.D. No. 8",
+   "account_number": "728701",
+   "invoice_date": "2026-07-22",
+   "service_period_start": "2026-06-09",
+   "service_period_end": "2026-07-10",
+   "total_cents": 19498
+  },
+  {
+   "vendor_id": "7be30529-8907-4ef3-ba28-f4ec33f114db",
+   "vendor_name": "CINCO M.U.D. No. 8",
+   "account_number": "728702",
+   "invoice_date": "2026-07-22",
+   "service_period_start": "2026-06-09",
+   "service_period_end": "2026-07-10",
+   "total_cents": 21410
+  },
+  {
+   "vendor_id": "7be30529-8907-4ef3-ba28-f4ec33f114db",
+   "vendor_name": "CINCO M.U.D. No. 8",
+   "account_number": "728698",
+   "invoice_date": "2026-07-22",
+   "service_period_start": "2026-06-09",
+   "service_period_end": "2026-07-10",
+   "total_cents": 50100
+  },
+  {
+   "vendor_id": "7be30529-8907-4ef3-ba28-f4ec33f114db",
+   "vendor_name": "CINCO M.U.D. No. 8",
+   "account_number": "733608",
+   "invoice_date": "2026-07-22",
+   "service_period_start": "2026-06-09",
+   "service_period_end": "2026-07-10",
+   "total_cents": 121897
+  },
+  {
+   "vendor_id": "b456b011-615f-4d0c-9d38-c717555d8ede",
+   "vendor_name": "Texas Access Works LLC",
+   "account_number": null,
+   "invoice_date": "2026-07-24",
+   "service_period_start": null,
+   "service_period_end": null,
+   "total_cents": 396605
+  },
+  {
+   "vendor_id": "d539ea42-b766-48ac-b64e-c51f8b8f621a",
+   "vendor_name": "S&L SOLUTIONS",
+   "account_number": null,
+   "invoice_date": "2026-07-27",
+   "service_period_start": null,
+   "service_period_end": null,
+   "total_cents": 17500
+  },
+  {
+   "vendor_id": "a3dea309-a4cc-4f2f-a892-193cc4cf94f9",
+   "vendor_name": "Star Protection Agency LLC",
+   "account_number": null,
+   "invoice_date": "2026-07-27",
+   "service_period_start": "2026-07-19",
+   "service_period_end": "2026-07-25",
+   "total_cents": 427743
+  },
+  {
+   "vendor_id": "9b8e8d84-a4e0-478c-978f-13af24cd4a1e",
+   "vendor_name": "Aegis Aquatics, LLC",
+   "account_number": null,
+   "invoice_date": "2026-07-30",
+   "service_period_start": null,
+   "service_period_end": null,
+   "total_cents": 18403
+  },
+  {
+   "vendor_id": "35f76d51-0753-4f9f-b46d-df3c73d6092a",
+   "vendor_name": "DAUGHTRY & FARINE, P.C.",
+   "account_number": "2706.0000",
+   "invoice_date": "2026-07-31",
+   "service_period_start": null,
+   "service_period_end": null,
+   "total_cents": 2400
+  },
+  {
+   "vendor_id": "e254e558-9285-4a02-9b35-7ea66d07ec91",
+   "vendor_name": "Bedrock Association Management, LLC",
+   "account_number": null,
+   "invoice_date": "2026-07-31",
+   "service_period_start": null,
+   "service_period_end": null,
+   "total_cents": 29856
+  },
+  {
+   "vendor_id": "35f76d51-0753-4f9f-b46d-df3c73d6092a",
+   "vendor_name": "DAUGHTRY & FARINE, P.C.",
+   "account_number": "2705.0000",
+   "invoice_date": "2026-07-31",
+   "service_period_start": null,
+   "service_period_end": null,
+   "total_cents": 755941
+  },
+  {
+   "vendor_id": "96ff4d56-8569-4a71-9e93-971681b65326",
+   "vendor_name": "Comcast",
+   "account_number": "8777 70 510 0109188",
+   "invoice_date": "2026-08-01",
+   "service_period_start": "2026-08-01",
+   "service_period_end": "2026-08-31",
+   "total_cents": 30037
+  },
+  {
+   "vendor_id": "96ff4d56-8569-4a71-9e93-971681b65326",
+   "vendor_name": "Comcast",
+   "account_number": "8777 70 510 0011244",
+   "invoice_date": "2026-08-01",
+   "service_period_start": "2026-08-01",
+   "service_period_end": "2026-08-31",
+   "total_cents": 37194
+  },
+  {
+   "vendor_id": "9b8e8d84-a4e0-478c-978f-13af24cd4a1e",
+   "vendor_name": "Aegis Aquatics, LLC",
+   "account_number": null,
+   "invoice_date": "2026-08-01",
+   "service_period_start": "2026-09-01",
+   "service_period_end": "2026-09-30",
+   "total_cents": 217925
+  },
+  {
+   "vendor_id": "283255c2-f99e-49be-996b-f8780df95d21",
+   "vendor_name": "Earthcare Management, Inc.",
+   "account_number": null,
+   "invoice_date": "2026-08-01",
+   "service_period_start": "2026-08-01",
+   "service_period_end": "2026-08-31",
+   "total_cents": 884268
+  },
+  {
+   "vendor_id": "a3dea309-a4cc-4f2f-a892-193cc4cf94f9",
+   "vendor_name": "Star Protection Agency LLC",
+   "account_number": null,
+   "invoice_date": "2026-08-03",
+   "service_period_start": "2026-07-26",
+   "service_period_end": "2026-08-01",
+   "total_cents": 427743
+  },
+  {
+   "vendor_id": "96ff4d56-8569-4a71-9e93-971681b65326",
+   "vendor_name": "Comcast",
+   "account_number": "8777 70 510 0924479",
+   "invoice_date": "2026-08-04",
+   "service_period_start": "2026-08-09",
+   "service_period_end": "2026-09-08",
+   "total_cents": 13756
+  },
+  {
+   "vendor_id": "816262d3-51df-4744-9f38-232ba18bf8e1",
+   "vendor_name": "GymTech360",
+   "account_number": null,
+   "invoice_date": "2026-08-04",
+   "service_period_start": null,
+   "service_period_end": null,
+   "total_cents": 28499
+  },
+  {
+   "vendor_id": "9b8e8d84-a4e0-478c-978f-13af24cd4a1e",
+   "vendor_name": "Aegis Aquatics, LLC",
+   "account_number": null,
+   "invoice_date": "2026-08-05",
+   "service_period_start": null,
+   "service_period_end": null,
+   "total_cents": 48681
+  },
+  {
+   "vendor_id": "f314a838-5b3a-4e3a-a3c5-80c1bcafc6df",
+   "vendor_name": "RABKA Pest Control",
+   "account_number": null,
+   "invoice_date": "2026-08-10",
+   "service_period_start": null,
+   "service_period_end": null,
+   "total_cents": 10825
+  },
+  {
+   "vendor_id": "d539ea42-b766-48ac-b64e-c51f8b8f621a",
+   "vendor_name": "S&L SOLUTIONS",
+   "account_number": null,
+   "invoice_date": "2026-08-10",
+   "service_period_start": null,
+   "service_period_end": null,
+   "total_cents": 17500
+  },
+  {
+   "vendor_id": "b26c81e4-a4e2-49fa-9c33-f90affbc9a2b",
+   "vendor_name": "CYPRESS CREEK MOSQUITO CONTROL, LLC",
+   "account_number": "500857",
+   "invoice_date": "2026-08-10",
+   "service_period_start": "2026-07-02",
+   "service_period_end": "2026-07-30",
+   "total_cents": 45060
+  },
+  {
+   "vendor_id": "a3dea309-a4cc-4f2f-a892-193cc4cf94f9",
+   "vendor_name": "Star Protection Agency LLC",
+   "account_number": null,
+   "invoice_date": "2026-08-10",
+   "service_period_start": "2026-08-02",
+   "service_period_end": "2026-08-08",
+   "total_cents": 427743
+  },
+  {
+   "vendor_id": "2b8c1266-15f6-4608-94cc-f8903748995b",
+   "vendor_name": "Gexa Energy",
+   "account_number": "2939257",
+   "invoice_date": "2026-08-13",
+   "service_period_start": "2026-07-14",
+   "service_period_end": "2026-08-12",
+   "total_cents": 762
+  },
+  {
+   "vendor_id": "2b8c1266-15f6-4608-94cc-f8903748995b",
+   "vendor_name": "Gexa Energy",
+   "account_number": "2939255",
+   "invoice_date": "2026-08-13",
+   "service_period_start": "2026-07-14",
+   "service_period_end": "2026-08-12",
+   "total_cents": 1072
+  },
+  {
+   "vendor_id": "2b8c1266-15f6-4608-94cc-f8903748995b",
+   "vendor_name": "Gexa Energy",
+   "account_number": "2939259",
+   "invoice_date": "2026-08-13",
+   "service_period_start": "2026-07-14",
+   "service_period_end": "2026-08-12",
+   "total_cents": 2231
+  },
+  {
+   "vendor_id": "6395c5cb-bd65-49ac-9d51-f9c9c09d2a34",
+   "vendor_name": "Hugh Durlam",
+   "account_number": null,
+   "invoice_date": "2026-08-13",
+   "service_period_start": null,
+   "service_period_end": null,
+   "total_cents": 10992
+  },
+  {
+   "vendor_id": "2b8c1266-15f6-4608-94cc-f8903748995b",
+   "vendor_name": "Gexa Energy",
+   "account_number": "2939256",
+   "invoice_date": "2026-08-13",
+   "service_period_start": "2026-07-14",
+   "service_period_end": "2026-08-12",
+   "total_cents": 18108
+  },
+  {
+   "vendor_id": "02100594-c3cf-4b36-97a4-eab025e9dca1",
+   "vendor_name": "Community Controls",
+   "account_number": null,
+   "invoice_date": "2026-08-13",
+   "service_period_start": null,
+   "service_period_end": null,
+   "total_cents": 74860
+  },
+  {
+   "vendor_id": "2b8c1266-15f6-4608-94cc-f8903748995b",
+   "vendor_name": "Gexa Energy",
+   "account_number": "2939258",
+   "invoice_date": "2026-08-13",
+   "service_period_start": "2026-07-14",
+   "service_period_end": "2026-08-12",
+   "total_cents": 126553
+  },
+  {
+   "vendor_id": "a3dea309-a4cc-4f2f-a892-193cc4cf94f9",
+   "vendor_name": "Star Protection Agency LLC",
+   "account_number": null,
+   "invoice_date": "2026-08-17",
+   "service_period_start": "2026-08-09",
+   "service_period_end": "2026-08-15",
+   "total_cents": 5846
+  },
+  {
+   "vendor_id": "a3dea309-a4cc-4f2f-a892-193cc4cf94f9",
+   "vendor_name": "Star Protection Agency LLC",
+   "account_number": null,
+   "invoice_date": "2026-08-17",
+   "service_period_start": "2026-08-09",
+   "service_period_end": "2026-08-15",
+   "total_cents": 427743
+  },
+  {
+   "vendor_id": "7be30529-8907-4ef3-ba28-f4ec33f114db",
+   "vendor_name": "CINCO M.U.D. No. 8",
+   "account_number": "733623",
+   "invoice_date": "2026-08-20",
+   "service_period_start": "2026-07-11",
+   "service_period_end": "2026-08-10",
+   "total_cents": 4400
+  },
+  {
+   "vendor_id": "7be30529-8907-4ef3-ba28-f4ec33f114db",
+   "vendor_name": "CINCO M.U.D. No. 8",
+   "account_number": "728699",
+   "invoice_date": "2026-08-20",
+   "service_period_start": "2026-07-11",
+   "service_period_end": "2026-08-10",
+   "total_cents": 15407
+  },
+  {
+   "vendor_id": "7be30529-8907-4ef3-ba28-f4ec33f114db",
+   "vendor_name": "CINCO M.U.D. No. 8",
+   "account_number": "728702",
+   "invoice_date": "2026-08-20",
+   "service_period_start": "2026-07-11",
+   "service_period_end": "2026-08-10",
+   "total_cents": 17408
+  },
+  {
+   "vendor_id": "2b8c1266-15f6-4608-94cc-f8903748995b",
+   "vendor_name": "Gexa Energy",
+   "account_number": "2939351",
+   "invoice_date": "2026-08-20",
+   "service_period_start": "2026-07-20",
+   "service_period_end": "2026-08-18",
+   "total_cents": 52449
+  },
+  {
+   "vendor_id": "7be30529-8907-4ef3-ba28-f4ec33f114db",
+   "vendor_name": "CINCO M.U.D. No. 8",
+   "account_number": "733608",
+   "invoice_date": "2026-08-20",
+   "service_period_start": "2026-07-11",
+   "service_period_end": "2026-08-10",
+   "total_cents": 71874
+  },
+  {
+   "vendor_id": "7be30529-8907-4ef3-ba28-f4ec33f114db",
+   "vendor_name": "CINCO M.U.D. No. 8",
+   "account_number": "728698",
+   "invoice_date": "2026-08-20",
+   "service_period_start": "2026-07-11",
+   "service_period_end": "2026-08-10",
+   "total_cents": 74228
+  },
+  {
+   "vendor_id": "7be30529-8907-4ef3-ba28-f4ec33f114db",
+   "vendor_name": "CINCO M.U.D. No. 8",
+   "account_number": "728701",
+   "invoice_date": "2026-08-20",
+   "service_period_start": "2026-07-11",
+   "service_period_end": "2026-08-10",
+   "total_cents": 75406
+  },
+  {
+   "vendor_id": "7be30529-8907-4ef3-ba28-f4ec33f114db",
+   "vendor_name": "CINCO M.U.D. No. 8",
+   "account_number": "728700",
+   "invoice_date": "2026-08-20",
+   "service_period_start": "2026-07-11",
+   "service_period_end": "2026-08-10",
+   "total_cents": 112481
+  },
+  {
+   "vendor_id": "2b8c1266-15f6-4608-94cc-f8903748995b",
+   "vendor_name": "Gexa Energy",
+   "account_number": "2939352",
+   "invoice_date": "2026-08-20",
+   "service_period_start": "2026-07-20",
+   "service_period_end": "2026-08-18",
+   "total_cents": 622403
+  },
+  {
+   "vendor_id": "d539ea42-b766-48ac-b64e-c51f8b8f621a",
+   "vendor_name": "S&L SOLUTIONS",
+   "account_number": null,
+   "invoice_date": "2026-08-22",
+   "service_period_start": "2026-08-21",
+   "service_period_end": "2026-08-21",
+   "total_cents": 17500
+  },
+  {
+   "vendor_id": "9b8e8d84-a4e0-478c-978f-13af24cd4a1e",
+   "vendor_name": "Aegis Aquatics, LLC",
+   "account_number": null,
+   "invoice_date": "2026-08-23",
+   "service_period_start": null,
+   "service_period_end": null,
+   "total_cents": 9310
+  },
+  {
+   "vendor_id": "a3dea309-a4cc-4f2f-a892-193cc4cf94f9",
+   "vendor_name": "Star Protection Agency LLC",
+   "account_number": null,
+   "invoice_date": "2026-08-24",
+   "service_period_start": "2026-08-16",
+   "service_period_end": "2026-08-22",
+   "total_cents": 17537
+  },
+  {
+   "vendor_id": "a3dea309-a4cc-4f2f-a892-193cc4cf94f9",
+   "vendor_name": "Star Protection Agency LLC",
+   "account_number": null,
+   "invoice_date": "2026-08-24",
+   "service_period_start": "2026-08-16",
+   "service_period_end": "2026-08-22",
+   "total_cents": 427743
+  },
+  {
+   "vendor_id": "e254e558-9285-4a02-9b35-7ea66d07ec91",
+   "vendor_name": "Bedrock Association Management, LLC",
+   "account_number": null,
+   "invoice_date": "2026-08-25",
+   "service_period_start": "2026-08-01",
+   "service_period_end": "2026-08-31",
+   "total_cents": 535000
+  },
+  {
+   "vendor_id": "a3dea309-a4cc-4f2f-a892-193cc4cf94f9",
+   "vendor_name": "Star Protection Agency LLC",
+   "account_number": null,
+   "invoice_date": "2026-08-31",
+   "service_period_start": "2026-08-23",
+   "service_period_end": "2026-08-29",
+   "total_cents": 5846
+  },
+  {
+   "vendor_id": "35f76d51-0753-4f9f-b46d-df3c73d6092a",
+   "vendor_name": "DAUGHTRY & FARINE, P.C.",
+   "account_number": "2706.0000",
+   "invoice_date": "2026-08-31",
+   "service_period_start": null,
+   "service_period_end": null,
+   "total_cents": 36006
+  },
+  {
+   "vendor_id": "a3dea309-a4cc-4f2f-a892-193cc4cf94f9",
+   "vendor_name": "Star Protection Agency LLC",
+   "account_number": null,
+   "invoice_date": "2026-08-31",
+   "service_period_start": "2026-08-23",
+   "service_period_end": "2026-08-29",
+   "total_cents": 416657
+  },
+  {
+   "vendor_id": "35f76d51-0753-4f9f-b46d-df3c73d6092a",
+   "vendor_name": "DAUGHTRY & FARINE, P.C.",
+   "account_number": "2705.0000",
+   "invoice_date": "2026-08-31",
+   "service_period_start": null,
+   "service_period_end": null,
+   "total_cents": 474061
+  },
+  {
+   "vendor_id": "79fff84d-02d2-41f3-b28e-99dab2e9d824",
+   "vendor_name": "NBD",
+   "account_number": null,
+   "invoice_date": "2026-09-01",
+   "service_period_start": null,
+   "service_period_end": null,
+   "total_cents": 5900
+  },
+  {
+   "vendor_id": "96ff4d56-8569-4a71-9e93-971681b65326",
+   "vendor_name": "Comcast",
+   "account_number": "8777 70 510 0109188",
+   "invoice_date": "2026-09-01",
+   "service_period_start": "2026-09-01",
+   "service_period_end": "2026-09-30",
+   "total_cents": 30037
+  },
+  {
+   "vendor_id": "d17446f2-3c50-4ea6-afb9-4ed6f765aa58",
+   "vendor_name": "Comcast Business",
+   "account_number": "8777 70 510 0011244",
+   "invoice_date": "2026-09-01",
+   "service_period_start": "2026-09-01",
+   "service_period_end": "2026-09-30",
+   "total_cents": 37194
+  },
+  {
+   "vendor_id": "9b8e8d84-a4e0-478c-978f-13af24cd4a1e",
+   "vendor_name": "Aegis Aquatics, LLC",
+   "account_number": null,
+   "invoice_date": "2026-09-01",
+   "service_period_start": "2026-10-01",
+   "service_period_end": "2026-10-31",
+   "total_cents": 104616
+  },
+  {
+   "vendor_id": "283255c2-f99e-49be-996b-f8780df95d21",
+   "vendor_name": "Earthcare Management, Inc.",
+   "account_number": null,
+   "invoice_date": "2026-09-01",
+   "service_period_start": "2026-09-01",
+   "service_period_end": "2026-09-30",
+   "total_cents": 884268
+  },
+  {
+   "vendor_id": "b456b011-615f-4d0c-9d38-c717555d8ede",
+   "vendor_name": "Texas Access Works LLC",
+   "account_number": null,
+   "invoice_date": "2026-09-01",
+   "service_period_start": null,
+   "service_period_end": null,
+   "total_cents": 2203561
+  },
+  {
+   "vendor_id": "e254e558-9285-4a02-9b35-7ea66d07ec91",
+   "vendor_name": "Bedrock Association Management, LLC",
+   "account_number": null,
+   "invoice_date": "2026-09-03",
+   "service_period_start": "2026-09-01",
+   "service_period_end": "2026-09-30",
+   "total_cents": 535000
+  },
+  {
+   "vendor_id": "96ff4d56-8569-4a71-9e93-971681b65326",
+   "vendor_name": "Comcast",
+   "account_number": "8777 70 510 0924479",
+   "invoice_date": "2026-09-04",
+   "service_period_start": "2026-09-09",
+   "service_period_end": "2026-10-08",
+   "total_cents": 13756
+  },
+  {
+   "vendor_id": "e254e558-9285-4a02-9b35-7ea66d07ec91",
+   "vendor_name": "Bedrock Association Management, LLC",
+   "account_number": null,
+   "invoice_date": "2026-09-04",
+   "service_period_start": "2026-08-01",
+   "service_period_end": "2026-08-31",
+   "total_cents": 30788
+  },
+  {
+   "vendor_id": "a3dea309-a4cc-4f2f-a892-193cc4cf94f9",
+   "vendor_name": "Star Protection Agency LLC",
+   "account_number": null,
+   "invoice_date": "2026-09-07",
+   "service_period_start": "2026-08-30",
+   "service_period_end": "2026-09-05",
+   "total_cents": 427529
+  },
+  {
+   "vendor_id": "816262d3-51df-4744-9f38-232ba18bf8e1",
+   "vendor_name": "GymTech360",
+   "account_number": null,
+   "invoice_date": "2026-09-08",
+   "service_period_start": null,
+   "service_period_end": null,
+   "total_cents": 91890
+  },
+  {
+   "vendor_id": "f674bb0d-fd8d-4bfa-a7c2-d1a02f1fedca",
+   "vendor_name": "Versatex Commercial Services LLC",
+   "account_number": null,
+   "invoice_date": "2026-09-09",
+   "service_period_start": null,
+   "service_period_end": null,
+   "total_cents": 25980
+  },
+  {
+   "vendor_id": "b26c81e4-a4e2-49fa-9c33-f90affbc9a2b",
+   "vendor_name": "CYPRESS CREEK MOSQUITO CONTROL, LLC",
+   "account_number": "500857",
+   "invoice_date": "2026-09-09",
+   "service_period_start": "2026-08-06",
+   "service_period_end": "2026-08-27",
+   "total_cents": 36048
+  },
+  {
+   "vendor_id": "f674bb0d-fd8d-4bfa-a7c2-d1a02f1fedca",
+   "vendor_name": "Versatex Commercial Services LLC",
+   "account_number": null,
+   "invoice_date": "2026-09-09",
+   "service_period_start": null,
+   "service_period_end": null,
+   "total_cents": 45465
+  },
+  {
+   "vendor_id": "f674bb0d-fd8d-4bfa-a7c2-d1a02f1fedca",
+   "vendor_name": "Versatex Commercial Services LLC",
+   "account_number": null,
+   "invoice_date": "2026-09-09",
+   "service_period_start": null,
+   "service_period_end": null,
+   "total_cents": 53584
+  },
+  {
+   "vendor_id": "f674bb0d-fd8d-4bfa-a7c2-d1a02f1fedca",
+   "vendor_name": "Versatex Commercial Services LLC",
+   "account_number": null,
+   "invoice_date": "2026-09-09",
+   "service_period_start": null,
+   "service_period_end": null,
+   "total_cents": 103920
+  },
+  {
+   "vendor_id": "2b8c1266-15f6-4608-94cc-f8903748995b",
+   "vendor_name": "Gexa Energy",
+   "account_number": "2939255",
+   "invoice_date": "2026-09-14",
+   "service_period_start": "2026-08-12",
+   "service_period_end": "2026-09-11",
+   "total_cents": 1183
+  },
+  {
+   "vendor_id": "b456b011-615f-4d0c-9d38-c717555d8ede",
+   "vendor_name": "Texas Access Works LLC",
+   "account_number": null,
+   "invoice_date": "2026-09-14",
+   "service_period_start": null,
+   "service_period_end": null,
+   "total_cents": 2203561
+  },
+  {
+   "vendor_id": "f314a838-5b3a-4e3a-a3c5-80c1bcafc6df",
+   "vendor_name": "RABKA Pest Control",
+   "account_number": null,
+   "invoice_date": "2026-09-17",
+   "service_period_start": "2026-09-01",
+   "service_period_end": "2026-09-30",
+   "total_cents": 10825
+  },
+  {
+   "vendor_id": "d539ea42-b766-48ac-b64e-c51f8b8f621a",
+   "vendor_name": "S&L SOLUTIONS",
+   "account_number": null,
+   "invoice_date": "2026-09-17",
+   "service_period_start": "2026-09-04",
+   "service_period_end": "2026-09-04",
+   "total_cents": 17500
+  },
+  {
+   "vendor_id": "d539ea42-b766-48ac-b64e-c51f8b8f621a",
+   "vendor_name": "S&L SOLUTIONS",
+   "account_number": null,
+   "invoice_date": "2026-09-18",
+   "service_period_start": null,
+   "service_period_end": null,
+   "total_cents": 17500
+  },
+  {
+   "vendor_id": "a3dea309-a4cc-4f2f-a892-193cc4cf94f9",
+   "vendor_name": "Star Protection Agency LLC",
+   "account_number": null,
+   "invoice_date": "2026-09-21",
+   "service_period_start": "2026-09-13",
+   "service_period_end": "2026-09-19",
+   "total_cents": 427529
+  },
+  {
+   "vendor_id": "2b8c1266-15f6-4608-94cc-f8903748995b",
+   "vendor_name": "Gexa Energy",
+   "account_number": "2939351",
+   "invoice_date": "2026-09-22",
+   "service_period_start": "2026-08-18",
+   "service_period_end": "2026-09-17",
+   "total_cents": 52104
+  },
+  {
+   "vendor_id": "2b8c1266-15f6-4608-94cc-f8903748995b",
+   "vendor_name": "Gexa Energy",
+   "account_number": "2939352",
+   "invoice_date": "2026-09-22",
+   "service_period_start": "2026-08-18",
+   "service_period_end": "2026-09-17",
+   "total_cents": 618726
+  },
+  {
+   "vendor_id": "7be30529-8907-4ef3-ba28-f4ec33f114db",
+   "vendor_name": "CINCO M.U.D. No. 8",
+   "account_number": "733623",
+   "invoice_date": "2026-09-23",
+   "service_period_start": "2026-08-12",
+   "service_period_end": "2026-09-10",
+   "total_cents": 3900
+  },
+  {
+   "vendor_id": "7be30529-8907-4ef3-ba28-f4ec33f114db",
+   "vendor_name": "CINCO M.U.D. No. 8",
+   "account_number": "728699",
+   "invoice_date": "2026-09-23",
+   "service_period_start": "2026-08-12",
+   "service_period_end": "2026-09-10",
+   "total_cents": 8403
+  },
+  {
+   "vendor_id": "7be30529-8907-4ef3-ba28-f4ec33f114db",
+   "vendor_name": "CINCO M.U.D. No. 8",
+   "account_number": "728702",
+   "invoice_date": "2026-09-23",
+   "service_period_start": "2026-08-12",
+   "service_period_end": "2026-09-10",
+   "total_cents": 29163
+  },
+  {
+   "vendor_id": "7be30529-8907-4ef3-ba28-f4ec33f114db",
+   "vendor_name": "CINCO M.U.D. No. 8",
+   "account_number": "733608",
+   "invoice_date": "2026-09-23",
+   "service_period_start": "2026-08-12",
+   "service_period_end": "2026-09-10",
+   "total_cents": 61870
+  },
+  {
+   "vendor_id": "7be30529-8907-4ef3-ba28-f4ec33f114db",
+   "vendor_name": "CINCO M.U.D. No. 8",
+   "account_number": "728698",
+   "invoice_date": "2026-09-23",
+   "service_period_start": "2026-08-12",
+   "service_period_end": "2026-09-10",
+   "total_cents": 81879
+  },
+  {
+   "vendor_id": "7be30529-8907-4ef3-ba28-f4ec33f114db",
+   "vendor_name": "CINCO M.U.D. No. 8",
+   "account_number": "728700",
+   "invoice_date": "2026-09-23",
+   "service_period_start": "2026-08-12",
+   "service_period_end": "2026-09-10",
+   "total_cents": 108362
+  },
+  {
+   "vendor_id": "7be30529-8907-4ef3-ba28-f4ec33f114db",
+   "vendor_name": "CINCO M.U.D. No. 8",
+   "account_number": "728701",
+   "invoice_date": "2026-09-23",
+   "service_period_start": "2026-08-12",
+   "service_period_end": "2026-09-10",
+   "total_cents": 135432
+  },
+  {
+   "vendor_id": "a898f2ec-ba75-444d-b6d4-4962a4a1203e",
+   "vendor_name": "AAA Awning Co., Inc.",
+   "account_number": null,
+   "invoice_date": "2026-09-23",
+   "service_period_start": null,
+   "service_period_end": null,
+   "total_cents": 427587
+  },
+  {
+   "vendor_id": "283255c2-f99e-49be-996b-f8780df95d21",
+   "vendor_name": "Earthcare Management, Inc.",
+   "account_number": null,
+   "invoice_date": "2026-09-24",
+   "service_period_start": null,
+   "service_period_end": null,
+   "total_cents": 70904
+  },
+  {
+   "vendor_id": "65609496-e824-46a4-8ad0-ebe093eb9f26",
+   "vendor_name": "Joel's Painting LLC",
+   "account_number": null,
+   "invoice_date": "2026-09-26",
+   "service_period_start": null,
+   "service_period_end": null,
+   "total_cents": 150000
+  },
+  {
+   "vendor_id": "35f76d51-0753-4f9f-b46d-df3c73d6092a",
+   "vendor_name": "DAUGHTRY & FARINE, P.C.",
+   "account_number": "2706.0001",
+   "invoice_date": "2026-09-30",
+   "service_period_start": null,
+   "service_period_end": null,
+   "total_cents": 13200
+  },
+  {
+   "vendor_id": "35f76d51-0753-4f9f-b46d-df3c73d6092a",
+   "vendor_name": "DAUGHTRY & FARINE, P.C.",
+   "account_number": "2705.0000",
+   "invoice_date": "2026-09-30",
+   "service_period_start": null,
+   "service_period_end": null,
+   "total_cents": 147440
+  },
+  {
+   "vendor_id": "283255c2-f99e-49be-996b-f8780df95d21",
+   "vendor_name": "Earthcare Management, Inc.",
+   "account_number": null,
+   "invoice_date": "2026-09-30",
+   "service_period_start": null,
+   "service_period_end": null,
+   "total_cents": 959375
+  },
+  {
+   "vendor_id": "02100594-c3cf-4b36-97a4-eab025e9dca1",
+   "vendor_name": "Community Controls",
+   "account_number": null,
+   "invoice_date": "2026-10-01",
+   "service_period_start": null,
+   "service_period_end": null,
+   "total_cents": 74860
+  },
+  {
+   "vendor_id": "e254e558-9285-4a02-9b35-7ea66d07ec91",
+   "vendor_name": "Bedrock Association Management, LLC",
+   "account_number": null,
+   "invoice_date": "2026-10-01",
+   "service_period_start": "2026-10-01",
+   "service_period_end": "2026-10-31",
+   "total_cents": 535000
+  },
+  {
+   "vendor_id": "283255c2-f99e-49be-996b-f8780df95d21",
+   "vendor_name": "Earthcare Management, Inc.",
+   "account_number": null,
+   "invoice_date": "2026-10-01",
+   "service_period_start": "2026-10-01",
+   "service_period_end": "2026-10-31",
+   "total_cents": 884268
+  },
+  {
+   "vendor_id": "b456b011-615f-4d0c-9d38-c717555d8ede",
+   "vendor_name": "Texas Access Works LLC",
+   "account_number": null,
+   "invoice_date": "2026-10-02",
+   "service_period_start": null,
+   "service_period_end": null,
+   "total_cents": 47630
+  },
+  {
+   "vendor_id": "e254e558-9285-4a02-9b35-7ea66d07ec91",
+   "vendor_name": "Bedrock Association Management, LLC",
+   "account_number": null,
+   "invoice_date": "2026-10-05",
+   "service_period_start": "2026-09-01",
+   "service_period_end": "2026-09-30",
+   "total_cents": 56172
+  },
+  {
+   "vendor_id": "a3dea309-a4cc-4f2f-a892-193cc4cf94f9",
+   "vendor_name": "Star Protection Agency LLC",
+   "account_number": "519",
+   "invoice_date": "2026-10-05",
+   "service_period_start": "2026-09-27",
+   "service_period_end": "2026-10-03",
+   "total_cents": 245984
+  },
+  {
+   "vendor_id": "b26c81e4-a4e2-49fa-9c33-f90affbc9a2b",
+   "vendor_name": "CYPRESS CREEK MOSQUITO CONTROL, LLC",
+   "account_number": "500857",
+   "invoice_date": "2026-10-08",
+   "service_period_start": "2026-09-04",
+   "service_period_end": "2026-09-24",
+   "total_cents": 36048
+  },
+  {
+   "vendor_id": "d539ea42-b766-48ac-b64e-c51f8b8f621a",
+   "vendor_name": "S&L SOLUTIONS",
+   "account_number": null,
+   "invoice_date": "2026-10-12",
+   "service_period_start": null,
+   "service_period_end": "2026-09-30",
+   "total_cents": 25000
+  },
+  {
+   "vendor_id": "f5ebd1db-578a-491d-87de-b1e1bee9de73",
+   "vendor_name": "Cox CPA Services",
+   "account_number": null,
+   "invoice_date": "2026-10-12",
+   "service_period_start": null,
+   "service_period_end": null,
+   "total_cents": 509500
+  },
+  {
+   "vendor_id": "46fcb6ae-8625-4aea-9160-9fe56eeb6aeb",
+   "vendor_name": "Sam's Club",
+   "account_number": null,
+   "invoice_date": "2026-10-14",
+   "service_period_start": null,
+   "service_period_end": null,
+   "total_cents": 22725
+  }
+ ]
+}
