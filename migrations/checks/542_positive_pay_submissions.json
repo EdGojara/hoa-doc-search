@@ -1,6 +1,6 @@
 {
   "migration": "542_positive_pay_submissions.sql",
-  "summary": "Positive Pay submission tracking (Ed 2026-10-22). Adds bank_accounts.positive_pay_enabled + positive_pay_start_date, enables the four NewFirst operating accounts on the Addendum (Canyon Gate 5313, Still Creek 1777, LOPF 2449, Waterview 5961) with NO start date (nothing exports until the backlog is reviewed), and creates positive_pay_submissions + positive_pay_submission_items with a one-live-submission-per-check unique index. No check, payment or journal entry changes.",
+  "summary": "Positive Pay submission tracking (Ed 2026-10-22). Adds bank_accounts.positive_pay_enabled, enables the four NewFirst operating accounts on the Addendum (Canyon Gate 5313, Still Creek 1777, LOPF 2449, Waterview 5961), and creates positive_pay_submissions + positive_pay_submission_items with a one-live-submission-per-check unique index. The export cutoff (banks.positive_pay_settings.export_from) is NOT set, so nothing exports. No check, payment or journal entry changes.",
   "requires": [
     "541_acc_decision_authority_guard.sql"
   ],
@@ -17,15 +17,14 @@
     }
   ],
   "expected_changes": [
-    "bank_accounts: columns positive_pay_enabled (boolean, default false) and positive_pay_start_date (date) added.",
-    "bank_accounts: positive_pay_enabled = true on the four NewFirst operating accounts; every other account false; every start date NULL.",
+    "bank_accounts: column positive_pay_enabled (boolean, default false) added.",
+    "bank_accounts: positive_pay_enabled = true on the four NewFirst operating accounts; every other account false.",
     "New tables positive_pay_submissions and positive_pay_submission_items (empty), with service_role grants and updated_at triggers.",
-    "No other row changes."
+    "No other row changes; banks.positive_pay_settings is untouched (no export cutoff)."
   ],
   "objects": {
     "added": [
       "column:bank_accounts.positive_pay_enabled",
-      "column:bank_accounts.positive_pay_start_date",
       "table:positive_pay_submissions",
       "table:positive_pay_submission_items",
       "index:idx_pp_submissions_bank_status",
@@ -60,8 +59,8 @@
       "expect": 4
     },
     {
-      "name": "no account has a start date (nothing exports yet)",
-      "sql": "SELECT count(*)::int FROM bank_accounts WHERE positive_pay_start_date IS NOT NULL",
+      "name": "no export cutoff is set (nothing exports yet)",
+      "sql": "SELECT count(*)::int FROM banks WHERE positive_pay_settings ? 'export_from'",
       "expect": 0
     },
     {

@@ -15,13 +15,13 @@ const throwsCode = async (fn, code) => { try { await fn(); return false; } catch
 
 const ACTIVE = { id: 'c-wv', name: 'Waterview Estates', management_status: 'active' };
 const ARCHIVED = { id: 'c-eg', name: 'Eaglewood', management_status: 'archived' };
-const acct = (o) => ({ id: 'a1', community_id: ACTIVE.id, bank_id: P.NEWFIRST_BANK_ID, account_nickname: 'Waterview Operating', account_last4: '5961', is_active: true, positive_pay_enabled: true, positive_pay_start_date: '2026-10-20', community: ACTIVE, account_number_full: '765961', ...o });
+const acct = (o) => ({ id: 'a1', community_id: ACTIVE.id, bank_id: P.NEWFIRST_BANK_ID, account_nickname: 'Waterview Operating', account_last4: '5961', is_active: true, positive_pay_enabled: true, community: ACTIVE, account_number_full: '765961', ...o });
 const chk = (o) => ({ id: 'k1', community_id: ACTIVE.id, bank_account_id: 'a1', check_number: '1050', issue_date: '2026-10-21', payee_name: 'Lake Pro, Inc.', amount_cents: 32470, status: 'issued', created_at: '2026-10-21T20:00:00Z', ...o });
 
 console.log('who is in the file');
 {
   const e = (a, c) => P.accountEligibility(a, c || a.community);
-  check('enrolled, started, operational, full number ends in last four: eligible', e(acct()).eligible && e(acct()).started);
+  check('enrolled, operational, full number ends in last four: eligible', e(acct()).eligible);
   check('not enrolled: excluded', !e(acct({ positive_pay_enabled: false })).eligible);
   check('former client (archived Eaglewood): excluded, named', !e(acct({ community: ARCHIVED })).eligible && /former client/.test(e(acct({ community: ARCHIVED })).reason));
   check('full account number missing: a problem, not silently skipped', /not on file/.test(e(acct({ account_number_full: '' })).problem || ''));
@@ -41,16 +41,17 @@ console.log('who is in the file');
     ],
     items: [{ id: 'i1', submission_id: 's-old', check_register_id: 'k7', status: 'accepted' }],
     submissions: [{ id: 's-old', status: 'accepted' }],
+    exportFrom: '2026-10-20',
   });
   const ids = plan.toExport.map((c) => c.id);
   check('exports the new issued and outstanding checks only', JSON.stringify(ids) === '["k1","k8"]', JSON.stringify(ids));
   check('voided, stop-paid and cleared checks are never exported (status allow-list, not .neq(void))', !ids.includes('k2') && !ids.includes('k3') && !ids.includes('k4'));
-  check('a check issued before the start date is backlog, not exported', plan.backlog.map((c) => c.id).join() === 'k5' && /before the Positive Pay start date/.test(plan.backlog[0].backlog_reason));
+  check('a check issued before the cutoff is never exported (e.g. one NewFirst already paid as an exception)', plan.backlog.map((c) => c.id).join() === 'k5' && /before the Positive Pay cutoff/.test(plan.backlog[0].backlog_reason));
   check('a former client\'s checks are excluded and the account is listed as excluded', !ids.includes('k6') && plan.excludedAccounts.some((a) => a.bank_account_id === 'a2'));
   check('a check already accepted in an earlier file is not sent again', !ids.includes('k7') && plan.alreadyLive.some((c) => c.id === 'k7'));
-  const ns = P.planExport({ accounts: [acct({ positive_pay_start_date: null })], checks: [chk()] });
-  check('an account with no start date exports nothing: every check is backlog', !ns.toExport.length && ns.backlog.length === 1 && /no Positive Pay start date/.test(ns.backlog[0].backlog_reason));
-  const stale = P.planExport({ accounts: [acct()], checks: [chk()], items: [{ id: 'i9', submission_id: 's-x', check_register_id: 'k1', status: 'included' }], submissions: [{ id: 's-x', status: 'cancelled' }] });
+  const ns = P.planExport({ accounts: [acct()], checks: [chk()] });
+  check('no cutoff set: nothing exports', !ns.toExport.length && ns.backlog.length === 1 && /no Positive Pay cutoff/.test(ns.backlog[0].backlog_reason));
+  const stale = P.planExport({ accounts: [acct()], checks: [chk()], items: [{ id: 'i9', submission_id: 's-x', check_register_id: 'k1', status: 'included' }], submissions: [{ id: 's-x', status: 'cancelled' }], exportFrom: '2026-10-20' });
   check('a row left included on a cancelled file does not hide the check', stale.toExport.length === 1);
 }
 
@@ -84,7 +85,7 @@ console.log('recording the bank\'s outcome');
 console.log('exceptions');
 {
   const now = new Date('2026-10-23T15:00:00Z');
-  const plan = P.planExport({ accounts: [acct()], checks: [chk(), chk({ id: 'k5', check_number: '1040', issue_date: '2026-10-09' })] });
+  const plan = P.planExport({ accounts: [acct()], checks: [chk(), chk({ id: 'k5', check_number: '1040', issue_date: '2026-10-09' })], exportFrom: '2026-10-20' });
   const subs = [
     { id: 's1', status: 'prepared', prepared_at: '2026-10-23T09:00:00Z', check_count: 3 },
     { id: 's2', status: 'uploaded', uploaded_at: '2026-10-22T22:00:00Z', check_count: 2 },
@@ -98,7 +99,8 @@ console.log('exceptions');
   const ex = P.exceptions({ plan, checks, submissions: subs, items, now });
   const kinds = ex.map((x) => x.kind);
   check('an issued check not in any file is reported', kinds.includes('not_submitted'));
-  check('the backlog is reported, not exported', kinds.includes('backlog'));
+  check('checks before the cutoff are not an exception (history is resolved once, by hand)', !kinds.includes('backlog'));
+  check('no cutoff set is reported', P.exceptions({ plan: P.planExport({ accounts: [acct()], checks: [] }), now }).some((x) => x.kind === 'no_cutoff'));
   check('a prepared file not uploaded, and an uploaded file with no bank confirmation, are reported', kinds.includes('awaiting_upload') && kinds.includes('awaiting_confirmation'));
   check('a rejected check not yet resubmitted is reported', ex.some((x) => x.kind === 'rejected' && /payee mismatch/.test(x.text)));
   check('a check voided after it was sent says to cancel it at the bank', ex.some((x) => x.kind === 'voided_after_submission' && /cancel it in Positive Pay/.test(x.text)));
@@ -129,6 +131,8 @@ function store(seed) {
       if (op === 'update') {
         const next = rows.map((r) => ({ ...r, ...payload }));
         if (table === 'positive_pay_submission_items' && liveDup(next)) return { data: null, error: { code: '23505', message: 'duplicate' } };
+        // mirror migration 542's CHECK: an outcome names who recorded it and the bank's confirmation
+        if (table === 'positive_pay_submissions' && ['accepted', 'partially_accepted', 'rejected'].includes(payload.status) && !(payload.outcome_recorded_at && String(payload.outcome_recorded_by_name || '').trim() && String(payload.outcome_evidence || '').trim())) return { data: null, error: { code: '23514', message: 'check constraint' } };
         rows.forEach((r) => Object.assign(r, payload)); return { data: sel ? rows : null, error: null };
       }
       if (rng) rows = rows.slice(rng[0], rng[1] + 1); if (lim) rows = rows.slice(0, lim);
@@ -142,8 +146,9 @@ function store(seed) {
 (async () => {
   console.log('lifecycle');
   const decrypt = (s) => s;   // the test store holds the number in the clear
-  const accountRow = { id: 'a1', community_id: ACTIVE.id, bank_id: P.NEWFIRST_BANK_ID, account_nickname: 'Waterview Operating', account_last4: '5961', account_number_encrypted: '765961', is_active: true, positive_pay_enabled: true, positive_pay_start_date: '2026-10-20', communities: ACTIVE };
-  const db = store({ bank_accounts: [accountRow], check_register: [chk(), chk({ id: 'k8', check_number: '1055' })], positive_pay_submission_items: [], positive_pay_submissions: [], email_messages: [] });
+  const accountRow = { id: 'a1', community_id: ACTIVE.id, bank_id: P.NEWFIRST_BANK_ID, account_nickname: 'Waterview Operating', account_last4: '5961', account_number_encrypted: '765961', is_active: true, positive_pay_enabled: true, communities: ACTIVE };
+  const banks = [{ id: P.NEWFIRST_BANK_ID, positive_pay_settings: { exception_cutoff: '10:00', export_from: '2026-10-20' } }];
+  const db = store({ banks, bank_accounts: [accountRow], check_register: [chk(), chk({ id: 'k8', check_number: '1055' })], positive_pay_submission_items: [], positive_pay_submissions: [], email_messages: [] });
   // the module decrypts with lib/crypto_field; route its loads through the clear-text store
   const cf = require('../lib/crypto_field'); const real = cf.decryptField; cf.decryptField = decrypt;
   try {
@@ -179,6 +184,37 @@ function store(seed) {
     check('a concurrent duplicate is refused by the unique index, and the empty file is closed', await throwsCode(() => P.prepare(db, {}), 'duplicate_submission') && db.T.positive_pay_submissions.slice(-1)[0].status === 'cancelled');
     check('only NewFirst files are built', await throwsCode(() => P.loadState(db, 'first-citizens'), 'invalid_input'));
   } finally { cf.decryptField = real; }
+
+  console.log('event-driven: one run, quiet days, another run');
+  {
+    const bk = [{ id: P.NEWFIRST_BANK_ID, positive_pay_settings: { export_from: '2026-10-20' } }];
+    const d = store({ banks: bk, bank_accounts: [accountRow], check_register: [
+      chk({ id: 'old', check_number: '1001', issue_date: '2026-10-01' }),   // before the cutoff: NewFirst already paid it as an exception
+      chk({ id: 'm1', check_number: '1100', issue_date: '2026-10-26' }), chk({ id: 'm2', check_number: '1101', issue_date: '2026-10-26' }),
+    ], positive_pay_submission_items: [], positive_pay_submissions: [] });
+    const cf2 = require('../lib/crypto_field'); const real2 = cf2.decryptField; cf2.decryptField = (x) => x;
+    const quiet = (now) => P.exceptions({ plan: P.planExport({ accounts: [{ ...accountRow, community: ACTIVE, account_number_full: '765961' }], checks: d.T.check_register, items: d.T.positive_pay_submission_items, submissions: d.T.positive_pay_submissions, exportFrom: '2026-10-20' }), checks: d.T.check_register, submissions: d.T.positive_pay_submissions, items: d.T.positive_pay_submission_items, now });
+    try {
+      const mon = await P.prepare(d, { now: new Date('2026-10-26T22:00:00Z') });
+      check("Monday: the file has Monday's two checks only, never the pre-cutoff check NewFirst already paid", mon.count === 2 && !d.T.positive_pay_submission_items.some((i) => i.check_register_id === 'old'));
+      await P.markUploaded(d, mon.submission.id, { actor: { kat: true } });
+      await P.recordOutcome(d, mon.submission.id, { actor: { kat: true }, outcome: 'accepted', evidence: 'Import complete: 2 items' });
+      const tue = await P.prepare(d, {}); const wed = await P.prepare(d, {}); const thu = await P.prepare(d, {});
+      check('Tuesday to Thursday, no checks issued: no file, and nothing needs attention', !tue.submission && !wed.submission && !thu.submission && d.T.positive_pay_submissions.length === 1 && !quiet(new Date('2026-10-29T22:00:00Z')).length);
+      d.T.check_register.push(chk({ id: 'f1', check_number: '1102', issue_date: '2026-10-30' }));
+      const fri = await P.prepare(d, {});
+      const fr = d.T.positive_pay_submission_items.filter((i) => i.submission_id === fri.submission.id).map((i) => i.check_register_id);
+      check("Friday: the next run's file has only the new check; Monday's accepted checks are not resent", fri.count === 1 && fr.join() === 'f1');
+      await P.markUploaded(d, fri.submission.id, { actor: { kat: true } });
+      await P.recordOutcome(d, fri.submission.id, { actor: { kat: true }, outcome: 'rejected', evidence: 'Import failed: invalid file', reason: 'import failed' });
+      d.T.check_register.push(chk({ id: 'n1', check_number: '1103', issue_date: '2026-11-02' }));
+      const mon2 = await P.prepare(d, {});
+      const m2 = d.T.positive_pay_submission_items.filter((i) => i.submission_id === mon2.submission.id).map((i) => i.check_register_id).sort();
+      check('after a failed upload, the next run carries the failed check forward with the new one', m2.join() === 'f1,n1');
+      const pending = await P.prepare(d, {});
+      check('while that file awaits upload and confirmation, its checks are not put in another file', !pending.submission);
+    } finally { cf2.decryptField = real2; }
+  }
 
   console.log('static');
   const api = fs.readFileSync(path.join(__dirname, '..', 'api', 'checks.js'), 'utf8');

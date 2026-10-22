@@ -54,7 +54,7 @@
   <div class="card">
     <h2>Accounts</h2>
     <div id="accounts"><div class="muted">Loading…</div></div>
-    <div class="note">An account's checks are exported only when it is enrolled and has a start date. Outstanding checks issued before the start date are the <b>backlog</b> (<span id="backlogCount">…</span>): they stay out of every file until they are reviewed.</div>
+    <div class="note" id="cutoffNote">…</div>
   </div>
 </div>
 
@@ -96,10 +96,12 @@ function render(){
     :'<div class="muted">No newly issued checks are waiting to be sent.</div>';
   const f=s.submissions||[];
   $('files').innerHTML=f.length?`<table><thead><tr><th>Prepared</th><th>Checks</th><th style="text-align:right;">Total</th><th>Status</th><th></th></tr></thead><tbody>${f.map(fileRow).join('')}</tbody></table>`:'<div class="muted">No files yet.</div>';
-  $('accounts').innerHTML=`<table><thead><tr><th>Community</th><th>Account</th><th>Enrolled</th><th>Start date</th><th>Status</th></tr></thead><tbody>${(s.accounts||[]).map(a=>{
-    const e=a.eligibility||{}; const st=e.problem?`<span class="pill bad">${esc(e.problem)}</span>`:(!e.eligible?`<span class="pill">${esc(e.reason)}</span>`:(a.start_date?'<span class="pill ok">Exporting</span>':'<span class="pill warn">Not started: backlog review</span>'));
-    return `<tr><td>${esc(a.community)}</td><td>${esc(a.account)} · …${esc(a.account_last4)}</td><td>${a.enabled?'Yes':'No'}</td><td>${esc(a.start_date||'—')}</td><td>${st}</td></tr>`;}).join('')}</tbody></table>`;
-  $('backlogCount').textContent=(s.backlog||[]).length+' check'+((s.backlog||[]).length===1?'':'s');
+  $('accounts').innerHTML=`<table><thead><tr><th>Community</th><th>Account</th><th>On the Addendum</th><th>Status</th></tr></thead><tbody>${(s.accounts||[]).map(a=>{
+    const e=a.eligibility||{}; const st=e.problem?`<span class="pill bad">${esc(e.problem)}</span>`:(!e.eligible?`<span class="pill">${esc(e.reason)}</span>`:'<span class="pill ok">In the file</span>');
+    return `<tr><td>${esc(a.community)}</td><td>${esc(a.account)} · …${esc(a.account_last4)}</td><td>${a.enabled?'Yes':'No'}</td><td>${st}</td></tr>`;}).join('')}</tbody></table>`;
+  $('cutoffNote').innerHTML=s.export_from
+    ? `The file covers checks issued on or after <b>${esc(s.export_from)}</b>. ${s.before_cutoff_count||0} older outstanding check${s.before_cutoff_count===1?'':'s'} in the register are history, handled once with NewFirst and never put in a file.`
+    : 'No cutoff date is set yet, so no file can be prepared. It is set once, after the historical checks are resolved with NewFirst.';
 }
 
 function fileRow(f){

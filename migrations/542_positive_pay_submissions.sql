@@ -6,21 +6,21 @@
 -- reached NewFirst as an exception (9/23 through 10/22/2026) and nothing could
 -- say which checks had been submitted, accepted or rejected.
 --
--- 1) bank_accounts.positive_pay_enabled / positive_pay_start_date
---    An account is in the Positive Pay file only when it is ENABLED (on the
---    bank's Positive Pay Addendum) and its start date is SET. Checks issued
---    before the start date are the backlog: they are reported, never exported,
---    until a person reviews them and sets the date. The four NewFirst operating
---    accounts on the Addendum (Kat to Melody Hess, 2026-09-08; Melody confirmed
---    2026-09-09) are enabled here with NO start date, so nothing exports until
---    the backlog decision is made.
+-- 1) bank_accounts.positive_pay_enabled
+--    Only accounts on the bank's Positive Pay Addendum go in the file. The four
+--    NewFirst operating accounts on the Addendum (Kat to Melody Hess, 2026-09-08;
+--    Melody confirmed 2026-09-09) are enabled here.
+--    The first issue date the file covers is ONE cutoff for the bank, kept in the
+--    existing banks.positive_pay_settings (export_from), set once after the
+--    historical checks are resolved with NewFirst. Until it is set nothing exports,
+--    and checks issued before it are never exported by trustEd.
 --
 -- 2) positive_pay_submissions: one row per file prepared for a bank. Status:
 --      prepared            file built; NOT sent, NOT accepted
---      uploaded            a person says it was uploaded; still NOT accepted
---      accepted            the bank accepted every row (evidence required)
---      partially_accepted  the bank accepted some rows (evidence required)
---      rejected            the bank accepted none (evidence required)
+--      uploaded            Kat (or a person) uploaded it; still NOT accepted
+--      accepted            the bank confirmed every row (confirmation recorded)
+--      partially_accepted  the bank confirmed some rows (confirmation recorded)
+--      rejected            the bank rejected the file (confirmation recorded)
 --      cancelled           never uploaded; its checks are free again
 --    Building or downloading a file never sets uploaded or accepted.
 --
@@ -37,11 +37,9 @@
 BEGIN;
 
 ALTER TABLE bank_accounts ADD COLUMN IF NOT EXISTS positive_pay_enabled boolean NOT NULL DEFAULT false;
-ALTER TABLE bank_accounts ADD COLUMN IF NOT EXISTS positive_pay_start_date date;
 COMMENT ON COLUMN bank_accounts.positive_pay_enabled IS 'On the bank''s Positive Pay Addendum: checks drawn on it belong in the issued-check file. Read by lib/accounting/positive_pay_submissions.js.';
-COMMENT ON COLUMN bank_accounts.positive_pay_start_date IS 'First issue date exported to Positive Pay. NULL = not started: every outstanding check on the account is backlog awaiting review, and nothing exports.';
 
--- The four NewFirst operating accounts on the Addendum. Enabled, not started.
+-- The four NewFirst operating accounts on the Addendum.
 UPDATE bank_accounts SET positive_pay_enabled = true
  WHERE bank_id = '16e07b6a-8902-4d1a-980e-db78938b98b3'
    AND id IN ('2dd4bf0b-0e71-4da0-b8a7-269845ddf54c',   -- Canyon Gate Operating Checking (5313)
@@ -66,7 +64,7 @@ CREATE TABLE IF NOT EXISTS positive_pay_submissions (
   uploaded_by_user_id         uuid,
   uploaded_by_name            text,
   outcome_recorded_at         timestamptz,
-  outcome_recorded_by_user_id uuid,
+  outcome_recorded_by_user_id uuid,                       -- null when Kat recorded it
   outcome_recorded_by_name    text,
   bank_reference              text,                       -- the bank's import / confirmation id, when it gives one
   outcome_evidence            text,                       -- what the person saw (import summary, receipt, email)
@@ -74,7 +72,7 @@ CREATE TABLE IF NOT EXISTS positive_pay_submissions (
   notes                       text,
   created_at                  timestamptz NOT NULL DEFAULT now(),
   updated_at                  timestamptz NOT NULL DEFAULT now(),
-  CHECK (status NOT IN ('accepted', 'partially_accepted', 'rejected') OR (outcome_recorded_at IS NOT NULL AND outcome_recorded_by_user_id IS NOT NULL AND length(trim(coalesce(outcome_evidence, ''))) > 0)),
+  CHECK (status NOT IN ('accepted', 'partially_accepted', 'rejected') OR (outcome_recorded_at IS NOT NULL AND length(trim(coalesce(outcome_recorded_by_name, ''))) > 0 AND length(trim(coalesce(outcome_evidence, ''))) > 0)),
   CHECK (status <> 'cancelled' OR length(trim(coalesce(cancelled_reason, ''))) > 0)
 );
 CREATE INDEX IF NOT EXISTS idx_pp_submissions_bank_status ON positive_pay_submissions (bank_id, status, prepared_at DESC);

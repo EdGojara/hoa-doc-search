@@ -7,7 +7,7 @@
 //   GET  /run/:printRunId/pdf                      rendered checks PDF
 //   GET  /register?community_id&bank_account_id    the check register
 //   POST /void                                     void a check (append-only)
-//   GET  /positive-pay/status                      next file, backlog, files, exceptions
+//   GET  /positive-pay/status                      next file, files, exceptions
 //   POST /positive-pay/prepare                     record the next tracked file
 //   GET  /positive-pay/submissions/:id/file        download it (changes nothing)
 //   POST /positive-pay/submissions/:id/uploaded|outcome|cancel
@@ -554,7 +554,7 @@ const actorFrom = (u) => ({ userId: u.user.id, name: u.full_name || u.email || '
 const RETIRED_PP = { error: 'retired', detail: 'Positive Pay files are prepared on the Positive Pay page (/admin/positive-pay), one tracked file for all NewFirst accounts. This download is no longer available.' };
 router.get('/run/:printRunId/positive-pay', (req, res) => res.status(410).json(RETIRED_PP));
 
-// GET /positive-pay/status — what the next file would contain, the backlog, files and exceptions.
+// GET /positive-pay/status — what the next file would contain, the files and what needs attention.
 router.get('/positive-pay/status', async (req, res) => {
   try {
     const u = await requireStaff(req, res); if (!u) return;
@@ -608,15 +608,14 @@ router.post('/positive-pay/submissions/:id/cancel', express.json(), async (req, 
   } catch (err) { ppErr(res, 'pp-cancel', err); }
 });
 
-// POST /positive-pay/accounts/:id/start-date — ADMIN: first issue date exported for the
-// account, set after the backlog review. Earlier checks stay backlog.
-router.post('/positive-pay/accounts/:id/start-date', express.json(), async (req, res) => {
+// POST /positive-pay/cutoff — ADMIN, once: { from_date } is the first issue date the file
+// covers, set after the historical checks are resolved with NewFirst.
+router.post('/positive-pay/cutoff', express.json(), async (req, res) => {
   try {
     const admin = await requireAdmin(req, res); if (!admin) return;
-    res.json({ account: await PPS.setStartDate(supabase, req.params.id, (req.body || {}).start_date) });
-  } catch (err) { ppErr(res, 'pp-start-date', err); }
+    res.json({ bank: await PPS.setCutoff(supabase, (req.body || {}).from_date) });
+  } catch (err) { ppErr(res, 'pp-cutoff', err); }
 });
-
 
 router.get('/register', async (req, res) => {
   try {
