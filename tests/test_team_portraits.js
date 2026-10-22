@@ -66,7 +66,7 @@ check('identity: face v2 is the reference, the excluded high-resolution set is n
 });
 check('the persona image map owns amanda.jpg; every mapped photo exists; no other teammate is mapped', () => {
   const map = JSON.parse(fs.readFileSync(path.join(ROOT, 'lib', 'team', 'persona_images.json'), 'utf8'));
-  assert.deepStrictEqual(Object.keys(map).filter((k) => !k.startsWith('_')), ['amanda', 'paige', 'phoebe', 'maggie']);
+  assert.deepStrictEqual(Object.keys(map).filter((k) => !k.startsWith('_')), ['amanda', 'paige', 'phoebe', 'maggie', 'claire', 'annie', 'miranda']);
   assert.strictEqual(map.amanda.canonical_square.out, 'public/assets/presentations/team/amanda.jpg');
   for (const k of Object.keys(map.amanda.photos)) assert.ok(fs.existsSync(path.join(ROOT, map.amanda.dir, k + '.jpg')), k);
 });
@@ -97,7 +97,7 @@ check('old-face video posters use the legacy portrait (poster matches the video)
   assert.match(story, /poster: '\/assets\/presentations\/team\/amanda_legacy_v1\.jpg', video_topic: 'clma_amanda_management'/);
   assert.ok(!/team\/amanda\.jpg', video_topic/.test(story), 'no old-face video poster on amanda.jpg');
   const resolve = fs.readFileSync(path.join(ROOT, 'lib', 'presentations', 'resolve.js'), 'utf8');
-  assert.match(resolve, /LEGACY_VIDEO_POSTER = \{ amanda: 'amanda_legacy_v1', paige: 'paige_legacy_v1' \}/);
+  assert.match(resolve, /LEGACY_VIDEO_POSTER = \{ amanda: 'amanda_legacy_v1', paige: 'paige_legacy_v1', claire: 'claire_legacy_2026-10-22' \}/);
   assert.match(resolve, /LEGACY_VIDEO_POSTER\[seg\.persona\] \|\| seg\.persona/);
 });
 
@@ -187,6 +187,37 @@ check('Maggie: nothing upscaled; M365 and the portal video portrait unchanged un
     const [w, h] = map.photos[owner].native_px; const d = jpegSize(path.join(dir, f));
     assert.ok(d.w <= w && d.h <= h, `${f} ${d.w}x${d.h} > ${w}x${h}`);
   }
+});
+
+// ---- Claire, Annie, Miranda (Ed 2026-10-22): the 10/21 website portraits become their TrustEd portraits ----
+const CAM = {
+  claire: { current: 'f97d69fd58571c7a862481465fc516c8fda60018edf6434f4b8730aa674f7232', previous: 'a3f63910631113536831c315085e0e6cd896b41a14a6623a542421e108177488' },
+  annie: { current: '772132ed8e8d222f095d5d39fec57e0109fb0b3c72955f8610546b811c38df9f', previous: '0d81c7a568ff4a64edbf6d3274e992e79929eab1a36c3687557a93efe66f413a' },
+  miranda: { current: '83c779a515dd418d94f1bd08e49d30e5dabb25bd00b0fd508979b5dfab6394d1', previous: 'aa09642662b7d379cd403322dfdabf126bc06c5426aa81a9aeb6bd8a6dc87060' },
+};
+for (const [k, s] of Object.entries(CAM)) {
+  check(`${k}.jpg is the 2026-10-22 portrait (640x640); the previous portrait is preserved byte-identical`, () => {
+    assert.strictEqual(sha(path.join(TEAM, k + '.jpg')), s.current, 'a deliberate replacement updates this test');
+    assert.deepStrictEqual(jpegSize(path.join(TEAM, k + '.jpg')), { w: 640, h: 640 });
+    assert.strictEqual(sha(path.join(TEAM, k + '_legacy_2026-10-22.jpg')), s.previous);
+  });
+  check(`${k}: only the cropped square is stored (no AI-drawn sign or screen); nothing upscaled; M365, HeyGen and portal face unchanged`, () => {
+    const map = JSON.parse(fs.readFileSync(path.join(ROOT, 'lib', 'team', 'persona_images.json'), 'utf8'))[k];
+    for (const pl of ['microsoft_365', 'heygen_avatar', 'portal_video_visit']) assert.strictEqual(map.placements[pl].photo, 'unchanged', pl);
+    const dir = path.join(ROOT, map.dir);
+    const [name, ph] = Object.entries(map.photos)[0];
+    assert.ok(ph.crop && ph.crop.w === ph.crop.h, 'stored photo is the square crop');
+    for (const f of fs.readdirSync(dir).filter((x) => x.endsWith('.jpg'))) {
+      const dd = jpegSize(path.join(dir, f));
+      assert.ok(dd.w <= ph.crop.w && dd.h <= ph.crop.h, `${f} ${dd.w}x${dd.h} exceeds the crop`);
+      assert.strictEqual(dd.w, dd.h, `${f} is square`);
+    }
+  });
+}
+check("Claire's team videos keep a poster that matches the face they show", () => {
+  const resolve = fs.readFileSync(path.join(ROOT, 'lib', 'presentations', 'resolve.js'), 'utf8');
+  assert.match(resolve, /claire: 'claire_legacy_2026-10-22'/);
+  assert.ok(fs.existsSync(path.join(TEAM, 'claire_legacy_2026-10-22.jpg')));
 });
 
 (async () => {
