@@ -663,6 +663,10 @@ function pendingReplyHtml(m){
 }
 function draftBoxHtml(id, subject, body, careful, persona, covers, genAtts, sender, opts){
   persona = persona || 'claire';
+  // The stored draft's files (extracted.draft.attachments) are exactly what Send attaches:
+  // remember them on first render so a re-draft never hides a file that will still go out,
+  // and never shows one that will not. (Ed 2026-10-20.)
+  if (opts && opts.restore) genAttsByMsg[id] = Array.isArray(genAtts) ? genAtts : [];
   const unsent = (opts && opts.restore) ? loadUnsent(id) : null;
   if (unsent) {
     body = unsent.body;
@@ -1232,8 +1236,9 @@ async function doSend(id, btn, careful, persona){
   const body = _dt.value;
   btn.disabled = true; btn.textContent = 'Sending…';
   const also_handle = covers.map(c=>c.id);
-  // Auto attachments (the ARC form) attach server-side by classification. Split the
-  // rest: filed library docs go by id; files dragged in go by storage_path.
+  // An ARC form offered by the draft is STAGED on the stored draft (shown read-only, attached
+  // server-side and fail-closed). Manual attachments: filed library docs go by id; files
+  // dragged in go by storage_path.
   const manual = (attachByMsg[id]||[]).filter(a=>!a.auto);
   const attach_doc_ids = manual.filter(a=>!a.upload).map(a=>a.id);
   const attach_uploads = manual.filter(a=>a.upload&&a.storage_path).map(a=>({name:a.title, storage_path:a.storage_path, mime:a.mime}));
