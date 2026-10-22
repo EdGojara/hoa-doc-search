@@ -523,7 +523,9 @@ router.post('/run', express.json(), async (req, res) => {
       community_id: b.community_id, bank_account_id: b.bank_account_id,
       payment_date: b.payment_date, invoice_ids: b.invoice_ids, memo: b.memo, user: b.user || null,
     });
-    res.json(run);
+    // NewFirst checks in this run become Kat's Positive Pay task now (event-driven; never throws).
+    const positive_pay = await require('../lib/accounting/positive_pay_submissions').syncKatTask(supabase, { reason: 'check_run' });
+    res.json({ ...run, positive_pay });
   } catch (err) { handleErr(res, 'run', err); }
 });
 
@@ -566,7 +568,9 @@ router.get('/positive-pay/status', async (req, res) => {
 router.post('/positive-pay/prepare', express.json(), async (req, res) => {
   try {
     const u = await requireStaff(req, res); if (!u) return;
-    res.json(await PPS.prepare(supabase, { preparedBy: u.full_name || u.email || 'Staff', userId: u.user.id }));
+    const r = await PPS.prepare(supabase, { preparedBy: u.full_name || u.email || 'Staff', userId: u.user.id });
+    await PPS.syncKatTask(supabase, { reason: 'prepared' });
+    res.json(r);
   } catch (err) { ppErr(res, 'pp-prepare', err); }
 });
 
@@ -586,17 +590,21 @@ router.get('/positive-pay/submissions/:id/file', async (req, res) => {
 router.post('/positive-pay/submissions/:id/uploaded', express.json(), async (req, res) => {
   try {
     const u = await requireStaff(req, res); if (!u) return;
-    res.json({ submission: await PPS.markUploaded(supabase, req.params.id, { actor: actorFrom(u), note: (req.body || {}).note || null }) });
+    const submission = await PPS.markUploaded(supabase, req.params.id, { actor: actorFrom(u), note: (req.body || {}).note || null });
+    await PPS.syncKatTask(supabase, { reason: 'uploaded' });
+    res.json({ submission });
   } catch (err) { ppErr(res, 'pp-uploaded', err); }
 });
 
-// POST /positive-pay/submissions/:id/outcome — the bank's confirmation:
+// POST /positive-pay/submissions/:id/outcome — NewFirst's import result (from prepared or uploaded):
 //   { outcome: accepted|partially_accepted|rejected, evidence, bank_reference?, reason?, rejected?: [{check_register_id, reason}] }
 router.post('/positive-pay/submissions/:id/outcome', express.json(), async (req, res) => {
   try {
     const u = await requireStaff(req, res); if (!u) return;
     const b = req.body || {};
-    res.json(await PPS.recordOutcome(supabase, req.params.id, { actor: actorFrom(u), outcome: b.outcome, evidence: b.evidence, bankReference: b.bank_reference || null, reason: b.reason || null, rejected: Array.isArray(b.rejected) ? b.rejected : [], rejectedCheckNumbers: Array.isArray(b.rejected_check_numbers) ? b.rejected_check_numbers : [] }));
+    const r = await PPS.recordOutcome(supabase, req.params.id, { actor: actorFrom(u), outcome: b.outcome, evidence: b.evidence, bankReference: b.bank_reference || null, reason: b.reason || null, rejected: Array.isArray(b.rejected) ? b.rejected : [], rejectedCheckNumbers: Array.isArray(b.rejected_check_numbers) ? b.rejected_check_numbers : [] });
+    await PPS.syncKatTask(supabase, { reason: `result_${b.outcome}` });
+    res.json(r);
   } catch (err) { ppErr(res, 'pp-outcome', err); }
 });
 
@@ -604,7 +612,9 @@ router.post('/positive-pay/submissions/:id/outcome', express.json(), async (req,
 router.post('/positive-pay/submissions/:id/cancel', express.json(), async (req, res) => {
   try {
     const u = await requireStaff(req, res); if (!u) return;
-    res.json({ submission: await PPS.cancel(supabase, req.params.id, { actor: actorFrom(u), reason: (req.body || {}).reason }) });
+    const submission = await PPS.cancel(supabase, req.params.id, { actor: actorFrom(u), reason: (req.body || {}).reason });
+    await PPS.syncKatTask(supabase, { reason: 'cancelled' });
+    res.json({ submission });
   } catch (err) { ppErr(res, 'pp-cancel', err); }
 });
 
@@ -613,7 +623,9 @@ router.post('/positive-pay/submissions/:id/cancel', express.json(), async (req, 
 router.post('/positive-pay/cutoff', express.json(), async (req, res) => {
   try {
     const admin = await requireAdmin(req, res); if (!admin) return;
-    res.json({ bank: await PPS.setCutoff(supabase, (req.body || {}).from_date) });
+    const bank = await PPS.setCutoff(supabase, (req.body || {}).from_date);
+    await PPS.syncKatTask(supabase, { reason: 'cutoff_set' });
+    res.json({ bank });
   } catch (err) { ppErr(res, 'pp-cutoff', err); }
 });
 
@@ -680,12 +692,15 @@ router.post('/void', express.json(), async (req, res) => {
     if (!b.reason || !String(b.reason).trim()) {
       return res.status(400).json({ error: 'reason_required', detail: 'A void is a permanent audit record. Say why.' });
     }
-    res.json(await voidCheck({
+    const voided = await voidCheck({
       check_register_id: b.check_register_id,
       reason: b.reason,
       disposition: b.disposition || 'reissue',
       user: admin.user.id,
-    }));
+    });
+    // A check voided after it was sent to Positive Pay must be removed at the bank: Kat's task says so.
+    await require('../lib/accounting/positive_pay_submissions').syncKatTask(supabase, { reason: 'void' });
+    res.json(voided);
   } catch (err) {
     if (err && err.code === 'invalid_state') return res.status(409).json({ error: err.message });
     if (err && err.code === 'invalid_input') return res.status(400).json({ error: err.message });

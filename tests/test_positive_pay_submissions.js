@@ -103,7 +103,7 @@ console.log('exceptions');
   check('no cutoff set is reported', P.exceptions({ plan: P.planExport({ accounts: [acct()], checks: [] }), now }).some((x) => x.kind === 'no_cutoff'));
   check('a prepared file not uploaded, and an uploaded file with no bank confirmation, are reported', kinds.includes('awaiting_upload') && kinds.includes('awaiting_confirmation'));
   check('a rejected check not yet resubmitted is reported', ex.some((x) => x.kind === 'rejected' && /payee mismatch/.test(x.text)));
-  check('a check voided after it was sent says to cancel it at the bank', ex.some((x) => x.kind === 'voided_after_submission' && /cancel it in Positive Pay/.test(x.text)));
+  check('a check voided after it was sent says to cancel it at the bank', ex.some((x) => x.kind === 'voided_after_submission' && /remove it in NewFirst Positive Pay/.test(x.text)));
 }
 
 // In-memory store: enough of the PostgREST builder for the lifecycle, with the
@@ -112,10 +112,10 @@ function store(seed) {
   const T = JSON.parse(JSON.stringify(seed)); let n = 0;
   const liveDup = (rows) => { const live = T.positive_pay_submission_items.filter((i) => ['included', 'accepted'].includes(i.status)); for (const r of rows) if (['included', 'accepted'].includes(r.status) && live.some((i) => i.check_register_id === r.check_register_id && i.id !== r.id)) return true; return false; };
   function q(table) {
-    let op = 'select', payload = null; const f = []; let lim = null, rng = null, sel = false;
+    let op = 'select', payload = null; const f = []; let lim = null, rng = null, sel = false, one = false;
     const api = {
       select() { sel = true; return api; }, eq(c, v) { f.push((r) => r[c] === v); return api; }, in(c, v) { f.push((r) => v.includes(r[c])); return api; },
-      order() { return api; }, limit(x) { lim = x; return api; }, range(a, b) { rng = [a, b]; return api; },
+      order() { return api; }, limit(x) { lim = x; return api; }, range(a, b) { rng = [a, b]; return api; }, single() { one = true; return api; },
       insert(rows) { op = 'insert'; payload = Array.isArray(rows) ? rows : [rows]; return api; },
       update(p) { op = 'update'; payload = p; return api; },
       then(res, rej) { return Promise.resolve(run()).then(res, rej); },
@@ -125,7 +125,8 @@ function store(seed) {
       if (op === 'insert') {
         const rows = payload.map((r) => ({ id: `${table}-${++n}`, created_at: new Date().toISOString(), prepared_at: new Date().toISOString(), ...r }));
         if (table === 'positive_pay_submission_items' && (liveDup(rows) || new Set(rows.map((r) => r.check_register_id)).size !== rows.length)) return { data: null, error: { code: '23505', message: 'duplicate key value violates unique constraint "uq_pp_items_one_live_per_check"' } };
-        t.push(...rows); return { data: sel ? rows : null, error: null };
+        if (table === 'work_items' && rows.some((r) => r.source_ref && t.some((w) => w.source_ref === r.source_ref && ['new', 'in_progress', 'waiting'].includes(w.status)))) return { data: null, error: { code: '23505', message: 'ux_work_items_open_source_ref' } };
+        t.push(...rows); return { data: sel ? (one ? rows[0] : rows) : null, error: null };
       }
       let rows = t.filter((r) => f.every((g) => g(r)));
       if (op === 'update') {
@@ -160,7 +161,7 @@ function store(seed) {
     check('downloading rebuilds the identical file and changes nothing', require('crypto').createHash('sha256').update(f1.csv).digest('hex') === s1.file_sha256 && db.T.positive_pay_submissions[0].status === 'prepared');
     const r2 = await P.prepare(db, {});
     check('preparing again sends nothing twice: no new file while the checks are in a live one', r2.submission === null && db.T.positive_pay_submissions.length === 1);
-    check('an outcome cannot be recorded before the upload', await throwsCode(() => P.recordOutcome(db, s1.id, { actor: { kat: true }, outcome: 'accepted', evidence: 'x' }), 'invalid_state'));
+    check('a result needs NewFirst\'s message as evidence', await throwsCode(() => P.recordOutcome(db, s1.id, { actor: { kat: true }, outcome: 'accepted', evidence: '' }), 'invalid_input'));
     check('no anonymous actor: a person or Kat must record the upload', await throwsCode(() => P.markUploaded(db, s1.id, {}), 'invalid_input'));
     await P.markUploaded(db, s1.id, { actor: { kat: true } });
     check('Kat records the upload; the file is still not accepted', db.T.positive_pay_submissions[0].status === 'uploaded' && db.T.positive_pay_submissions[0].uploaded_by_name === P.KAT);
@@ -214,6 +215,44 @@ function store(seed) {
       const pending = await P.prepare(d, {});
       check('while that file awaits upload and confirmation, its checks are not put in another file', !pending.submission);
     } finally { cf2.decryptField = real2; }
+  }
+
+  console.log("Kat's task: opened by a check run, kept open until resolved, closed by evidence");
+  {
+    const bk = [{ id: P.NEWFIRST_BANK_ID, positive_pay_settings: { export_from: '2026-10-20' } }];
+    const d = store({ banks: bk, bank_accounts: [accountRow], check_register: [], positive_pay_submission_items: [], positive_pay_submissions: [], work_items: [], work_item_events: [] });
+    const cf3 = require('../lib/crypto_field'); const real3 = cf3.decryptField; cf3.decryptField = (x) => x;
+    const open = () => d.T.work_items.filter((w) => w.source_ref === P.TASK_REF && ['new', 'in_progress', 'waiting'].includes(w.status));
+    try {
+      let r = await P.syncKatTask(d, { reason: 'check_run', now: new Date('2026-10-23T15:00:00Z') });
+      check('a day with no NewFirst checks: no task, nothing runs', r.action === 'none' && !d.T.work_items.length);
+      d.T.check_register.push(chk({ id: 't1', check_number: '1200', issue_date: '2026-10-26' }), chk({ id: 't2', check_number: '1201', issue_date: '2026-10-26' }));
+      r = await P.syncKatTask(d, { reason: 'check_run', now: new Date('2026-10-26T20:00:00Z') });
+      const t = open()[0];
+      check('a NewFirst check run opens ONE task for Kat, due 5:00 pm Central that day', r.action === 'opened' && open().length === 1 && t.assigned_to === 'Kat' && /2 checks to send/.test(t.title) && t.sla_due_at === '2026-10-26T22:00:00.000Z' && t.action_url === '/admin/positive-pay', JSON.stringify(t));
+      await P.syncKatTask(d, { reason: 'check_run' });
+      check('a second event the same day updates the same task, never a second one', open().length === 1);
+      const prep = await P.prepare(d, {});
+      await P.syncKatTask(d, { reason: 'prepared' });
+      check('prepared but not imported: the task stays open and says the file awaits NewFirst', open().length === 1 && /awaiting NewFirst/.test(open()[0].title));
+      await P.recordOutcome(d, prep.submission.id, { actor: { kat: true }, outcome: 'accepted', evidence: 'File imported successfully' });
+      const sub = d.T.positive_pay_submissions.find((x) => x.id === prep.submission.id);
+      check('recording the result straight from prepared stamps the import too (one step for Kat)', sub.status === 'accepted' && sub.uploaded_at && sub.uploaded_by_name === P.KAT && sub.outcome_recorded_by_name === P.KAT);
+      r = await P.syncKatTask(d, { reason: 'result_accepted' });
+      check('NewFirst accepted everything: the task closes by evidence', r.action === 'closed' && !open().length && d.T.work_item_events.some((e) => e.event === 'closed_by_evidence'));
+      r = await P.syncKatTask(d, { reason: 'check_run' });
+      check('quiet days after: nothing reopens', r.action === 'none' && !open().length);
+      d.T.check_register.find((c) => c.id === 't1').status = 'voided'; d.T.check_register.find((c) => c.id === 't1').voided_at = '2026-10-27T15:00:00Z';
+      r = await P.syncKatTask(d, { reason: 'void' });
+      check('a check voided after NewFirst accepted it reopens Kat\'s task to remove it at the bank', r.action === 'opened' && /remove it in NewFirst Positive Pay/.test(open()[0].summary));
+      d.T.check_register.push(chk({ id: 't3', check_number: '1202', issue_date: '2026-10-28' }));
+      const p2 = await P.prepare(d, {});
+      await P.recordOutcome(d, p2.submission.id, { actor: { kat: true }, outcome: 'rejected', evidence: 'Error: file could not be imported', reason: 'file could not be imported' });
+      await P.syncKatTask(d, { reason: 'result_rejected' });
+      check('a file that did not import keeps the task open with the check waiting to send again', open().length === 1 && /1 check to send/.test(open()[0].title));
+      const failing = await P.syncKatTask({ from: () => { throw new Error('db down'); } }, { reason: 'check_run' });
+      check('a failure syncing the task never breaks the check run (logged, returned)', failing.action === 'error');
+    } finally { cf3.decryptField = real3; }
   }
 
   console.log('static');

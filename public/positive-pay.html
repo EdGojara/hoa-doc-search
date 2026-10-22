@@ -32,7 +32,7 @@
 <div class="wrap">
   <a class="back" href="/">&larr; Back to trustEd</a>
   <h1>🛡️ Positive Pay — NewFirst National Bank</h1>
-  <div class="sub">On any day trustEd issues checks on a NewFirst account, Kat prepares one file of every check the bank has not yet confirmed (new checks, and any carried forward from a failed upload), uploads it in NewFirst's portal, and records the bank's confirmation here. No checks, no file. NewFirst matches presented checks against it and emails us any exception; Kat investigates and an authorized person decides pay or return in the bank portal.</div>
+  <div class="sub">When a check run includes NewFirst checks, Kat gets a task here. She prepares one file of every check NewFirst has not yet accepted (including any from a file that did not import), imports it in NewFirst, and records NewFirst's result. No checks, no task. NewFirst matches presented checks and emails any exception; Kat investigates and an authorized person decides pay or return.</div>
   <div id="err"></div>
 
   <div class="card">
@@ -41,9 +41,9 @@
   </div>
 
   <div class="card">
-    <h2>Next file <span id="nextPill" class="pill">…</span></h2>
+    <h2>Checks to send <span id="nextPill" class="pill">…</span></h2>
     <div id="next"><div class="muted">Loading…</div></div>
-    <div class="note">Preparing a file records it as <b>prepared</b>. It is not sent and not accepted until the upload and the bank's confirmation are recorded below. A check is in only one live file, so it can never be sent twice.</div>
+    <div class="note">Preparing a file does not send it. A check counts as sent only when NewFirst's import result is recorded. A check is in only one live file, so it is never sent twice.</div>
   </div>
 
   <div class="card">
@@ -70,7 +70,7 @@ async function af(url,opts){ opts=opts||{}; const h=Object.assign({},opts.header
   return fetch(url,Object.assign({},opts,{headers:h,credentials:'same-origin'})); }
 async function post(url,body){ const r=await af(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body||{})}); const j=await r.json().catch(()=>({}));
   if(!r.ok) throw new Error(j.error||('HTTP '+r.status)); return j; }
-const STATUS={prepared:['warn','Prepared, not uploaded'],uploaded:['warn','Uploaded, awaiting bank confirmation'],accepted:['ok','Accepted by bank'],partially_accepted:['bad','Partially accepted'],rejected:['bad','Rejected by bank'],cancelled:['','Cancelled']};
+const STATUS={prepared:['warn','Prepared: import it in NewFirst'],uploaded:['warn','Imported, result pending'],accepted:['ok','Accepted by NewFirst'],partially_accepted:['bad','Some checks not imported'],rejected:['bad','Not imported'],cancelled:['','Cancelled']};
 
 (async()=>{
   try{ const cfg=await (await fetch('/api/auth/config')).json();
@@ -93,7 +93,7 @@ function render(){
   $('next').innerHTML=n.length?`<table><thead><tr><th>Community / account</th><th>Check #</th><th>Issued</th><th>Payee</th><th style="text-align:right;">Amount</th></tr></thead><tbody>${n.map(c=>{const a=(s.accounts||[]).find(x=>x.id===c.bank_account_id)||{};return `<tr><td>${esc(a.community||'')} · …${esc(a.account_last4||'')}</td><td>${esc(c.check_number)}</td><td>${esc(String(c.issue_date||'').slice(0,10))}</td><td>${esc(c.payee_name)}</td><td style="text-align:right;">${money(c.amount_cents)}</td></tr>`;}).join('')}
       <tr style="font-weight:700;background:#f8fafc;"><td colspan="4" style="text-align:right;">Total</td><td style="text-align:right;">${money(s.to_export_total_cents)}</td></tr></tbody></table>
       <div style="margin-top:10px;"><button class="btn" id="prepBtn" onclick="prepare()">Prepare file (${n.length})</button></div>`
-    :'<div class="muted">No newly issued checks are waiting to be sent.</div>';
+    :'<div class="muted">No checks are waiting to be sent.</div>';
   const f=s.submissions||[];
   $('files').innerHTML=f.length?`<table><thead><tr><th>Prepared</th><th>Checks</th><th style="text-align:right;">Total</th><th>Status</th><th></th></tr></thead><tbody>${f.map(fileRow).join('')}</tbody></table>`:'<div class="muted">No files yet.</div>';
   $('accounts').innerHTML=`<table><thead><tr><th>Community</th><th>Account</th><th>On the Addendum</th><th>Status</th></tr></thead><tbody>${(s.accounts||[]).map(a=>{
@@ -108,16 +108,16 @@ function fileRow(f){
   const [cls,label]=STATUS[f.status]||['',f.status];
   const dl=f.status==='cancelled'?'':`<a class="btn ghost sm" href="#" onclick="download('${f.id}');return false;">Download</a> `;
   let act='';
-  if(f.status==='prepared') act=`<button class="btn sm" onclick="uploaded('${f.id}')">Record upload</button> <button class="btn ghost sm" onclick="cancelFile('${f.id}')">Cancel</button>`;
-  if(f.status==='uploaded') act=`<button class="btn sm" onclick="outcomeForm('${f.id}')">Record bank confirmation</button>`;
-  const who=[f.prepared_by?'Prepared by '+esc(f.prepared_by):'', f.uploaded_at?'uploaded '+when(f.uploaded_at)+(f.uploaded_by_name?' by '+esc(f.uploaded_by_name):''):'', f.outcome_recorded_at?'confirmed '+when(f.outcome_recorded_at)+(f.outcome_recorded_by_name?' by '+esc(f.outcome_recorded_by_name):''):''].filter(Boolean).join(' · ');
-  const ev=f.outcome_evidence?`<div class="muted" style="font-size:11.5px;">Bank confirmation: ${esc(f.outcome_evidence)}${f.bank_reference?' (ref '+esc(f.bank_reference)+')':''}</div>`:(f.cancelled_reason?`<div class="muted" style="font-size:11.5px;">Cancelled: ${esc(f.cancelled_reason)}</div>`:'');
+  if(f.status==='prepared') act=`<button class="btn sm" onclick="outcomeForm('${f.id}')">Record NewFirst result</button> <button class="btn ghost sm" title="Imported, but NewFirst has not shown the result yet" onclick="pending('${f.id}')">Result pending</button> <button class="btn ghost sm" onclick="cancelFile('${f.id}')">Cancel</button>`;
+  if(f.status==='uploaded') act=`<button class="btn sm" onclick="outcomeForm('${f.id}')">Record NewFirst result</button>`;
+  const who=[f.prepared_by?'Prepared by '+esc(f.prepared_by):'', f.uploaded_at?'imported '+when(f.uploaded_at)+(f.uploaded_by_name?' by '+esc(f.uploaded_by_name):''):'', f.outcome_recorded_at?'result recorded '+when(f.outcome_recorded_at)+(f.outcome_recorded_by_name?' by '+esc(f.outcome_recorded_by_name):''):''].filter(Boolean).join(' · ');
+  const ev=f.outcome_evidence?`<div class="muted" style="font-size:11.5px;">NewFirst: ${esc(f.outcome_evidence)}</div>`:(f.cancelled_reason?`<div class="muted" style="font-size:11.5px;">Cancelled: ${esc(f.cancelled_reason)}</div>`:'');
   return `<tr><td>${when(f.prepared_at)}<div class="muted" style="font-size:11.5px;">${who}</div>${ev}<div id="form-${f.id}"></div></td><td>${f.check_count}</td><td style="text-align:right;">${money(f.total_cents)}</td><td><span class="pill ${cls}">${esc(label)}</span></td><td style="white-space:nowrap;">${dl}${act}</td></tr>`;
 }
 
 async function prepare(){
   const b=$('prepBtn'); if(b){ b.disabled=true; b.textContent='Preparing…'; }
-  try{ const j=await post('/api/checks/positive-pay/prepare'); await load(); if(j.submission) download(j.submission.id); else alert(j.reason||'Nothing to prepare.'); }
+  try{ const j=await post('/api/checks/positive-pay/prepare'); await load(); if(j.submission){ download(j.submission.id); outcomeForm(j.submission.id); } else alert(j.reason||'Nothing to prepare.'); }
   catch(e){ alert('Could not prepare the file: '+e.message); load(); }
 }
 async function download(id){
@@ -126,29 +126,33 @@ async function download(id){
     const url=URL.createObjectURL(await r.blob()); const a=document.createElement('a'); a.href=url; a.download=name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(url),4000); }
   catch(e){ alert('Could not download the file: '+e.message); }
 }
-async function uploaded(id){
-  if(!confirm('Record that this file was uploaded in NewFirst\'s portal? This is not the bank\'s acceptance; record that next.')) return;
+async function pending(id){
+  if(!confirm("Record that this file was imported but NewFirst has not shown the result yet? It stays on Kat's list until the result is recorded.")) return;
   try{ await post('/api/checks/positive-pay/submissions/'+id+'/uploaded'); load(); }catch(e){ alert(e.message); }
 }
 async function cancelFile(id){
-  const reason=prompt('Why is this file being cancelled? (It must not be uploaded; its checks go back into the next file.)'); if(!reason) return;
+  const reason=prompt('Why is this file being cancelled? (It must not be imported; its checks go back into the next file.)'); if(!reason) return;
   try{ await post('/api/checks/positive-pay/submissions/'+id+'/cancel',{reason}); load(); }catch(e){ alert(e.message); }
 }
 function outcomeForm(id){
-  $('form-'+id).innerHTML=`<div class="form">
-    <label>What did NewFirst confirm?</label>
-    <select id="oc-${id}" onchange="$('rj-${id}').style.display=this.value==='partially_accepted'?'block':'none'">
-      <option value="accepted">Every check accepted</option><option value="partially_accepted">Some checks rejected</option><option value="rejected">The file was rejected</option></select>
-    <label>Bank confirmation (what the import summary, receipt or email said)</label><textarea id="ev-${id}" rows="2"></textarea>
-    <label>Bank reference (if any)</label><input id="ref-${id}">
-    <label>Reason (if rejected)</label><input id="why-${id}">
-    <div id="rj-${id}" style="display:none;"><label>Rejected check numbers, comma separated</label><input id="rjn-${id}"></div>
-    <div style="margin-top:10px;"><button class="btn sm" onclick="saveOutcome('${id}')">Save confirmation</button></div></div>`;
+  const box=$('form-'+id); if(!box) return;
+  box.innerHTML=`<div class="form">
+    <div class="muted" style="font-size:12px;">In NewFirst: Management Tools, Positive Pay, Overview, Import a File. Choose this file and the Bedrock template, click Next, then record what NewFirst showed.</div>
+    <label>What did NewFirst show?</label>
+    <select id="oc-${id}" onchange="ocChange('${id}')">
+      <option value="accepted">Confirmation: imported with no exceptions (or every exception corrected in NewFirst)</option>
+      <option value="partially_accepted">Import exceptions on some checks, not corrected</option>
+      <option value="rejected">Error: the file was not imported</option></select>
+    <label>NewFirst's message (copy it here)</label><textarea id="ev-${id}" rows="2"></textarea>
+    <div id="rj-${id}" style="display:none;"><label>Check numbers not imported, comma separated</label><input id="rjn-${id}"></div>
+    <div class="muted" style="font-size:11.5px; margin-top:6px;">Checks that were not imported go back into the next file automatically.</div>
+    <div style="margin-top:10px;"><button class="btn sm" onclick="saveOutcome('${id}')">Save result</button></div></div>`;
 }
+function ocChange(id){ $('rj-'+id).style.display=$('oc-'+id).value==='partially_accepted'?'block':'none'; }
 async function saveOutcome(id){
-  const outcome=$('oc-'+id).value, evidence=$('ev-'+id).value.trim(), why=$('why-'+id).value.trim();
-  if(!evidence){ alert('Describe the bank\'s confirmation.'); return; }
-  const body={outcome,evidence,bank_reference:$('ref-'+id).value.trim()||null,reason:why||null};
+  const outcome=$('oc-'+id).value, evidence=$('ev-'+id).value.trim();
+  if(!evidence){ alert("Copy NewFirst's message into the box."); return; }
+  const body={outcome,evidence,reason:outcome==='accepted'?null:evidence};
   if(outcome==='partially_accepted') body.rejected_check_numbers=$('rjn-'+id).value.split(',').map(x=>x.trim()).filter(Boolean);
   try{ await post('/api/checks/positive-pay/submissions/'+id+'/outcome',body); load(); }catch(e){ alert(e.message); }
 }
