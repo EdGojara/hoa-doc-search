@@ -560,7 +560,7 @@ router.get('/run/:printRunId/positive-pay', (req, res) => res.status(410).json(R
 router.get('/positive-pay/status', async (req, res) => {
   try {
     const u = await requireStaff(req, res); if (!u) return;
-    res.json(await PPS.status(supabase));
+    res.json(await PPS.status(supabase, PPS.NEWFIRST_BANK_ID, { isAdmin: u.role === 'admin' }));
   } catch (err) { ppErr(res, 'pp-status', err); }
 });
 
@@ -618,12 +618,12 @@ router.post('/positive-pay/submissions/:id/cancel', express.json(), async (req, 
   } catch (err) { ppErr(res, 'pp-cancel', err); }
 });
 
-// POST /positive-pay/cutoff — ADMIN, once: { from_date } is the first issue date the file
-// covers, set after the historical checks are resolved with NewFirst.
+// POST /positive-pay/cutoff — ADMIN, once, from the Positive Pay page: { from_date } is the first
+// issue date the file covers. Records the signed-in owner who set it (never from a chat).
 router.post('/positive-pay/cutoff', express.json(), async (req, res) => {
   try {
     const admin = await requireAdmin(req, res); if (!admin) return;
-    const bank = await PPS.setCutoff(supabase, (req.body || {}).from_date);
+    const bank = await PPS.setCutoff(supabase, (req.body || {}).from_date, { setBy: `${admin.full_name || 'Owner'} <${admin.email}> (signed in)` });
     await PPS.syncKatTask(supabase, { reason: 'cutoff_set' });
     res.json({ bank });
   } catch (err) { ppErr(res, 'pp-cutoff', err); }

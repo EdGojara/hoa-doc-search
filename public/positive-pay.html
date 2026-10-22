@@ -100,8 +100,9 @@ function render(){
     const e=a.eligibility||{}; const st=e.problem?`<span class="pill bad">${esc(e.problem)}</span>`:(!e.eligible?`<span class="pill">${esc(e.reason)}</span>`:'<span class="pill ok">In the file</span>');
     return `<tr><td>${esc(a.community)}</td><td>${esc(a.account)} · …${esc(a.account_last4)}</td><td>${a.enabled?'Yes':'No'}</td><td>${st}</td></tr>`;}).join('')}</tbody></table>`;
   $('cutoffNote').innerHTML=s.export_from
-    ? `The file covers checks issued on or after <b>${esc(s.export_from)}</b>. ${s.before_cutoff_count||0} older outstanding check${s.before_cutoff_count===1?'':'s'} in the register are history, handled once with NewFirst and never put in a file.`
-    : 'No cutoff date is set yet, so no file can be prepared. It is set once, after the historical checks are resolved with NewFirst.';
+    ? `The file covers checks issued on or after <b>${esc(s.export_from)}</b>${s.export_from_set_by?` (set by ${esc(s.export_from_set_by)}${s.export_from_set_at?' '+when(s.export_from_set_at):''})`:''}. ${s.before_cutoff_count||0} older outstanding check${s.before_cutoff_count===1?'':'s'} in the register are history, handled once with NewFirst and never put in a file.`
+    : 'No cutoff date is set yet, so no file can be prepared and no task opens. It is set once, by the owner.'
+      + (s.can_set_cutoff?`<div style="margin-top:8px;"><input type="date" id="cutoffDate"> <button class="btn sm" onclick="setCutoff()">Set cutoff (once)</button></div>`:'');
 }
 
 function fileRow(f){
@@ -147,6 +148,11 @@ function outcomeForm(id){
     <div id="rj-${id}" style="display:none;"><label>Check numbers not imported, comma separated</label><input id="rjn-${id}"></div>
     <div class="muted" style="font-size:11.5px; margin-top:6px;">Checks that were not imported go back into the next file automatically.</div>
     <div style="margin-top:10px;"><button class="btn sm" onclick="saveOutcome('${id}')">Save result</button></div></div>`;
+}
+async function setCutoff(){
+  const d=$('cutoffDate').value; if(!d){ alert('Pick the first issue date the file covers.'); return; }
+  if(!confirm('Set the Positive Pay cutoff to '+d+'? Checks issued before it are never put in a file. This is set once.')) return;
+  try{ await post('/api/checks/positive-pay/cutoff',{from_date:d}); load(); }catch(e){ alert(e.message); }
 }
 function ocChange(id){ $('rj-'+id).style.display=$('oc-'+id).value==='partially_accepted'?'block':'none'; }
 async function saveOutcome(id){

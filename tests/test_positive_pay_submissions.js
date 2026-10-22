@@ -255,6 +255,23 @@ function store(seed) {
     } finally { cf3.decryptField = real3; }
   }
 
+  console.log('the cutoff: set once, by the signed-in owner');
+  {
+    const d = store({ banks: [{ id: P.NEWFIRST_BANK_ID, positive_pay_settings: { exception_cutoff: '10:00' } }], bank_accounts: [accountRow], check_register: [chk({ id: 'c1', check_number: '1300', issue_date: '2026-10-22' }), chk({ id: 'c2', check_number: '1301', issue_date: '2026-10-23' })], positive_pay_submission_items: [], positive_pay_submissions: [], work_items: [], work_item_events: [] });
+    const cf4 = require('../lib/crypto_field'); const real4 = cf4.decryptField; cf4.decryptField = (x) => x;
+    try {
+      check('a malformed date is refused', await throwsCode(() => P.setCutoff(d, '10/23/2026', { setBy: 'Ed' }), 'invalid_input') && await throwsCode(() => P.setCutoff(d, '2026-13-45', { setBy: 'Ed' }), 'invalid_input'));
+      check('who set it is required', await throwsCode(() => P.setCutoff(d, '2026-10-23', {}), 'invalid_input'));
+      const st0 = await P.status(d, P.NEWFIRST_BANK_ID, { isAdmin: true });
+      check('before the cutoff is set: nothing to send, the owner sees the control, staff do not', !st0.to_export.length && st0.can_set_cutoff === true && (await P.status(d, P.NEWFIRST_BANK_ID, {})).can_set_cutoff === false);
+      await P.setCutoff(d, '2026-10-23', { setBy: 'Ed Gojara <egojara@bedrocktx.com> (signed in)' });
+      const st = await P.status(d);
+      check('a valid date is saved with who set it; the bank\'s other settings are kept', st.export_from === '2026-10-23' && /signed in/.test(st.export_from_set_by) && d.T.banks[0].positive_pay_settings.exception_cutoff === '10:00');
+      check('only checks issued on or after the cutoff are sent; the 10/22 check is history', st.to_export.map((c) => c.id).join() === 'c2' && st.before_cutoff_count === 1);
+      check('it is set once', await throwsCode(() => P.setCutoff(d, '2026-10-24', { setBy: 'Ed' }), 'invalid_state'));
+    } finally { cf4.decryptField = real4; }
+  }
+
   console.log('static');
   const api = fs.readFileSync(path.join(__dirname, '..', 'api', 'checks.js'), 'utf8');
   check('no check_register query excludes status "void" (the register says voided)', !/\.neq\('status',\s*'void'\)/.test(api));
