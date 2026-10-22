@@ -272,6 +272,27 @@ function store(seed) {
     } finally { cf4.decryptField = real4; }
   }
 
+  console.log('former clients are not shown on the operational screen');
+  {
+    const FORMER = { id: 'c-old', name: 'Former Client HOA', management_status: 'archived' };
+    const ENDED = { id: 'c-end', name: 'Ended HOA', management_status: 'active', management_end_date: '2026-09-30' };
+    const d = store({ banks: [{ id: P.NEWFIRST_BANK_ID, positive_pay_settings: { export_from: '2026-10-20' } }], bank_accounts: [
+      accountRow,
+      { ...accountRow, id: 'a-sav', account_nickname: 'Waterview Savings', account_last4: '9999', account_number_encrypted: '1239999', positive_pay_enabled: false },
+      { ...accountRow, id: 'a-old', community_id: 'c-old', account_nickname: 'Former Operating', account_last4: '7385', account_number_encrypted: '777385', positive_pay_enabled: true, communities: FORMER },
+      { ...accountRow, id: 'a-end', community_id: 'c-end', account_nickname: 'Ended Operating', account_last4: '4444', account_number_encrypted: '444444', positive_pay_enabled: true, communities: ENDED },
+    ], check_register: [chk({ id: 'o1', bank_account_id: 'a-old', community_id: 'c-old', check_number: '9001', issue_date: '2026-10-21' }), chk({ id: 'e1', bank_account_id: 'a-end', community_id: 'c-end', check_number: '9002', issue_date: '2026-10-21' })], positive_pay_submission_items: [], positive_pay_submissions: [] });
+    const cf5 = require('../lib/crypto_field'); const real5 = cf5.decryptField; cf5.decryptField = (x) => x;
+    try {
+      const st = await P.status(d, P.NEWFIRST_BANK_ID, { today: '2026-10-22' });
+      const shown = st.accounts.map((a) => a.id).sort().join();
+      check('only active communities appear in Accounts (archived and past-end-date former clients hidden, by lifecycle status)', shown === 'a-sav,a1', shown);
+      check("an active community's non-enrolled account stays visible with its status", st.accounts.some((a) => a.id === 'a-sav' && a.enabled === false && /not enrolled/.test(a.eligibility.reason)));
+      check("a former client's checks are never sent and raise nothing on Needs attention", !st.to_export.some((c) => ['o1', 'e1'].includes(c.id)) && !st.exceptions.length);
+      check("the former client's records are untouched (read-only screen)", d.T.bank_accounts.length === 4 && d.T.check_register.length === 2);
+    } finally { cf5.decryptField = real5; }
+  }
+
   console.log('static');
   const api = fs.readFileSync(path.join(__dirname, '..', 'api', 'checks.js'), 'utf8');
   check('no check_register query excludes status "void" (the register says voided)', !/\.neq\('status',\s*'void'\)/.test(api));
