@@ -476,10 +476,10 @@ check('ACKNOWLEDGE: the fixed, non-AI acknowledgement is sent ONCE and verified;
   assert.strictEqual(M.sends, 1);
 });
 
-check('INGEST decides for every staff-assist draft (incl. the older drafter)', () => {
+check('INGEST leaves every staff-assist draft pending for a person (Ed 2026-10-22: no automatic send)', () => {
   const ing = fs.readFileSync(path.join(__dirname, '..', 'lib', 'email', 'graph_ingest.js'), 'utf8');
-  assert.match(ing, /contract: d\.amanda_request \|\| null/);
-  assert.ok(!/if \(d\.amanda_request\) \{\s*try \{\s*draft\.autonomy/.test(ing), 'the decision no longer skips the older drafter');
+  assert.match(ing, /persona: 'amanda', review_hint: d\.review_hint \|\| null \};\s*if \(d\.amanda_request\) draft\.amanda_request = d\.amanda_request;/);
+  assert.ok(!/draft\.autonomy/.test(ing), 'no automatic-send decision on any draft');
 });
 
 // ================= HUMAN SEND GUARDS (behavioral: lib/amanda/auto_reply.js humanSendGuard) =================
@@ -561,11 +561,10 @@ check('DRAFT QUEUE: Amanda receipt records are never sent, edited or discarded f
 });
 
 // ================= WIRING =================
-check('WIRING: ingest decides before the row and executes only on EXECUTE; recovery rides boot + the 6-hour push pass; no new timer; no sign-off; migration shape', () => {
+check('WIRING: ingest never sends automatically (Ed 2026-10-22: human approval for all five); recovery rides boot + the push pass; no new timer; no sign-off; migration shape', () => {
   const ing = fs.readFileSync(path.join(__dirname, '..', 'lib', 'email', 'graph_ingest.js'), 'utf8');
-  assert.match(ing, /draft\.autonomy = await require\('\.\.\/amanda\/auto_reply'\)\.getAutoReply\(\)\.decide\(/);
-  assert.match(ing, /\['EXECUTE', 'ACKNOWLEDGE'\]\.includes\(draft\.autonomy\.class\)\) \{[\s\S]*?getAutoReply\(\)\.execute\(/);
-  assert.match(ing, /contract: d\.amanda_request \|\| null/, 'the decision runs for every staff-assist draft, including the older drafter');
+  assert.ok(!/getAutoReply\(\)\.(decide|execute)\(/.test(ing), 'ingest must not decide on or start an automatic Amanda send');
+  assert.ok(!/draft\.autonomy/.test(ing), 'no draft carries an automatic-send decision');
   const push = fs.readFileSync(path.join(__dirname, '..', 'lib', 'email', 'graph_push.js'), 'utf8');
   assert.match(push, /getAutoReply\(\)\.sweep\(\)/);
   const server = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
