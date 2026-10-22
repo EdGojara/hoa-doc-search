@@ -286,6 +286,7 @@ const CHECKS = [
   'tests/sql/517_close_policy_e2e.mjs',
   'tests/sql/518_apply_one_e2e.mjs',
   'tests/sql/540_apply_one_e2e.mjs',
+  'tests/sql/542_apply_one_e2e.mjs',
   'tests/sql/540_541_decision_authority_e2e.mjs',
   'tests/sql/519_apply_one_e2e.mjs',
   'tests/sql/520_apply_one_e2e.mjs',
