@@ -360,5 +360,81 @@
     "originals": [
       "Uncorrected originals (with the AI-drawn logo) archived in Documents/TrustEd_session_backup_2026-10-20/phoebe_photos_2026-10-21; never published"
     ]
+  },
+  "maggie": {
+    "name": "Maggie Sullivan",
+    "approved": "2026-10-22",
+    "approved_by": "Ed Gojara",
+    "identity_reference": {
+      "authority": "Ed 2026-10-22: new visual direction for Maggie, photo 1 (tan blazer, warm smile) of 'Professional Community Management Portfolio.png' (sha256 ea3a93bea53a0eea...). The high-resolution portrait below was generated from it and approved as her primary image.",
+      "must_match": [
+        "apparent age about 40 to 45",
+        "long, softly wavy blonde and light-brown hair with natural dimension",
+        "green-hazel eyes, warm open smile",
+        "small gold hoop earrings and a round gold pendant",
+        "natural skin texture, not glamour-retouched"
+      ],
+      "rule": "Replaces the earlier brunette Maggie (kept as team/maggie_legacy_<date>.jpg). Never revert to the brunette look; the collage panels with AI-drawn 'Bedrock' text on a mug, folder or screen are never used."
+    },
+    "dir": "public/assets/personas/maggie",
+    "canonical_square": {
+      "from": "maggie-office-portrait",
+      "out": "public/assets/presentations/team/maggie.jpg",
+      "region": {
+        "x": 270,
+        "y": 0,
+        "size": 900
+      },
+      "width": 640,
+      "alt": "Maggie Sullivan, Bedrock growth and community relations"
+    },
+    "photos": {
+      "maggie-office-portrait": {
+        "use": "primary professional portrait: team directory, email signature, avatars, presentations, profile",
+        "alt": "Maggie Sullivan, Bedrock growth and community relations",
+        "source": "Warm Professional Office Portrait (2).png, 1254x1254 (Ed 2026-10-22)",
+        "native_px": [
+          1254,
+          1254
+        ],
+        "widths": [
+          480,
+          960
+        ],
+        "square_region": {
+          "x": 270,
+          "y": 0,
+          "size": 900
+        },
+        "square_widths": [
+          240,
+          480
+        ]
+      }
+    },
+    "placements": {
+      "_about": "Every Maggie surface reads the canonical square. Her email signature reads team-internal/maggie.jpg (she is an internal Bedrock-ops persona), which is kept byte-identical to team/maggie.jpg.",
+      "email_signature": {
+        "photo": "canonical_square",
+        "source": "public/assets/presentations/team-internal/maggie.jpg",
+        "display_px": 64
+      },
+      "team_presentation_and_outbox": {
+        "photo": "canonical_square",
+        "surfaces": [
+          "presentation team screen",
+          "outbox / Draft Queue",
+          "owner team board"
+        ]
+      },
+      "microsoft_365": {
+        "photo": "unchanged",
+        "note": "PENDING Ed's go-ahead after merge"
+      },
+      "portal_video_visit": {
+        "photo": "unchanged",
+        "note": "faces/maggie.webp in storage; PENDING Ed's go-ahead after merge"
+      }
+    }
   }
 }
