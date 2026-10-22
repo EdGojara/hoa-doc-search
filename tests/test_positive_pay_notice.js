@@ -101,7 +101,7 @@ console.log('review on books (in-memory)');
   { const conf = { items: [{ account_last4: '5313', check_number: '1044', amount_cents: 427587, bank_account_id: 'ba-cg', bank_decision: 'unconfirmed' }] };
     db.bank_statement_imports = [{ id: 'imp-cg', bank_account_id: 'ba-cg' }]; db.bank_statement_transactions = [{ bank_statement_import_id: 'imp-cg', check_number: '1044', amount_cents: -427587, posting_date: '2026-10-16' }];
     const ch = await W.confirmFromStatements(sb, conf);
-    check('the bank\'s own evidence confirms it: a check that cleared on the statement is recorded paid', ch && conf.items[0].bank_decision === 'paid' && /cleared on the bank statement 2026-10-16/.test(conf.items[0].bank_decision_evidence)); }
+    check('clearing comes from bank activity: a check on the statement is recorded CLEARED, separately from the exception decision', ch && conf.items[0].cleared_date === '2026-10-16' && /check transaction on the bank statement, posted 2026-10-16/.test(conf.items[0].cleared_evidence) && conf.items[0].bank_decision === 'unconfirmed'); }
   { const tri2 = fs.readFileSync(require.resolve('../api/email_triage'), 'utf8');
     check('a person records the portal decision per item (pay / return); a note alone confirms nothing', /decisions = Array\.isArray\(req\.body && req\.body\.decisions\)/.test(tri2) && /allDecided \? \{ decided_at: at/.test(tri2)); }
   db.email_messages.push({ id: 'today', direction: 'inbound', ...OCT14, extracted: {} });

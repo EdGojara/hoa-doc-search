@@ -93,7 +93,10 @@ const review = (items, extra = {}) => ({ items, deadline, notice: { reminder: fa
   db.T.email_messages.push({ ...reply, id: 'bankreply', body_full: reply.body_full.replace(rowsHtml([['5961', '1024', '6300.16'], ['5961', '1032', '3250.00']]), rowsHtml([['5961', '1024', '6300.16'], ['5313', '9999', '10.00']])) });
   await W.tick({ supabase: db, now: new Date('2026-10-22T13:50:00Z'), notify, logger: { warn() {} } });
   const rec = db.T.email_messages.find((m) => m.id === 'today').extracted.positive_pay;
-  check('NewFirst replies "We will pay these items": both items recorded paid, with the bank\'s words as evidence', rec.items.every((i) => i.bank_decision === 'paid' && /NewFirst confirmed by email/.test(i.bank_decision_evidence)));
+  check('NewFirst replies "We will pay these items": both items recorded APPROVED FOR PAYMENT, with the bank\'s words as evidence', rec.items.every((i) => i.bank_decision === 'approved_for_payment' && /exception approved for payment: NewFirst confirmed by email/.test(i.bank_decision_evidence)));
+  check('an approval email never marks a check cleared (clearing comes only from bank transaction activity)', rec.items.every((i) => !i.cleared_date && !i.cleared_evidence));
+  { const fs2 = require('fs'); const p2 = require('path'); const src2 = fs2.readFileSync(p2.join(__dirname, '..', 'lib', 'banking', 'positive_pay_watch.js'), 'utf8');
+    check('nothing in the Positive Pay watch writes the check register or a reconciliation', !/from\('check_register'\)\.update|from\('bank_rec|cleared_date:\s*[^,]*register/.test(src2) && !/check_register/.test(src2.replace(/\/\/[^\n]*/g, ''))); }
   check('the task closes by evidence and the reply opened nothing of its own', !tasks().length && db.T.work_item_events.some((e) => e.event === 'closed_by_evidence') && texts.length === 1);
   await W.tick({ supabase: db, now: new Date('2026-10-22T14:15:00Z'), notify, logger: { warn() {} } });
   check('9:15 am: decided items raise no "still undecided" text', texts.length === 1);

@@ -1232,7 +1232,7 @@ router.post('/:id/positive-pay-decided', express.json(), async (req, res) => {
     const who = u.email || u.full_name || 'staff'; const at = new Date().toISOString();
     const items = (m.extracted.positive_pay.items || []).map((i) => {
       const d = decisions.find((x) => String(x.check_number) === String(i.check_number) && String(x.account_last4) === String(i.account_last4));
-      return d && ['pay', 'return'].includes(d.decision) ? { ...i, bank_decision: d.decision === 'pay' ? 'paid' : 'returned', bank_decision_evidence: `decided ${d.decision} in the bank portal, recorded by ${who} ${at.slice(0, 16)}` } : i;
+      return d && ['pay', 'return'].includes(d.decision) ? { ...i, bank_decision: d.decision === 'pay' ? 'approved_for_payment' : 'returned', bank_decision_evidence: `exception ${d.decision === 'pay' ? 'approved for payment' : 'returned'} in the bank portal, recorded by ${who} ${at.slice(0, 16)}` } : i;
     });
     const allDecided = items.every((i) => i.bank_decision && i.bank_decision !== 'unconfirmed');
     const pp = { ...m.extracted.positive_pay, items, decision_note: note, ...(allDecided ? { decided_at: at, decided_by: who } : {}) };
