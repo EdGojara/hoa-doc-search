@@ -378,8 +378,15 @@ check('wiring: live Emma intake uses the all-format fetch + one-outcome record',
 check('wiring: attachment names are fetched BEFORE entity resolution (the vendor-evidence check reads them)', () => {
   const g = src('lib/email/graph_ingest.js');
   const names = g.indexOf('email.attachment_names = await fetchAttachmentNames');
-  const resolve = g.indexOf('await resolveEntities(ex, email, supabase)');
+  // Since 30c355cb a verified website inquiry resolves by the submitter's address, so the call
+  // passes _resolveEmail: a COPY of the email ({ ...email, ... }) made after the names are set,
+  // which therefore still carries attachment_names. Lock both: order, and that the copy spreads email.
+  const resolve = g.search(/await resolveEntities\(ex, (?:email|_resolveEmail), supabase\)/);
   assert.ok(names > 0 && resolve > 0 && names < resolve, `names@${names} resolve@${resolve}`);
+  const copy = g.match(/const _resolveEmail = [^\n]*/);
+  if (/resolveEntities\(ex, _resolveEmail/.test(g)) {
+    assert.ok(copy && g.indexOf(copy[0]) > names && /\{ \.\.\.email,/.test(copy[0]) && /: email;$/.test(copy[0].trim()), 'the resolve copy spreads the email (keeping attachment_names) or is the email itself');
+  }
 });
 check('wiring: /sweep-inbox uses the same path (not the old PDF-only filter)', () => {
   const s = src('api/ap_intake.js');
