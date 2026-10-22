@@ -75,10 +75,11 @@ check('a missing file skips rather than throwing', () => {
   assert.ok(/continue;/.test(load), 'a missing object must be skipped');
   assert.ok(/console\.warn/.test(load), 'and logged, never silent');
 });
-check('the send path warns when a file did not make it', () => {
+check('the send path refuses when a file did not make it', () => {
+  // Fail closed (Ed 2026-10-20): the draft's documents go with it or nothing goes.
   const s = src('api/email_triage.js');
-  assert.ok(/generated attachments: \$\{files\.length\}\/\$\{generated\.length\}/.test(s),
-    'a partial attach must be visible in the logs, not silently fewer files');
+  assert.ok(/if \(!files \|\| files\.length !== generated\.length\) return res\.status\(502\)\.json\(\{ error: 'attachment_unavailable'/.test(s),
+    'a partial attach must block the send, never silently send fewer files');
 });
 check('nothing is generated at send time', () => {
   // Only what was produced at draft time and reviewed by the person clicking

@@ -96,8 +96,8 @@ const t = async (name, fn) => { try { await fn(); console.log('PASS  ' + name); 
   await t('triage /:id/send: in-thread ONLY when the message lives in the sending mailbox; otherwise a fresh reply from the persona mailbox with the history inline', () => {
     const block = sendRouteBlock();
     assert.match(block, /const replyFrom = graphSend\.personaMailbox\(persona\);/);
-    assert.match(block, /const threaded = !!m\.graph_id && graphSend\.sameMailbox\(m\.mailbox, replyFrom\);/);
-    assert.match(block, /const inlineQuote = threaded \? '' : quoted;/, 'the fresh-reply fallback carries the history');
+    assert.match(block, /const threaded = !bankInquiry && !!m\.graph_id && graphSend\.sameMailbox\(m\.mailbox, replyFrom\);/);
+    assert.match(block, /const inlineQuote = threaded \|\| bankInquiry \? '' : quoted;/, 'the fresh-reply fallback carries the history (a bank inquiry is a new message, never quoted)');
     assert.match(block, /if \(threaded && graphSend\.sameMailbox\(fromMailbox, replyFrom\)\) \{/);
     assert.match(block, /sendReplyAs\(\{ from: fromMailbox, sourceMailbox: m\.mailbox, sourceGraphId: m\.graph_id/);
     assert.match(block, /graphSend\.sendAs\(\{ from: fromMailbox, to: recipient/, 'fallback sends from the persona mailbox');

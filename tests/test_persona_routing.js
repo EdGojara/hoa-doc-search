@@ -48,6 +48,10 @@ const OWNED = [
   ['emma',    'EMMA_MAILBOX'],
   ['claire',  'CLAIRE_MAILBOX'],
   ['tessa',   'TESSA_MAILBOX'],
+  ['darby',   'DARBY_MAILBOX'],
+  ['phoebe',  'PHOEBE_MAILBOX'],
+  ['vivian',  'VIVIAN_MAILBOX'],
+  ['maggie',  'MAGGIE_MAILBOX'],
 ];
 
 console.log('\nA teammate owns the mail sent to their own box');
@@ -109,7 +113,9 @@ check('every persona with a *_MAILBOX constant has a routing rule', () => {
     .filter((k) => /_MAILBOX$/.test(k) && graphSend[k])
     // ED_MAILBOX is Tessa's ghostwriting box, BILLING_MAILBOX is a pipeline
     // rather than a person; both are covered elsewhere.
-    .filter((k) => !['ED_MAILBOX', 'BILLING_MAILBOX'].includes(k));
+    // ISABELLA/MEI/PRIYA are the language front office: personaFor in
+    // email_triage.js owns their mail, not personaForMessage.
+    .filter((k) => !['ED_MAILBOX', 'BILLING_MAILBOX', 'ISABELLA_MAILBOX', 'MEI_MAILBOX', 'PRIYA_MAILBOX'].includes(k));
   const covered = new Set(OWNED.map((o) => o[1]));
   const missing = declared.filter((k) => !covered.has(k));
   assert.deepStrictEqual(missing, [],

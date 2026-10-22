@@ -1187,7 +1187,13 @@ router.post('/:id/draft-reply', express.json(), async (req, res) => {
       } catch (_) {}
     }
 
+    // Check the records that cover this topic BEFORE drafting, and the finished draft against
+    // them (Ed 2026-10-22: a Kat draft claimed files were being uploaded when none had been).
+    // Narrow: only topics an agent's provider covers; everything else is reported as unverified.
+    let _facts = null;
+    try { const _d = require('../lib/email/agent_desk').deskFor(m.persona || 'claire'); _facts = await require('../lib/agents/operational_facts').factsFor(supabase, _d, { subject: m.subject, body: m.body_full || m.body_preview }); } catch (_) { _facts = null; }
     const draft = await draftReply({
+      factBasis: (_facts && _facts.basis) || undefined,
       email: { subject: m.subject, body_preview: m.body_preview, body_full: m.body_full, conversation_id: m.conversation_id, sender_email: m.sender_email, graph_id: m.graph_id, mailbox: m.mailbox, has_attachments: m.has_attachments },
       classification: m.classification,
       contactId: m.resolved_contact_id, propertyId, communityId,
@@ -1207,7 +1213,12 @@ router.post('/:id/draft-reply', express.json(), async (req, res) => {
       pendingApplications, // Annie: ACC applications already in our queue for this property
       persona: m.persona || 'claire', // draft AS the owning teammate, so a specialist answers in their own lane
     });
-    res.json({ ...draft, covers, auto_attachments: autoAttachments, community_id: communityId, ...recipientOut });
+    let fact_check = null;
+    if (_facts && draft && draft.body) {
+      fact_check = require('../lib/agents/operational_facts').checkDraft(draft.body, _facts);
+      if (fact_check.issues.length) draft.review_hint = [`Record check: ${fact_check.note} ${fact_check.issues.map((i) => i.why).join(' ')}`, draft.review_hint].filter(Boolean).join(' ');
+    }
+    res.json({ ...draft, fact_check, covers, auto_attachments: autoAttachments, community_id: communityId, ...recipientOut });
   } catch (err) {
     console.error('[email_triage] draft-reply failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
@@ -1251,6 +1262,9 @@ router.post('/:id/positive-pay-decided', express.json(), async (req, res) => {
 // in" option, not a new assignment workflow.)
 router.post('/:id/forward-internal', express.json(), async (req, res) => {
   try {
+    // Every outgoing email names the signed-in person who sent it; no identity, no send (Ed 2026-10-22).
+    const _fwdBy = await getAuthedUser(req).catch(() => null);
+    if (!_fwdBy || !_fwdBy.email) return res.status(401).json({ error: 'approver_unidentified', message: 'Sign in to send. Nothing was sent.' });
     const { to_email, to_name, note, cc_email } = req.body || {};
     const { data: m, error } = await supabase.from('email_messages')
       .select('id, subject, body_full, body_preview, sender_email, sender_name, classification, extracted, graph_id, mailbox, conversation_id, received_at, resolved_contact_id, resolved_property_id, resolved_vendor_id, community_id, community:community_id(name)')
@@ -1388,7 +1402,7 @@ ${fwdSig.html}
       await supabase.from('email_messages').update({
         extracted: merged,
         triage_status: 'handled',
-        reviewed_by: (await getAuthedUser(req).catch(() => null))?.email || 'staff',
+        reviewed_by: String(_fwdBy.email).toLowerCase(),
         reviewed_at: new Date().toISOString(),
       }).eq('id', req.params.id);
     } catch (_) { /* annotation best-effort */ }
@@ -1409,7 +1423,7 @@ ${fwdSig.html}
         persona: 'claire', community_id: m.community_id || null,
         resolved_contact_id: m.resolved_contact_id || null, resolved_property_id: m.resolved_property_id || null, resolved_vendor_id: m.resolved_vendor_id || null,
         resolution_confidence: 'high', triage_status: 'handled', record_ownership: 'workpaper',
-        reviewed_by: (await getAuthedUser(req).catch(() => null))?.email || 'staff', reviewed_at: new Date().toISOString(),
+        reviewed_by: String(_fwdBy.email).toLowerCase(), reviewed_at: new Date().toISOString(),
       });
     } catch (e) { console.warn('[email_triage] forward outbound log skipped:', e.message); }
 
@@ -1465,7 +1479,13 @@ router.post('/:id/attach-upload', attachUpload.single('file'), async (req, res) 
 
 router.post('/:id/send', express.json(), async (req, res) => {
   try {
-    const { body: _rawBody, to, subject, reviewed_by, original_draft } = req.body || {};
+    const { body: _rawBody, to, subject, original_draft } = req.body || {};
+    // The approver is the signed-in person, from the session, never a name the browser sends
+    // (Ed 2026-10-22: Kat's reply to Melody was recorded as "staff"). No identity, no send.
+    const _approver = await getAuthedUser(req).catch(() => null);
+    if (!_approver || !_approver.email) return res.status(401).json({ error: 'approver_unidentified', message: 'Sign in to approve and send. The approver could not be identified, so nothing was sent.', sent: false });
+    const reviewed_by = String(_approver.email).toLowerCase();
+    let sentMessageId = null;
     // Proofread the operator's copy — fix spelling/typos before it sends (and
     // before it's captured as encode-Ed training). Conservative + fail-safe.
     let body = String(_rawBody == null ? '' : _rawBody).trim();
@@ -1780,7 +1800,7 @@ router.post('/:id/send', express.json(), async (req, res) => {
     let verifiedRecipients = null;
     // The atomic claim, right before Graph (shared with the Draft Queue): a simultaneous
     // or repeated Send for this email is refused, never sent twice.
-    const claim = await ReplyGuard.claim(supabase, { inboundId: req.params.id, path: 'communications', actor: reviewed_by || 'staff', retryAfterUncertain });
+    const claim = await ReplyGuard.claim(supabase, { inboundId: req.params.id, path: 'communications', actor: reviewed_by, retryAfterUncertain });
     if (!claim.ok) return res.status(claim.status).json({ error: claim.error, message: claim.message, needs_confirmation: claim.needs_confirmation || undefined, sent: false });
     let suppressed = null;   // the demo/outbound guard held it: nothing left, so the claim must not block a real reply
     try {
@@ -1791,6 +1811,7 @@ router.post('/:id/send', express.json(), async (req, res) => {
         // Graph adds the quote, so we send just our body (no reconstructed block).
         const sent = await graphSend.sendReplyAs({ from: fromMailbox, sourceMailbox: m.mailbox, sourceGraphId: m.graph_id, to: recipient, cc: ccList || undefined, html, attachments });
         if (sent && sent.suppressed) suppressed = sent.reason || 'suppressed';
+        sentMessageId = (sent && sent.internetMessageId) || null;
         if (sent && sent.recipients) verifiedRecipients = [...sent.recipients.to, ...sent.recipients.cc];
       } else {
         // No source message id, OR the message lives in another mailbox (shared inbox
@@ -1800,6 +1821,7 @@ router.post('/:id/send', express.json(), async (req, res) => {
         // that was the second copy. One history, from the inline quote.
         const sent = await graphSend.sendAs({ from: fromMailbox, to: recipient, cc: ccList || undefined, subject: subj, html, attachments });
         if (sent && sent.suppressed) suppressed = sent.reason || 'suppressed';
+        sentMessageId = (sent && sent.internetMessageId) || null;
       }
     } catch (e) {
       await ReplyGuard.finish(supabase, { key: claim.key, token: claim.token, ok: false, err: e });
@@ -1808,12 +1830,12 @@ router.post('/:id/send', express.json(), async (req, res) => {
     await ReplyGuard.finish(supabase, suppressed ? { key: claim.key, token: claim.token, ok: false, err: 'suppressed: ' + suppressed, uncertain: false } : { key: claim.key, token: claim.token, ok: true });
 
     // Mark the inbound handled + log the outbound reply on the record.
-    await supabase.from('email_messages').update({ triage_status: 'handled', reviewed_by: reviewed_by || 'staff', reviewed_at: new Date().toISOString() }).eq('id', req.params.id);
+    await supabase.from('email_messages').update({ triage_status: 'handled', reviewed_by: reviewed_by, reviewed_at: new Date().toISOString() }).eq('id', req.params.id);
     // This reply covered the homeowner's other recent emails — mark those
     // handled too, so sending once clears them all instead of leaving stragglers.
     const alsoHandle = Array.isArray(req.body && req.body.also_handle) ? req.body.also_handle.filter(Boolean).slice(0, 10) : [];
     if (alsoHandle.length) {
-      try { await supabase.from('email_messages').update({ triage_status: 'handled', reviewed_by: `${reviewed_by || 'staff'} (covered by one reply)`, reviewed_at: new Date().toISOString() }).in('id', alsoHandle); } catch (_) {}
+      try { await supabase.from('email_messages').update({ triage_status: 'handled', reviewed_by: `${reviewed_by} (covered by one reply)`, reviewed_at: new Date().toISOString() }).in('id', alsoHandle); } catch (_) {}
     }
     const { data: outRow } = await supabase.from('email_messages').insert({
       mailbox: fromMailbox, direction: 'outbound', sender_email: fromMailbox,
@@ -1827,7 +1849,9 @@ router.post('/:id/send', express.json(), async (req, res) => {
       received_at: new Date().toISOString(),
       classification: 'outbound_reply', classification_confidence: 'high', ai_summary: `${senderLabel.split(' ')[0]} replied to ${recipient}${sentLanguage !== 'en' ? ` (sent in ${sentLanguage}; body stored in English)` : ''}`, persona,
       community_id: m.community_id, resolved_contact_id: m.resolved_contact_id, resolved_property_id: m.resolved_property_id, resolved_vendor_id: m.resolved_vendor_id,
-      resolution_confidence: 'high', triage_status: 'handled', record_ownership: 'association_record', reviewed_by: reviewed_by || 'staff', reviewed_at: new Date().toISOString(),
+      resolution_confidence: 'high', triage_status: 'handled', record_ownership: 'association_record', reviewed_by, reviewed_at: new Date().toISOString(),
+      internet_message_id: sentMessageId,
+      extracted: { approval: { approved_by: reviewed_by, approved_by_name: _approver.full_name || null, approved_at: new Date().toISOString(), agent: persona, mailbox: fromMailbox, message_id: sentMessageId, in_thread: !!(threaded && graphSend.sameMailbox(fromMailbox, replyFrom)), path: 'communications' } },
     }).select('id').maybeSingle();
 
     // Capture any commitment this reply made — or asked the other side for — as a
@@ -1861,7 +1885,7 @@ router.post('/:id/send', express.json(), async (req, res) => {
     if (persona === 'miranda' && m.extracted && m.extracted.drv && m.extracted.drv.violation_id) {
       try {
         const { logDrvOutbound } = require('../lib/enforcement/drv_reply');
-        await logDrvOutbound({ violationId: m.extracted.drv.violation_id, communityId: m.community_id, propertyId: m.resolved_property_id, contactId: m.resolved_contact_id, subject: subj, body: String(body).trim(), sentBy: reviewed_by || 'staff' });
+        await logDrvOutbound({ violationId: m.extracted.drv.violation_id, communityId: m.community_id, propertyId: m.resolved_property_id, contactId: m.resolved_contact_id, subject: subj, body: String(body).trim(), sentBy: reviewed_by });
       } catch (e) { console.warn('[email_triage] drv outbound log skipped:', e.message); }
     }
     // Promised follow-up (Ed 2026-07-27): if this reply said "I'll let Carlos
@@ -2455,7 +2479,7 @@ router.post('/compose', express.json(), async (req, res) => {
       }
     } catch (e) { console.warn('[email_triage] compose re-attach skipped:', e.message); }
 
-    await graphSend.sendAs({ from: fromMailbox, to: toList, cc: ccList, subject: subj, html, attachments });
+    const _sentCompose = await graphSend.sendAs({ from: fromMailbox, to: toList, cc: ccList, subject: subj, html, attachments });
 
     const allRecipients = [...toList, ...ccList];
     await supabase.from('email_messages').insert({
@@ -2464,7 +2488,9 @@ router.post('/compose', express.json(), async (req, res) => {
       body_full: String(body).trim(),
       classification: 'outbound_reply', classification_confidence: 'high', persona: P, ai_summary: `${personaName} emailed ${allRecipients.join(', ')} (composed by ${admin.full_name || admin.email})`,
       community_id, resolved_contact_id, resolved_property_id, resolution_confidence: resolved_contact_id ? 'high' : 'low',
-      triage_status: 'handled', record_ownership: 'association_record', reviewed_by: admin.full_name || admin.email || 'admin', reviewed_at: new Date().toISOString(),
+      triage_status: 'handled', record_ownership: 'association_record', reviewed_by: String(admin.email || '').toLowerCase() || null, reviewed_at: new Date().toISOString(),
+      internet_message_id: (_sentCompose && _sentCompose.internetMessageId) || null,
+      extracted: { approval: { approved_by: String(admin.email || '').toLowerCase() || null, approved_by_name: admin.full_name || null, approved_at: new Date().toISOString(), agent: P, mailbox: fromMailbox, message_id: (_sentCompose && _sentCompose.internetMessageId) || null, path: 'compose' } },
     });
 
     res.json({ sent: true, to: toList, cc: ccList, from: fromMailbox, persona: personaName.toLowerCase(), linked_to_homeowner: !!resolved_contact_id, attached_files: reattached });

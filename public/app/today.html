@@ -192,8 +192,10 @@
       </div>
       <div id="th-am-body"><div class="tx-skel" style="height:40px;width:70%;margin-top:12px"></div></div>
       <details class="th-em-wrap" id="th-em-wrap">
-      <summary>Amanda&rsquo;s email desk <small id="th-em-sum">loading&hellip;</small></summary>
-      <section class="th-em" id="th-em" aria-label="Amanda's email desk">
+      <summary><span id="th-em-title">AI employee email desk</span> <small id="th-em-sum">loading&hellip;</small></summary>
+      <section class="th-em" id="th-em" aria-label="AI employee email desk">
+        <div class="th-em-desks" id="th-em-desks" role="group" aria-label="Whose desk" style="display:flex;gap:6px;flex-wrap:wrap;margin:4px 0 10px"></div>
+        <div class="th-em-from tx-muted" id="th-em-from" style="font-size:12.5px;margin:-4px 0 8px"></div>
         <div class="th-em-tabs" role="tablist">
           <button type="button" role="tab" id="th-em-t-inbox" aria-selected="true" data-tab="inbox">Inbox<span class="th-em-n" id="th-em-n-inbox">&middot;</span></button>
           <button type="button" role="tab" id="th-em-t-outbox" aria-selected="false" data-tab="outbox">Outbox<span class="th-em-n" id="th-em-n-outbox">&middot;</span></button>
@@ -588,6 +590,35 @@
     unchecked: ['tx-pill--mute', 'Not checked'],
   };
   var EM_TABS = ['inbox', 'outbox', 'ask', 'draft', 'activity'];
+  // ---- One desk, every AI employee with an email desk on the roster (Ed 2026-10-22).
+  // Amanda keeps her Ask and Draft tabs (her request contract); the inbox, outbox,
+  // reply and approval are the same shared desk for everyone.
+  var DESKS = []; var DESK = store('tx.em.desk') || 'amanda';
+  function deskInfo() { return DESKS.find(function (d) { return d.persona === DESK; }) || { persona: DESK, name: DESK, mailbox: '' }; }
+  function deskFirst() { return String(deskInfo().name || DESK).split(' ')[0]; }
+  function deskApi(path) { return '/api/agents/' + encodeURIComponent(DESK) + '/email' + (path || ''); }
+  function renderDesks() {
+    var el = $('th-em-desks'); if (!el) return;
+    el.innerHTML = DESKS.map(function (d) {
+      return '<button type="button" class="tx-btn ' + (d.persona === DESK ? 'tx-btn--pri' : 'tx-btn--sec') + '" data-desk="' + esc(d.persona) + '" aria-pressed="' + (d.persona === DESK) + '" title="' + esc(d.responsibilities || '') + '">' + esc(d.name.split(' ')[0]) + '</button>';
+    }).join('');
+    var di = deskInfo();
+    $('th-em-from').innerHTML = di.mailbox ? 'Sends from <b>' + esc(di.mailbox) + '</b> as ' + esc(di.name) + ' · ' + esc(di.responsibilities || '') + ' · every send needs a person\u2019s approval' : '';
+    ['ask', 'draft'].forEach(function (t) { $('th-em-t-' + t).hidden = DESK !== 'amanda'; });
+    if (DESK !== 'amanda' && ['ask', 'draft'].indexOf(store('tx.em.tab')) >= 0) emTab('inbox');
+  }
+  async function loadDesks() {
+    if (user.role !== 'admin') return;
+    var r = await TX.get('/api/agents/desks');
+    DESKS = (r.ok && r.data && r.data.desks) || [{ persona: 'amanda', name: 'Amanda Albright', mailbox: 'amandaalbright@bedrocktx.com' }];
+    if (!DESKS.some(function (d) { return d.persona === DESK; })) DESK = 'amanda';
+    renderDesks();
+  }
+  $('th-em-desks').addEventListener('click', function (e) {
+    var b = e.target.closest('[data-desk]'); if (!b) return;
+    DESK = b.getAttribute('data-desk'); store('tx.em.desk', DESK); ibOpen = null; ibLast = null; emLast = null; ibSummary = null;
+    renderDesks(); loadEmail(); loadInbox();
+  });
   function emPill(st) { var p = EM_STATUS[st] || ['tx-pill--mute', st || '?']; return '<span class="tx-pill ' + p[0] + '">' + esc(p[1]) + '</span>'; }
   function emTab(name) {
     EM_TABS.forEach(function (t) {
@@ -602,7 +633,8 @@
     var who = 'To ' + esc(d.to_email || '') + (d.cc ? ' · CC ' + esc(d.cc) : '');
     var open = d.status === 'failed' || d.status === 'blocked';
     return '<div class="th-em-row" data-draft="' + esc(d.id) + '"><div><div class="th-em-subj">' + esc(d.subject || '(no subject)') + '</div>' +
-      '<div class="th-em-meta">' + who + ' · prepared ' + esc(fmtWhen(d.created_at)) + '</div>' +
+      '<div class="th-em-meta">' + who + ' · prepared ' + esc(fmtWhen(d.created_at)) + (d.sends_from || d.from_mailbox ? ' · <b>sends from ' + esc(d.sends_from || d.from_mailbox) + '</b>' : '') + '</div>' +
+      ((d.policy && d.policy.fact_check && (d.policy.fact_check.issues || []).length) ? '<div class="th-em-why">Record check: ' + esc(d.policy.fact_check.note) + ' ' + esc(d.policy.fact_check.issues.map(function (i) { return '\u201c' + i.sentence + '\u201d ' + i.why; }).join(' ')) + '</div>' : '') +
       (open ? '<div class="th-em-why">' + (d.status === 'blocked' ? 'Blocked: ' : 'Last attempt failed: ') + esc(String(d.reason || '').replace(/^blocked:\s*/i, '')) + '</div>' : '') +
       '<div class="th-em-body" hidden>' + esc(d.body_text || '') + '</div></div>' +
       '<div class="th-em-acts">' + emPill(d.status) + ' <button type="button" class="tx-btn tx-btn--sec" data-em="view">Review</button>' +
@@ -618,6 +650,7 @@
   var emLast = null;
   async function loadEmail() {
     if (user.role !== 'admin') return;
+    if (DESK !== 'amanda') return loadAgentOutbox();
     var r = await TX.get('/api/amanda/email');
     var d = r.ok ? r.data : null;
     if (!d) {
@@ -643,16 +676,35 @@
       : '<div class="tx-muted" style="font-size:13px;padding:4px 0">No email activity in the last 14 days.</div>') +
       '<div class="tx-muted" style="font-size:12px;margin-top:6px">Last 14 days. The outbox record is the source of truth; her Sent Items are checked only to catch sends that bypassed it.</div>';
   }
+  // Shared outbox for every agent but Amanda (hers also reconciles her Sent Items).
+  async function loadAgentOutbox() {
+    var mine = DESK;
+    var r = await TX.get(deskApi('/outbox'));
+    if (mine !== DESK) return;
+    var d = r.ok ? r.data : null;
+    if (!d) {
+      var err = '<div class="tx-err">' + icon('alert', { size: 16 }) + '<span>Couldn\u2019t load ' + esc(deskFirst()) + '\u2019s outbox. Nothing here is counted as clear.</span></div>';
+      $('th-em-p-outbox').innerHTML = err; $('th-em-p-activity').innerHTML = err; emCount('th-em-n-outbox', null); emCount('th-em-n-activity', null); return;
+    }
+    emLast = { outbox: d.drafts || [], activity: (d.sent || []).map(function (x) { return { subject: x.subject, at: x.sent_at, to: x.to_email, cc: x.cc, status: 'sent', reason: 'Sent from ' + (x.sends_from || '') + (x.approved_by ? ' · approved by ' + x.approved_by : '') }; }) };
+    emSummary();
+    var ob = emLast.outbox;
+    emCount('th-em-n-outbox', ob.length, ob.some(function (x) { return x.status === 'failed' || x.status === 'blocked'; }));
+    $('th-em-p-outbox').innerHTML = ob.length ? ob.map(emOutboxRow).join('')
+      : '<div class="tx-muted" style="font-size:13px;padding:4px 0">' + esc(deskFirst()) + '\u2019s outbox is empty. Replies staged from the Inbox wait here for review.</div>';
+    emCount('th-em-n-activity', emLast.activity.length, false);
+    $('th-em-p-activity').innerHTML = emLast.activity.length ? emLast.activity.map(emActivityRow).join('') : '<div class="tx-muted" style="font-size:13px;padding:4px 0">No sends from this desk in the last 30 days.</div>';
+  }
   $('th-em-p-outbox').addEventListener('click', async function (e) {
     var b = e.target.closest('[data-em]'); if (!b) return;
     var row = b.closest('[data-draft]'); var id = row.getAttribute('data-draft');
     var kind = b.getAttribute('data-em');
     if (kind === 'view') { var bd = row.querySelector('.th-em-body'); bd.hidden = !bd.hidden; b.textContent = bd.hidden ? 'Review' : 'Hide'; return; }
     var d = ((emLast && emLast.outbox) || []).find(function (x) { return x.id === id; }) || {};
-    if (kind === 'send' && !confirm('Send this email from Amanda now?\n\nTo: ' + (d.to_email || '') + (d.cc ? '\nCC: ' + d.cc : '') + '\nSubject: ' + (d.subject || ''))) return;
+    if (kind === 'send' && !confirm('Send this email as ' + (deskInfo().name || 'Amanda') + ' from ' + (d.sends_from || d.from_mailbox || deskInfo().mailbox || '') + ' now?\n\nTo: ' + (d.to_email || '') + (d.cc ? '\nCC: ' + d.cc : '') + '\nSubject: ' + (d.subject || '') + ((d.policy && d.policy.fact_check && (d.policy.fact_check.issues || []).length) ? '\n\nRecord check flagged ' + d.policy.fact_check.issues.length + ' statement(s). Correct them before sending.' : ''))) return;
     if (kind === 'discard' && !confirm('Discard this prepared email? It will not be sent.')) return;
     b.disabled = true;
-    var r = await TX.post('/api/email-drafts/' + encodeURIComponent(id) + '/' + (kind === 'send' ? 'send' : 'discard'), kind === 'send' ? { approved_by: user.email || 'staff', approved_package_sha256: d.package_sha256 } : {});
+    var r = await TX.post('/api/email-drafts/' + encodeURIComponent(id) + '/' + (kind === 'send' ? 'send' : 'discard'), kind === 'send' ? { desk_persona: DESK, approved_package_sha256: d.package_sha256 } : {});
     if (!r.ok) { b.disabled = false; alert((kind === 'send' ? 'Not sent. ' : 'Not discarded. ') + (r.error || 'Something went wrong.') + (kind === 'send' ? '\n\nIt stays in the outbox with the reason.' : '')); }
     loadEmail();
   });
@@ -712,7 +764,7 @@
     var el = $('th-em-sum'); if (!el) return;
     var parts = [];
     if (ibSummary) {
-      parts.push(ibSummary.needs + ' in Amanda\u2019s reply queue');
+      parts.push(ibSummary.needs + ' in ' + deskFirst() + '\u2019s reply queue');
       parts.push(ibSummary.staged + ' repl' + (ibSummary.staged === 1 ? 'y' : 'ies') + ' drafted, awaiting approval');
       parts.push(ibSummary.replied + ' replied (sent)');
       parts.push(ibSummary.filed + ' classified or filed only');
@@ -727,7 +779,7 @@
   }
   function ibRow(i) {
     var who = esc(i.from_name ? i.from_name + ' <' + (i.from_email || '') + '>' : (i.from_email || ''));
-    var routed = i.routed_to && i.routed_to !== 'amanda' ? ' · filed under ' + esc(i.routed_to.charAt(0).toUpperCase() + i.routed_to.slice(1)) : '';
+    var routed = (i.routed_to && i.routed_to !== DESK ? ' · filed under ' + esc(i.routed_to.charAt(0).toUpperCase() + i.routed_to.slice(1)) : '') + (i.delivered_to_agent === false ? ' · via ' + esc(i.mailbox || 'a shared inbox') : '');
     return '<div class="th-em-row" data-ib="' + esc(i.id) + '"><div><div class="th-em-subj">' + esc(i.subject || '(no subject)') + '</div>' +
       '<div class="th-em-meta">' + who + ' · ' + esc(fmtWhen(i.received_at)) + (i.community ? ' · ' + esc(i.community) : '') + routed + '</div>' +
       '<div class="th-ib-thread" hidden></div></div>' +
@@ -735,9 +787,11 @@
   }
   async function loadInbox() {
     if (user.role !== 'admin') return;
-    var r = await TX.get('/api/amanda/email/inbox');
+    var mine = DESK;
+    var r = await TX.get(deskApi('/inbox'));
+    if (mine !== DESK) return;
     var d = r.ok ? r.data : null;
-    if (!d) { $('th-em-p-inbox').innerHTML = '<div class="tx-err">' + icon('alert', { size: 16 }) + '<span>Couldn’t load Amanda’s inbox. Nothing here is counted as clear.</span></div>'; emCount('th-em-n-inbox', null); return; }
+    if (!d) { $('th-em-p-inbox').innerHTML = '<div class="tx-err">' + icon('alert', { size: 16 }) + '<span>Couldn’t load ' + esc(deskFirst()) + '’s inbox. Nothing here is counted as clear.</span></div>'; emCount('th-em-n-inbox', null); return; }
     ibLast = d;
     var items = d.items || [];
     emCount('th-em-n-inbox', d.needs_reply, d.needs_reply > 0);
@@ -746,8 +800,8 @@
     emSummary();
     var se = Object.keys(d.source_errors || {});
     $('th-em-p-inbox').innerHTML = (se.length ? '<div class="tx-err" style="margin-bottom:8px">' + icon('alert', { size: 16 }) + '<span>Some reply statuses couldn’t be checked (' + esc(se.join(', ')) + ').</span></div>' : '') +
-      (items.length ? items.map(ibRow).join('') : '<div class="tx-muted" style="font-size:13px;padding:4px 0">No email to Amanda in the last 30 days.</div>') +
-      '<div class="tx-muted" style="font-size:12px;margin-top:6px">Last 30 days of mail delivered to Amanda’s mailbox, from the same records Communications uses. New mail appears after the inbox is pulled.</div>';
+      (items.length ? items.map(ibRow).join('') : '<div class="tx-muted" style="font-size:13px;padding:4px 0">No email for ' + esc(deskFirst()) + ' in the last 30 days.</div>') +
+      '<div class="tx-muted" style="font-size:12px;margin-top:6px">Last 30 days: mail delivered to ' + esc(deskInfo().mailbox || 'this mailbox') + ' and mail Communications routed to ' + esc(deskFirst()) + ', from the same records Communications uses.</div>';
     if (ibOpen) { var again = $('th-em-p-inbox').querySelector('[data-ib="' + ibOpen + '"]'); if (again) ibToggle(again, true); }
   }
   function ibThreadHtml(t) {
@@ -765,9 +819,12 @@
       ? '<div class="th-em-meta" style="margin-top:6px">' + ibPill('handled').replace('Handled', 'With Emma') + ' Receipt handed to Emma ' + esc(fmtWhen(eh.at)) + (eh.expense_cents != null ? ' (expense $' + (eh.expense_cents / 100).toFixed(2) + ')' : '') + ': ' +
         esc((eh.items || []).map(function (x) { return (IBK[x.kind] || x.kind) + ' $' + ((x.amount_cents || 0) / 100).toFixed(2); }).join(' · ') || 'item created') + '.</div>'
       : (m.has_attachments ? '<div class="th-em-meta" style="margin-top:6px"><button type="button" class="tx-btn tx-btn--sec" data-ibact="emma">Hand receipt to Emma</button> <span data-ibf="emma-out"></span></div>' : '');
-    return '<div class="th-em-meta" style="margin-top:8px">To ' + esc((m.to || []).join(', ')) + cc + '</div>' + handoff + msgs +
+    var ar = t.already_replied;
+    var replied = ar ? '<div class="tx-err" style="margin-top:8px">' + icon('alert', { size: 16 }) + '<span><b>Already replied</b> from ' + esc((t.desk && t.desk.mailbox) || '') + ' on ' + esc(fmtWhen(ar.at)) + (ar.approved_by ? ' (approved by ' + esc(ar.approved_by) + ')' : '') + ' to ' + esc((ar.to || []).join(', ')) + '. A new reply is prepared only if you ask for a follow-up.</span></div>' : '';
+    return '<div class="th-em-meta" style="margin-top:8px">To ' + esc((m.to || []).join(', ')) + cc + '</div>' + replied + handoff + msgs +
       '<form class="th-ib-reply" autocomplete="off">' +
-      '<div class="th-em-meta" style="margin-top:10px"><b>Reply as Amanda</b> · to ' + esc(rp.to || '') + ' · ' + esc(rp.subject || '') + '</div>' +
+      '<div class="th-em-meta" style="margin-top:10px"><b>Reply as ' + esc(deskInfo().name || 'Amanda') + '</b> · sends from <b>' + esc(rp.sends_from || (t.desk && t.desk.mailbox) || '') + '</b> · to ' + esc(rp.to || '') + ' · ' + esc(rp.subject || '') + '</div>' +
+      (ar ? '<label style="display:flex;gap:6px;align-items:center;margin-top:6px"><input type="checkbox" data-ibf="followup"> This is a deliberate follow-up</label>' : '') +
       // Reply All is Amanda's default for board/community threads; sender-only stays one click away.
       ((rp.reply_all_cc || []).length
         ? '<div class="th-ib-mode" role="radiogroup" aria-label="Who gets the reply">' +
@@ -776,9 +833,9 @@
         : '') +
       '<label>Add CC (optional)</label><input type="text" data-ibf="cc" placeholder="name@example.com">' +
       '<div class="th-em-meta th-ib-rcpt" data-ibf="rcpt"></div>' +
-      '<label>Reply</label><textarea data-ibf="text" placeholder="Write the reply, or write a note and choose Have Amanda write it."></textarea>' +
-      '<div class="th-em-bar"><span class="th-em-note">' + (m.threaded_reply_possible ? 'Sends as a reply in the same Outlook thread, with the conversation quoted below.' : 'The original is quoted below the reply.') + ' Staged in her outbox; nothing sends from here.</span>' +
-      '<button type="button" class="tx-btn tx-btn--sec" data-ibact="draft">Have Amanda write it</button><button type="submit" class="tx-btn tx-btn--pri">Stage my reply</button></div>' +
+      '<label>Reply</label><textarea data-ibf="text" placeholder="Write the reply, or write a note and choose Have ' + esc(deskFirst()) + ' write it."></textarea>' +
+      '<div class="th-em-bar"><span class="th-em-note">' + esc(rp.threading || (rp.in_thread ? 'Replies in the original thread.' : 'The original is quoted below the reply.')) + ' Staged in ' + esc(deskFirst()) + '\u2019s outbox; nothing sends from here.</span>' +
+      '<button type="button" class="tx-btn tx-btn--sec" data-ibact="draft">Have ' + esc(deskFirst()) + ' write it</button><button type="submit" class="tx-btn tx-btn--pri">Stage my reply</button></div>' +
       '<div class="th-em-out" data-ibf="out" aria-live="polite"></div></form>';
   }
   function ibMode(f, t) { var r = f.querySelector('[data-ibf=mode]:checked'); return r ? r.value : ((t.reply || {}).default_mode || 'sender'); }
@@ -786,7 +843,7 @@
   // else on the original in CC; Amanda never; duplicates removed (server applies the same rule).
   function ibRcpt(f, t) {
     var rp = t.reply || {}; var to = String(rp.to || '').toLowerCase();
-    var mine = { 'amandaalbright@bedrocktx.com': 1, 'amanda@bedrocktx.com': 1 };
+    var mine = {}; (((t.desk && t.desk.aliases) || [(t.desk && t.desk.mailbox) || 'amandaalbright@bedrocktx.com', 'amanda@bedrocktx.com'])).forEach(function (a) { mine[String(a).toLowerCase()] = 1; });
     var extra = String(f.querySelector('[data-ibf=cc]').value || '').split(/[,;\s]+/).map(function (a) { return a.trim().toLowerCase(); }).filter(function (a) { return /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(a); });
     var base = ibMode(f, t) === 'all' ? (rp.reply_all_cc || []) : [];
     var seen = {}; var cc = base.concat(extra).filter(function (a) { a = String(a).toLowerCase(); if (!a || a === to || mine[a] || seen[a]) return false; seen[a] = 1; return true; });
@@ -807,7 +864,7 @@
     if (!box.hidden && !forceOpen) { box.hidden = true; btn.textContent = 'Open'; ibOpen = null; return; }
     var id = row.getAttribute('data-ib'); ibOpen = id;
     box.hidden = false; btn.textContent = 'Close'; box.innerHTML = '<div class="tx-muted" style="font-size:12.5px;margin-top:8px">Loading the thread…</div>';
-    var r = await TX.get('/api/amanda/email/inbox/' + encodeURIComponent(id));
+    var r = await TX.get(deskApi('/inbox/' + encodeURIComponent(id)));
     if (!r.ok) { box.innerHTML = '<div class="tx-err" style="margin-top:8px">' + icon('alert', { size: 16 }) + '<span>Couldn’t load this thread.</span></div>'; return; }
     box.innerHTML = ibThreadHtml(r.data); box._t = r.data;
     var fm = box.querySelector('form'); ibRcpt(fm, r.data);
@@ -821,14 +878,17 @@
     var ibModeVal = ibMode(f, t);
     var cc = f.querySelector('[data-ibf=cc]').value;
     f.querySelectorAll('button').forEach(function (b) { b.disabled = true; });
-    out.innerHTML = '<span class="tx-muted">' + (mode === 'draft' ? 'Amanda is writing the reply…' : 'Staging…') + '</span>';
-    var r = await TX.post('/api/amanda/email/inbox/' + encodeURIComponent(row.getAttribute('data-ib')) + '/reply', mode === 'draft' ? { thought: text, cc: cc, reply_mode: ibModeVal } : { body: text, cc: cc, reply_mode: ibModeVal });
+    out.innerHTML = '<span class="tx-muted">' + (mode === 'draft' ? esc(deskFirst()) + ' is checking the records and writing the reply…' : 'Staging…') + '</span>';
+    var fu = f.querySelector('[data-ibf=followup]'); var followUp = !!(fu && fu.checked);
+    var r = await TX.post(deskApi('/inbox/' + encodeURIComponent(row.getAttribute('data-ib')) + '/reply'), mode === 'draft' ? { thought: text, cc: cc, reply_mode: ibModeVal, follow_up: followUp } : { body: text, cc: cc, reply_mode: ibModeVal, follow_up: followUp });
     f.querySelectorAll('button').forEach(function (b) { b.disabled = false; });
     var d = r.ok ? r.data : (r.body || null);
     if (!d || d.ok === false) { out.innerHTML = '<div class="tx-err">' + icon('alert', { size: 16 }) + '<span>' + esc((d && d.detail) || r.error || 'Couldn’t stage the reply.') + ' Nothing was sent.</span></div>'; return; }
     var dr = d.draft || {};
     out.innerHTML = '<span class="tx-pill tx-pill--info">In outbox</span> <span>' + esc(d.reply || '') + '</span><div class="th-em-meta" style="margin-top:6px">To ' + esc(dr.to_email || '') + (dr.cc ? ' · CC ' + esc(dr.cc) : '') + ' · ' + esc(dr.subject || '') + '</div>' +
-      (dr.body_text ? '<div class="th-em-body">' + esc(dr.body_text) + '</div>' : '') + '<div class="th-em-meta">Review and send it from the Outbox tab.</div>';
+      (dr.body_text ? '<div class="th-em-body">' + esc(dr.body_text) + '</div>' : '') +
+      (d.fact_check ? '<div class="' + ((d.fact_check.issues || []).length ? 'th-em-why' : 'th-em-meta') + '">Record check: ' + esc(d.fact_check.note || '') + ((d.fact_check.issues || []).length ? ' ' + esc(d.fact_check.issues.map(function (i) { return '\u201c' + i.sentence + '\u201d ' + i.why; }).join(' ')) : '') + '</div>' : '') +
+      '<div class="th-em-meta">Sends from ' + esc(d.sends_from || '') + ' after approval. Review and send it from the Outbox tab.</div>';
     loadEmail(); loadInbox();
   }
   $('th-em-p-inbox').addEventListener('click', function (e) {
@@ -853,6 +913,7 @@
     var r = await TX.get('/api/feed' + q);
     if (mine !== feedSeq) return;
     renderFeed(r);
+    if (!DESKS.length) await loadDesks();
     loadEmail();
     loadInbox();
   }

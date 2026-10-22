@@ -248,6 +248,10 @@ router.post('/:id/send', async (req, res) => {
     if (d.draft_kind === 'amanda_auto_reply') return res.status(409).json({ error: 'amanda_auto_reply_receipt', message: 'This is Amanda\'s automatic-reply record, not a draft. Reply from Communications, which checks whether Amanda already sent it.' });
     if (d.status === 'sent') return res.status(409).json({ error: 'already_sent' });
     if (d.status === 'discarded') return res.status(409).json({ error: 'discarded' });
+    // An agent's desk approves only its own agent's drafts (Ed 2026-10-22): a draft opened on
+    // Kat's desk can never be approved as Maggie's, and the reverse.
+    const deskPersona = req.body && req.body.desk_persona ? String(req.body.desk_persona).toLowerCase() : null;
+    if (deskPersona && deskPersona !== String(d.persona || '').toLowerCase()) return res.status(409).json({ error: 'wrong_desk', message: `This draft belongs to ${d.persona}'s desk, not ${deskPersona}'s. Nothing was sent.` });
     if (!graphSend.isConfigured()) return res.status(400).json({ error: 'email not connected (Graph credentials missing)' });
 
     // Send exactly what the person reviewed: the screen echoes the fingerprint of the
@@ -327,7 +331,7 @@ router.post('/:id/send', async (req, res) => {
     //   * on success the inbound is marked handled.
     // (Ed 2026-10-06, Amanda inbox.)
     let replyTo = null;
-    if (d.draft_kind === 'amanda_reply' && d.source_email_ref) {
+    if (['amanda_reply', 'agent_reply'].includes(d.draft_kind) && d.source_email_ref) {
       const { data: src, error: srcErr } = await supabase.from('email_messages')
         .select('id, mailbox, graph_id, internet_message_id, sender_name, sender_email, subject, body_full, body_preview, received_at, recipients, community:community_id(name)')
         .eq('id', d.source_email_ref).maybeSingle();
@@ -337,7 +341,7 @@ router.post('/:id/send', async (req, res) => {
         return res.status(409).json({ error: 'source_email_missing' });
       }
       replyTo = src;
-      if (src.internet_message_id) {
+      if (d.persona === 'amanda' && src.internet_message_id) {
         const autoReply = require('../lib/amanda/auto_reply').getAutoReply();
         let rcpt = null;
         try { rcpt = await autoReply.receiptFor(src.internet_message_id); }
@@ -365,9 +369,10 @@ router.post('/:id/send', async (req, res) => {
     // reply (from here or from Communications) is refused, never sent twice.
     const claim = await ReplyGuard.claim(supabase, { inboundId, draftId: d.id, path: 'draft_queue', packageSha: currentPackage, actor: approvedBy, retryAfterUncertain });
     if (!claim.ok) return res.status(claim.status).json({ error: claim.error, message: claim.message, needs_confirmation: claim.needs_confirmation || undefined });
+    let sent = null;
     try {
       // A threaded reply goes to exactly the recipients reviewed (never createReply's own pick).
-      const sent = threaded
+      sent = threaded
         ? await graphSend.sendReplyAs({ from, sourceMailbox: replyTo.mailbox, sourceGraphId: replyTo.graph_id, to: d.to_email, cc: d.cc || undefined, html, attachments: [...personaAttachments, ...fileAttachments], communityId: d.community_id || null })
         : await graphSend.sendAs({ from, to: d.to_email, cc: d.cc || undefined, subject, html, attachments: [...personaAttachments, ...fileAttachments] });
       // sendAs RETURNS (does not throw) when the outbound guard suppresses a send.
@@ -386,9 +391,13 @@ router.post('/:id/send', async (req, res) => {
       return res.status(502).json({ error: `send failed: ${e.userMessage || e.message}`, uncertain: uncertain || undefined });
     }
     await ReplyGuard.finish(supabase, { key: claim.key, token: claim.token, ok: true });
+    const sentAt = new Date().toISOString();
     await supabase.from('outbound_email_drafts').update({
-      status: 'sent', sent_at: new Date().toISOString(), sent_from: from,
-      approved_by: approvedBy, send_error: null,
+      status: 'sent', sent_at: sentAt, sent_from: from,
+      approved_by: approvedBy, send_error: null, sent_internet_message_id: (sent && sent.internetMessageId) || null,
+      // The approval record (Ed 2026-10-22): who approved, when, for which agent and mailbox, and
+      // the message that went out. Never a generic "staff".
+      policy: { ...(d.policy || {}), approval: { approved_by: approvedBy, approved_by_name: approver.full_name || null, approver_user_id: approver.id || null, approved_at: sentAt, agent: d.persona, mailbox: from, message_id: (sent && sent.internetMessageId) || null, in_thread: !!threaded } },
       record_ownership: 'association_record',
     }).eq('id', d.id);
     if (replyTo) {
