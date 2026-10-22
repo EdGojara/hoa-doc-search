@@ -88,6 +88,13 @@ const decide = async (args, d = deps) => { const ev = await I.associationEvidenc
     const { d } = await decide({ extracted: { bill_to: 'Canyon Gate at Cinco Ranch HOA', payment_account_last4: '313' } }, d2);
     assert.strictEqual(d.decision, 'selected'); assert.strictEqual(d.community_id, 'cg'); assert.ok(d.basis.includes('payment_account'));
   });
+  await t('wired: a weak association (e.g. last four alone) is held for review unless the bill or email confirms it, never posted', async () => {
+    const src = fs.readFileSync(path.join(__dirname, '..', 'lib', 'ap', 'intake.js'), 'utf8');
+    const at = src.indexOf("if (cid && (cidSource === 'email' || cidSource === 'hint' || assoc.decision === 'weak')) {");
+    assert.ok(at > 0, 'the corroboration guard covers every weak decision');
+    const guard = src.slice(at, at + 1200);
+    assert.ok(/outcome: 'needs_review'/.test(guard) && /community_unconfirmed/.test(guard), 'an unconfirmed weak association is held');
+  });
   await t('wired: the intake query loads each account\'s community lifecycle', async () => {
     const src = fs.readFileSync(path.join(__dirname, '..', 'lib', 'ap', 'intake.js'), 'utf8');
     assert.ok(/communities\(name, management_status, management_end_date\)/.test(src) && /isOperational\(a\.communities\)/.test(src));
