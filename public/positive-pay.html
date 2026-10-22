@@ -55,6 +55,7 @@
     <h2>Accounts</h2>
     <div id="accounts"><div class="muted">Loading…</div></div>
     <div class="note" id="cutoffNote">…</div>
+    <div class="note"><b>Two different dates.</b> The <b>TrustEd start date</b> above is an internal control: which issued checks enter the upload workflow. <b>NewFirst's 10:00 am cutoff</b> is the bank's deadline for approving or returning exception items in its portal. It is not a file-upload deadline; the upload timing is being confirmed with NewFirst.</div>
   </div>
 </div>
 
@@ -100,9 +101,9 @@ function render(){
     const e=a.eligibility||{}; const st=e.problem?`<span class="pill bad">${esc(e.problem)}</span>`:(!e.eligible?`<span class="pill">${esc(e.reason)}</span>`:'<span class="pill ok">In the file</span>');
     return `<tr><td>${esc(a.community)}</td><td>${esc(a.account)} · …${esc(a.account_last4)}</td><td>${a.enabled?'Yes':'No'}</td><td>${st}</td></tr>`;}).join('')}</tbody></table>`;
   $('cutoffNote').innerHTML=s.export_from
-    ? `The file covers checks issued on or after <b>${esc(s.export_from)}</b>${s.export_from_set_by?` (set by ${esc(s.export_from_set_by)}${s.export_from_set_at?' '+when(s.export_from_set_at):''})`:''}. ${s.before_cutoff_count||0} older outstanding check${s.before_cutoff_count===1?'':'s'} in the register are history, handled once with NewFirst and never put in a file.`
-    : 'No cutoff date is set yet, so no file can be prepared and no task opens. It is set once, by the owner.'
-      + (s.can_set_cutoff?`<div style="margin-top:8px;"><input type="date" id="cutoffDate"> <button class="btn sm" onclick="setCutoff()">Set cutoff (once)</button></div>`:'');
+    ? `<b>TrustEd start date: ${esc(s.export_from)}.</b> The upload file covers checks issued on or after this date${s.export_from_set_by?` (set by ${esc(s.export_from_set_by)}${s.export_from_set_at?' '+when(s.export_from_set_at):''})`:''}. ${s.before_cutoff_count||0} older outstanding check${s.before_cutoff_count===1?'':'s'} in the register were issued before it: they are reconciled separately against bank clearing records and never added to a file automatically.`
+    : 'No TrustEd start date is set yet, so no upload file can be prepared and no task opens. It is the first issue date included in the upload workflow, set once by the owner. Checks issued earlier are reconciled separately.'
+      + (s.can_set_cutoff?`<div style="margin-top:8px;"><input type="date" id="cutoffDate"> <button class="btn sm" onclick="setCutoff()">Set start date (once)</button></div>`:'');
 }
 
 function fileRow(f){
@@ -151,7 +152,7 @@ function outcomeForm(id){
 }
 async function setCutoff(){
   const d=$('cutoffDate').value; if(!d){ alert('Pick the first issue date the file covers.'); return; }
-  if(!confirm('Set the Positive Pay cutoff to '+d+'? Checks issued before it are never put in a file. This is set once.')) return;
+  if(!confirm('Set the TrustEd Positive Pay start date to '+d+'? Only checks issued on or after it go into upload files; earlier checks are reconciled separately. This is set once.')) return;
   try{ await post('/api/checks/positive-pay/cutoff',{from_date:d}); load(); }catch(e){ alert(e.message); }
 }
 function ocChange(id){ $('rj-'+id).style.display=$('oc-'+id).value==='partially_accepted'?'block':'none'; }

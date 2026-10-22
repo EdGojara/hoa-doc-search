@@ -625,7 +625,8 @@ router.post('/positive-pay/submissions/:id/cancel', express.json(), async (req, 
   } catch (err) { ppErr(res, 'pp-cancel', err); }
 });
 
-// POST /positive-pay/cutoff — ADMIN, once, from the Positive Pay page: { from_date } is the first
+// POST /positive-pay/cutoff — ADMIN, once: sets the TrustEd Positive Pay START DATE (an internal
+// control; unrelated to NewFirst's 10:00 am exception-decision cutoff). { from_date } is the first
 // issue date the file covers. Records the signed-in owner who set it (never from a chat).
 router.post('/positive-pay/cutoff', express.json(), async (req, res) => {
   try {

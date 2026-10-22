@@ -46,11 +46,11 @@ console.log('who is in the file');
   const ids = plan.toExport.map((c) => c.id);
   check('exports the new issued and outstanding checks only', JSON.stringify(ids) === '["k1","k8"]', JSON.stringify(ids));
   check('voided, stop-paid and cleared checks are never exported (status allow-list, not .neq(void))', !ids.includes('k2') && !ids.includes('k3') && !ids.includes('k4'));
-  check('a check issued before the cutoff is never exported (e.g. one NewFirst already paid as an exception)', plan.backlog.map((c) => c.id).join() === 'k5' && /before the Positive Pay cutoff/.test(plan.backlog[0].backlog_reason));
+  check('a check issued before the cutoff is never exported (e.g. one NewFirst already paid as an exception)', plan.backlog.map((c) => c.id).join() === 'k5' && /before the TrustEd Positive Pay start date/.test(plan.backlog[0].backlog_reason));
   check('a former client\'s checks are excluded and the account is listed as excluded', !ids.includes('k6') && plan.excludedAccounts.some((a) => a.bank_account_id === 'a2'));
   check('a check already accepted in an earlier file is not sent again', !ids.includes('k7') && plan.alreadyLive.some((c) => c.id === 'k7'));
   const ns = P.planExport({ accounts: [acct()], checks: [chk()] });
-  check('no cutoff set: nothing exports', !ns.toExport.length && ns.backlog.length === 1 && /no Positive Pay cutoff/.test(ns.backlog[0].backlog_reason));
+  check('no cutoff set: nothing exports', !ns.toExport.length && ns.backlog.length === 1 && /no TrustEd Positive Pay start date/.test(ns.backlog[0].backlog_reason));
   const stale = P.planExport({ accounts: [acct()], checks: [chk()], items: [{ id: 'i9', submission_id: 's-x', check_register_id: 'k1', status: 'included' }], submissions: [{ id: 's-x', status: 'cancelled' }], exportFrom: '2026-10-20' });
   check('a row left included on a cancelled file does not hide the check', stale.toExport.length === 1);
 }
@@ -297,6 +297,8 @@ function store(seed) {
   const api = fs.readFileSync(path.join(__dirname, '..', 'api', 'checks.js'), 'utf8');
   check('no check_register query excludes status "void" (the register says voided)', !/\.neq\('status',\s*'void'\)/.test(api));
   check('the per-run and per-community downloads are retired (410)', /'\/run\/:printRunId\/positive-pay', \(req, res\) => res\.status\(410\)/.test(api) && /'\/positive-pay-file', \(req, res\) => res\.status\(410\)/.test(api));
+  const page = fs.readFileSync(path.join(__dirname, '..', 'public', 'positive-pay.html'), 'utf8');
+  check('the page keeps the two dates apart: TrustEd start date (internal) vs NewFirst 10:00 am exception cutoff (not an upload deadline)', page.includes('TrustEd start date') && page.includes("NewFirst's 10:00 am cutoff</b> is the bank's deadline for approving or returning exception items") && page.includes('It is not a file-upload deadline') && page.includes('Set start date (once)') && !page.includes('Set cutoff'));
   check('the status route strips full account numbers before they reach the browser', /account_number_full, \.\.\.r/.test(fs.readFileSync(path.join(__dirname, '..', 'lib', 'accounting', 'positive_pay_submissions.js'), 'utf8')));
 
   console.log(`\npositive_pay_submissions: ${pass} passed, ${fail} failed`);
