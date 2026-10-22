@@ -1,12 +1,11 @@
 #!/usr/bin/env node
-// Kat's banking mail (Ed 2026-10-22): kat@ only is ingested automatically, every 15-minute tick
-// 6:00-10:00 am Central on business days and about hourly otherwise; the Positive Pay watch runs
-// right after it; NewFirst's own "we will pay these items" reply is evidence of the bank's
-// decision; one exception task per notice day carries Kat's recommendation; alerts are for
-// today's notices only (no backlog of stale texts) and never duplicated. Offline.
+// Positive Pay watch (Ed 2026-10-14, 2026-10-22): separate from email ingestion. It reviews
+// NewFirst notices already in trustEd, keeps one exception task per notice day with Kat's
+// recommendation, treats NewFirst's own "we will pay these items" reply as evidence of the
+// bank's decision (never of clearing), and escalates unresolved decisions before the cutoff.
+// Alerts are for today's notices only and never duplicated. Offline.
 process.env.SUPABASE_URL = process.env.SUPABASE_URL || 'http://offline.invalid';
 process.env.SUPABASE_KEY = process.env.SUPABASE_KEY || 'offline';
-const K = require('../lib/banking/kat_banking_mail');
 const W = require('../lib/banking/positive_pay_watch');
 let pass = 0, fail = 0;
 const check = (name, ok, info) => { if (ok) { pass++; console.log('  ✓ ' + name); } else { fail++; console.log('  ✗ ' + name + (info ? ' :: ' + info : '')); } };
@@ -43,21 +42,6 @@ const deadline = { at: '2026-10-22T15:00:00.000Z', central: '10:00 Central on 20
 const review = (items, extra = {}) => ({ items, deadline, notice: { reminder: false, replied_by_person: false }, escalate: items.filter((i) => i.verdict !== 'matched').map((i) => `${i.account_last4} check ${i.check_number}: ${i.reasons.join('; ')}`), alerts: [], ...extra });
 
 (async () => {
-  console.log('cadence: kat@ only, every tick in the morning window');
-  const at = (iso) => K.pollDue(new Date(iso));
-  check('Thursday 7:20 am Central: due (morning window, every 15-minute tick)', at('2026-10-22T12:20:00Z').due && at('2026-10-22T12:20:00Z').mode === 'morning_window');
-  check('Thursday 6:00 and 9:59 am Central: due; 10:00 am: falls back to hourly', at('2026-10-22T11:00:00Z').due && at('2026-10-22T14:59:00Z').due && at('2026-10-22T15:20:00Z').mode === 'hourly');
-  check('outside the window: about hourly (the first tick of each hour)', at('2026-10-22T18:05:00Z').due && !at('2026-10-22T18:20:00Z').due);
-  check('Saturday morning: hourly, not every tick (no notices on weekends)', !at('2026-10-24T12:20:00Z').due && at('2026-10-24T12:05:00Z').due);
-  const calls = [];
-  const r = await K.tick({ supabase: {}, now: new Date('2026-10-22T12:20:00Z'), ingest: async (mbx, o) => { calls.push({ mbx, o }); return { scanned: 3, kept: 1 }; }, watch: async () => ({ reviewed: 1, alerted: 0 }), logger: { warn() {} } });
-  check('ingests ONLY kat@bedrocktx.com, current mail, no Inbox filing sweep, never stacking on a running pull', calls.length === 1 && calls[0].mbx === 'kat@bedrocktx.com' && calls[0].o.fileBacklog === false && calls[0].o.light === false && calls[0].o.skipIfBusy === true && r.kept === 1);
-  let watched = false;
-  const r2 = await K.tick({ supabase: {}, now: new Date('2026-10-22T12:20:00Z'), ingest: async () => { throw new Error('graph 503'); }, watch: async () => { watched = true; return {}; }, logger: { warn() {} } });
-  check('an ingest failure is reported and the watch still runs (notices already in trustEd keep their escalation)', watched && r2.errors.includes('graph 503'));
-  const skip = await K.tick({ supabase: {}, now: new Date('2026-10-22T18:20:00Z'), ingest: async () => { throw new Error('should not run'); }, watch: async () => { throw new Error('should not run'); } });
-  check('not due: nothing runs', skip.fired === false && skip.reason === 'not_due');
-
   console.log("NewFirst's own confirmation is evidence of its decision");
   const reply = { direction: 'inbound', sender_email: 'TreasuryManagement@newfirst.com', subject: 'RE: Positive Pay Items Ready For Review', received_at: '2026-10-22T13:45:00Z',
     body_full: `Thank you, Celina! We will pay these items, and I will update you soon regarding your Positive Pay issue. From: Celina Deleon Sent: Thursday 8:40 AM Subject: Re: Positive Pay Items Ready For Review I have reviewed and approved all these below. From: treasurymanagement@newfirst.com Subject: Positive Pay Items Ready For Review You have positive pay items to review. Please review these by 11:00AM. Account Number Date Item Number Amount ${rowsHtml([['5961', '1024', '6300.16'], ['5961', '1032', '3250.00']])}` };
@@ -111,9 +95,10 @@ const review = (items, extra = {}) => ({ items, deadline, notice: { reminder: fa
 
   const fs = require('fs'); const path = require('path');
   const sched = fs.readFileSync(path.join(__dirname, '..', 'lib', 'scheduler.js'), 'utf8');
-  check('wired: kat_banking_mail registered on the scheduler; the standalone watch defers to it (never both)', /name: 'kat_banking_mail'/.test(sched) && /minIntervalMin: 10/.test(sched) && /run by kat_banking_mail/.test(sched));
+  check('wired: positive_pay_watch is its own scheduler job and runs on its own (no mailbox ingest job, no deferral)', /name: 'positive_pay_watch'/.test(sched) && /require\('\.\/banking\/positive_pay_watch'\)\.tick\(/.test(sched) && !/kat_banking_mail/.test(sched));
+  check('wired: the watch never reads a mailbox (email arrives by Graph push)', !/graph_ingest|ingestMailbox/.test(fs.readFileSync(path.join(__dirname, '..', 'lib', 'banking', 'positive_pay_watch.js'), 'utf8')));
   check('wired: no other mailbox is auto-ingested (the general job is still manual unless EMAIL_INGEST_AUTO)', /if \(process\.env\.EMAIL_INGEST_AUTO !== 'true'\) return \{ fired: false, reason: 'manual_only' \}/.test(sched));
 
-  console.log(`\nkat_banking_mail: ${pass} passed, ${fail} failed`);
+  console.log(`\npositive_pay_watch: ${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 })().catch((e) => { console.error(e); process.exit(1); });

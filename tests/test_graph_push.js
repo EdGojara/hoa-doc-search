@@ -266,31 +266,107 @@ check('CREATE FAILURE retries at 2 / 10 / 30 minutes, then waits for recovery; e
   g.failCreate = 0; const ok = await a.p.ensureSubscription(AMANDA); assert.strictEqual(ok.action, 'created');
 });
 
-check('LIFECYCLE events: reauthorizationRequired renews, subscriptionRemoved recreates, missed runs one catch-up ingest; bad clientState ignored', async () => {
+// Delta reconciliation harness: Graph delta pages by URL prefix, a stored deltaLink, and the set of
+// message ids already in trustEd.
+function deltaPush(over = {}) {
   const g = fakeGraph([ourSub('s1', '2026-10-07T00:00:00Z')]);
-  const a = push({ graph: g });
+  g.deltaUrls = []; g.deltaPages = over.pages || [{ value: [], '@odata.deltaLink': 'https://graph/delta?token=next' }]; g.deltaFail = over.deltaFail || null;
+  g.delta = async (url) => { g.deltaUrls.push(url); if (g.deltaFail) { const f = g.deltaFail; g.deltaFail = null; const e = new Error('delta ' + f); e.status = f; throw e; } return g.deltaPages.shift() || { value: [], '@odata.deltaLink': 'https://graph/delta?token=next' }; };
+  const stored = new Set(over.stored || []);
+  const storeOnIngest = over.storeOnIngest || [];
+  const a = push({ graph: g, ingestMailbox: async (mbx, o) => { a.ing.calls.push([mbx, o]); for (const id of storeOnIngest) stored.add(id); return { scanned: 1, kept: storeOnIngest.length }; }, loadDeltaLink: async () => (over.link === undefined ? null : over.link), storedIds: async (ids) => new Set(ids.filter((i) => stored.has(i))), ...(over.push || {}) });
+  return { ...a, g, stored };
+}
+const msg = (id, at, from = 'resident@example.com', extra = {}) => ({ id: 'g-' + id, internetMessageId: id, receivedDateTime: at, from: { emailAddress: { address: from } }, ...extra });
+
+check('LIFECYCLE events: reauthorizationRequired renews, subscriptionRemoved recreates then delta-reconciles, missed runs a delta reconciliation (no time-window re-read); bad clientState ignored', async () => {
+  const a = deltaPush();
   a.p.handleLifecycle(KEY, { value: [{ lifecycleEvent: 'reauthorizationRequired', clientState: goodCs }] }); await tick(); await tick();
-  assert.deepStrictEqual(g.renewed, ['s1'], 'renewed even though not near expiry');
-  g.subs = [];
-  a.p.handleLifecycle(KEY, { value: [{ lifecycleEvent: 'subscriptionRemoved', clientState: goodCs }] }); await tick(); await tick();
-  assert.strictEqual(g.created.length, 1);
-  a.p.handleLifecycle(KEY, { value: [{ lifecycleEvent: 'missed', clientState: goodCs }] }); await tick();
-  assert.strictEqual(a.ing.calls.length, 1); assert.strictEqual(a.ing.calls[0][1].sinceISO, '2026-10-04T13:00:00.000Z', 'catch-up covers the recovery window');
+  assert.deepStrictEqual(a.g.renewed, ['s1'], 'renewed even though not near expiry');
+  a.g.subs = [];
+  a.p.handleLifecycle(KEY, { value: [{ lifecycleEvent: 'subscriptionRemoved', clientState: goodCs }] }); for (let i = 0; i < 6; i++) await tick();
+  assert.strictEqual(a.g.created.length, 1);
+  assert.ok(a.g.deltaUrls.length >= 1, 'the gap after removal is reconciled by delta');
+  const before = a.g.deltaUrls.length;
+  a.p.handleLifecycle(KEY, { value: [{ lifecycleEvent: 'missed', clientState: goodCs }] }); for (let i = 0; i < 4; i++) await tick();
+  assert.strictEqual(a.g.deltaUrls.length, before + 1, 'missed -> one delta reconciliation');
+  assert.strictEqual(a.ing.calls.length, 0, 'nothing new in the delta: no mailbox read at all');
+  a.p.handleLifecycle(KEY, { value: [{ lifecycleEvent: 'missed', clientState: 'nope' }] }); await tick();
+  assert.strictEqual(a.g.deltaUrls.length, before + 1, 'bad clientState ignored');
 });
 
 // ---- recovery ----
-check('RECOVERY is low-frequency (default 6h, floor 1h) and an empty pass records nothing', async () => {
+check('RECOVERY: the 6-hour pass only checks subscriptions (no mail read); delta runs on boot and once a day; an empty delta records its deltaLink and ingests nothing', async () => {
   const saved = process.env.GRAPH_PUSH_RECOVERY_HOURS;
   try {
     delete process.env.GRAPH_PUSH_RECOVERY_HOURS; assert.strictEqual(GP.recoveryMs(), 6 * 3600e3);
     process.env.GRAPH_PUSH_RECOVERY_HOURS = '0.01'; assert.strictEqual(GP.recoveryMs(), 3600e3, 'never faster than hourly');
   } finally { if (saved === undefined) delete process.env.GRAPH_PUSH_RECOVERY_HOURS; else process.env.GRAPH_PUSH_RECOVERY_HOURS = saved; }
-  const a = push({ graph: fakeGraph([ourSub('s1', '2026-10-07T00:00:00Z')]) });
-  await a.p.recover('recovery');
-  assert.strictEqual(a.ing.calls.length, 1); assert.strictEqual(a.ing.calls[0][1].fileBacklog, false);
-  assert.strictEqual(a.sb.rows.length, 0, 'kept subscription + empty catch-up = no rows');
+  let t = Date.parse('2026-10-04T20:00:00Z');
+  const a = deltaPush({ push: { now: () => t } });
+  await a.p.recover('boot');
+  assert.strictEqual(a.g.deltaUrls.length, 1, 'boot reconciles (covers a deploy gap)');
+  assert.match(a.g.deltaUrls[0], /\/users\/amandaalbright%40bedrocktx\.com\/mailFolders\('inbox'\)\/messages\/delta\?\$select=id,internetMessageId,receivedDateTime,from&changeType=created&\$filter=receivedDateTime ge 2026-10-03T18:00:00\.000Z$/, 'first sync: Inbox only, created only, the last 26 hours');
+  assert.strictEqual(a.ing.calls.length, 0);
+  const rows = a.sb.rows.filter((r) => r.job_name === GP.JOB_DELTA);
+  assert.strictEqual(rows.length, 1); assert.strictEqual(rows[0].ok, true); assert.strictEqual(rows[0].summary.delta_link, 'https://graph/delta?token=next'); assert.strictEqual(rows[0].summary.mailbox, AMANDA);
+  t += 6 * 3600e3; await a.p.recover('recovery');
+  assert.strictEqual(a.g.deltaUrls.length, 1, 'six hours later: subscriptions checked, no delta, no mail read');
+  assert.strictEqual(a.ing.calls.length, 0);
+  t += 18 * 3600e3; await a.p.recover('recovery');
+  assert.strictEqual(a.g.deltaUrls.length, 2, 'a day after the last reconciliation: the daily delta runs');
   const src = fs.readFileSync(path.join(__dirname, '..', 'lib', 'email', 'graph_push.js'), 'utf8');
   assert.ok(!/AMANDA_WAKE|INTERVAL_SEC/.test(src), 'no short-interval polling knob');
+  assert.ok(!/requestIngest\(m, reason, recovery/.test(src), 'the recovery pass no longer re-reads a time window');
+});
+
+check('DELTA: a message push never delivered is ingested from its own time, and the deltaLink advances only once it is stored; own mail and removals are ignored', async () => {
+  const a = deltaPush({ link: 'https://graph/delta?token=prev', stored: ['<old@x>'], storeOnIngest: ['<new@x>', '<new2@x>'], pages: [
+    { value: [msg('<old@x>', '2026-10-04T18:00:00Z'), msg('<new@x>', '2026-10-04T19:10:00Z'), msg('<mine@x>', '2026-10-04T19:20:00Z', AMANDA), { id: 'gone', '@removed': { reason: 'deleted' } }], '@odata.nextLink': 'https://graph/delta?page=2' },
+    { value: [msg('<new2@x>', '2026-10-04T19:30:00Z')], '@odata.deltaLink': 'https://graph/delta?token=after' },
+  ] });
+  const r = await a.p.reconcile(AMANDA, 'missed');
+  assert.strictEqual(a.ing.calls.length, 1, 'one recovery ingest for the two missing messages');
+  assert.strictEqual(a.ing.calls[0][1].sinceISO, '2026-10-04T19:05:00.000Z', 'from the oldest missing message, less 5 minutes');
+  assert.deepStrictEqual(a.g.deltaUrls, ['https://graph/delta?token=prev', 'https://graph/delta?page=2'], 'continues from the stored deltaLink');
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(r.changes, 3, 'own mail and removals ignored');
+  const rows = a.sb.rows.filter((x) => x.job_name === GP.JOB_DELTA);
+  assert.strictEqual(rows[rows.length - 1].summary.delta_link, 'https://graph/delta?token=after');
+});
+
+check('DELTA: when the recovery ingest does not store the message, the deltaLink does NOT advance; it retries at 2 minutes and then succeeds', async () => {
+  const a = deltaPush({ link: 'https://graph/delta?token=prev', pages: [{ value: [msg('<lost@x>', '2026-10-04T19:10:00Z')], '@odata.deltaLink': 'https://graph/delta?token=after' }] });
+  const r = await a.p.reconcile(AMANDA, 'daily');
+  assert.strictEqual(r.ok, false); assert.match(r.error, /1 new message\(s\) still not in trustEd/);
+  assert.strictEqual(a.ing.calls.length, 1); assert.strictEqual(a.ing.calls[0][1].sinceISO, '2026-10-04T19:05:00.000Z', 'reads from the missed message, not a fixed window');
+  assert.strictEqual(a.ing.calls[0][1].max, 500); assert.strictEqual(a.ing.calls[0][1].fileBacklog, false);
+  const fail = a.sb.rows.filter((x) => x.job_name === GP.JOB_DELTA);
+  assert.strictEqual(fail.length, 1); assert.strictEqual(fail[0].ok, false); assert.ok(!fail[0].summary.delta_link, 'no deltaLink saved on failure');
+  assert.strictEqual(a.timers[a.timers.length - 1].ms, 2 * 60e3);
+  a.g.deltaPages = [{ value: [msg('<lost@x>', '2026-10-04T19:10:00Z')], '@odata.deltaLink': 'https://graph/delta?token=after' }];
+  a.stored.add('<lost@x>');
+  await a.timers[a.timers.length - 1].fn(); for (let i = 0; i < 4; i++) await tick();
+  const ok = a.sb.rows.filter((x) => x.job_name === GP.JOB_DELTA && x.ok);
+  assert.strictEqual(ok.length, 1); assert.strictEqual(ok[0].summary.delta_link, 'https://graph/delta?token=after');
+});
+
+check('DELTA: an expired sync state (410) starts over from the last day; a refused first-sync filter (400) falls back to the whole (zero-inbox) Inbox', async () => {
+  const a = deltaPush({ link: 'https://graph/delta?token=old', deltaFail: 410 });
+  const r = await a.p.reconcile(AMANDA, 'daily');
+  assert.strictEqual(r.ok, true); assert.strictEqual(a.g.deltaUrls.length, 2); assert.match(a.g.deltaUrls[1], /receivedDateTime ge /);
+  assert.strictEqual(a.sb.rows.filter((x) => x.job_name === GP.JOB_DELTA)[0].summary.restarted, true);
+  const b = deltaPush({ deltaFail: 400 });
+  const r2 = await b.p.reconcile(AMANDA, 'boot');
+  assert.strictEqual(r2.ok, true); assert.ok(!/\$filter/.test(b.g.deltaUrls[1]), 'second try without the filter');
+});
+
+check('INGEST FAILURE on a notification schedules a delta reconciliation in 2 minutes (the message is not lost)', async () => {
+  const a = deltaPush({ push: { ingestMailbox: async () => { throw new Error('graph 503'); } } });
+  a.p.handleNotifications(KEY, note(goodCs)); for (let i = 0; i < 4; i++) await tick();
+  const t = a.timers.find((x) => x.ms === 2 * 60e3); assert.ok(t, 'retry scheduled');
+  await t.fn(); for (let i = 0; i < 4; i++) await tick();
+  assert.strictEqual(a.g.deltaUrls.length, 1, 'the retry is a delta reconciliation');
 });
 
 // ---- integration: push -> the real ingestMailbox ----
