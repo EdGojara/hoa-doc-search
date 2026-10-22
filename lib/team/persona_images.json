@@ -436,5 +436,225 @@
         "note": "faces/maggie.webp in storage; PENDING Ed's go-ahead after merge"
       }
     }
+  },
+  "claire": {
+    "name": "Claire Bennett",
+    "approved": "2026-10-22",
+    "approved_by": "Ed Gojara",
+    "identity_reference": {
+      "authority": "Ed 2026-10-21 approved this portrait for the Bedrock Intelligence website; Ed 2026-10-22 approved it, with the square crop below, as Claire Bennett's TrustEd portrait (one consistent identity).",
+      "must_match": [
+        "long tousled brunette hair with lighter highlights",
+        "hazel eyes, natural open smile",
+        "slim black earpiece headset",
+        "large gold hoop earrings and a round gold pendant",
+        "dark knit top"
+      ],
+      "rule": "Replaces the earlier TrustEd portrait, kept as team/claire_legacy_2026-10-22.jpg, which is also what her existing videos show. The wall sign in the source (an AI-drawn BEDROCK INTELLIGENCE wordmark with an incorrect B) is outside the square crop; never use the uncropped photo."
+    },
+    "dir": "public/assets/personas/claire",
+    "canonical_square": {
+      "from": "claire-headset-portrait",
+      "out": "public/assets/presentations/team/claire.jpg",
+      "region": {
+        "x": 280,
+        "y": 0,
+        "size": 760
+      },
+      "width": 640,
+      "alt": "Claire Bennett, Bedrock front office"
+    },
+    "photos": {
+      "claire-headset-portrait": {
+        "use": "head-and-shoulders square (the only part of the source stored; the full photo is never published): source of the canonical square",
+        "alt": "Claire Bennett, Bedrock front office",
+        "source": "Warm Office Portrait with Bedrock Branding.png (1374x1145), Downloads/bedrock-intelligence-ai-team-2026-10-21",
+        "native_px": [
+          1374,
+          1145
+        ],
+        "crop": {
+          "x": 280,
+          "y": 0,
+          "w": 760,
+          "h": 760
+        },
+        "widths": [
+          240,
+          480
+        ]
+      }
+    },
+    "placements": {
+      "_about": "Every small placement reads team/claire.jpg. Existing team videos show the earlier face, so their posters use the legacy file.",
+      "email_signature": {
+        "photo": "canonical_square",
+        "display_px": 64
+      },
+      "team_presentation_and_outbox": {
+        "photo": "canonical_square"
+      },
+      "video_posters": {
+        "photo": "claire_legacy_2026-10-22"
+      },
+      "microsoft_365": {
+        "photo": "unchanged",
+        "note": "pending Ed's separate approval"
+      },
+      "heygen_avatar": {
+        "photo": "unchanged",
+        "note": "pending Ed's separate approval"
+      },
+      "portal_video_visit": {
+        "photo": "unchanged",
+        "note": "faces/claire.webp; pending Ed's separate approval"
+      }
+    }
+  },
+  "annie": {
+    "name": "Annie Reeves",
+    "approved": "2026-10-22",
+    "approved_by": "Ed Gojara",
+    "identity_reference": {
+      "authority": "Ed 2026-10-21 approved this portrait for the Bedrock Intelligence website; Ed 2026-10-22 approved it, with the square crop below, as Annie Reeves's TrustEd portrait (one consistent identity).",
+      "must_match": [
+        "long wavy natural red hair",
+        "blue-gray eyes, light freckles",
+        "small gold hoops and a round gold pendant",
+        "cream knit top"
+      ],
+      "rule": "Replaces the earlier TrustEd portrait, kept as team/annie_legacy_2026-10-22.jpg, which is also what her existing videos show. The monitor in the source shows an AI-drawn TrustEd screen with invented addresses; it is outside the square crop; never use the uncropped photo."
+    },
+    "dir": "public/assets/personas/annie",
+    "canonical_square": {
+      "from": "annie-architectural-portrait",
+      "out": "public/assets/presentations/team/annie.jpg",
+      "region": {
+        "x": 120,
+        "y": 0,
+        "size": 760
+      },
+      "width": 640,
+      "alt": "Annie Reeves, Bedrock architectural review"
+    },
+    "photos": {
+      "annie-architectural-portrait": {
+        "use": "head-and-shoulders square (the only part of the source stored; the full photo is never published): source of the canonical square",
+        "alt": "Annie Reeves, Bedrock architectural review",
+        "source": "Warm Architectural Office Portrait.png (1312x1199), Downloads/bedrock-intelligence-ai-team-2026-10-21",
+        "native_px": [
+          1312,
+          1199
+        ],
+        "crop": {
+          "x": 120,
+          "y": 0,
+          "w": 760,
+          "h": 760
+        },
+        "widths": [
+          240,
+          480
+        ]
+      }
+    },
+    "placements": {
+      "_about": "Every small placement reads team/annie.jpg. Existing team videos show the earlier face, so their posters use the legacy file.",
+      "email_signature": {
+        "photo": "canonical_square",
+        "display_px": 64
+      },
+      "team_presentation_and_outbox": {
+        "photo": "canonical_square"
+      },
+      "video_posters": {
+        "photo": "annie_legacy_2026-10-22"
+      },
+      "microsoft_365": {
+        "photo": "unchanged",
+        "note": "pending Ed's separate approval"
+      },
+      "heygen_avatar": {
+        "photo": "unchanged",
+        "note": "pending Ed's separate approval"
+      },
+      "portal_video_visit": {
+        "photo": "unchanged",
+        "note": "faces/annie.webp; pending Ed's separate approval"
+      }
+    }
+  },
+  "miranda": {
+    "name": "Miranda Pierce",
+    "approved": "2026-10-22",
+    "approved_by": "Ed Gojara",
+    "identity_reference": {
+      "authority": "Ed 2026-10-21 approved this portrait for the Bedrock Intelligence website; Ed 2026-10-22 approved it, with the square crop below, as Miranda Pierce's TrustEd portrait (one consistent identity).",
+      "must_match": [
+        "brunette hair loosely pulled back with loose strands",
+        "green-hazel eyes, natural smile",
+        "twisted gold hoop earrings and a round gold pendant",
+        "burgundy blouse"
+      ],
+      "rule": "Replaces the earlier TrustEd portrait, kept as team/miranda_legacy_2026-10-22.jpg, which is also what her existing videos show. The wall sign in the source (an AI-drawn BEDROCK INTELLIGENCE wordmark with an incorrect B) is outside the square crop; never use the uncropped photo."
+    },
+    "dir": "public/assets/personas/miranda",
+    "canonical_square": {
+      "from": "miranda-office-portrait",
+      "out": "public/assets/presentations/team/miranda.jpg",
+      "region": {
+        "x": 300,
+        "y": 0,
+        "size": 720
+      },
+      "width": 640,
+      "alt": "Miranda Pierce, Bedrock community standards"
+    },
+    "photos": {
+      "miranda-office-portrait": {
+        "use": "head-and-shoulders square (the only part of the source stored; the full photo is never published): source of the canonical square",
+        "alt": "Miranda Pierce, Bedrock community standards",
+        "source": "Warm Bedrock Office Portrait.png (1374x1145), Downloads/bedrock-intelligence-ai-team-2026-10-21",
+        "native_px": [
+          1374,
+          1145
+        ],
+        "crop": {
+          "x": 300,
+          "y": 0,
+          "w": 720,
+          "h": 720
+        },
+        "widths": [
+          240,
+          480
+        ]
+      }
+    },
+    "placements": {
+      "_about": "Every small placement reads team/miranda.jpg. Existing team videos show the earlier face, so their posters use the legacy file.",
+      "email_signature": {
+        "photo": "canonical_square",
+        "display_px": 64
+      },
+      "team_presentation_and_outbox": {
+        "photo": "canonical_square"
+      },
+      "video_posters": {
+        "photo": "miranda_legacy_2026-10-22"
+      },
+      "microsoft_365": {
+        "photo": "unchanged",
+        "note": "pending Ed's separate approval"
+      },
+      "heygen_avatar": {
+        "photo": "unchanged",
+        "note": "pending Ed's separate approval"
+      },
+      "portal_video_visit": {
+        "photo": "unchanged",
+        "note": "faces/miranda.webp; pending Ed's separate approval"
+      }
+    }
   }
 }

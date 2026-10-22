@@ -15,7 +15,7 @@
       },
       "assets": [
         { "file": "claire_look_3d2a7d29_IN-USE.webp", "role": "canonical", "origin": "heygen_generated_look", "origin_ref": "HeyGen prompt-generated look in production use" },
-        { "repo": "public/assets/presentations/team/claire.jpg", "role": "derived", "origin": "repo", "origin_ref": "public/assets/presentations/team/claire.jpg", "parent_file": "claire_look_3d2a7d29_IN-USE.webp" },
+        { "repo": "public/assets/presentations/team/claire_legacy_2026-10-22.jpg", "role": "derived", "origin": "repo", "origin_ref": "public/assets/presentations/team/claire_legacy_2026-10-22.jpg (was team/claire.jpg until 2026-10-22)", "parent_file": "claire_look_3d2a7d29_IN-USE.webp" },
         { "bucket": "explainers", "key": "faces/claire.webp", "role": "provider_copy", "origin": "supabase_explainers_bucket", "origin_ref": "explainers/faces/claire.webp (public bucket)", "parent_file": "claire_look_3d2a7d29_IN-USE.webp" },
         { "file": "claire_look_d1c09238.webp", "role": "unapproved_variant", "origin": "heygen_generated_look", "origin_ref": "Alternate generated look in the Claire group" },
         { "file": "claire_look_4d5381b3.webp", "role": "unapproved_variant", "origin": "heygen_generated_look", "origin_ref": "Alternate generated look in the Claire group" },
