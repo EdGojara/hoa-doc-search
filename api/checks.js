@@ -131,7 +131,7 @@ router.get('/payable/:invoiceId/document', async (req, res) => {
 router.get('/statement-tracker', async (req, res) => {
   try {
     const { data: accts, error: aErr } = await supabase.from('bank_accounts')
-      .select('id, account_nickname, account_type, is_check_disbursement, community_id, community:community_id(name), bank:bank_id(name)')
+      .select('id, account_nickname, account_type, is_check_disbursement, community_id, community:community_id(name, management_status, management_end_date), bank:bank_id(name)')
       .order('community_id');
     if (aErr) throw aErr;
     const { data: imps, error: iErr } = await supabase.from('bank_statement_imports')
@@ -164,16 +164,23 @@ router.get('/statement-tracker', async (req, res) => {
       sm += 1; if (sm > 12) { sm = 1; sy += 1; }
     }
 
-    const commMap = {};
+    // A former client (lifecycle rule, not a name list) owes statements only through the last
+    // month we managed it; later months are not "missing". Its history stays as it is.
+    const { statementsExpectedThrough } = require('../lib/community/lifecycle');
+    const commMap = {}; const commMeta = {};
     for (const a of accts || []) {
       const cn = a.community ? a.community.name : '—';
+      const through = statementsExpectedThrough(a.community);
+      commMeta[cn] = { former: through !== undefined, through: through === undefined ? null : through };
       (commMap[cn] = commMap[cn] || []).push({
         id: a.id, nickname: a.account_nickname, bank: a.bank ? a.bank.name : null,
         type: a.account_type, is_check: !!a.is_check_disbursement,
         uploaded: [...(uploadedBy[a.id] || [])],
+        expected_through: through === undefined ? null : through,   // null on a former client: none expected
+        former_client: through !== undefined,
       });
     }
-    const communities = Object.entries(commMap).map(([name, accounts]) => ({ name, accounts }));
+    const communities = Object.entries(commMap).map(([name, accounts]) => ({ name, accounts, former_client: commMeta[name].former, expected_through: commMeta[name].through }));
 
     res.json({ months, communities });
   } catch (err) { handleErr(res, 'statement-tracker', err); }

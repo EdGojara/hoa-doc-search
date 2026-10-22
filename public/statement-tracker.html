@@ -114,7 +114,6 @@
 
 <script>
 const NOTES = {
-  "Eaglewood": "GL blocked — gather, don't load yet",
 };
 function esc(s){ return String(s==null?'':s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
 let toastT=null;
@@ -151,7 +150,8 @@ function render(d){
   h += "</tr></thead><tbody>";
   let need=0, have=0;
   for(const g of comms){
-    const note = NOTES[g.name] ? `<span class="gnote">${esc(NOTES[g.name])}</span>` : "";
+    const note = g.former_client ? `<span class="gnote">Former client: statements owed through ${esc(g.expected_through||'its last managed month')} only</span>`
+      : NOTES[g.name] ? `<span class="gnote">${esc(NOTES[g.name])}</span>` : "";
     h += `<tr class="grouprow"><td colspan="${months.length+1}"><span class="gname">${esc(g.name)}</span>${note}</td></tr>`;
     for(const a of g.accounts){
       const legacy = /columbia/i.test(a.bank||'');
@@ -160,6 +160,8 @@ function render(d){
       const up = new Set(a.uploaded||[]);
       for(const m of months){
         if(up.has(m.key)){ have++; h += `<td class="cell"><div class="chip have" title="Imported">✓</div></td>`; }
+        // Former client: months after the last month we managed it are not owed (not counted as missing).
+        else if(a.former_client && (!a.expected_through || m.key > a.expected_through)){ h += `<td class="cell"><span style="color:var(--muted)" title="Not managed by Bedrock this month">—</span></td>`; }
         else { need++; h += `<td class="cell"><div class="chip need" data-aid="${esc(a.id)}" data-m="${esc(m.key)}" data-acct="${esc(a.nickname)}" data-lbl="${esc(m.label+' '+m.yr)}" title="Click to upload — ${esc(a.nickname)}, ${esc(m.label)} ${esc(m.yr)}">+</div></td>`; }
       }
       h += "</tr>";
@@ -174,7 +176,7 @@ function render(d){
   document.getElementById('nums').innerHTML = `<b>${have}</b> of <b>${owed}</b> statements imported (${pct}%) &middot; <b>${need}</b> still needed &middot; click any open cell to upload`;
   document.getElementById('notes').innerHTML = `
     <div class="note"><b>Quail Ridge is live</b>Reconciled through May 2026 — watch for its latest month. Its reserve account still needs everything.</div>
-    <div class="note"><b>Eaglewood is on hold</b>Its books can't be reconciled until the Vantaca trial balance is fixed. Gather statements, but they aren't loaded yet.</div>
+    <div class="note"><b>Former clients</b>A community Bedrock no longer manages owes statements only through its last managed month; later months show — and are not counted as missing. Its earlier statements stay on file.</div>
     <div class="note"><b>Canyon Gate is mid-switch</b>Columbia (closing) + NewFirst (go-forward). Collect Columbia through closing, NewFirst from its open date.</div>
     <div class="note"><b>Sweeps &amp; brokerage</b>ICS sweep balances usually appear on the parent statement (shown N/A). Edward Jones brokerage has its own.</div>`;
 }
