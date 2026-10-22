@@ -98,7 +98,7 @@ Message: Hello, I would like to report a couple of concerns.`;
       if (/oauth2|login.microsoftonline/.test(url)) return { ok: true, json: async () => ({ access_token: 'tok', expires_in: 3600 }) };
       if (/createReply$/.test(url)) return { ok: true, json: async () => ({ id: 'd1', body: { content: '<p>quoted</p>' } }) };
       if (opt.method === 'PATCH') { const b = JSON.parse(opt.body); if (behaviour !== 'graph_ignores_to' && b.toRecipients) draft.toRecipients = b.toRecipients; if (b.ccRecipients) draft.ccRecipients = b.ccRecipients; return { ok: true, json: async () => ({}) }; }
-      if (/\?\$select=toRecipients,ccRecipients$/.test(url)) return { ok: true, json: async () => draft };
+      if (/\?\$select=toRecipients,ccRecipients(,internetMessageId)?$/.test(url)) return { ok: true, json: async () => draft };
       if (opt.method === 'DELETE') return { ok: true, status: 204 };
       if (/\/send$/.test(url)) return { ok: true, status: 202 };
       return { ok: true, json: async () => ({}) }; };

@@ -201,7 +201,8 @@ check('inbox routes are admin-gated and never send', () => {
 });
 check('releasing an Amanda reply: double-send guard first, then a threaded reply, then the inbound marked handled', () => {
   const s = src('api/email_drafts.js');
-  const g = s.indexOf("d.draft_kind === 'amanda_reply'"), guard = s.indexOf('humanSendGuard(rcpt', g), rep = s.indexOf('graphSend.sendReplyAs(', g);
+  // Shared desk (Ed 2026-10-22): Amanda's reply kind is handled in the same order.
+  const g = s.indexOf("['amanda_reply', 'agent_reply'].includes(d.draft_kind)"), guard = s.indexOf('humanSendGuard(rcpt', g), rep = s.indexOf('graphSend.sendReplyAs(', g);
   const sentUpd = s.indexOf("status: 'sent', sent_at", rep), handled = s.indexOf("triage_status: 'handled'", sentUpd);
   assert.ok(g > 0 && guard > g && rep > guard && sentUpd > rep && handled > sentUpd, 'order: kind check < guard < threaded reply < sent < handled');
   assert.match(s, /const threaded = !!\(replyTo && replyTo\.graph_id && graphSend\.sameMailbox\(replyTo\.mailbox, from\)\)/);
@@ -212,7 +213,8 @@ check('other drafts send exactly as before (sendAs path unchanged for non-reply 
 check('the card has an Inbox tab, loads it, and opens threads / stages replies through the desk routes', () => {
   const h = src('public/app/today.html');
   assert.ok(h.includes('id="th-em-t-inbox"') && h.includes('id="th-em-p-inbox"'));
-  assert.ok(h.includes("TX.get('/api/amanda/email/inbox')") && h.includes("'/api/amanda/email/inbox/' + encodeURIComponent(id)"));
+  // The shared AI employee desk (Ed 2026-10-22) serves Amanda's inbox at /api/agents/amanda/email.
+  assert.ok(h.includes("function deskApi(path) { return '/api/agents/' + encodeURIComponent(DESK) + '/email'") && h.includes("TX.get(deskApi('/inbox'))") && h.includes("TX.get(deskApi('/inbox/' + encodeURIComponent(id)))") && h.includes("store('tx.em.desk') || 'amanda'"));
   assert.ok(h.includes("'/reply'"));
   assert.ok(h.includes('value="all"') && h.includes('Reply to sender only') && h.includes("rp.default_mode !== 'sender' ? ' checked'"), 'Reply all selected by default, sender-only visible');
   assert.ok(h.includes('reply_mode: ibModeVal') && h.includes("data-ibf=\"rcpt\""), 'mode sent to the server and recipients previewed');
