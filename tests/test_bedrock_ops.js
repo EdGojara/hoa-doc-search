@@ -20,10 +20,22 @@ function ok(c, l) { if (c) { pass++; console.log('  PASS  ' + l); } else { fail+
 
 console.log('\nBedrock-ops: Maggie (Growth)\n');
 
-// --- isolation: Maggie is NOT on the community team --------------------------
-console.log('Isolation from the community-facing team:');
-ok(communityRoster.get('maggie') === null, 'Maggie is NOT in the community roster (never on a community surface)');
-ok(!communityRoster.people().some((m) => m.persona === 'maggie'), 'community people() excludes Maggie');
+// --- placement: on the team, never offered to a homeowner -------------------
+// Ed 2026-09-09 put Maggie on the team roster ("public facing as our BD person")
+// so she appears on the team screen and email board. Ed 2026-10-22: she is
+// business development, not community management, so she is never offered in a
+// homeowner/board portal visit and is never a hand-off target there.
+console.log('Placement: team screen yes, homeowner-facing visit surfaces no:');
+const rm = communityRoster.get('maggie');
+ok(rm && rm.name === 'Maggie Sullivan', 'Maggie is on the team roster (team screen, email board)');
+ok(communityRoster.people().some((x) => x.persona === 'maggie'), 'team people() includes Maggie (presentation team screen)');
+ok(rm.community_facing === false && communityRoster.isCommunityFacing(rm) === false, 'flagged not community-facing on the team roster');
+ok(!communityRoster.communityVisitPersonas().some((x) => x.persona === 'maggie'), 'homeowner portal visit team excludes Maggie');
+ok(communityRoster.communityVisitPersonas().some((x) => x.persona === 'claire'), 'the portal visit team still includes Claire');
+const claireSrc = require('fs').readFileSync(require('path').join(__dirname, '..', 'api', 'claire.js'), 'utf8');
+ok(/team: roster\.communityVisitPersonas\(\)/.test(claireSrc), 'portal /me team list uses communityVisitPersonas');
+ok(/askedFor\.visit && roster\.isCommunityFacing\(askedFor\)/.test(claireSrc), 'a visitor cannot start a visit with a non-community teammate');
+ok(/target && roster\.isCommunityFacing\(target\)/.test(claireSrc), 'Claire never hands a visitor to a non-community teammate');
 ok(ops.get('maggie') && ops.get('maggie').name === 'Maggie Sullivan', 'Maggie IS in the internal Bedrock-ops registry');
 const m = ops.get('maggie');
 ok(m.community_facing === false && m.internal === true && m.owner_gated === true, 'flagged internal, owner-gated, not community-facing');

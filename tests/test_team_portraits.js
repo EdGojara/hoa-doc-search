@@ -66,7 +66,7 @@ check('identity: face v2 is the reference, the excluded high-resolution set is n
 });
 check('the persona image map owns amanda.jpg; every mapped photo exists; no other teammate is mapped', () => {
   const map = JSON.parse(fs.readFileSync(path.join(ROOT, 'lib', 'team', 'persona_images.json'), 'utf8'));
-  assert.deepStrictEqual(Object.keys(map).filter((k) => !k.startsWith('_')), ['amanda', 'paige', 'phoebe']);
+  assert.deepStrictEqual(Object.keys(map).filter((k) => !k.startsWith('_')), ['amanda', 'paige', 'phoebe', 'maggie']);
   assert.strictEqual(map.amanda.canonical_square.out, 'public/assets/presentations/team/amanda.jpg');
   for (const k of Object.keys(map.amanda.photos)) assert.ok(fs.existsSync(path.join(ROOT, map.amanda.dir, k + '.jpg')), k);
 });
@@ -161,6 +161,31 @@ check('brand: the approved lockup is unchanged; the light-on-dark versions exist
   for (const k of ['fullLockupReversed', 'fullLockupReversedCompact']) {
     assert.ok(logos[k], k);
     assert.ok(fs.existsSync(path.join(ROOT, 'public', logos[k])), logos[k]);
+  }
+});
+
+// ---- Maggie (Ed 2026-10-22): new blonde/light-brown look; the brunette portrait is kept as a backup ----
+const MAGGIE_CURRENT_SHA = '52009c0c87ffceda1fe101fb62eeb5464cbcde35baff2e88fa3e3a7ddb74c5ce';
+const MAGGIE_PREVIOUS_SHA = 'a50bd2f20175ba2b0536eaea36dcfbe149fc201a7880e9cd24b9ef4d6c1174e8';   // brunette, 2026-09-09
+check('maggie.jpg is the 2026-10-22 portrait (640x640); the previous portrait is preserved byte-identical', () => {
+  assert.strictEqual(sha(path.join(TEAM, 'maggie.jpg')), MAGGIE_CURRENT_SHA, 'a deliberate replacement updates this test');
+  assert.deepStrictEqual(jpegSize(path.join(TEAM, 'maggie.jpg')), { w: 640, h: 640 });
+  assert.strictEqual(sha(path.join(TEAM, 'maggie_legacy_2026-10-22.jpg')), MAGGIE_PREVIOUS_SHA);
+});
+check('Maggie: her email signature reads team-internal/maggie.jpg, which is byte-identical to team/maggie.jpg', () => {
+  assert.strictEqual(sha(path.join(ROOT, 'public', 'assets', 'presentations', 'team-internal', 'maggie.jpg')), MAGGIE_CURRENT_SHA);
+});
+check('Maggie: nothing upscaled; M365 and the portal video portrait unchanged until Ed approves', () => {
+  const map = JSON.parse(fs.readFileSync(path.join(ROOT, 'lib', 'team', 'persona_images.json'), 'utf8')).maggie;
+  assert.strictEqual(map.canonical_square.out, 'public/assets/presentations/team/maggie.jpg');
+  assert.strictEqual(map.placements.microsoft_365.photo, 'unchanged');
+  assert.strictEqual(map.placements.portal_video_visit.photo, 'unchanged');
+  const dir = path.join(ROOT, map.dir);
+  const names = Object.keys(map.photos).sort((x, y) => y.length - x.length);
+  for (const f of fs.readdirSync(dir).filter((x) => x.endsWith('.jpg'))) {
+    const owner = names.find((n) => f.startsWith(n)); assert.ok(owner, f);
+    const [w, h] = map.photos[owner].native_px; const d = jpegSize(path.join(dir, f));
+    assert.ok(d.w <= w && d.h <= h, `${f} ${d.w}x${d.h} > ${w}x${h}`);
   }
 });
 

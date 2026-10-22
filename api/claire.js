@@ -206,8 +206,7 @@ router.get('/me', async (req, res) => {
       // The team a visitor could meet in a visit. owner_only teammates are
       // excluded outright rather than gated on "is staff" — Tessa is Ed's
       // private EA, and "any active staffer" is not Ed.
-      team: roster.visitPersonas()
-        .filter((m) => !m.owner_only)
+      team: roster.communityVisitPersonas()
         .map((m) => ({ ...publicPersona(m.persona), on_camera: canAppear(m.persona) })),
     });
   } catch (err) {
@@ -243,7 +242,7 @@ router.post('/session/start', async (req, res) => {
     // only one who actually has a door.
     const asked = String((req.body || {}).persona || '').trim();
     const askedFor = asked ? roster.get(asked) : null;
-    const startPersona = (askedFor && askedFor.visit && !askedFor.owner_only)
+    const startPersona = (askedFor && askedFor.visit && roster.isCommunityFacing(askedFor))
       ? asked
       : (LANG_PERSONA[language] || 'claire');
 
@@ -359,7 +358,7 @@ router.post('/session/:id/turn', async (req, res) => {
   try {
     const suggested = routeSpecialist({ subject: '', bodyText: text });
     const target = suggested ? roster.get(suggested.persona) : null;
-    if (target && !target.owner_only && suggested.persona !== who && canAppear(suggested.persona)) {
+    if (target && roster.isCommunityFacing(target) && suggested.persona !== who && canAppear(suggested.persona)) {
       handoff = {
         from: who, to: suggested.persona,
         line: roster.handoffLine(who, suggested.persona, suggested.reason),
