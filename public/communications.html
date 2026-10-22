@@ -478,10 +478,13 @@ function msgHtml(m){
 // clears on a statement. A match is not the bank's decision. (Ed 2026-10-14)
 function ppPanelHtml(m){
   const pp = m.extracted.positive_pay; const items = pp.items || [];
-  const dec = (i) => i.bank_decision && i.bank_decision !== 'unconfirmed' ? '<strong style="color:#166534;">'+esc(i.bank_decision)+'</strong>'+(i.bank_decision_evidence?' <span style="opacity:.7;">('+esc(i.bank_decision_evidence)+')</span>':'') : '<strong style="color:#92400e;">unconfirmed</strong>';
+  // Exception decision and clearing are different facts: an approval is not a clearing.
+  const DEC = { approved_for_payment: 'Approved for payment', paid: 'Approved for payment', returned: 'Returned' };
+  const dec = (i) => (i.bank_decision && i.bank_decision !== 'unconfirmed' ? '<strong style="color:#166534;">'+esc(DEC[i.bank_decision]||i.bank_decision)+'</strong>'+(i.bank_decision_evidence?' <span style="opacity:.7;">('+esc(i.bank_decision_evidence)+')</span>':'') : '<strong style="color:#92400e;">decision unconfirmed</strong>')
+    + (i.cleared_date ? ' · <strong style="color:#1e3a8a;">Cleared '+esc(i.cleared_date)+'</strong> <span style="opacity:.7;">(bank statement)</span>' : ' · <span style="opacity:.7;">not yet cleared</span>');
   const btn = (i, d, label) => '<button class="btn" style="padding:1px 7px;font-size:11px;" data-id="'+esc(m.id)+'" data-last4="'+esc(i.account_last4)+'" data-check="'+esc(i.check_number)+'" data-decision="'+d+'" onclick="ppDecide(this)">'+label+'</button>';
   const row = (i) => '<div style="margin-top:3px;">'+esc(i.account_last4)+' #'+esc(i.check_number)+' $'+(i.amount_cents/100).toFixed(2)+' · '+(i.verdict==='matched'?'matches our register ('+esc(i.payee||'')+')':'<strong style="color:#991b1b;">'+esc(String(i.verdict).toUpperCase())+'</strong>')+' · bank: <span class="ppdec">'+dec(i)+'</span>'
-    +((!i.bank_decision||i.bank_decision==='unconfirmed')?' '+btn(i,'pay','Paid in portal')+' '+btn(i,'return','Returned'):'')+'</div>';
+    +((!i.bank_decision||i.bank_decision==='unconfirmed')?' '+btn(i,'pay','Approved in portal')+' '+btn(i,'return','Returned'):'')+'</div>';
   return '<div style="font-size:12px;margin-top:6px;background:#f8fafc;border:1px solid #dbe3ea;border-radius:6px;padding:7px 9px;">🏦 <strong>Positive Pay (Kat)</strong>'+(pp.deadline?' · cutoff '+esc(pp.deadline.central):'')+items.map(row).join('')+'<div id="ppmsg-'+esc(m.id)+'" style="margin-top:3px;"></div></div>';
 }
 async function ppDecide(b){
