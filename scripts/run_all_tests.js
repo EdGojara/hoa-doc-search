@@ -113,6 +113,8 @@ const CHECKS = [
   'tests/test_bank_rec_combined_match.js',
   'tests/test_cutoff_bs_presentation.js',
   'tests/test_positive_pay_notice.js',
+  'tests/test_positive_pay.js',
+  'tests/test_positive_pay_submissions.js',
   'tests/test_bank_correspondence.js',
   'tests/test_vigilance.js',
   'tests/test_reply_engine.js',

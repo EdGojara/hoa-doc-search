@@ -7,6 +7,10 @@
 //   GET  /run/:printRunId/pdf                      rendered checks PDF
 //   GET  /register?community_id&bank_account_id    the check register
 //   POST /void                                     void a check (append-only)
+//   GET  /positive-pay/status                      next file, backlog, files, exceptions
+//   POST /positive-pay/prepare                     record the next tracked file
+//   GET  /positive-pay/submissions/:id/file        download it (changes nothing)
+//   POST /positive-pay/submissions/:id/uploaded|outcome|cancel
 // ============================================================================
 const express = require('express');
 const { createClient } = require('@supabase/supabase-js');
@@ -16,7 +20,7 @@ const {
   getBankCheckConfig, updateBankCheckConfig,
 } = require('../lib/accounting/check_run');
 const { renderChecksPDF, micrFontInstalled } = require('../lib/accounting/check_renderer');
-const { requireAdmin } = require('./_require_admin');
+const { requireAdmin, requireStaff } = require('./_require_admin');
 const { encryptField, last4 } = require('../lib/crypto_field');
 const multer = require('multer');
 const crypto = require('crypto');
@@ -534,45 +538,85 @@ router.get('/run/:printRunId/pdf', async (req, res) => {
   } catch (err) { handleErr(res, 'run-pdf', err); }
 });
 
-// GET /run/:printRunId/positive-pay — the NewFirst issued-check file for this run,
-// to upload through Treasury Management after the checks are cut. Combined format:
-// a header row + one row per check, with the ACCOUNT # column so all operating
-// accounts can go in one upload (Melody Hess confirmed 2026-09-09).
-router.get('/run/:printRunId/positive-pay', async (req, res) => {
+// Positive Pay (Ed 2026-10-22, migration 542). ONE cumulative file per bank, tracked
+// from preparation to the bank's confirmation (lib/accounting/positive_pay_submissions).
+// Preparing or downloading a file never marks it uploaded or accepted. The per-run and
+// per-community downloads below are retired: an untracked file is how checks were
+// omitted or could be sent twice.
+const PPS = require('../lib/accounting/positive_pay_submissions');
+const ppErr = (res, feature, err) => {
+  if (err && err.code === 'not_found') return res.status(404).json({ error: err.message });
+  if (err && (err.code === 'invalid_state' || err.code === 'duplicate_submission' || err.code === 'file_mismatch')) return res.status(409).json({ error: err.message, code: err.code });
+  return handleErr(res, feature, err);
+};
+const actorFrom = (u) => ({ userId: u.user.id, name: u.full_name || u.email || 'Staff' });
+
+const RETIRED_PP = { error: 'retired', detail: 'Positive Pay files are prepared on the Positive Pay page (/admin/positive-pay), one tracked file for all NewFirst accounts. This download is no longer available.' };
+router.get('/run/:printRunId/positive-pay', (req, res) => res.status(410).json(RETIRED_PP));
+
+// GET /positive-pay/status — what the next file would contain, the backlog, files and exceptions.
+router.get('/positive-pay/status', async (req, res) => {
   try {
-    const { data: checks, error } = await supabase.from('check_register')
-      .select('check_number, payee_name, amount_cents, issue_date, status, bank_account_id')
-      .eq('print_run_id', req.params.printRunId)
-      .neq('status', 'void')
-      .order('check_number');
-    if (error) throw error;
-    if (!checks || !checks.length) return res.status(404).json({ error: 'run_not_found_or_empty' });
-    // Resolve each check's FULL bank account number for the ACCOUNT # column. It
-    // is stored encrypted (account_number_encrypted); last4 is not enough for the
-    // bank to route the row, so we decrypt the full number and leave it blank if
-    // it was never captured — generatePositivePayCsv then flags it as missing.
-    const acctIds = [...new Set((checks || []).map((c) => c.bank_account_id).filter(Boolean))];
-    const acctMap = {};
-    if (acctIds.length) {
-      const { decryptField } = require('../lib/crypto_field');
-      const { data: accts } = await supabase.from('bank_accounts').select('id, account_number_encrypted').in('id', acctIds);
-      for (const a of accts || []) {
-        let full = '';
-        try { full = a.account_number_encrypted ? (decryptField(a.account_number_encrypted) || '') : ''; } catch (_) { full = ''; }
-        acctMap[a.id] = full;
-      }
-    }
-    const withAcct = (checks || []).map((c) => ({ ...c, account_number: acctMap[c.bank_account_id] || '' }));
-    const { generatePositivePayCsv } = require('../lib/accounting/positive_pay');
-    const out = generatePositivePayCsv(withAcct);
-    if (out.missing_account) res.setHeader('X-Bedrock-Missing-Account', out.missing_account);
-    const stamp = new Date().toISOString().slice(0, 10);
-    res.setHeader('Content-Type', 'text/csv');
-    res.setHeader('Content-Disposition', `attachment; filename="positive-pay-${stamp}-${req.params.printRunId.slice(0, 8)}.csv"`);
-    res.setHeader('X-Bedrock-Check-Count', out.count);
-    res.send(out.csv);
-  } catch (err) { handleErr(res, 'run-positive-pay', err); }
+    const u = await requireStaff(req, res); if (!u) return;
+    res.json(await PPS.status(supabase));
+  } catch (err) { ppErr(res, 'pp-status', err); }
 });
+
+// POST /positive-pay/prepare — record the next file (status prepared). Sends nothing.
+router.post('/positive-pay/prepare', express.json(), async (req, res) => {
+  try {
+    const u = await requireStaff(req, res); if (!u) return;
+    res.json(await PPS.prepare(supabase, { preparedBy: u.full_name || u.email || 'Staff', userId: u.user.id }));
+  } catch (err) { ppErr(res, 'pp-prepare', err); }
+});
+
+// GET /positive-pay/submissions/:id/file — the exact file prepared. Changes nothing.
+router.get('/positive-pay/submissions/:id/file', async (req, res) => {
+  try {
+    const u = await requireStaff(req, res); if (!u) return;
+    const { submission, csv } = await PPS.rebuildFile(supabase, req.params.id);
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', `attachment; filename="${submission.file_name}"`);
+    res.setHeader('Cache-Control', 'no-store');
+    res.send(csv);
+  } catch (err) { ppErr(res, 'pp-file', err); }
+});
+
+// POST /positive-pay/submissions/:id/uploaded — the file was uploaded in the bank portal.
+router.post('/positive-pay/submissions/:id/uploaded', express.json(), async (req, res) => {
+  try {
+    const u = await requireStaff(req, res); if (!u) return;
+    res.json({ submission: await PPS.markUploaded(supabase, req.params.id, { actor: actorFrom(u), note: (req.body || {}).note || null }) });
+  } catch (err) { ppErr(res, 'pp-uploaded', err); }
+});
+
+// POST /positive-pay/submissions/:id/outcome — the bank's confirmation:
+//   { outcome: accepted|partially_accepted|rejected, evidence, bank_reference?, reason?, rejected?: [{check_register_id, reason}] }
+router.post('/positive-pay/submissions/:id/outcome', express.json(), async (req, res) => {
+  try {
+    const u = await requireStaff(req, res); if (!u) return;
+    const b = req.body || {};
+    res.json(await PPS.recordOutcome(supabase, req.params.id, { actor: actorFrom(u), outcome: b.outcome, evidence: b.evidence, bankReference: b.bank_reference || null, reason: b.reason || null, rejected: Array.isArray(b.rejected) ? b.rejected : [], rejectedCheckNumbers: Array.isArray(b.rejected_check_numbers) ? b.rejected_check_numbers : [] }));
+  } catch (err) { ppErr(res, 'pp-outcome', err); }
+});
+
+// POST /positive-pay/submissions/:id/cancel — a prepared file that will not be uploaded.
+router.post('/positive-pay/submissions/:id/cancel', express.json(), async (req, res) => {
+  try {
+    const u = await requireStaff(req, res); if (!u) return;
+    res.json({ submission: await PPS.cancel(supabase, req.params.id, { actor: actorFrom(u), reason: (req.body || {}).reason }) });
+  } catch (err) { ppErr(res, 'pp-cancel', err); }
+});
+
+// POST /positive-pay/accounts/:id/start-date — ADMIN: first issue date exported for the
+// account, set after the backlog review. Earlier checks stay backlog.
+router.post('/positive-pay/accounts/:id/start-date', express.json(), async (req, res) => {
+  try {
+    const admin = await requireAdmin(req, res); if (!admin) return;
+    res.json({ account: await PPS.setStartDate(supabase, req.params.id, (req.body || {}).start_date) });
+  } catch (err) { ppErr(res, 'pp-start-date', err); }
+});
+
 
 router.get('/register', async (req, res) => {
   try {
@@ -591,40 +635,9 @@ router.get('/register', async (req, res) => {
   } catch (err) { handleErr(res, 'register', err); }
 });
 
-// Positive Pay / "Validation-Stop" file — the outbound file Bedrock sends
-// NewFirst (per their 2026-07-14 integration spec) so the bank pays only the
-// checks we actually issued. Real data from the check register. Format is CSV
-// (NewFirst: "CSV or tab delimited" — TBD); one row per non-voided issued check.
-router.get('/positive-pay-file', async (req, res) => {
-  try {
-    const { community_id, bank_account_id } = req.query;
-    if (!community_id) return res.status(400).json({ error: 'community_id_required' });
-    const { data: accts } = await supabase.from('bank_accounts')
-      .select('id, account_last4, account_nickname').eq('community_id', community_id);
-    const acctMap = new Map((accts || []).map((a) => [a.id, a]));
-    let q = supabase.from('check_register')
-      .select('check_number, issue_date, payee_name, amount_cents, status, bank_account_id')
-      .eq('community_id', community_id).neq('status', 'voided')
-      .order('check_number', { ascending: true });
-    if (bank_account_id) q = q.eq('bank_account_id', bank_account_id);
-    const { data, error } = await q;
-    if (error) throw error;
-    const rows = data || [];
-    const csvField = (v) => `"${String(v == null ? '' : v).replace(/"/g, '""')}"`;
-    const header = 'Account,Check Number,Amount,Issue Date,Payee,Status';
-    const lines = rows.map((c) => {
-      const a = acctMap.get(c.bank_account_id);
-      const acct = a && a.account_last4 ? ('XXXXXX' + a.account_last4) : '';
-      const amt = ((c.amount_cents || 0) / 100).toFixed(2);
-      const d = c.issue_date ? new Date(c.issue_date + 'T00:00:00').toLocaleDateString('en-US') : '';
-      return [csvField(acct), c.check_number, amt, d, csvField(c.payee_name), 'Issued'].join(',');
-    });
-    const csv = [header, ...lines].join('\r\n') + '\r\n';
-    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-    res.setHeader('Content-Disposition', 'attachment; filename="newfirst-validation-stop-file.csv"');
-    res.send(csv);
-  } catch (err) { handleErr(res, 'positive-pay-file', err); }
-});
+// The old per-community "Validation-Stop" CSV (masked account numbers, wrong header,
+// untracked) is retired: NewFirst could not route it, and nothing recorded it.
+router.get('/positive-pay-file', (req, res) => res.status(410).json(RETIRED_PP));
 
 // Reprint a hand-picked set of checks into ONE combined PDF. Same-day locked
 // (see getChecksForReprint) so an already-mailed check can't be re-cut.

@@ -1,0 +1,80 @@
+{
+  "migration": "542_positive_pay_submissions.sql",
+  "summary": "Positive Pay submission tracking (Ed 2026-10-22). Adds bank_accounts.positive_pay_enabled + positive_pay_start_date, enables the four NewFirst operating accounts on the Addendum (Canyon Gate 5313, Still Creek 1777, LOPF 2449, Waterview 5961) with NO start date (nothing exports until the backlog is reviewed), and creates positive_pay_submissions + positive_pay_submission_items with a one-live-submission-per-check unique index. No check, payment or journal entry changes.",
+  "requires": [
+    "541_acc_decision_authority_guard.sql"
+  ],
+  "preflight": [
+    {
+      "name": "the four Addendum accounts are NewFirst accounts",
+      "sql": "SELECT count(*)::int FROM bank_accounts WHERE bank_id = '16e07b6a-8902-4d1a-980e-db78938b98b3' AND id IN ('2dd4bf0b-0e71-4da0-b8a7-269845ddf54c','52cf2b77-4277-4b11-9e3f-60177f419f5f','13d7c91d-955c-43a1-bee6-a77c8b5a84de','829b287e-3d9f-4a4e-9eab-4ba437a329be')",
+      "expect": 4
+    },
+    {
+      "name": "the submission tables do not exist yet",
+      "sql": "SELECT count(*)::int FROM information_schema.tables WHERE table_schema = 'public' AND table_name IN ('positive_pay_submissions','positive_pay_submission_items')",
+      "expect": 0
+    }
+  ],
+  "expected_changes": [
+    "bank_accounts: columns positive_pay_enabled (boolean, default false) and positive_pay_start_date (date) added.",
+    "bank_accounts: positive_pay_enabled = true on the four NewFirst operating accounts; every other account false; every start date NULL.",
+    "New tables positive_pay_submissions and positive_pay_submission_items (empty), with service_role grants and updated_at triggers.",
+    "No other row changes."
+  ],
+  "objects": {
+    "added": [
+      "column:bank_accounts.positive_pay_enabled",
+      "column:bank_accounts.positive_pay_start_date",
+      "table:positive_pay_submissions",
+      "table:positive_pay_submission_items",
+      "index:idx_pp_submissions_bank_status",
+      "index:uq_pp_items_one_live_per_check",
+      "index:idx_pp_items_submission",
+      "index:idx_pp_items_account_check",
+      "trigger:positive_pay_submissions.trg_pp_submissions_updated_at",
+      "trigger:positive_pay_submission_items.trg_pp_items_updated_at"
+    ],
+    "changed": [],
+    "removed": []
+  },
+  "row_changes": {
+    "bank_accounts": 4,
+    "check_register": 0,
+    "journal_entries": 0
+  },
+  "protected": [
+    {
+      "table": "check_register",
+      "order_by": "id"
+    },
+    {
+      "table": "journal_entries",
+      "order_by": "id"
+    }
+  ],
+  "verify": [
+    {
+      "name": "exactly the four Addendum accounts are enabled",
+      "sql": "SELECT count(*)::int FROM bank_accounts WHERE positive_pay_enabled",
+      "expect": 4
+    },
+    {
+      "name": "no account has a start date (nothing exports yet)",
+      "sql": "SELECT count(*)::int FROM bank_accounts WHERE positive_pay_start_date IS NOT NULL",
+      "expect": 0
+    },
+    {
+      "name": "the duplicate guard index exists",
+      "sql": "SELECT count(*)::int FROM pg_indexes WHERE indexname = 'uq_pp_items_one_live_per_check'",
+      "expect": 1
+    },
+    {
+      "name": "no submissions yet",
+      "sql": "SELECT count(*)::int FROM positive_pay_submissions",
+      "expect": 0
+    }
+  ],
+  "api_checks": [],
+  "reload_schema": true
+}
