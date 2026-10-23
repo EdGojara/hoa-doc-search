@@ -570,7 +570,7 @@ router.post('/open-violation', express.json(), async (req, res) => {
       const aliasIds = await expandCategoryToAliases(obs.category_id);
       const matchIds = aliasIds && aliasIds.length ? aliasIds : [obs.category_id];
       const { data: openPriors } = await supabase.from('violations')
-        .select('id, current_stage, continuation_count, cure_period_ends_at, current_stage_started_at')
+        .select('id, current_stage, continuation_count, cure_period_ends_at, current_stage_started_at, opened_from_observation_id')
         .eq('property_id', obs.property_id)
         .in('primary_category_id', matchIds)
         .not('current_stage', 'in', '(cured,closed,voided)')
@@ -599,26 +599,39 @@ router.post('/open-violation', express.json(), async (req, res) => {
         const stageStarted = target.current_stage_started_at ? new Date(target.current_stage_started_at) : null;
         const daysAtStage = stageStarted ? (now.getTime() - stageStarted.getTime()) / 86400000 : Infinity;
         const readyToEscalate = daysAtStage >= ESCALATION_MIN_DAYS;
-        let advancedTo = null, eligibleForCertified = false;
-        if (readyToEscalate && target.current_stage === 'courtesy_1') {
-          const { data: comm } = await supabase.from('communities')
-            .select('letter_cure_days_courtesy_2').eq('id', obs.community_id).maybeSingle();
-          const cureDays = (comm && Number(comm.letter_cure_days_courtesy_2)) || 20;
-          const { data: adv } = await supabase.from('violations').update({
-            current_stage: 'courtesy_2',
-            current_stage_started_at: now.toISOString(),
-            cure_period_ends_at: new Date(now.getTime() + cureDays * 86400000).toISOString(),
-          }).eq('id', target.id).eq('current_stage', 'courtesy_1').select('id'); // optimistic race guard
-          if (adv && adv.length) advancedTo = 'courtesy_2';
-        } else if (readyToEscalate && target.current_stage === 'courtesy_2') {
+        // Courtesy 1 -> Courtesy 2 follows the SAME rules as inspection confirm
+        // (Ed 2026-10-23): a later observation advances it even inside the cure
+        // period, once the first notice has gone out, at most once per inspection,
+        // and the Courtesy 1 deadline is kept. Courtesy 2 -> §209 is unchanged: it
+        // is only flagged for staff review.
+        const { decideReobservationOutcome, seenEarlierInThisInspection } = require('../lib/enforcement/reobservation_outcome');
+        const sameInspection = await seenEarlierInThisInspection(supabase, {
+          violationId: target.id, openedFromObservationId: target.opened_from_observation_id,
+          inspectionId: obs.inspection_id, excludeObservationId: obs.id,
+        });
+        let advancedTo = null, eligibleForCertified = false, c1Outcome = null;
+        if (target.current_stage === 'courtesy_1') {
+          c1Outcome = (await decideReobservationOutcome(supabase, target, { sameInspection })).outcome;
+          if (c1Outcome === 'advance_courtesy_2') {
+            const { data: adv } = await supabase.from('violations').update({
+              current_stage: 'courtesy_2',
+              current_stage_started_at: now.toISOString(),
+            }).eq('id', target.id).eq('current_stage', 'courtesy_1').select('id'); // optimistic race guard
+            if (adv && adv.length) advancedTo = 'courtesy_2';
+          }
+        } else if (readyToEscalate && !sameInspection && target.current_stage === 'courtesy_2') {
           eligibleForCertified = true;
         }
 
         const outcomeNote = advancedTo
-          ? 'Re-observed past the 10-day internal escalation window, advanced to Courtesy 2 and a new cure clock started.'
+          ? 'Re-observed on a later inspection, advanced to Courtesy 2 (a reminder; the Courtesy 1 deadline is unchanged).'
           : eligibleForCertified
             ? 'Re-observed past the 10-day internal window at Courtesy 2, ELIGIBLE for the certified notice (staff review before sending; the certified notice keeps its 30-day cure).'
-            : 'Re-observed within the 10-day internal window, or already certified, continuation logged; stage and cure clock unchanged.';
+            : sameInspection
+              ? 'Re-observed on the same inspection that already acted on this case, continuation logged; stage and cure clock unchanged.'
+              : c1Outcome === 'awaiting_first_mail'
+                ? 'Re-observed, but the first courtesy notice has not been mailed yet, continuation logged; stage and cure clock unchanged.'
+                : 'Re-observed within the 10-day internal window at Courtesy 2, or already certified, continuation logged; stage and cure clock unchanged.';
 
         try {
           await supabase.from('violation_continuations').insert({
@@ -1867,6 +1880,7 @@ router.post('/generate-letter', express.json(), async (req, res) => {
         category_description: violation.enforcement_categories && violation.enforcement_categories.description,
         board_priority_at_open: violation.board_priority_at_open,
       },
+      fixed_cure_by: (violation.current_stage === 'courtesy_2' && !(Number(violation.cure_days_override) > 0)) ? (violation.cure_period_ends_at || null) : null,
       cure_days_override: violation.cure_days_override || null, // migration 247 — operator grace override
       property: {
         street_address: pRow.street_address,
@@ -2523,6 +2537,11 @@ async function _assembleBundlePdf({ group, letterDate }) {
     property: { street_address: pRow.street_address, unit: pRow.unit, city: pRow.city, state: pRow.state, zip: pRow.zip, lot_number: pRow.lot_number },
     owner: { full_name: pRow.owner_name, mailing_address: pRow.owner_mailing_address },
     community, stage, cure_days_override: _bundleCureOverride,
+    // A Courtesy 2 reminder keeps the case deadline. If bundled cases differ, the
+    // later date is printed so no owner's deadline is shortened.
+    fixed_cure_by: (stage === 'courtesy_2' && !_bundleCureOverride)
+      ? (orderedGroup.map((d) => (vById.get(d.violation_id) || {}).cure_period_ends_at).filter(Boolean).sort().pop() || null)
+      : null,
     letter_date: letterDate,
     wide_photo_buffer: widePhotoBuffer,
     violations: violationsCtx,
@@ -3834,7 +3853,7 @@ router.post('/mail-queue/lock-and-batch', express.json(), async (req, res) => {
         // Fetch violation + joined data needed for regeneration
         const { data: vio } = await supabase
           .from('violations')
-          .select('id, property_id, community_id, current_stage, primary_category_id, opened_at, board_priority_at_open, opened_from_observation_id, cure_days_override, source')
+          .select('id, property_id, community_id, current_stage, primary_category_id, opened_at, board_priority_at_open, opened_from_observation_id, cure_days_override, source, cure_period_ends_at')
           .eq('id', L.violation_id)
           .maybeSingle();
         if (!vio) { skipped.push({ id: L.id, reason: 'violation not found' }); continue; }
@@ -3896,7 +3915,12 @@ router.post('/mail-queue/lock-and-batch', express.json(), async (req, res) => {
         const cureDays = renderStage === 'courtesy_1' ? Number(community.letter_cure_days_courtesy_1 || 20)
                        : renderStage === 'courtesy_2' ? Number(community.letter_cure_days_courtesy_2 || 20)
                        : Number(community.letter_cure_days_certified_209 || 30);
-        const cureBy = new Date(postmarkDate.getTime() + cureDays * 24 * 60 * 60 * 1000).toISOString();
+        // Courtesy 2 is a reminder: it keeps the deadline already on the case
+        // (from the Courtesy 1 letter) unless extra time was granted on the case.
+        const _c2KeepsDeadline = renderStage === 'courtesy_2' && !(Number(vio.cure_days_override) > 0) && !!vio.cure_period_ends_at;
+        const cureBy = _c2KeepsDeadline
+          ? new Date(vio.cure_period_ends_at).toISOString()
+          : new Date(postmarkDate.getTime() + cureDays * 24 * 60 * 60 * 1000).toISOString();
 
         // Property + owner. owner_contact_id is needed for multi-channel
         // supplemental notices (email/SMS lookups go through contacts).
@@ -4072,6 +4096,7 @@ router.post('/mail-queue/lock-and-batch', express.json(), async (req, res) => {
               category_label: catRow && catRow.label,
               board_priority_at_open: vio.board_priority_at_open,
             },
+            fixed_cure_by: _c2KeepsDeadline ? cureBy : null,
             cure_days_override: vio.cure_days_override || null, // migration 247 — survives mailing
             property: {
               street_address: pRow.street_address, unit: pRow.unit,
@@ -6747,8 +6772,15 @@ async function _draftLetterForBumpedViolation(violation, decision, communityId, 
       return { letter_path: _path, interaction_id: _inter && _inter.id };
     }
 
-    const newCureEnd = _newCureDate(decision);
+    let newCureEnd = _newCureDate(decision);
+    let _keptDeadline = null;
+    if (decision.stage === 'courtesy_2') {
+      // A Courtesy 2 reminder states the deadline already on the case.
+      const { data: _cv } = await supabase.from('violations').select('cure_period_ends_at, cure_days_override').eq('id', violation.id).maybeSingle();
+      if (_cv && _cv.cure_period_ends_at && !(Number(_cv.cure_days_override) > 0)) { _keptDeadline = _cv.cure_period_ends_at; newCureEnd = _keptDeadline; }
+    }
     const pdfBuffer = await renderViolationLetterPdf({
+      fixed_cure_by: _keptDeadline,
       violation: {
         id: violation.id,
         current_stage: decision.stage,
