@@ -2705,7 +2705,7 @@ async function runAutoBundle({ communityId = null, force = false, propertyId = n
     let bundlesCreated = 0;
     let draftsBundled = 0;
     let singletons = 0;
-    const skipped = [];
+    const skipped = [..._misrouted];
 
     for (const [, group] of groups) {
       try {
@@ -3645,6 +3645,16 @@ router.post('/mail-queue/lock-and-batch', express.json(), async (req, res) => {
       const held = new Set((letters || []).filter((l) => verdict.get(l.community_id) && !verdict.get(l.community_id).allowed).map((l) => l.id));
       if (held.size) { for (let i = letters.length - 1; i >= 0; i--) if (held.has(letters[i].id)) letters.splice(i, 1); console.warn('[enforcement] lock-and-batch held', held.size, 'letter(s) for communities no longer managed'); }
     }
+    // A certified-stage letter (certified §209 / fine) is never printed in a first-class run: a
+    // certified statutory notice must go by certified mail (Ed 2026-10-23). Held, reported, unchanged.
+    const _misrouted = [];
+    {
+      const { deliveryMismatch, letterStageOf } = require('../lib/enforcement/letter_stage');
+      for (let i = (letters || []).length - 1; i >= 0; i--) {
+        if (deliveryMismatch(letters[i], deliveryMethod)) { _misrouted.push({ id: letters[i].id, reason: `this is a ${letterStageOf(letters[i])} letter and must go by certified mail, not ${deliveryMethod}; held, nothing printed` }); letters.splice(i, 1); }
+      }
+      if (_misrouted.length) console.warn('[enforcement] lock-and-batch held', _misrouted.length, 'certified-stage letter(s) from a non-certified run');
+    }
     if (!letters || letters.length === 0) {
       return res.status(404).json({ error: 'No pending letters match those filters.' });
     }
@@ -4203,8 +4213,11 @@ router.post('/mail-queue/lock-and-batch', express.json(), async (req, res) => {
     try {
       const { data: includedInters } = await supabase
         .from('interactions')
-        .select('id, community_id, property_id, violation_id, type, bundle_id')
+        .select('id, community_id, property_id, violation_id, type, subject, bundle_id')
         .in('id', included);
+      // The letter's ACTUAL stage (its subject), not its type: every violation letter is typed
+      // letter_209, which recorded first-class courtesy letters as certified_209 mailings.
+      const { letterStageOf } = require('../lib/enforcement/letter_stage');
       const stageMap = {
         letter_courtesy_1: 'courtesy_1',
         letter_courtesy_2: 'courtesy_2',
@@ -4219,7 +4232,7 @@ router.post('/mail-queue/lock-and-batch', express.json(), async (req, res) => {
         property_id:    inter.property_id,
         violation_id:   inter.violation_id,
         bundle_id:      inter.bundle_id,
-        stage_at_send:  stageMap[inter.type] || 'certified_209',
+        stage_at_send:  letterStageOf(inter) || stageMap[inter.type] || 'certified_209',
         provider:       'manual',
         delivery_method: deliveryMethod === 'certified_mail' ? 'certified_mail' : 'first_class',
         return_receipt_requested: deliveryMethod === 'certified_mail',
