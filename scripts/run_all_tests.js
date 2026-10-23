@@ -204,6 +204,7 @@ const CHECKS = [
   'tests/test_tessa_delegation.js',
   'tests/test_tessa_rls.js',
   'tests/test_tessa_threaded_reply.js',
+  'tests/test_vendor_routes_shadowing.js',
   'tests/test_signature_identity.js',
   'tests/test_email_body_links.js',
   'tests/test_signature_headshot_size.js',
