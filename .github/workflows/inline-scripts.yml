@@ -1,0 +1,24 @@
+# Required check (Ed 2026-10-23): every pull request to main must pass the existing inline-script
+# validation. A single syntax error in an inline <script> makes the browser drop the whole block
+# (PR #275's unescaped apostrophe hung the Home dashboard for about 13 hours). Runs on every PR,
+# not only page changes, so the required check never sits waiting on PRs that skip it.
+name: inline-scripts
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  inline-scripts:
+    name: inline-scripts
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      # Uses only Node built-ins (fs, path, vm): no npm install.
+      - run: node scripts/check_inline_scripts.js
