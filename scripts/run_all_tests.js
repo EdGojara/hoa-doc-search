@@ -64,6 +64,7 @@ const CHECKS = [
   // Violation letters: the stage on the mail record, certified-mail guards,
   // mail states and audited reductions (Ed 2026-10-23).
   'tests/test_stale_letter_guard.js',
+  'tests/test_delivery_receipts_access.js',
   'tests/test_letter_mail_states.js',
   'tests/test_advance_audit.js',
   'tests/test_courtesy2_reminder.js',
