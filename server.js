@@ -1352,6 +1352,7 @@ app.use('/api/feed', require('./api/feed'));
 // Amanda request contract, Phase 2A (Issue #29): in-app door, proposals only (admin).
 app.use('/api/amanda/email', require('./api/amanda_email'));  // Amanda's email desk (prepare + list; sending stays on /api/email-drafts)
 app.use('/api/agents', require('./api/agent_desk'));  // AI employee email desk for every roster agent with email_desk (Ed 2026-10-22)
+app.use('/api/agent-browser', require('./api/agent_browser'));  // owner-only: guarded server-side browser skills for AI employees (Ed 2026-10-23)
 app.use('/api/amanda', require('./api/amanda'));
 // Community Data Readiness — read-only, staff sign-in (Issue #6).
 app.use('/api/readiness', require('./api/readiness'));
