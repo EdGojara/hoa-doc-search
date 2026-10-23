@@ -36854,8 +36854,8 @@ async function downloadVwRFP() {
     try {
       const res = await fetch(`/download-rfp/${vwState.bidRequestId}`);
       if (!res.ok) {
-        const err = await res.json();
-        alert('Error: ' + (err.error || 'Could not download'));
+        const err = await res.json().catch(() => ({}));
+        alert(err.detail || ('Error: ' + (err.error || 'Could not download')));
         return;
       }
       const blob = await res.blob();
