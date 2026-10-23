@@ -913,7 +913,7 @@ async function findSiblingEmails(message) {
   const WINDOW = 2 * 3600 * 1000; // 2 hours either side — a real "forgot something" burst, not unrelated later mail
   try {
     const { data } = await supabase.from('email_messages')
-      .select('id, subject, body_full, body_preview, received_at')
+      .select('id, subject, body_full, body_preview, received_at, conversation_id')
       .ilike('sender_email', message.sender_email)
       .eq('direction', 'inbound')
       .neq('id', message.id)
@@ -921,8 +921,24 @@ async function findSiblingEmails(message) {
       .gte('received_at', new Date(center - WINDOW).toISOString())
       .lte('received_at', new Date(center + WINDOW).toISOString())
       .order('received_at', { ascending: true }).limit(6);
-    return (data || []).map((s) => ({ id: s.id, subject: s.subject, body: s.body_full || s.body_preview || '', received_at: s.received_at }));
+    const rows = await coverableSiblings(message, data || []);
+    return rows.map((s) => ({ id: s.id, subject: s.subject, body: s.body_full || s.body_preview || '', received_at: s.received_at }));
   } catch (_) { return []; }
+}
+
+// One reply covers only the same matter. A sibling in a DIFFERENT conversation that we wrote in
+// (the sender answering one of our own outgoing emails) is its own matter and must stay open.
+// Scar (Ed 2026-10-23): Kat's reply on Melody's "RE: Positive Pay" thread also marked handled
+// Melody's answer to Kat's separate "Automating our bank reconciliations" email. A failed lookup
+// keeps only same-conversation siblings (never clears more than it can prove).
+async function coverableSiblings(message, candidates) {
+  const other = (c) => c.conversation_id && c.conversation_id !== message.conversation_id;
+  const convs = [...new Set(candidates.filter(other).map((c) => c.conversation_id))];
+  if (!convs.length) return candidates;
+  const { data, error } = await supabase.from('email_messages').select('conversation_id').eq('direction', 'outbound').in('conversation_id', convs).limit(1000);
+  if (error) return candidates.filter((c) => !other(c));
+  const ours = new Set((data || []).map((r) => r.conversation_id));
+  return candidates.filter((c) => !(other(c) && ours.has(c.conversation_id)));
 }
 
 // Greet the person who actually emailed, NOT the household account name. A joint
@@ -1833,7 +1849,12 @@ router.post('/:id/send', express.json(), async (req, res) => {
     await supabase.from('email_messages').update({ triage_status: 'handled', reviewed_by: reviewed_by, reviewed_at: new Date().toISOString() }).eq('id', req.params.id);
     // This reply covered the homeowner's other recent emails — mark those
     // handled too, so sending once clears them all instead of leaving stragglers.
-    const alsoHandle = Array.isArray(req.body && req.body.also_handle) ? req.body.also_handle.filter(Boolean).slice(0, 10) : [];
+    let alsoHandle = Array.isArray(req.body && req.body.also_handle) ? req.body.also_handle.filter(Boolean).slice(0, 10) : [];
+    // Never trust the client's list: only messages this server would itself propose as covered.
+    if (alsoHandle.length) {
+      const allowed = new Set((await findSiblingEmails({ id: req.params.id, ...m })).map((x) => x.id));
+      alsoHandle = alsoHandle.filter((id) => allowed.has(id));
+    }
     if (alsoHandle.length) {
       try { await supabase.from('email_messages').update({ triage_status: 'handled', reviewed_by: `${reviewed_by} (covered by one reply)`, reviewed_at: new Date().toISOString() }).in('id', alsoHandle); } catch (_) {}
     }
