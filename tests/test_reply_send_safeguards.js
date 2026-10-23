@@ -43,7 +43,7 @@ function query(table) {
   const q = {
     select() { return q; }, insert(p) { st.op = 'insert'; st.payload = p; return q; }, update(p) { st.op = 'update'; st.payload = p; return q; },
     eq(c, v) { st.f.push((r) => r[c] === v); return q; }, neq(c, v) { st.f.push((r) => r[c] !== v); return q; }, in(c, v) { st.f.push((r) => v.includes(r[c])); return q; },
-    is(c, v) { st.f.push((r) => (r[c] == null) === (v === null)); return q; }, ilike() { return q; }, or() { return q; }, not() { return q; }, gte() { return q; }, lte() { return q; },
+    is(c, v) { st.f.push((r) => (r[c] == null) === (v === null)); return q; }, ilike(c, v) { if (!String(v).includes('%')) st.f.push((r) => String(r[c] || '').toLowerCase() === String(v).toLowerCase()); return q; }, or() { return q; }, not() { return q; }, gte() { return q; }, lte() { return q; },
     order() { return q; }, limit() { return q; }, range() { return q; },
     maybeSingle() { st.single = true; return q; }, single() { st.single = true; return q; },
     then(a, b) { return Promise.resolve(run()).then(a, b); },
@@ -321,6 +321,48 @@ check('Communications attachments fail closed: a chosen file that cannot load st
   STORE[`documents/email_outbound_attachments/${OTHER}/form.pdf`] = Buffer.from('%PDF form');
   const ok = await sendOther('Hi, the form is attached.', { attach_uploads: [{ name: 'form.pdf', storage_path: `email_outbound_attachments/${OTHER}/form.pdf`, mime: 'application/pdf' }] });
   assert.equal(ok.status, 200, JSON.stringify(ok.j)); assert.ok(calls[0].attachments.some((a) => a.name === 'form.pdf'));
+});
+
+// ---- one reply covers only the same matter (Ed 2026-10-23: Kat's reply on Melody's "RE: Positive
+// Pay" thread also marked handled Melody's answer to Kat's separate "Automating our bank
+// reconciliations" email, a different conversation Kat had started) ----
+check('COVERED BY ONE REPLY: only same-thread siblings are covered; another thread from the same sender (a reply to our email, or a new email) stays open; the server ignores ids it would not propose', async () => {
+  reset();
+  const S = 'mhess@newfirst.test', MBX = 'amandaalbright@bedrocktx.com';
+  const msg = (id, conv, at, subject) => ({ id, mailbox: MBX, graph_id: 'g-' + id, internet_message_id: '<' + id + '@x>', direction: 'inbound', sender_email: S, sender_name: 'Hess,Melody', subject, persona: 'amanda', triage_status: 'needs_review', received_at: at, recipients: [MBX], body_full: 'Hi', conversation_id: conv, extracted: {} });
+  const A = '11111111-0000-4000-8000-00000000000a', B = '11111111-0000-4000-8000-00000000000b', C = '11111111-0000-4000-8000-00000000000c', D = '11111111-0000-4000-8000-00000000000d', X = '11111111-0000-4000-8000-00000000000e';
+  DB.email_messages.push(
+    msg(A, 'conv-pp', '2026-10-23T16:47:27Z', 'RE: Positive Pay'),
+    msg(B, 'conv-pp', '2026-10-23T16:55:53Z', 'RE: Positive Pay'),
+    msg(C, 'conv-recon', '2026-10-23T17:02:04Z', 'RE: Automating our bank reconciliations'),
+    msg(D, 'conv-new', '2026-10-23T17:05:00Z', 'One more thing'),
+    { ...msg(X, 'conv-other', '2026-10-23T17:00:00Z', 'Unrelated'), sender_email: 'someone.else@example.test' },
+    { id: '11111111-0000-4000-8000-0000000000f1', mailbox: MBX, direction: 'outbound', sender_email: MBX, subject: 'Automating our bank reconciliations', conversation_id: 'conv-recon', created_at: '2026-10-23T11:51:31Z', received_at: '2026-10-23T11:51:31Z' });
+  const r = await http('POST', `/api/email-triage/${A}/send`, { body: 'Hi Melody, thank you for confirming.', to: S, persona: 'amanda', also_handle: [B, C, D, X] });
+  assert.equal(r.status, 200, JSON.stringify(r.j));
+  const st = (id) => DB.email_messages.find((m) => m.id === id);
+  assert.equal(st(A).triage_status, 'handled');
+  assert.equal(st(B).triage_status, 'handled', 'same-thread sibling covered'); assert.match(st(B).reviewed_by, /covered by one reply/);
+  assert.equal(st(C).triage_status, 'needs_review', 'the reply to our own outgoing email (another conversation) stays open');
+  assert.equal(st(D).triage_status, 'needs_review', 'a separate new thread from the same sender is not covered: sender and time alone are not enough');
+  assert.equal(st(X).triage_status, 'needs_review', 'an id the server would not propose (another sender) is ignored');
+  assert.equal(r.j.also_handled, 1);
+});
+
+check('TWO SIMULTANEOUS CONVERSATIONS, same sender, different subjects and thread ids: a reply on each covers only its own thread', async () => {
+  reset();
+  const S = 'board.president@example.test', MBX = 'amandaalbright@bedrocktx.com';
+  const msg = (id, conv, at, subject) => ({ id, mailbox: MBX, graph_id: 'g-' + id, internet_message_id: '<' + id + '@x>', direction: 'inbound', sender_email: S, sender_name: 'President', subject, persona: 'amanda', triage_status: 'needs_review', received_at: at, recipients: [MBX], body_full: 'Hi', conversation_id: conv, extracted: {} });
+  const P1 = '22222222-0000-4000-8000-0000000000a1', P2 = '22222222-0000-4000-8000-0000000000a2', Q1 = '22222222-0000-4000-8000-0000000000b1', Q2 = '22222222-0000-4000-8000-0000000000b2';
+  DB.email_messages.push(msg(P1, 'thread-pool', '2026-10-23T15:00:00Z', 'Pool hours'), msg(Q1, 'thread-gate', '2026-10-23T15:05:00Z', 'Gate repair'),
+    msg(P2, 'thread-pool', '2026-10-23T15:10:00Z', 'RE: Pool hours'), msg(Q2, 'thread-gate', '2026-10-23T15:15:00Z', 'RE: Gate repair'));
+  const st = (id) => DB.email_messages.find((m) => m.id === id).triage_status;
+  const r1 = await http('POST', `/api/email-triage/${P1}/send`, { body: 'The pool closes at 9.', to: S, persona: 'amanda', also_handle: [P2, Q1, Q2] });
+  assert.equal(r1.status, 200, JSON.stringify(r1.j)); assert.equal(r1.j.also_handled, 1);
+  assert.equal(st(P1), 'handled'); assert.equal(st(P2), 'handled', 'its own thread is covered');
+  assert.equal(st(Q1), 'needs_review'); assert.equal(st(Q2), 'needs_review', 'the gate thread is untouched by the pool reply');
+  const r2 = await http('POST', `/api/email-triage/${Q1}/send`, { body: 'The gate is scheduled for Monday.', to: S, persona: 'amanda', also_handle: [Q2] });
+  assert.equal(r2.status, 200, JSON.stringify(r2.j)); assert.equal(st(Q2), 'handled', 'a reply on the gate thread covers the gate follow-up');
 });
 
 // ---- deliberate follow-ups (Ed 2026-10-23: Kat's Positive Pay permissions request to Melody was

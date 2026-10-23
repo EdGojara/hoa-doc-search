@@ -902,26 +902,32 @@ router.post('/ingest', express.json(), async (req, res) => {
   }
 });
 
-// Other UNHANDLED inbound emails from the SAME sender within a short window —
-// homeowners often send a second (or third) note because they forgot something
-// or want to add info. One reply should cover them all so the homeowner gets a
-// single coherent answer, not several. Returns [{id, subject, body, received_at}].
+// Other UNHANDLED inbound emails from the SAME sender in the SAME conversation within a
+// short window: a second note in the thread ("forgot something"). One reply covers them.
+// Sender and time alone are never enough (Ed 2026-10-23): the conversation is the verified
+// thread relationship, so a separate thread from the same sender stays open.
+// Returns [{id, subject, body, received_at}].
 async function findSiblingEmails(message) {
-  if (!message || message.direction === 'outbound' || !message.sender_email) return [];
+  if (!message || message.direction === 'outbound' || !message.sender_email || !message.conversation_id) return [];
   const center = new Date(message.received_at || Date.now()).getTime();
   if (!Number.isFinite(center)) return [];
   const WINDOW = 2 * 3600 * 1000; // 2 hours either side — a real "forgot something" burst, not unrelated later mail
   try {
     const { data } = await supabase.from('email_messages')
-      .select('id, subject, body_full, body_preview, received_at')
+      .select('id, subject, body_full, body_preview, received_at, conversation_id')
       .ilike('sender_email', message.sender_email)
+      .eq('conversation_id', message.conversation_id)
       .eq('direction', 'inbound')
       .neq('id', message.id)
       .in('triage_status', ['new', 'needs_review', 'linked'])
       .gte('received_at', new Date(center - WINDOW).toISOString())
       .lte('received_at', new Date(center + WINDOW).toISOString())
       .order('received_at', { ascending: true }).limit(6);
-    return (data || []).map((s) => ({ id: s.id, subject: s.subject, body: s.body_full || s.body_preview || '', received_at: s.received_at }));
+    // Scar (Ed 2026-10-23): matched on sender + time only, Kat's reply on Melody's "RE: Positive
+    // Pay" thread also marked handled Melody's answer to Kat's separate "Automating our bank
+    // reconciliations" email. Re-check the thread on each row as well as in the query.
+    return (data || []).filter((s) => s.conversation_id === message.conversation_id)
+      .map((s) => ({ id: s.id, subject: s.subject, body: s.body_full || s.body_preview || '', received_at: s.received_at }));
   } catch (_) { return []; }
 }
 
@@ -1833,7 +1839,12 @@ router.post('/:id/send', express.json(), async (req, res) => {
     await supabase.from('email_messages').update({ triage_status: 'handled', reviewed_by: reviewed_by, reviewed_at: new Date().toISOString() }).eq('id', req.params.id);
     // This reply covered the homeowner's other recent emails — mark those
     // handled too, so sending once clears them all instead of leaving stragglers.
-    const alsoHandle = Array.isArray(req.body && req.body.also_handle) ? req.body.also_handle.filter(Boolean).slice(0, 10) : [];
+    let alsoHandle = Array.isArray(req.body && req.body.also_handle) ? req.body.also_handle.filter(Boolean).slice(0, 10) : [];
+    // Never trust the client's list: only messages this server would itself propose as covered.
+    if (alsoHandle.length) {
+      const allowed = new Set((await findSiblingEmails({ id: req.params.id, ...m })).map((x) => x.id));
+      alsoHandle = alsoHandle.filter((id) => allowed.has(id));
+    }
     if (alsoHandle.length) {
       try { await supabase.from('email_messages').update({ triage_status: 'handled', reviewed_by: `${reviewed_by} (covered by one reply)`, reviewed_at: new Date().toISOString() }).in('id', alsoHandle); } catch (_) {}
     }
