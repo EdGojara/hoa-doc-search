@@ -10,7 +10,9 @@ const { runSkill, SKILLS, JOB, BUCKET } = require('../lib/agent_browser/runner')
 const router = express.Router();
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 
-// GET as well as POST so the owner can start the read-only check from a link. Both are owner-only.
+// POST only, from the owner's signed-in page (/admin/agent-browser), which sends the owner's
+// Supabase session token. A typed URL carries only the shared staff cookie, which cannot identify
+// the owner, so there is deliberately no GET form of an action (Ed 2026-10-23).
 async function start(req, res) {
   try {
     const u = await requireOwner(req, res); if (!u) return;
@@ -21,7 +23,6 @@ async function start(req, res) {
   } catch (err) { console.error('[agent_browser] run failed:', err.message); res.status(500).json({ error: safeErrorMessage(err) }); }
 }
 router.post('/run/:skill', start);
-router.get('/run/:skill', start);
 
 router.get('/runs', async (req, res) => {
   try {
@@ -33,7 +34,8 @@ router.get('/runs', async (req, res) => {
   } catch (err) { console.error('[agent_browser] runs failed:', err.message); res.status(500).json({ error: safeErrorMessage(err) }); }
 });
 
-// A short-lived link to one evidence screenshot of a recorded run.
+// A short-lived signed link to one evidence screenshot of a recorded run, returned as JSON so the
+// signed-in page can fetch it with the owner's token and then show the image.
 router.get('/evidence', async (req, res) => {
   try {
     const u = await requireOwner(req, res); if (!u) return;
@@ -41,7 +43,7 @@ router.get('/evidence', async (req, res) => {
     if (!/^agent-browser\/[0-9a-f-]{36}\/[\w.-]+\.png$/.test(path)) return res.status(400).json({ error: 'invalid_path' });
     const { data, error } = await supabase.storage.from(BUCKET).createSignedUrl(path, 300);
     if (error) throw error;
-    res.redirect(data.signedUrl);
+    res.json({ url: data.signedUrl, expires_in: 300 });
   } catch (err) { console.error('[agent_browser] evidence failed:', err.message); res.status(500).json({ error: safeErrorMessage(err) }); }
 });
 

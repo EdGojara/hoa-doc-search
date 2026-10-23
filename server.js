@@ -1303,6 +1303,9 @@ app.get('/admin/bank-setup', (req, res) => {
 app.get('/admin/positive-pay', (req, res) => {
   res.sendFile(require('path').join(__dirname, 'public', 'positive-pay.html'));
 });
+app.get('/admin/agent-browser', (req, res) => {
+  res.sendFile(require('path').join(__dirname, 'public', 'agent-browser.html'));
+});
 app.get('/admin/newfirst-integration', (req, res) => {
   res.sendFile(require('path').join(__dirname, 'public', 'newfirst-integration.html'));
 });
