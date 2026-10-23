@@ -8494,10 +8494,18 @@
       const st = (i.status || '').toLowerCase();
       if (st === 'draft') return `<span style="display:inline-block; background:#fef3c7; color:#92400e; border:1px solid #fcd34d; padding:1px 7px; border-radius:10px; font-size:10px; font-weight:700; white-space:nowrap;">✎ Draft — not mailed</span>`;
       if (['rejected', 'discarded', 'voided', 'cancelled'].includes(st)) return `<span style="display:inline-block; background:#f1f5f9; color:#64748b; border:1px solid #e2e8f0; padding:1px 7px; border-radius:10px; font-size:10px; font-weight:700;">✕ ${escapeHtml(st)}</span>`;
+      // Queued, printed and confirmed-mailed are different facts: only a confirmed
+      // mailing reads as mailed (Ed 2026-10-23). mail_state comes from the server.
+      if (i.mail_state && i.mail_state.state !== 'generated') {
+        const ms = i.mail_state;
+        const color = ms.state === 'mailed' ? '#15803d' : (ms.state === 'held' ? '#64748b' : '#b45309');
+        const icon = ms.state === 'mailed' ? '📬' : (ms.state === 'held' ? '⏸' : '🖨');
+        return `<span style="color:${color}; font-weight:600;" title="${escapeHtml(ms.label)}">${icon} ${escapeHtml(ms.label)}</span>`;
+      }
       if (i.printed_at || st === 'sent' || st === 'mailed') {
         const when = i.printed_at || i.sent_at;
-        const lbl = (i.delivery_method === 'certified_mail') ? '📬 certified mail' : `📬 ${method || 'mailed'}`;
-        return `<span style="color:#15803d; font-weight:600; white-space:nowrap;">${lbl}</span>${when ? `<div style="color:#94a3b8; font-size:10px;">${new Date(when).toLocaleDateString()}</div>` : ''}`;
+        const lbl = i.mailed_at ? ((i.delivery_method === 'certified_mail') ? '📬 certified mail' : `📬 ${method || 'mailed'}`) : (i.printed_at ? '🖨 printed, mailing not confirmed' : '🖨 in the mail queue');
+        return `<span style="color:${i.mailed_at ? '#15803d' : '#b45309'}; font-weight:600; white-space:nowrap;">${lbl}</span>${when ? `<div style="color:#94a3b8; font-size:10px;">${new Date(when).toLocaleDateString()}</div>` : ''}`;
       }
       return method || '—';
     };
@@ -19943,7 +19951,7 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
                        // These open the stored file (never regenerate) so the sent
                        // letter can be seen without ever changing it.
                        const sent = (d.interactions || []).filter((x) => x.violation_id === v.id && x.sent_at && /^letter_/.test(x.type || ''));
-                       const letterLinks = sent.map((x) => `<a href="/api/enforcement/interactions/${x.id}/file" target="_blank" rel="noopener" title="View the exact letter we mailed on ${new Date(x.sent_at).toLocaleDateString()} — this is the sealed record and is never regenerated" style="display:inline-block; background:#eef2f7; border:1px solid #cbd5e1; color:#0B1D34; padding:3px 7px; border-radius:5px; font-size:10.5px; font-weight:600; text-decoration:none; margin-right:3px;">📄 Sent ${new Date(x.sent_at).toLocaleDateString('en-US', { month: 'numeric', day: 'numeric' })}</a>${(window.currentUser && window.currentUser.role === 'admin') ? `<button onclick="inspRecordMailing('${x.id}','${escapeHtml(v.enforcement_categories?.label || v.category_label || 'letter')}')" title="Admin only: record or correct the real mail date, method, and certified tracking number — re-renders the letter to that date. Use when it was mailed by hand outside the system." style="background:#fff; border:1px solid #cbd5e1; color:#475569; padding:3px 7px; border-radius:5px; font-size:10.5px; font-weight:600; cursor:pointer; margin-right:3px;">📮 Mailing</button>` : ''}`).join('');
+                       const letterLinks = sent.map((x) => `<a href="/api/enforcement/interactions/${x.id}/file" target="_blank" rel="noopener" title="${escapeHtml((x.mail_state && x.mail_state.label) || 'Letter')}. Opens the sealed letter; it is never regenerated." style="display:inline-block; background:#eef2f7; border:1px solid #cbd5e1; color:#0B1D34; padding:3px 7px; border-radius:5px; font-size:10.5px; font-weight:600; text-decoration:none; margin-right:3px;">📄 ${escapeHtml(({ mailed: 'Mailed', printed: 'Printed, not confirmed mailed', queued: 'Queued, not printed', held: 'Held, not mailed', generated: 'Generated' })[x.mail_state && x.mail_state.state] || 'Letter')} ${new Date((x.mail_state && x.mail_state.at) || x.sent_at).toLocaleDateString('en-US', { month: 'numeric', day: 'numeric' })}</a>${(window.currentUser && window.currentUser.role === 'admin') ? `<button onclick="inspRecordMailing('${x.id}','${escapeHtml(v.enforcement_categories?.label || v.category_label || 'letter')}')" title="Admin only: record or correct the real mail date, method, and certified tracking number — re-renders the letter to that date. Use when it was mailed by hand outside the system." style="background:#fff; border:1px solid #cbd5e1; color:#475569; padding:3px 7px; border-radius:5px; font-size:10.5px; font-weight:600; cursor:pointer; margin-right:3px;">📮 Mailing</button>` : ''}`).join('');
                        const photoLink = v.opened_from_observation_id ? `<a href="/api/enforcement/observations/${v.opened_from_observation_id}/photo" target="_blank" rel="noopener" title="The inspection photo this violation was opened from" style="display:inline-block; background:#eef2f7; border:1px solid #cbd5e1; color:#0B1D34; padding:3px 7px; border-radius:5px; font-size:10.5px; font-weight:600; text-decoration:none; margin-right:3px;">📷 Photo</a>` : '';
                        return letterLinks + photoLink;
                      })()}
@@ -19953,7 +19961,7 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
                      ${stage === 'voided' ? `<button onclick="inspViolationUnvoid('${v.id}')" title="Bring this voided case back to an open Courtesy 1 so you can work it." style="background:#fff; border:1px solid #fdba74; color:#9a3412; padding:3px 7px; border-radius:5px; font-size:10.5px; font-weight:600; cursor:pointer; margin-right:3px;">↩ Unvoid</button>` : ''}
                      ${v.quality_status !== 'superseded' ? `<button onclick="inspViolationCorrect('${v.id}')" title="Correct or void this record (wrong house, duplicate, or void). To fix a wrong CATEGORY use ✎ Category instead." style="background:#fff; border:1px solid #fecaca; color:#b91c1c; padding:3px 7px; border-radius:5px; font-size:10.5px; font-weight:600; cursor:pointer; margin-right:3px;">⚠ Correct</button>` : ''}
                      ${['courtesy_1','courtesy_2','certified_209'].includes(v.current_stage) ? `<button onclick="inspAdvanceStage('${v.id}','${v.current_stage}')" title="Advance to the next enforcement stage (Courtesy 2 → Certified §209, etc.). Deliberate staff action — you still generate + mail the certified notice; the cure clock starts when it goes out." style="background:#fff7ed; border:1px solid #fdba74; color:#9a3412; padding:3px 7px; border-radius:5px; font-size:10.5px; font-weight:600; cursor:pointer; margin-right:3px;">↑ Advance</button>` : ''}
-                     ${['courtesy_2','certified_209','fine_assessed'].includes(v.current_stage) ? `<button onclick="inspReduceStage('${v.id}','${v.current_stage}')" title="Reduce to the previous stage (Courtesy 2 → Courtesy 1, Certified → Courtesy 2). Use when a case was over-escalated — e.g. a deduped duplicate bumped a first occurrence up a level. Clears the cure clock; regenerate the lower-stage letter." style="background:#eff6ff; border:1px solid #93c5fd; color:#1e40af; padding:3px 7px; border-radius:5px; font-size:10.5px; font-weight:600; cursor:pointer; margin-right:3px;">↓ Reduce</button>` : ''}
+                     ${['courtesy_2','certified_209','fine_assessed'].includes(v.current_stage) ? `<button onclick="inspReduceStage('${v.id}','${v.current_stage}')" title="Reduce to a lower stage, or correct the record to match the letter actually mailed. A reason is required and goes on the audit trail. A printed higher-stage letter must be confirmed physically held. Never sends a letter." style="background:#eff6ff; border:1px solid #93c5fd; color:#1e40af; padding:3px 7px; border-radius:5px; font-size:10.5px; font-weight:600; cursor:pointer; margin-right:3px;">↓ Reduce</button>` : ''}
                      ${v.sent_to_attorney_at ? `<span title="Sent to the association's attorney on ${new Date(v.sent_to_attorney_at).toLocaleDateString()}${v.attorney_firm ? ' — ' + escapeHtml(v.attorney_firm) : ''}${v.attorney_matter_ref ? ' (ref ' + escapeHtml(v.attorney_matter_ref) + ')' : ''}. This §209's cure clock is now counsel's — it's off the Schedule calendar. If it comes back, mark it Cured." style="display:inline-block; background:#ede9fe; border:1px solid #c4b5fd; color:#5b21b6; padding:3px 7px; border-radius:5px; font-size:10.5px; font-weight:700; margin-right:3px;">⚖ At attorney <button onclick="inspUnsetAttorney('${v.id}')" title="Undo — this was marked in error. Does not resolve the case." style="background:none; border:none; color:#7c3aed; cursor:pointer; font-size:10.5px; padding:0 0 0 3px; text-decoration:underline;">undo</button></span>` : (['courtesy_1','courtesy_2','certified_209','fine_assessed'].includes(v.current_stage) ? `<button onclick="inspSendToAttorney('${v.id}')" title="Refer this case to the association's attorney for enforcement — works at any stage, no certified letter required (use this for cases you inherited that are already at legal). The case stays open but its cure deadline comes off the Schedule calendar — that clock is counsel's now. If it later comes back, mark it Cured." style="background:#f5f3ff; border:1px solid #c4b5fd; color:#5b21b6; padding:3px 7px; border-radius:5px; font-size:10.5px; font-weight:600; cursor:pointer; margin-right:3px;">⚖ To attorney</button>` : '')}
                      ${v.sent_to_attorney_at ? `<button onclick="legalPhotoPick('${v.id}')" title="Take or upload a current photo for this at-legal case. It lands in the same place as the monthly drive photos, and the Attorney Update packet always uses the latest photo on file. The capture date + time + address are burned into the photo so it can't be disputed." style="background:#7f1d1d; border:1px solid #7f1d1d; color:#fff; padding:3px 7px; border-radius:5px; font-size:10.5px; font-weight:600; cursor:pointer; margin-right:3px;">📷 Legal picture</button>` : ''}
                      ${!['cured','closed','voided'].includes(v.current_stage) ? `<button onclick="inspMarkCured('${v.id}')" title="Close this violation (homeowner-confirmed cure, drive-by spot check, or board dismissal). Auto-resets any open repeat in this category back to Courtesy 1." style="background:#dcfce7; border:1px solid #86efac; color:#15803d; padding:3px 7px; border-radius:5px; font-size:10.5px; font-weight:600; cursor:pointer; margin-right:3px;">✓ Cure</button>` : ''}
@@ -20000,11 +20008,18 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
       if (['rejected', 'discarded', 'voided', 'cancelled'].includes(st)) {
         return `<span style="display:inline-block; background:#f1f5f9; color:#64748b; border:1px solid #e2e8f0; padding:1px 7px; border-radius:10px; font-size:10px; font-weight:700;">✕ ${escapeHtml(st)}</span>`;
       }
-      // Actually mailed (printed via the mail queue, or marked sent).
+      // Queued, printed and confirmed-mailed are different facts: only a confirmed
+      // mailing reads as mailed (Ed 2026-10-23). mail_state comes from the server.
+      if (i.mail_state && i.mail_state.state !== 'generated') {
+        const ms = i.mail_state;
+        const color = ms.state === 'mailed' ? '#15803d' : (ms.state === 'held' ? '#64748b' : '#b45309');
+        const icon = ms.state === 'mailed' ? '📬' : (ms.state === 'held' ? '⏸' : '🖨');
+        return `<span style="color:${color}; font-weight:600;" title="${escapeHtml(ms.label)}">${icon} ${escapeHtml(ms.label)}</span>`;
+      }
       if (i.printed_at || st === 'sent' || st === 'mailed') {
         const when = i.printed_at || i.sent_at;
-        const lbl = (i.delivery_method === 'certified_mail') ? '📬 certified mail' : `📬 ${method || 'mailed'}`;
-        return `<span style="color:#15803d; font-weight:600; white-space:nowrap;">${lbl}</span>${when ? `<div style="color:#94a3b8; font-size:10px;">${new Date(when).toLocaleDateString()}</div>` : ''}`;
+        const lbl = i.mailed_at ? ((i.delivery_method === 'certified_mail') ? '📬 certified mail' : `📬 ${method || 'mailed'}`) : (i.printed_at ? '🖨 printed, mailing not confirmed' : '🖨 in the mail queue');
+        return `<span style="color:${i.mailed_at ? '#15803d' : '#b45309'}; font-weight:600; white-space:nowrap;">${lbl}</span>${when ? `<div style="color:#94a3b8; font-size:10px;">${new Date(when).toLocaleDateString()}</div>` : ''}`;
       }
       // Status not fetched / unknown — degrade to the raw method (old behavior).
       return method || '—';
@@ -20690,22 +20705,50 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
 
   async function inspReduceStage(violationId, currentStage) {
     if (!violationId) return;
-    const PREV = { courtesy_2: 'Courtesy 1', certified_209: 'Courtesy 2', fine_assessed: 'Certified §209' };
-    const prevLabel = PREV[currentStage] || 'the previous stage';
-    const note = prompt('Reduce this violation back to ' + prevLabel + '?\n\nUse this when it was over-escalated — e.g. a duplicate from the same drive bumped a first occurrence up a level.\n\nOptional note (why it is being reduced):', '');
-    if (note === null) return; // cancelled
-    try {
+    // Ed 2026-10-23: a reduction is an audited correction. The person picks the
+    // target (any lower stage, or "match the letter actually mailed" when the
+    // record shows a stage that was never sent), gives the reason, and confirms
+    // any printed higher-stage letter is physically held.
+    const LADDER = ['courtesy_1', 'courtesy_2', 'certified_209', 'fine_assessed'];
+    const LABEL = { courtesy_1: 'Courtesy 1', courtesy_2: 'Courtesy 2', certified_209: 'Certified §209', fine_assessed: 'Fine' };
+    const lower = LADDER.slice(0, Math.max(0, LADDER.indexOf(currentStage))).reverse();
+    if (!lower.length) { alert('This case is already at the first stage.'); return; }
+    const options = lower.map((s, i) => `${i + 1} = ${LABEL[s]}${i === 0 ? ' (one step down)' : ''}${s === 'courtesy_1' ? ' (first notice: a cured case resets the sequence)' : ''}`);
+    const matchN = lower.length + 1;
+    options.push(`${matchN} = Match the letter actually mailed (the record shows ${LABEL[currentStage] || currentStage}, but only a lower letter went out; keeps that letter's cure date)`);
+    const pick = prompt('Reduce this case from ' + (LABEL[currentStage] || currentStage) + ' to:\n\n' + options.join('\n') + '\n\nEnter the number:', '1');
+    if (pick === null) return;
+    const n = parseInt(pick, 10);
+    if (!(n >= 1 && n <= matchN)) { alert('Pick one of the listed numbers.'); return; }
+    const body = n === matchN ? { correction: 'match_mailed_letter' } : { override_stage: lower[n - 1] };
+    const note = prompt('Why is this stage being reduced? (required, it goes on the audit trail)', '');
+    if (note === null) return;
+    if (!note.trim()) { alert('A reason is required.'); return; }
+    body.note = note.trim();
+    const send = async () => {
       const r = await window._authFetch(`/api/enforcement/violations/${violationId}/reduce-stage`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ note: note || undefined }),
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
       });
-      const j = await r.json();
-      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
-      const newStage = (j.new_stage || prevLabel).toString().replace(/_/g, ' ');
+      return { r, j: await r.json().catch(() => ({})) };
+    };
+    try {
+      let { r, j } = await send();
+      if (r.status === 409 && j.error === 'printed_letter_hold_unconfirmed') {
+        const list = (j.printed_letters || []).map((l) => `  • ${LABEL[l.stage] || l.stage} letter: ${l.state}`).join('\n');
+        if (!confirm('This case has a printed letter that was never confirmed mailed:\n\n' + list + '\n\nConfirm the envelope is physically held and was NOT mailed. It will be marked held (kept on the record, never deleted).')) return;
+        body.printed_letters_held = true;
+        ({ r, j } = await send());
+      }
+      if (!r.ok) throw new Error(j.detail || j.error || `HTTP ${r.status}`);
       if (typeof inspPDCurrentPropertyId !== 'undefined' && inspPDCurrentPropertyId) {
         await inspOpenPropertyDetail(inspPDCurrentPropertyId);
       }
-      setTimeout(() => alert('✓ Reduced to ' + newStage + '. The cure clock was cleared — regenerate the lower-stage letter when ready.'), 100);
+      const lines = [`✓ ${j.correction ? 'Corrected' : 'Reduced'} to ${LABEL[j.new_stage] || j.new_stage}.`];
+      if (j.correction) lines.push('The cure date from the letter actually mailed was kept. No new letter is needed.');
+      else lines.push('The cure clock was cleared. No letter is sent automatically: generate and approve the lower-stage letter when ready.');
+      if ((j.held_letters || []).length) lines.push(`${j.held_letters.length} unmailed higher-stage letter(s) marked held.`);
+      if ((j.fee_charges_for_review || []).length) lines.push(`${j.fee_charges_for_review.length} certified fee charge(s) for the held letter(s) are left for accounting review.`);
+      setTimeout(() => alert(lines.join('\n\n')), 100);
     } catch (e) {
       alert('Could not reduce: ' + e.message);
     }

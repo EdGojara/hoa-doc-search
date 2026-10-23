@@ -3213,7 +3213,7 @@ router.post('/mail-queue/confirm-mailed', express.json(), async (req, res) => {
     const printedAt = req.body && req.body.printed_at; // scope to ONE print session
     let q = supabase
       .from('interactions')
-      .select('id, type, violation_id, status')
+      .select('id, type, subject, violation_id, status')
       .in('type', _MAIL_LETTER_TYPES)
       .eq('delivery_method', deliveryMethod)
       .not('printed_at', 'is', null)
@@ -3229,8 +3229,29 @@ router.post('/mail-queue/confirm-mailed', express.json(), async (req, res) => {
     // correction (or a void) is stale — hold it, never mail, never bill. This is
     // the machine-readable enforcement of the old prose "do not mail" note that
     // the mail run used to ignore (17715 Sunset River Lane's certified §209).
-    const { mailable, stale } = await partitionMailable(supabase, letters);
+    const { mailable: _cleared, stale } = await partitionMailable(supabase, letters);
     const now = new Date().toISOString();
+
+    // A certified-stage letter is never confirmed as mailed in a first-class run
+    // (Ed 2026-10-23). It stays printed and unmailed until an admin records the
+    // real mailing with an explicit correction reason (📮 Mailing).
+    const { deliveryMismatch, letterStageOf } = require('../lib/enforcement/letter_stage');
+    const misrouted = _cleared.filter((l) => deliveryMismatch(l, deliveryMethod));
+    const mailable = _cleared.filter((l) => !deliveryMismatch(l, deliveryMethod));
+    if (misrouted.length) {
+      try {
+        const { error: nErr } = await supabase.from('interactions').insert(misrouted.map((l) => ({
+          community_id: communityId || null,
+          violation_id: l.violation_id || null,
+          type: 'observation_note',
+          subject: 'Letter held at mail run — wrong delivery method',
+          content: `Not confirmed as mailed: this is a ${letterStageOf(l)} letter and must go by certified mail, not ${deliveryMethod}. It stays printed and unmailed until the real mailing is recorded with a correction reason.`,
+          created_at: now,
+        })));
+        if (nErr) console.warn('[confirm-mailed] misroute-note insert failed:', nErr.message);
+      } catch (e) { console.warn('[confirm-mailed] misroute-note insert failed:', e.message); }
+      console.warn(`[confirm-mailed] held ${misrouted.length} certified letter(s) from a ${deliveryMethod} run`);
+    }
 
     if (stale.length) {
       await supabase.from('interactions')
@@ -3243,10 +3264,14 @@ router.post('/mail-queue/confirm-mailed', express.json(), async (req, res) => {
         type: 'observation_note',
         subject: 'Letter held at mail run — stale',
         content: `Held from the ${deliveryMethod} mail run and not mailed: ${l.reason}. The case moved after this letter was sealed, so mailing it would send an escalation the case no longer supports. No fee was charged.`,
-        source: 'stale_letter_guard',
         created_at: now,
       }));
-      try { await supabase.from('interactions').insert(notes); } catch (e) { console.warn('[confirm-mailed] hold-note insert failed:', e.message); }
+      // (No `source`: interactions.source only allows its intake values, and a
+      // refused insert here used to vanish without a word.)
+      try {
+        const { error: nErr } = await supabase.from('interactions').insert(notes);
+        if (nErr) console.warn('[confirm-mailed] hold-note insert failed:', nErr.message);
+      } catch (e) { console.warn('[confirm-mailed] hold-note insert failed:', e.message); }
       console.warn(`[confirm-mailed] held ${stale.length} stale letter(s):`, stale.map((l) => `${l.id.slice(0, 8)} (${l.reason})`).join('; '));
     }
 
@@ -3256,8 +3281,35 @@ router.post('/mail-queue/confirm-mailed', express.json(), async (req, res) => {
         .update({ mailed_at: now, status: 'sent', sent_at: now })
         .in('id', mailable.map((l) => l.id));
       if (uErr) return res.status(500).json({ error: uErr.message });
+
+      // The mail piece becomes "mailed" only now, at the person's confirmation;
+      // lock-and-batch leaves it queued (printed, not mailed).
+      try {
+        const { data: pcs, error: pErr } = await supabase.from('letter_mail_pieces')
+          .select('id, status, events').in('interaction_id', mailable.map((l) => l.id));
+        if (pErr) throw pErr;
+        for (const p of (pcs || []).filter((x) => x.status === 'queued')) {
+          const { error: e2 } = await supabase.from('letter_mail_pieces').update({
+            status: 'submitted', submitted_at: now, mailed_at: now,
+            events: [...(Array.isArray(p.events) ? p.events : []), { ts: now, type: 'mailing_confirmed', note: `Confirmed mailed in the ${deliveryMethod} run` }],
+          }).eq('id', p.id).eq('status', 'queued');
+          if (e2) console.warn('[confirm-mailed] piece update failed:', p.id, e2.message);
+        }
+      } catch (e) { console.warn('[confirm-mailed] mail-piece confirmation failed:', e.message); }
+
+      // The certified-letter fee posts on a CONFIRMED certified mailing, never at print.
+      if (deliveryMethod === 'certified_mail') {
+        try {
+          const { getActingUser } = require('./_acting_user');
+          const actor = await getActingUser(req).catch(() => null);
+          const { sweepCertifiedViolationFees } = require('../lib/enforcement/certified_fee');
+          sweepCertifiedViolationFees(supabase, { postedByUserId: actor && actor.id })
+            .then((sum) => { if (sum.posting) console.log(`[certified-fee] posted ${sum.posting} fee(s), $${(sum.total_cents / 100).toFixed(2)}`); })
+            .catch((e) => console.warn('[certified-fee] sweep failed (non-fatal):', e.message));
+        } catch (e) { console.warn('[certified-fee] sweep not started:', e.message); }
+      }
     }
-    res.json({ confirmed: mailable.length, held: stale.length });
+    res.json({ confirmed: mailable.length, held: stale.length, held_wrong_method: misrouted.length });
   } catch (err) {
     console.error('[mail-queue.confirm-mailed]', err);
     res.status(500).json({ error: err.message });
@@ -4236,13 +4288,15 @@ router.post('/mail-queue/lock-and-batch', express.json(), async (req, res) => {
         provider:       'manual',
         delivery_method: deliveryMethod === 'certified_mail' ? 'certified_mail' : 'first_class',
         return_receipt_requested: deliveryMethod === 'certified_mail',
-        status:         'submitted',
-        submitted_at:   printedAt,
-        mailed_at:      postmarkDate.toISOString(),
+        // Printed is not mailed: the piece stays queued until a person confirms
+        // the mailing (confirm-mailed / record-mailing). The postmark is the plan.
+        status:         'queued',
+        submitted_at:   null,
+        mailed_at:      null,
         events: [{
           ts: printedAt,
           type: 'manual_print_batch',
-          note: `Locked + printed in batch by user ${actor.id}, postmark ${postmarkIso}`,
+          note: `Locked + printed in batch by user ${actor.id}, planned postmark ${postmarkIso}; awaiting mailing confirmation`,
         }],
       }));
       if (pieces.length > 0) {
@@ -4250,15 +4304,10 @@ router.post('/mail-queue/lock-and-batch', express.json(), async (req, res) => {
           .upsert(pieces, { onConflict: 'interaction_id' });
         if (mpErr) console.warn('[mail-queue.lock-and-batch] letter_mail_pieces upsert failed:', mpErr.message);
       }
-      // Auto-post the certified-letter fee (Dr 1300 A/R / Cr 2300 Accrued
-      // Liability) for any certified letters in this batch. Best-effort,
-      // non-blocking, idempotent — a re-batch never double-charges. (Ed 2026-08-27)
-      try {
-        const { sweepCertifiedViolationFees } = require('../lib/enforcement/certified_fee');
-        sweepCertifiedViolationFees(supabase, { postedByUserId: actor && actor.id })
-          .then((sum) => { if (sum.posting) console.log(`[certified-fee] posted ${sum.posting} fee(s), $${(sum.total_cents / 100).toFixed(2)}`); })
-          .catch((e) => console.warn('[certified-fee] sweep failed (non-fatal):', e.message));
-      } catch (e) { console.warn('[certified-fee] wire failed:', e.message); }
+      // The certified-letter fee is NOT posted here: printing is not mailing. It
+      // posts from confirm-mailed (or a recorded mailing) once the letter is
+      // confirmed in the mail (Ed 2026-10-23; two held letters were charged twice
+      // at print).
     } catch (e) {
       console.warn('[mail-queue.lock-and-batch] mail piece logging failed (non-fatal):', e.message);
     }
@@ -5414,7 +5463,7 @@ router.post('/interactions/:id/record-mailing', express.json(), async (req, res)
     const whoName = (admin.full_name || admin.email || body.user_name || 'Admin');
 
     const { data: ix, error: iErr } = await supabase.from('interactions')
-      .select('id, type, status, violation_id, community_id, property_id, observation_id, postmark_date, sent_at, printed_at, delivery_method, certified_tracking_number, notes')
+      .select('id, type, subject, status, violation_id, community_id, property_id, observation_id, postmark_date, sent_at, printed_at, delivery_method, certified_tracking_number, notes')
       .eq('id', id).maybeSingle();
     if (iErr) return res.status(500).json({ error: iErr.message });
     if (!ix) return res.status(404).json({ error: 'interaction_not_found' });
@@ -5424,6 +5473,12 @@ router.post('/interactions/:id/record-mailing', express.json(), async (req, res)
 
     const method = body.delivery_method || ix.delivery_method || 'certified_mail';
     const tracking = (body.certified_tracking_number || '').trim() || ix.certified_tracking_number || null;
+    // A certified-stage letter recorded as mailed by anything but certified mail
+    // is an explicit correction and needs its reason on the record (Ed 2026-10-23).
+    const { deliveryMismatch, letterStageOf } = require('../lib/enforcement/letter_stage');
+    if (deliveryMismatch(ix, method) && !String(body.reason || '').trim()) {
+      return res.status(400).json({ error: 'correction_reason_required', detail: `This is a ${letterStageOf(ix)} letter, which must go by certified mail. Recording it as ${method} is a correction: give the reason.` });
+    }
     const wasSent = ix.status === 'sent';
     const auditParts = [`[Mailing recorded ${new Date().toISOString().slice(0, 10)} by ${whoName}: physically mailed ${mailedDate} via ${method}${tracking ? ', tracking ' + tracking : ''}.`];
     if (wasSent) auditParts.push(` Corrected prior stamp (postmark ${ix.postmark_date || '-'}, sent ${(ix.sent_at || '-').slice(0, 10)}).`);
@@ -5442,6 +5497,38 @@ router.post('/interactions/:id/record-mailing', express.json(), async (req, res)
       notes: ix.notes ? `${audit}\n${ix.notes}` : audit,
     }).eq('id', id);
     if (uErr) return res.status(500).json({ error: uErr.message });
+
+    // Keep the mail piece in step with what was actually mailed: its stage, method,
+    // date and tracking, with the prior values kept in its event history.
+    try {
+      const { data: pc, error: pcErr } = await supabase.from('letter_mail_pieces')
+        .select('id, stage_at_send, delivery_method, status, mailed_at, tracking_number, events').eq('interaction_id', id).maybeSingle();
+      if (pcErr) throw pcErr;
+      if (pc) {
+        const pieceMethod = (method === 'certified_mail' || method === 'certified_return_receipt') ? method : (method === 'first_class_mail' ? 'first_class' : pc.delivery_method);
+        const stageNow = letterStageOf(ix);
+        await supabase.from('letter_mail_pieces').update({
+          stage_at_send: stageNow,
+          delivery_method: pieceMethod,
+          mailed_at: stampIso,
+          submitted_at: stampIso,
+          status: ['queued', 'submitted'].includes(pc.status) ? 'submitted' : pc.status,
+          tracking_number: tracking || pc.tracking_number || null,
+          events: [...(Array.isArray(pc.events) ? pc.events : []), {
+            ts: new Date().toISOString(), type: 'mailing_recorded', by: whoName,
+            prior: { stage_at_send: pc.stage_at_send, delivery_method: pc.delivery_method, status: pc.status, mailed_at: pc.mailed_at, tracking_number: pc.tracking_number },
+            note: audit,
+          }],
+        }).eq('id', pc.id);
+      }
+    } catch (e) { console.warn('[record-mailing] mail piece sync failed:', e.message); }
+    if (method === 'certified_mail' || method === 'certified_return_receipt') {
+      try {
+        const { sweepCertifiedViolationFees } = require('../lib/enforcement/certified_fee');
+        sweepCertifiedViolationFees(supabase, { postedByUserId: admin.id || null })
+          .catch((e) => console.warn('[certified-fee] sweep failed (non-fatal):', e.message));
+      } catch (_) { /* best-effort */ }
+    }
 
     // Recompute the cure clock on the linked violation from the TRUE mail date.
     let cureInfo = null;
@@ -8217,38 +8304,41 @@ router.post('/violations/:violationId/reduce-stage', express.json(), async (req,
   try {
     const violationId = req.params.violationId;
     if (!violationId) return res.status(400).json({ error: 'violation_id required' });
+    const { requireActingUser } = require('./_acting_user');
+    const actor = await requireActingUser(req, res);
+    if (!actor) return;
+    const body = req.body || {};
 
     const { data: violation, error: vErr } = await supabase
       .from('violations')
-      .select('id, property_id, community_id, primary_category_id, current_stage, opened_at, resolved_at, quality_status')
+      .select('id, property_id, community_id, primary_category_id, current_stage, current_stage_started_at, cure_period_ends_at, opened_at, resolved_at, quality_status')
       .eq('id', violationId)
       .maybeSingle();
     if (vErr) throw vErr;
-    if (!violation) return res.status(404).json({ error: 'violation_not_found' });
-    if (violation.resolved_at || ['cured', 'closed', 'voided'].includes(violation.current_stage)) {
-      return res.status(409).json({ error: 'violation is resolved/closed; cannot reduce' });
-    }
+    const { data: letters, error: lErr } = violation ? await supabase.from('interactions')
+      .select('id, type, subject, status, sent_at, printed_at, mailed_at, postmark_date, delivery_method, certified_tracking_number, created_at')
+      .eq('violation_id', violationId).like('type', 'letter%').order('created_at', { ascending: true }) : { data: [], error: null };
+    if (lErr) throw lErr;
 
-    // One conventional step down. (Mirror of the advance ladder.)
-    const conventionalPrev = {
-      'fine_assessed':  'certified_209',
-      'certified_209':  'courtesy_2',
-      'courtesy_2':     'courtesy_1',
-    };
-    const prevStage = (req.body && req.body.override_stage) || conventionalPrev[violation.current_stage];
-    if (!prevStage) {
-      return res.status(409).json({ error: `cannot reduce a ${violation.current_stage} violation — already at the first stage` });
+    // The rules (reason required, only downward, match-the-mailed-letter
+    // correction, printed letters confirmed held) live in reduce_plan.js.
+    const { planReduction } = require('../lib/enforcement/reduce_plan');
+    const { letterStageOf, letterMailState } = require('../lib/enforcement/letter_stage');
+    const plan = planReduction({ violation, letters, body });
+    if (!plan.ok) {
+      const { status, ...rest } = plan;
+      return res.status(status).json(rest);
     }
-    const note = (req.body && req.body.note) || null;
+    const { note, prevStage, correction, mailedLetter, outranking, printed } = plan;
 
     const now = new Date().toISOString();
-    const patch = {
-      current_stage: prevStage,
-      current_stage_started_at: now,
-      // Clear the higher-stage cure deadline; the corrected lower-stage letter
-      // sets the right one when it's generated.
-      cure_period_ends_at: null,
-    };
+    const patch = { current_stage: prevStage };
+    if (!correction) {
+      // A true step down: the higher-stage cure deadline no longer applies; the
+      // lower-stage letter, when generated, sets the right one.
+      patch.current_stage_started_at = now;
+      patch.cure_period_ends_at = null;
+    }
     // Reducing affirms this is the LIVE case. Clear a stale 'superseded' flag
     // (left over from a consolidation/correction) so the Letter button returns
     // and it counts toward escalation again — otherwise the operator reduces a
@@ -8257,28 +8347,62 @@ router.post('/violations/:violationId/reduce-stage', express.json(), async (req,
       patch.quality_status = 'verified';
       patch.confidence_weight = 1.0;
     }
-    const { error: upErr } = await supabase
+    const { data: upd, error: upErr } = await supabase
       .from('violations')
       .update(patch)
       .eq('id', violationId)
-      .eq('current_stage', violation.current_stage); // optimistic guard against a concurrent change
+      .eq('current_stage', violation.current_stage) // optimistic guard against a concurrent change
+      .select('id');
     if (upErr) throw upErr;
+    if (!upd || !upd.length) return res.status(409).json({ error: 'stage_changed', detail: 'The case changed while you were reducing it. Reload and try again.' });
 
-    // Audit trail on the property timeline (best-effort).
+    // Hold the stale letters: never deleted, marked held, mail pieces cancelled
+    // with the reason in their history.
+    const who = actor.full_name || actor.email || 'Staff';
+    const held = [];
+    for (const l of outranking) {
+      const { error: hErr } = await supabase.from('interactions').update({ status: 'rejected' }).eq('id', l.id).is('mailed_at', null);
+      if (hErr) { console.warn('[violations/reduce-stage] hold failed:', l.id, hErr.message); continue; }
+      held.push(l);
+      try {
+        const { data: pc } = await supabase.from('letter_mail_pieces').select('id, status, events').eq('interaction_id', l.id).maybeSingle();
+        if (pc && pc.status !== 'cancelled') {
+          await supabase.from('letter_mail_pieces').update({
+            status: 'cancelled', mailed_at: null,
+            events: [...(Array.isArray(pc.events) ? pc.events : []), { ts: now, type: 'held_not_mailed', by: who, prior_status: pc.status, note: `Stage reduced ${violation.current_stage} → ${prevStage}: ${note}` }],
+          }).eq('id', pc.id);
+        }
+      } catch (e) { console.warn('[violations/reduce-stage] piece cancel failed:', l.id, e.message); }
+    }
+
+    // A certified fee already charged for a held letter stays for a person to
+    // review: it is a ledger entry, so nothing here reverses it.
+    let feeCharges = [];
+    if (held.length) {
+      const { data: fc } = await supabase.from('ar_charges').select('id, original_amount_cents, status')
+        .eq('source_module', 'certified_letter_fee').in('source_reference', held.map((l) => 'interaction:' + l.id));
+      feeCharges = fc || [];
+    }
+
+    const parts = [`${who}: ${note}`];
+    if (correction && mailedLetter) parts.push(`Corrected to match the letter actually mailed: ${letterStageOf(mailedLetter)} by ${mailedLetter.delivery_method || 'mail'} on ${String(mailedLetter.postmark_date || mailedLetter.mailed_at).slice(0, 10)}. The recorded ${violation.current_stage} stage was never sent. Cure clock kept (${violation.cure_period_ends_at ? String(violation.cure_period_ends_at).slice(0, 10) : 'none'}).`);
+    if (held.length) parts.push(`Held, not mailed: ${held.map((l) => `${letterStageOf(l)} letter ${l.id.slice(0, 8)} (${letterMailState(l).label})`).join('; ')}.${printed.length ? ' The person confirmed the printed letter is physically held.' : ''}`);
+    if (feeCharges.length) parts.push(`Certified fee charge(s) left for review: ${feeCharges.map((c) => `${c.id.slice(0, 8)} $${(c.original_amount_cents / 100).toFixed(2)}`).join(', ')}.`);
     try {
       await supabase.from('interactions').insert({
         community_id: violation.community_id, property_id: violation.property_id, violation_id: violationId,
         type: 'observation_note', direction: 'internal',
-        subject: `Stage reduced: ${violation.current_stage} → ${prevStage}`,
-        content: note || 'Operator reduced the enforcement stage (over-escalation correction).',
+        subject: `Stage ${correction ? 'corrected' : 'reduced'}: ${violation.current_stage} → ${prevStage}`,
+        content: parts.join(' '),
+        sent_by_user_id: actor.id || null,
         sent_at: now,
       });
     } catch (e) { console.warn('[violations/reduce-stage] audit insert failed:', e.message); }
 
-    res.json({ ok: true, previous_stage: violation.current_stage, new_stage: prevStage });
+    res.json({ ok: true, previous_stage: violation.current_stage, new_stage: prevStage, correction, held_letters: held.map((l) => l.id), fee_charges_for_review: feeCharges.map((c) => c.id) });
   } catch (err) {
     console.error('[violations/reduce-stage] failed:', err.message);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: safeErrorMessage(err) });
   }
 });
 
@@ -9716,7 +9840,7 @@ router.post('/mail/send-via-lob', express.json({ limit: '2mb' }), async (req, re
     // Pull interactions + violation + property + community + letter PDF storage path
     const { data: interactions, error: iErr } = await supabase
       .from('interactions')
-      .select('id, violation_id, community_id, property_id, type, attachments, status, bundle_id, delivery_method')
+      .select('id, violation_id, community_id, property_id, type, subject, attachments, status, bundle_id, delivery_method')
       .in('id', interaction_ids);
     if (iErr) throw iErr;
     if (!interactions || interactions.length === 0) {
@@ -9724,8 +9848,14 @@ router.post('/mail/send-via-lob', express.json({ limit: '2mb' }), async (req, re
     }
 
     const results = [];
+    const { letterStageOf, deliveryMismatch } = require('../lib/enforcement/letter_stage');
     for (const inter of interactions) {
       try {
+        // A certified-stage letter never goes out first class (Ed 2026-10-23).
+        if (deliveryMismatch(inter, inter.delivery_method)) {
+          results.push({ interaction_id: inter.id, status: 'error', error: `this is a ${letterStageOf(inter)} letter and must go by certified mail, not ${inter.delivery_method || 'unset'}; not sent` });
+          continue;
+        }
         // Pull supporting data — property + community + sender
         const [propRes, commRes] = await Promise.all([
           supabase.from('v_current_property_owners')
@@ -9818,7 +9948,7 @@ router.post('/mail/send-via-lob', express.json({ limit: '2mb' }), async (req, re
             property_id:        inter.property_id,
             violation_id:       inter.violation_id,
             bundle_id:          inter.bundle_id,
-            stage_at_send:      _mapInteractionTypeToStage(inter.type),
+            stage_at_send:      letterStageOf(inter), // the letter's actual stage, not its type
             letter_pdf_storage_path: storagePath,
             recipient_name:     recipient.name,
             recipient_address_line1: recipient.address_line1,
@@ -9967,14 +10097,19 @@ router.post('/mail/lob-webhook', express.raw({ type: '*/*', limit: '256kb' }), a
 // ---------------------------------------------------------------------------
 router.post('/mail/log-manual-tracking', express.json(), async (req, res) => {
   try {
-    const { interaction_id, tracking_number, provider, delivery_method, mailed_at, postage_cents } = req.body || {};
+    const { interaction_id, tracking_number, provider, delivery_method, mailed_at, postage_cents, correction_reason } = req.body || {};
     if (!interaction_id) return res.status(400).json({ error: 'interaction_id_required' });
     if (!tracking_number) return res.status(400).json({ error: 'tracking_number_required' });
 
     const { data: inter } = await supabase.from('interactions')
-      .select('id, community_id, property_id, violation_id, type, bundle_id')
+      .select('id, community_id, property_id, violation_id, type, subject, bundle_id')
       .eq('id', interaction_id).maybeSingle();
     if (!inter) return res.status(404).json({ error: 'interaction_not_found' });
+    const { letterStageOf, deliveryMismatch } = require('../lib/enforcement/letter_stage');
+    const _method = delivery_method || 'certified_mail';
+    if (deliveryMismatch(inter, _method === 'first_class' ? 'first_class_mail' : _method) && !String(correction_reason || '').trim()) {
+      return res.status(400).json({ error: 'correction_reason_required', detail: `This is a ${letterStageOf(inter)} letter, which must go by certified mail.` });
+    }
 
     const { data: piece, error } = await supabase.from('letter_mail_pieces')
       .upsert({
@@ -9983,7 +10118,7 @@ router.post('/mail/log-manual-tracking', express.json(), async (req, res) => {
         property_id:        inter.property_id,
         violation_id:       inter.violation_id,
         bundle_id:          inter.bundle_id,
-        stage_at_send:      _mapInteractionTypeToStage(inter.type),
+        stage_at_send:      letterStageOf(inter), // the letter's actual stage, not its type
         provider:           provider || 'manual',
         tracking_number,
         delivery_method:    delivery_method || 'certified_mail',
