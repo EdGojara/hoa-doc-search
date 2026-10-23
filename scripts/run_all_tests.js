@@ -117,6 +117,7 @@ const CHECKS = [
   'tests/test_graph_push_desks.js',
   'tests/test_agent_browser_guard.js',
   'tests/test_agent_browser_auth.js',
+  'tests/test_home_dashboard_script.js',
   'tests/test_agent_desk.js',
   'tests/test_positive_pay.js',
   'tests/test_positive_pay_submissions.js',
