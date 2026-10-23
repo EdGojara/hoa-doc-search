@@ -3725,10 +3725,15 @@ router.post('/inspections/observations/:id/confirm', express.json(), async (req,
 
         // Decide via the SHARED classifier so the re-inspection preview counts
         // exactly what this endpoint does (no preview-diverges-from-action).
-        const { decideReobservationOutcome } = require('../lib/enforcement/reobservation_outcome');
+        const { decideReobservationOutcome, seenEarlierInThisInspection } = require('../lib/enforcement/reobservation_outcome');
+        const { data: _vOpen } = await supabase.from('violations').select('opened_from_observation_id').eq('id', vId).maybeSingle();
+        const sameInspection = await seenEarlierInThisInspection(supabase, {
+          violationId: vId, openedFromObservationId: _vOpen && _vOpen.opened_from_observation_id,
+          inspectionId: obs.inspection_id, excludeObservationId: obs.id,
+        });
         const { outcome } = await decideReobservationOutcome(supabase, {
           id: vId, current_stage: stage, current_stage_started_at: cont.existing_stage_started_at,
-        });
+        }, { sameInspection });
 
         if (outcome === 'recover_courtesy_1') {
           const r = await _draftFor('courtesy_1');
@@ -3740,13 +3745,12 @@ router.post('/inspections/observations/:id/confirm', express.json(), async (req,
           return res.json({ ...base, awaiting_first_notice_mail: true });
         }
         if (outcome === 'advance_courtesy_2') {
-          const { data: comm } = await supabase.from('communities').select('letter_cure_days_courtesy_2').eq('id', obs.community_id).maybeSingle();
-          const cureDays = (comm && Number(comm.letter_cure_days_courtesy_2)) || 20;
+          // Courtesy 2 is a reminder: the Courtesy 1 deadline stays exactly as it is
+          // (never shortened, never extended). (Ed 2026-10-23)
           const now = new Date();
           const { data: adv } = await supabase.from('violations').update({
             current_stage: 'courtesy_2',
             current_stage_started_at: now.toISOString(),
-            cure_period_ends_at: new Date(now.getTime() + cureDays * 86400000).toISOString(),
           }).eq('id', vId).eq('current_stage', 'courtesy_1').select('id').maybeSingle();
           await markObs('[Re-observed — advanced to Courtesy 2; second notice drafted]');
           let draftErr = null;

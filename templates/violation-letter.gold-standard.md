@@ -114,7 +114,8 @@ Sincerely,
 ## Stage 2: `courtesy_2` — Second courtesy notice
 
 **Mailing class**: First-class mail
-**Cure period**: 20 days (per-community override via `letter_cure_days_courtesy_2`)
+**Cure period**: none of its own. Courtesy 2 is a follow-up reminder (Ed 2026-10-23): it states the deadline already on the case from the Courtesy 1 letter, never shortened or extended. If that deadline has passed, the letter says so and asks for prompt correction. A new deadline (`letter_cure_days_courtesy_2` from the postmark) applies only when the case has none, or when staff granted extra time on the case (`cure_days_override`).
+**Advance rule**: a later inspection that observes the unresolved Courtesy 1 condition advances it, even inside the cure period, once the first notice has gone out; at most once per inspection.
 **Admin fee**: $0 default
 **Title**: `[TONE_SOFTENED.title_courtesy_2]` → "Second Notice — Covenant Violation"
 **Hearing-rights block**: NOT included
