@@ -51,10 +51,12 @@ const testMsg = (to, n, over = {}) => ({ id: 'g' + n, internetMessageId: `<push-
 check('REGISTRY: the five desks and the shared inboxes routed to them are always subscribed, exactly once, with no env list needed', () => {
   const want = [gs.KAT_MAILBOX, gs.ANNIE_MAILBOX, gs.MIRANDA_MAILBOX, gs.AMANDA_MAILBOX, 'violations@bedrocktx.com', 'accounting@bedrocktx.com', gs.MAGGIE_MAILBOX].map((x) => x.toLowerCase()).sort();
   assert.deepStrictEqual(GP.deskMailboxes().map((x) => x.toLowerCase()).sort(), want);
-  const r = GP.resolveRegistry('amanda@bedrocktx.com, kat@bedrocktx.com', undefined, { includeDesks: true });
-  assert.deepStrictEqual(r.mailboxes.map((x) => x.toLowerCase()).sort(), want, 'env entries already covered by the desks subscribe once');
+  // Plus the website Contact form's intake mailbox, welcome@ (Ed 2026-10-23).
+  assert.deepStrictEqual(GP.intakeMailboxes(), ['welcome@bedrocktx.com']);
+  const r = GP.resolveRegistry('amanda@bedrocktx.com, kat@bedrocktx.com, welcome@bedrocktx.com', undefined, { includeDesks: true });
+  assert.deepStrictEqual(r.mailboxes.map((x) => x.toLowerCase()).sort(), [...want, 'welcome@bedrocktx.com'].sort(), 'env entries already covered subscribe once');
   assert.deepStrictEqual(r.refused, []);
-  assert.ok(!GP.deskMailboxes().some((m) => /^(info|welcome|claire|emma|reese|paige)@/.test(m)), 'other teammates and the front door are not added');
+  assert.ok(!r.mailboxes.some((m) => /^(info|claire|emma|reese|paige)@/.test(m)), 'other teammates and info@ are not added');
   assert.deepStrictEqual(GP.resolveRegistry('').mailboxes, [], 'without includeDesks the env list alone decides (tests, tools)');
 });
 
