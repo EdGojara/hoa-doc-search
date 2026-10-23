@@ -20684,12 +20684,13 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
     const certWarn = currentStage === 'courtesy_2'
       ? '\n\n⚠ This moves it to CERTIFIED §209. You still generate + mail the certified notice — the system does NOT send it. The statutory cure clock starts when it actually goes out.'
       : '';
-    const note = prompt('Advance this violation to ' + nextLabel + '?' + certWarn + '\n\nOptional note (why it is being advanced):', '');
+    const note = prompt('Advance this violation to ' + nextLabel + '?' + certWarn + '\n\nWhy is it being advanced? (required, it goes on the audit trail with your name)', '');
     if (note === null) return; // cancelled
+    if (!note.trim()) { alert('A reason is required to advance a violation.'); return; }
     try {
       const r = await window._authFetch(`/api/enforcement/violations/${violationId}/advance-stage`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ note: note || undefined }),
+        body: JSON.stringify({ note: note.trim() }),
       });
       const j = await r.json();
       if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
@@ -54679,12 +54680,14 @@ ${questionsPage}
     const label = stageLabels[suggestedNextStage] || suggestedNextStage;
     if (!confirm(`Advance "${categoryLabel}" to ${label}?\n\nThis records that the violation is continuing and the next letter will go out at this stage. Trustfully advance only if you've verified the violation is uncured.`)) return;
 
-    const note = prompt('Optional note (e.g., "Inspected 2026-05-28, trash bins still out"):', '');
+    const note = prompt('Why is it being advanced? (required, e.g. "Inspected 2026-05-28, trash bins still out")', '');
+    if (note === null) return;
+    if (!note.trim()) { alert('A reason is required to advance a violation.'); return; }
 
-    fetch(`/api/enforcement/violations/${encodeURIComponent(violationId)}/advance-stage`, {
+    window._authFetch(`/api/enforcement/violations/${encodeURIComponent(violationId)}/advance-stage`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ note: note || null }),
+      body: JSON.stringify({ note: note.trim() }),
     })
       .then((r) => r.json())
       .then((j) => {

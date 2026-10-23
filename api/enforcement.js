@@ -8164,10 +8164,18 @@ router.post('/violations/:violationId/advance-stage', upload.single('pdf'), asyn
   try {
     const violationId = req.params.violationId;
     if (!violationId) return res.status(400).json({ error: 'violation_id required' });
+    // A manual advance is an enforcement decision: who, when, from, to and why
+    // are recorded, and the reason is required (Ed 2026-10-23).
+    const { requireActingUser } = require('./_acting_user');
+    const actor = await requireActingUser(req, res);
+    if (!actor) return;
+    const { reasonError, stageChangeAudit } = require('../lib/enforcement/stage_audit');
+    const _reasonErr = reasonError(req.body && req.body.note);
+    if (_reasonErr) return res.status(400).json(_reasonErr);
 
     const { data: violation, error: vErr } = await supabase
       .from('violations')
-      .select('id, property_id, community_id, primary_category_id, current_stage, opened_at, resolved_at, quality_status')
+      .select('id, property_id, community_id, primary_category_id, current_stage, current_stage_started_at, opened_at, resolved_at, quality_status')
       .eq('id', violationId)
       .maybeSingle();
     if (vErr) throw vErr;
@@ -8192,7 +8200,7 @@ router.post('/violations/:violationId/advance-stage', upload.single('pdf'), asyn
     const nextStage = (req.body && req.body.override_stage)
       || conventionalNext[violation.current_stage]
       || 'other';
-    const note = (req.body && req.body.note) || null;
+    const note = String(req.body.note).trim();
 
     // Fine guard: only communities with fines enabled can advance to a fine (or
     // beyond). Today only Lakes of Pine Forest fines; the rest do certifieds but
@@ -8219,22 +8227,30 @@ router.post('/violations/:violationId/advance-stage', upload.single('pdf'), asyn
       advPatch.quality_status = 'verified';
       advPatch.confidence_weight = 1.0;
     }
-    const { error: upErr } = await supabase
+    const { data: advUpd, error: upErr } = await supabase
       .from('violations')
       .update(advPatch)
-      .eq('id', violationId);
+      .eq('id', violationId)
+      .eq('current_stage', violation.current_stage) // optimistic guard against a concurrent change
+      .select('id');
     if (upErr) throw upErr;
+    if (!advUpd || !advUpd.length) return res.status(409).json({ error: 'stage_changed', detail: 'The case changed while you were advancing it. Reload and try again.' });
 
-    // Audit trail on the property timeline (best-effort).
-    try {
-      await supabase.from('interactions').insert({
-        community_id: violation.community_id, property_id: violation.property_id, violation_id: violationId,
-        type: 'observation_note', direction: 'internal',
-        subject: `Stage advanced: ${violation.current_stage} → ${nextStage}`,
-        content: note || 'Operator advanced the enforcement stage.',
-        sent_at: nowTs,
-      });
-    } catch (e) { console.warn('[violations/advance-stage] audit insert failed:', e.message); }
+    // Audit trail on the property timeline. Required: if it cannot be written,
+    // the advance is undone, so no stage change exists without its record.
+    const audit = stageChangeAudit({ action: 'advanced', actor, previousStage: violation.current_stage, newStage: nextStage, reason: note, at: nowTs });
+    const { error: auditErr } = await supabase.from('interactions').insert({
+      community_id: violation.community_id, property_id: violation.property_id, violation_id: violationId,
+      type: 'observation_note', direction: 'internal',
+      ...audit,
+    });
+    if (auditErr) {
+      console.error('[violations/advance-stage] audit insert failed, undoing advance:', auditErr.message);
+      await supabase.from('violations')
+        .update({ current_stage: violation.current_stage, current_stage_started_at: violation.current_stage_started_at || null })
+        .eq('id', violationId).eq('current_stage', nextStage);
+      return res.status(500).json({ error: 'audit_failed', detail: 'The audit record could not be written, so the stage was not changed.' });
+    }
 
     // Optionally record the new letter at the same time
     let letterResult = null;

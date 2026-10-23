@@ -3862,7 +3862,10 @@ router.post('/inspections/observations/:id/confirm', express.json(), async (req,
       if (isRepeat) {
         violationRow.is_recurrence = true;
         violationRow.recurrence_of_violation_id = recurrenceSignal.prior_violation_id;
-        violationRow.review_notes = `Repeat: the same/similar violation was cured on ${String(recurrenceSignal.prior_resolved_at || '').slice(0, 10)} (within 6 months). Opened at the first notice because a cured case resets the sequence. `
+        violationRow.review_notes = `Repeat: the same/similar violation was closed as cured on ${String(recurrenceSignal.prior_resolved_at || '').slice(0, 10)} (within 6 months). Opened at the first notice because a cured case resets the sequence. `
+          // A closure can be wrong (a moved trailer can look cured on a later drive).
+          // Only a person decides; nothing advances on its own (Ed 2026-10-23).
+          + 'Review: was the condition genuinely corrected and later recurred (this first notice stands), or was it never corrected and the earlier case closed in error (continuously unresolved: Advance, with a reason, to continue its sequence)? '
           + (recurrenceSignal.prior_certified_notice
             ? 'A certified §209 notice was mailed on an earlier case, so the §209 repeat exception may apply: a person may Advance after review.'
             : 'No certified §209 notice was ever mailed on the earlier case, so the §209 repeat exception does not apply.');
