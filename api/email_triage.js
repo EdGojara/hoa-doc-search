@@ -902,12 +902,13 @@ router.post('/ingest', express.json(), async (req, res) => {
   }
 });
 
-// Other UNHANDLED inbound emails from the SAME sender within a short window —
-// homeowners often send a second (or third) note because they forgot something
-// or want to add info. One reply should cover them all so the homeowner gets a
-// single coherent answer, not several. Returns [{id, subject, body, received_at}].
+// Other UNHANDLED inbound emails from the SAME sender in the SAME conversation within a
+// short window: a second note in the thread ("forgot something"). One reply covers them.
+// Sender and time alone are never enough (Ed 2026-10-23): the conversation is the verified
+// thread relationship, so a separate thread from the same sender stays open.
+// Returns [{id, subject, body, received_at}].
 async function findSiblingEmails(message) {
-  if (!message || message.direction === 'outbound' || !message.sender_email) return [];
+  if (!message || message.direction === 'outbound' || !message.sender_email || !message.conversation_id) return [];
   const center = new Date(message.received_at || Date.now()).getTime();
   if (!Number.isFinite(center)) return [];
   const WINDOW = 2 * 3600 * 1000; // 2 hours either side — a real "forgot something" burst, not unrelated later mail
@@ -915,30 +916,19 @@ async function findSiblingEmails(message) {
     const { data } = await supabase.from('email_messages')
       .select('id, subject, body_full, body_preview, received_at, conversation_id')
       .ilike('sender_email', message.sender_email)
+      .eq('conversation_id', message.conversation_id)
       .eq('direction', 'inbound')
       .neq('id', message.id)
       .in('triage_status', ['new', 'needs_review', 'linked'])
       .gte('received_at', new Date(center - WINDOW).toISOString())
       .lte('received_at', new Date(center + WINDOW).toISOString())
       .order('received_at', { ascending: true }).limit(6);
-    const rows = await coverableSiblings(message, data || []);
-    return rows.map((s) => ({ id: s.id, subject: s.subject, body: s.body_full || s.body_preview || '', received_at: s.received_at }));
+    // Scar (Ed 2026-10-23): matched on sender + time only, Kat's reply on Melody's "RE: Positive
+    // Pay" thread also marked handled Melody's answer to Kat's separate "Automating our bank
+    // reconciliations" email. Re-check the thread on each row as well as in the query.
+    return (data || []).filter((s) => s.conversation_id === message.conversation_id)
+      .map((s) => ({ id: s.id, subject: s.subject, body: s.body_full || s.body_preview || '', received_at: s.received_at }));
   } catch (_) { return []; }
-}
-
-// One reply covers only the same matter. A sibling in a DIFFERENT conversation that we wrote in
-// (the sender answering one of our own outgoing emails) is its own matter and must stay open.
-// Scar (Ed 2026-10-23): Kat's reply on Melody's "RE: Positive Pay" thread also marked handled
-// Melody's answer to Kat's separate "Automating our bank reconciliations" email. A failed lookup
-// keeps only same-conversation siblings (never clears more than it can prove).
-async function coverableSiblings(message, candidates) {
-  const other = (c) => c.conversation_id && c.conversation_id !== message.conversation_id;
-  const convs = [...new Set(candidates.filter(other).map((c) => c.conversation_id))];
-  if (!convs.length) return candidates;
-  const { data, error } = await supabase.from('email_messages').select('conversation_id').eq('direction', 'outbound').in('conversation_id', convs).limit(1000);
-  if (error) return candidates.filter((c) => !other(c));
-  const ours = new Set((data || []).map((r) => r.conversation_id));
-  return candidates.filter((c) => !(other(c) && ours.has(c.conversation_id)));
 }
 
 // Greet the person who actually emailed, NOT the household account name. A joint

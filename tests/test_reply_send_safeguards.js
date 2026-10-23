@@ -326,7 +326,7 @@ check('Communications attachments fail closed: a chosen file that cannot load st
 // ---- one reply covers only the same matter (Ed 2026-10-23: Kat's reply on Melody's "RE: Positive
 // Pay" thread also marked handled Melody's answer to Kat's separate "Automating our bank
 // reconciliations" email, a different conversation Kat had started) ----
-check('COVERED BY ONE REPLY: same-thread siblings are covered; a reply in a different conversation we wrote in stays open; a separate new email is still covered; the server ignores ids it would not propose', async () => {
+check('COVERED BY ONE REPLY: only same-thread siblings are covered; another thread from the same sender (a reply to our email, or a new email) stays open; the server ignores ids it would not propose', async () => {
   reset();
   const S = 'mhess@newfirst.test', MBX = 'amandaalbright@bedrocktx.com';
   const msg = (id, conv, at, subject) => ({ id, mailbox: MBX, graph_id: 'g-' + id, internet_message_id: '<' + id + '@x>', direction: 'inbound', sender_email: S, sender_name: 'Hess,Melody', subject, persona: 'amanda', triage_status: 'needs_review', received_at: at, recipients: [MBX], body_full: 'Hi', conversation_id: conv, extracted: {} });
@@ -344,9 +344,25 @@ check('COVERED BY ONE REPLY: same-thread siblings are covered; a reply in a diff
   assert.equal(st(A).triage_status, 'handled');
   assert.equal(st(B).triage_status, 'handled', 'same-thread sibling covered'); assert.match(st(B).reviewed_by, /covered by one reply/);
   assert.equal(st(C).triage_status, 'needs_review', 'the reply to our own outgoing email (another conversation) stays open');
-  assert.equal(st(D).triage_status, 'handled', 'a separate new email from the same sender (no reply of ours in it) is still covered, as before');
+  assert.equal(st(D).triage_status, 'needs_review', 'a separate new thread from the same sender is not covered: sender and time alone are not enough');
   assert.equal(st(X).triage_status, 'needs_review', 'an id the server would not propose (another sender) is ignored');
-  assert.equal(r.j.also_handled, 2);
+  assert.equal(r.j.also_handled, 1);
+});
+
+check('TWO SIMULTANEOUS CONVERSATIONS, same sender, different subjects and thread ids: a reply on each covers only its own thread', async () => {
+  reset();
+  const S = 'board.president@example.test', MBX = 'amandaalbright@bedrocktx.com';
+  const msg = (id, conv, at, subject) => ({ id, mailbox: MBX, graph_id: 'g-' + id, internet_message_id: '<' + id + '@x>', direction: 'inbound', sender_email: S, sender_name: 'President', subject, persona: 'amanda', triage_status: 'needs_review', received_at: at, recipients: [MBX], body_full: 'Hi', conversation_id: conv, extracted: {} });
+  const P1 = '22222222-0000-4000-8000-0000000000a1', P2 = '22222222-0000-4000-8000-0000000000a2', Q1 = '22222222-0000-4000-8000-0000000000b1', Q2 = '22222222-0000-4000-8000-0000000000b2';
+  DB.email_messages.push(msg(P1, 'thread-pool', '2026-10-23T15:00:00Z', 'Pool hours'), msg(Q1, 'thread-gate', '2026-10-23T15:05:00Z', 'Gate repair'),
+    msg(P2, 'thread-pool', '2026-10-23T15:10:00Z', 'RE: Pool hours'), msg(Q2, 'thread-gate', '2026-10-23T15:15:00Z', 'RE: Gate repair'));
+  const st = (id) => DB.email_messages.find((m) => m.id === id).triage_status;
+  const r1 = await http('POST', `/api/email-triage/${P1}/send`, { body: 'The pool closes at 9.', to: S, persona: 'amanda', also_handle: [P2, Q1, Q2] });
+  assert.equal(r1.status, 200, JSON.stringify(r1.j)); assert.equal(r1.j.also_handled, 1);
+  assert.equal(st(P1), 'handled'); assert.equal(st(P2), 'handled', 'its own thread is covered');
+  assert.equal(st(Q1), 'needs_review'); assert.equal(st(Q2), 'needs_review', 'the gate thread is untouched by the pool reply');
+  const r2 = await http('POST', `/api/email-triage/${Q1}/send`, { body: 'The gate is scheduled for Monday.', to: S, persona: 'amanda', also_handle: [Q2] });
+  assert.equal(r2.status, 200, JSON.stringify(r2.j)); assert.equal(st(Q2), 'handled', 'a reply on the gate thread covers the gate follow-up');
 });
 
 // ---- deliberate follow-ups (Ed 2026-10-23: Kat's Positive Pay permissions request to Melody was
