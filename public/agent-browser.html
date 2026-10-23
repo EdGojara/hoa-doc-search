@@ -1,0 +1,97 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kat's Browser Runs — Bedrock</title>
+<link rel="stylesheet" href="/brand.css">
+<style>
+  .wrap { max-width: 980px; margin: 0 auto; padding: 22px 20px 70px; }
+  .back { display:inline-flex; gap:6px; color:#5a7390; text-decoration:none; font-size:13px; font-weight:600; margin-bottom:12px; }
+  h1 { font-size:26px; color:var(--navy,#0B1D34); margin:6px 0 4px; }
+  .sub { color:#5a7390; font-size:14px; max-width:760px; margin-bottom:20px; }
+  .card { background:#fff; border:1px solid #e2e8f0; border-radius:12px; padding:18px 20px; margin-bottom:16px; }
+  .card h2 { font-size:15px; color:var(--navy,#0B1D34); margin:0 0 10px; }
+  .btn { background:var(--navy,#0B1D34); color:var(--gold,#C6A15B); border:0; border-radius:8px; padding:9px 14px; font-weight:700; font-size:13px; cursor:pointer; }
+  .btn:disabled { opacity:.5; cursor:default; }
+  .btn.sm { padding:5px 10px; font-size:12px; background:#fff; border:1px solid #cbd5e1; color:#475569; }
+  .pill { display:inline-block; font-size:10.5px; font-weight:700; padding:2px 9px; border-radius:20px; background:#f1f5f9; color:#475569; }
+  .pill.ok { background:#dcfce7; color:#166534; } .pill.bad { background:#fee2e2; color:#991b1b; } .pill.warn { background:#fef3c7; color:#92400e; }
+  table { width:100%; border-collapse:collapse; font-size:12.5px; margin-top:8px; }
+  th { text-align:left; padding:8px 10px; background:#f1f5f9; color:#475569; font-size:11px; text-transform:uppercase; letter-spacing:.03em; }
+  td { padding:8px 10px; border-top:1px solid #eef2f7; vertical-align:top; }
+  .muted { color:#64748b; font-size:12.5px; }
+  .err { color:#b91c1c; font-weight:600; }
+  .shots img { max-width:100%; border:1px solid #e2e8f0; border-radius:8px; margin:6px 0 14px; }
+</style>
+<div class="wrap">
+  <a class="back" href="/admin/newfirst-integration">← NewFirst</a>
+  <h1>Kat's browser runs</h1>
+  <div class="sub">Kat's guarded browser runs on the trustEd server, not on your computer. Each skill can reach only the sites and take only the actions it declares, and every step is kept as evidence. Owner only.</div>
+
+  <div class="card">
+    <h2>NewFirst public-page navigation</h2>
+    <div class="muted" style="margin-bottom:10px;">Opens www.newfirst.com, selects Business, and confirms the business username field, password field and Login button are there. It never types and never clicks Login; NewFirst's banking site is not reachable from this skill.</div>
+    <button class="btn" id="run" onclick="runNav()">Run navigation check</button>
+    <span id="runStatus" class="muted" style="margin-left:10px;"></span>
+    <div id="result" style="margin-top:12px;"></div>
+  </div>
+
+  <div class="card">
+    <h2>Recent runs</h2>
+    <div id="runs" class="muted">Loading…</div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+const $=id=>document.getElementById(id);
+const esc=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+const when=t=>t?new Date(t).toLocaleString('en-US',{timeZone:'America/Chicago',month:'short',day:'numeric',hour:'numeric',minute:'2-digit',second:'2-digit'})+' CT':'';
+let _supa=null; const _ev={};   // run id -> evidence paths
+// Every call carries the signed-in owner's session token; the API's owner check reads it.
+async function af(url,opts){ opts=opts||{}; const h=Object.assign({},opts.headers||{});
+  try{ if(_supa){ const s=(await _supa.auth.getSession()).data.session; if(s&&s.access_token) h.Authorization='Bearer '+s.access_token; } }catch(_){}
+  return fetch(url,Object.assign({},opts,{headers:h,credentials:'same-origin'})); }
+const pill=st=>st==='completed'?'<span class="pill ok">completed</span>':st==='needs_human'?'<span class="pill warn">needs a person</span>':'<span class="pill bad">'+esc(st||'failed')+'</span>';
+
+function render(o){
+  _ev[o.run_id]=(o.evidence||[]).map(e=>e.path);
+  const f=(o.result&&o.result.fields)||{};
+  const rows=Object.entries(f).map(([k,v])=>`<tr><td>${esc(k.replace(/_/g,' '))}</td><td>${v.visible?'visible':'<span class="err">not visible</span>'}</td><td>${esc(v.type||v.tag||'')}</td><td>${esc(v.label||'')}</td></tr>`).join('');
+  const blocked=(o.blocked||[]).filter(b=>b.kind==='host').map(b=>esc(b.host)).join(', ');
+  return `<div>${pill(o.status)} <b>${esc(o.skill)}</b> <span class="muted">${when(o.started_at)} · run ${esc(o.run_id)}</span></div>
+    ${o.stopped_because?`<div class="err" style="margin-top:6px;">${esc(o.stopped_because)}</div>`:''}
+    ${o.result?`<div class="muted" style="margin-top:6px;">Signed in: ${o.result.signed_in?'yes':'no'} · credentials used: ${o.result.credentials_used?'yes':'no'}</div>`:''}
+    ${rows?`<table><tr><th>Control</th><th>Found</th><th>Type</th><th>Label</th></tr>${rows}</table>`:''}
+    ${blocked?`<div class="muted" style="margin-top:8px;">Blocked other hosts: ${blocked}</div>`:''}
+    <div class="muted" style="margin-top:8px;">${(o.steps||[]).length} steps · ${(o.evidence||[]).length} screenshots kept with SHA-256</div>
+    ${(o.evidence||[]).length?`<button class="btn sm" style="margin-top:8px;" onclick="shots(this, '${esc(o.run_id)}')">Show screenshots</button><div class="shots"></div>`:''}`;
+}
+async function shots(btn, runId){
+  const box=btn.nextElementSibling; box.innerHTML='<div class="muted">Loading…</div>'; const out=[];
+  for(const p of (_ev[runId]||[])){ const r=await af('/api/agent-browser/evidence?path='+encodeURIComponent(p)); const j=await r.json().catch(()=>({}));
+    out.push(r.ok&&j.url?`<div class="muted">${esc(p.split('/').pop())}</div><img src="${esc(j.url)}" alt="">`:`<div class="err">${esc(p)}: ${esc(j.error||r.status)}</div>`); }
+  box.innerHTML=out.join('');
+}
+async function runNav(){
+  $('run').disabled=true; $('runStatus').textContent='Running on the trustEd server… (about 10 to 30 seconds)'; $('result').innerHTML='';
+  try{
+    const r=await af('/api/agent-browser/run/newfirst.login_navigation',{method:'POST'}); const j=await r.json().catch(()=>({}));
+    if(r.status===403){ $('runStatus').innerHTML='<span class="err">'+esc(j.detail||'Owner only. Sign in as the owner and reload this page.')+'</span>'; return; }
+    $('runStatus').textContent=''; $('result').innerHTML=j.run_id?render(j):'<div class="err">'+esc(j.error||('HTTP '+r.status))+'</div>';
+    loadRuns();
+  }catch(e){ $('runStatus').innerHTML='<span class="err">'+esc(e.message)+'</span>'; }
+  finally{ $('run').disabled=false; }
+}
+async function loadRuns(){
+  const r=await af('/api/agent-browser/runs'); const j=await r.json().catch(()=>({}));
+  if(r.status===403){ $('runs').innerHTML='<span class="err">Owner only. Sign in as the owner and reload this page.</span>'; return; }
+  if(!r.ok){ $('runs').innerHTML='<span class="err">'+esc(j.error||('HTTP '+r.status))+'</span>'; return; }
+  const runs=j.runs||[]; if(!runs.length){ $('runs').textContent='No runs yet.'; return; }
+  $('runs').innerHTML=runs.map(x=>`<div style="padding:10px 0;border-top:1px solid #eef2f7;">${render(x.summary||{})}<div class="muted">started by ${esc(x.triggered_by||'')}</div></div>`).join('');
+}
+(async()=>{
+  try{ const cfg=await (await fetch('/api/auth/config')).json();
+    if(cfg&&cfg.enabled&&window.supabase){ _supa=window.supabase.createClient(cfg.supabase_url,cfg.supabase_anon_key); } }catch(_){}
+  loadRuns();
+})();
+</script>
