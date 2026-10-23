@@ -137,7 +137,7 @@ check('an interrupted send is never re-sent automatically: owner-only release wi
 check('billing unchanged and exactly once: homeowner AR charge only after the claim; community pays via the activity invoice', () => {
   const s = src('server.js'); const fin = s.slice(s.indexOf("app.post('/acc-review/decisions/:id/finalize'"), s.indexOf("app.post('/acc-review/decisions/:id/redraft'"));
   assert.ok(fin.indexOf('if (!fin.ok) {') < fin.indexOf('let feeCharge'), 'the charge is unreachable unless this request completed the case');
-  assert.ok(/comm\.acc_fee_payer === 'homeowner' && feeCents > 0/.test(fin));
+  assert.ok(/postAccFee\(supabase/.test(fin) && /acc_fee_payer !== 'homeowner' \|\| feeCents <= 0/.test(src('lib/acc/acc_fee_posting.js')));
   const b = src('api/billing.js'); assert.ok(/\.eq\('status', 'decided'\)/.test(b) && /_distinctByComm\(accDecisions,/.test(b));
 });
 
