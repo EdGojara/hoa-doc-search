@@ -113,6 +113,7 @@ router.post('/:persona/email/inbox/:id/reply', async (req, res) => {
   } catch (e) {
     if (e.code === 'already_replied') return res.status(409).json({ ok: false, error: 'already_replied', already_replied: e.detail });
     if (e.code === 'reply_staged_by_another_agent') return res.status(409).json({ ok: false, error: 'reply_staged_by_another_agent', detail: `A reply to this email is already waiting on ${e.detail}'s desk.` });
+    if (e.code === 'recipient_unresolved') return res.status(409).json({ ok: false, error: 'recipient_unresolved', detail: e.detail || 'No trusted recipient for this reply. Nothing was prepared.' });
     fail(res, 'reply', e);
   }
 });
