@@ -235,6 +235,33 @@ check('INGEST: a classifier failure is recorded on the row and the message is ke
   } finally { classifyImpl = orig; }
 });
 
+// ======================= vendor solicitations (Ed 2026-10-23) =======================
+// The form's purpose is the visitor's choice, not the classification. Abigail at VettedVAs chose
+// "prospective" for a virtual-assistant staffing pitch.
+const VETTEDVAS = "Good Day,\nWe offer trained human Virtual Assistants supported by our custom-built AI system, MAVIS (My Advanced Virtual Intelligent System), that easily replaces the workload of a 10-person team, handling marketing, admin, social media, lead generation, CRM management, content creation, customer support, and more.\nThe best part is that you simply delegate tasks to one trained VA (full-time or part-time), and we handle the execution.\nOpen to discussion?";
+check('SOLICITATION: a sales pitch is a Vendor Solicitation for Maggie whatever purpose was chosen; genuine prospects and boards shopping for management stay prospects', () => {
+  for (const purpose of ['prospective', 'board', 'homeowner', 'other']) {
+    const a = WI.assignOwner({ purpose, message: VETTEDVAS, community: 'Abigail' });
+    assert.equal(a.owner, 'maggie', purpose); assert.equal(a.intent, 'vendor_solicitation', purpose); assert.equal(a.label, 'Vendor Solicitation');
+  }
+  assert.equal(WI.assignOwner({ purpose: 'prospective', message: 'looking to learn more about your company' }).intent, 'prospective_management_client', 'the real 10/18 prospect');
+  const board = WI.assignOwner({ purpose: 'board', message: 'Our HOA board is looking for a new management company. We offer flexible meeting times and would you be open to a call next week?' });
+  assert.equal(board.intent, 'board_seeking_new_management', 'shopping for management always wins over pitch-like wording');
+  assert.equal(WI.assignOwner({ purpose: 'vendor', message: VETTEDVAS }).owner, 'claire', 'a visitor who chose Vendor keeps the existing vendor intake');
+  assert.equal(WI.isVendorSolicitation({ message: 'Would you be interested in a partnership?' }, { aiSpam: true }), true, 'one signal plus the AI calling it spam');
+  assert.equal(WI.isVendorSolicitation({ message: 'looking to learn more about your company' }, { aiSpam: true }), false, 'the AI calling a plain prospect spam is not enough');
+});
+
+check('INGEST: the VettedVAs pitch (chose prospective) lands on Maggie\'s desk labeled Vendor Solicitation, classified vendor_general, with NO prospect draft', async () => {
+  const { rows } = await runIngest([graphMsg('va1', { purpose: 'prospective', name: 'Abigail Gupta', email: 'abigail@vettedvas.com', community: 'Abigail', message: VETTEDVAS })], { va1: goodHeaders({ replyTo: 'abigail@vettedvas.com' }) });
+  assert.equal(rows.length, 1); const r = rows[0];
+  assert.equal(r.persona, 'maggie'); assert.equal(r.classification, 'vendor_general'); assert.equal(r.triage_status, 'needs_review');
+  assert.match(r.ai_summary, /^Vendor Solicitation:/);
+  assert.equal(r.extracted.website_inquiry.intent, 'vendor_solicitation'); assert.equal(r.extracted.website_inquiry.label, 'Vendor Solicitation');
+  assert.equal(r.extracted.website_inquiry.purpose, 'prospective', 'what the visitor chose is kept as information');
+  assert.ok(!r.extracted.draft, 'no prospect reply is drafted'); assert.equal(seen.maggie.length, 0); assert.equal(seen.draftReply.length, 0);
+});
+
 // ============================ wiring (static) ============================
 const fs = require('fs'); const path = require('path');
 const read = (f) => fs.readFileSync(path.join(__dirname, '..', f), 'utf8');
