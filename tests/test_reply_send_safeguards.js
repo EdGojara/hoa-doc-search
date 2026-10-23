@@ -323,6 +323,41 @@ check('Communications attachments fail closed: a chosen file that cannot load st
   assert.equal(ok.status, 200, JSON.stringify(ok.j)); assert.ok(calls[0].attachments.some((a) => a.name === 'form.pdf'));
 });
 
+// ---- deliberate follow-ups (Ed 2026-10-23: Kat's Positive Pay permissions request to Melody was
+// refused as a duplicate of her 10/22 reply to the same email) ----
+check('FOLLOW-UP: after the email was answered, a person-staged follow-up sends once, threaded, with its own subject; a second plain reply is still refused', async () => {
+  reset();
+  assert.equal((await sendDQ()).status, 200, 'the first answer to the email goes out');
+  calls.length = 0;
+  const FU = '7d0c3f1e-1111-4a2b-9c3d-123456789abc';
+  DB.outbound_email_drafts.push({ id: FU, persona: 'amanda', from_mailbox: 'amandaalbright@bedrocktx.com', to_email: 'president@canyongateatcincoranch.com', cc: null,
+    subject: 'Camera proposals: one more question', body_text: 'Hugh,\n\nOne more question on the Taylor proposals.', draft_kind: 'amanda_reply', source_email_ref: HUGH, status: 'draft', created_at: '2026-10-23T01:00:00Z',
+    policy: { desk: 'amanda', follow_up: { requested_by: 'Ed Gojara <egojara@bedrocktx.com>', at: '2026-10-23T01:00:00Z', prior_reply_at: '2026-10-20T18:00:00Z' } } });
+  const fuRow = () => DB.outbound_email_drafts.find((d) => d.id === FU);
+  const r = await http('POST', `/api/email-drafts/${FU}/send`, { approved_package_sha256: ReplyGuard.packageHash(fuRow()) });
+  assert.equal(r.status, 200, JSON.stringify(r.j));
+  assert.equal(calls.length, 1); assert.equal(calls[0].kind, 'sendReplyAs', 'threaded in the original conversation');
+  assert.equal(calls[0].subject, 'Camera proposals: one more question', 'the follow-up keeps its own subject');
+  assert.ok(DB.reply_send_claims.some((c) => c.reply_key === 'draft:' + FU && c.status === 'sent'), 'guarded by its own draft id');
+  const again = await http('POST', `/api/email-drafts/${FU}/send`, { approved_package_sha256: ReplyGuard.packageHash(fuRow()) });
+  assert.equal(again.status, 409, 'the exact same follow-up never goes twice'); assert.equal(calls.length, 1);
+  // A draft WITHOUT the follow-up marker is still a second answer to the same email: refused.
+  const PLAIN = '7d0c3f1e-2222-4a2b-9c3d-123456789abc';
+  DB.outbound_email_drafts.push({ ...fuRow(), id: PLAIN, status: 'draft', policy: { desk: 'amanda' } });
+  const plain = await http('POST', `/api/email-drafts/${PLAIN}/send`, { approved_package_sha256: ReplyGuard.packageHash(DB.outbound_email_drafts.find((d) => d.id === PLAIN)) });
+  assert.equal(plain.status, 409); assert.equal(plain.j.error, 'already_replied'); assert.equal(calls.length, 1);
+});
+check('FOLLOW-UP marker needs the person who staged it; a plain reply keeps the one-reply-per-email key; ordinary replies send no subject override', () => {
+  assert.equal(ReplyGuard.isFollowUp({ policy: { follow_up: { requested_by: 'Ed' } } }), true);
+  assert.equal(ReplyGuard.isFollowUp({ policy: { follow_up: {} } }), false, 'no person, no follow-up');
+  assert.equal(ReplyGuard.inboundOf({ draft_kind: 'agent_reply', source_email_ref: HUGH, policy: { follow_up: { requested_by: 'Ed' } } }), null);
+  assert.equal(ReplyGuard.inboundOf({ draft_kind: 'agent_reply', source_email_ref: HUGH }), HUGH);
+  const src = require('fs').readFileSync(require('path').join(__dirname, '..', 'api', 'email_drafts.js'), 'utf8');
+  assert.match(src, /subject: \(d\.policy && d\.policy\.follow_up\) \? subject : null/);
+  const desk = require('fs').readFileSync(require('path').join(__dirname, '..', 'lib', 'email', 'agent_desk.js'), 'utf8');
+  assert.match(desk, /followUp && thread\.already_replied \? \{ follow_up: \{ requested_by: createdBy/, 'the desk records who asked for the follow-up');
+});
+
 // ---- the REAL Graph reply sender: threading + attachments fail closed ----
 function graphStub(script) {
   const log = [];

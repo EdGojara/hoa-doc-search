@@ -373,7 +373,7 @@ router.post('/:id/send', async (req, res) => {
     try {
       // A threaded reply goes to exactly the recipients reviewed (never createReply's own pick).
       sent = threaded
-        ? await graphSend.sendReplyAs({ from, sourceMailbox: replyTo.mailbox, sourceGraphId: replyTo.graph_id, to: d.to_email, cc: d.cc || undefined, html, attachments: [...personaAttachments, ...fileAttachments], communityId: d.community_id || null })
+        ? await graphSend.sendReplyAs({ from, sourceMailbox: replyTo.mailbox, sourceGraphId: replyTo.graph_id, to: d.to_email, cc: d.cc || undefined, subject: (d.policy && d.policy.follow_up) ? subject : null, html, attachments: [...personaAttachments, ...fileAttachments], communityId: d.community_id || null })
         : await graphSend.sendAs({ from, to: d.to_email, cc: d.cc || undefined, subject, html, attachments: [...personaAttachments, ...fileAttachments] });
       // sendAs RETURNS (does not throw) when the outbound guard suppresses a send.
       // That used to fall through and mark the draft 'sent' although nothing left.
