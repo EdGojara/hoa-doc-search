@@ -88,6 +88,28 @@ check('PUSH TEST end to end through the REAL ingestMailbox: stored once per desk
   assert.deepStrictEqual(db.other, [], 'no other table touched (no work item, objective, ACC, violation, AP or draft row)');
 });
 
+check('BANK CREDENTIALS: a bank sign-in email is stored as a placeholder only (no classifier, no draft, no content); a Positive Pay notice is processed as usual', async () => {
+  const { isBankCredentialEmail } = require('../lib/email/graph_ingest');
+  const cred = (subject, body, from = 'TreasuryManagement@newfirst.com') => ({ direction: 'inbound', sender_email: from, subject, body_full: body, body_preview: body.slice(0, 255) });
+  assert.strictEqual(isBankCredentialEmail(cred('NewFirst National Bank - Business Online Banking', 'Your User ID for Business Online Banking is KREED01.')), true);
+  assert.strictEqual(isBankCredentialEmail(cred('NewFirst National Banking - Business Online Banking', 'Your temporary password is Xy7!q2. You must change it at first login.')), true);
+  assert.strictEqual(isBankCredentialEmail(cred('Your passcode', 'Your one-time passcode is 482913.', 'noreply@poda.robo.secureinternetbank.com')), true, "the banking platform's own domain");
+  assert.strictEqual(isBankCredentialEmail(cred('Positive Pay Items Ready For Review', 'You have positive pay items to review. Please review these by 11:00AM. Account Number Date Item Number Amount')), false, 'Positive Pay notices still flow');
+  assert.strictEqual(isBankCredentialEmail(cred('RE: Positive Pay', 'Thank you! We will pay these items.')), false);
+  assert.strictEqual(isBankCredentialEmail(cred('Your password', 'I forgot my portal password', 'homeowner@gmail.com')), false, 'only bank senders');
+
+  page.length = 0; const before = calls.classify;
+  page.push(testMsg(gs.KAT_MAILBOX, 99, { subject: 'NewFirst National Bank - Business Online Banking', body: { contentType: 'text', content: 'Your temporary password is Xy7!q2.' }, bodyPreview: 'Your temporary password is Xy7!q2.',
+    from: { emailAddress: { address: 'TreasuryManagement@newfirst.com', name: 'Treasury Management' } }, sender: { emailAddress: { address: 'TreasuryManagement@newfirst.com' } } }));
+  const s = await ingestMailbox(gs.KAT_MAILBOX, { sinceISO: new Date(Date.now() - 3600e3).toISOString(), max: 50, fileBacklog: false });
+  assert.strictEqual(s.kept, 1);
+  const row = db.email_messages.find((r) => r.internet_message_id === '<push-test-99@bedrocktx.com>');
+  assert.ok(row && row.extracted.credential_withheld, 'placeholder stored');
+  assert.ok(!/Xy7/.test(JSON.stringify(row)), 'the credential is nowhere in the stored row');
+  assert.strictEqual(row.persona, 'kat'); assert.strictEqual(row.triage_status, 'needs_review'); assert.ok(!row.extracted.draft);
+  assert.strictEqual(calls.classify, before, 'never sent to the classifier');
+});
+
 check('NO AUTOMATIC SEND: ingest never decides on or starts an automatic reply, for any agent', () => {
   const ing = fs.readFileSync(path.join(__dirname, '..', 'lib', 'email', 'graph_ingest.js'), 'utf8');
   assert.ok(!/getAutoReply\(\)\.(decide|execute)\(/.test(ing));
