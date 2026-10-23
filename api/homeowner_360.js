@@ -377,6 +377,7 @@ async function assemble(contactId) {
   // rejected/draft/never-sent letter has no stored PDF, so linking it 404s
   // (file_not_found) — Ed hit exactly that on 5506 Hickory Harvest's RV letter,
   // which was status=rejected, sent_at=null. Require a dispatched state.
+  const { letterMailState, letterStageOf, mustGoCertified } = require('../lib/enforcement/letter_stage');
   const BAD_LETTER_STATUS = new Set(['rejected', 'failed', 'draft', 'pending', 'cancelled', 'error', 'superseded', 'unreviewed']);
   const letterWentOut = (it) => {
     if (it.status && BAD_LETTER_STATUS.has(String(it.status))) return false;
@@ -388,6 +389,8 @@ async function assemble(contactId) {
       (lettersByViolation[it.violation_id] || (lettersByViolation[it.violation_id] = [])).push({
         path: it.content,
         sent_at: it.sent_at || it.mailed_at || it.printed_at || it.created_at || null,
+        // Queued, printed and mailed are different facts (Ed 2026-10-23).
+        mail_state: letterMailState(it),
       });
     }
   }
@@ -406,7 +409,7 @@ async function assemble(contactId) {
   const certifiedByViolation = {};
   for (const it of (interactions || [])) {
     if (!it.violation_id) continue;
-    const isCertified = it.type === 'letter_209' || it.delivery_method === 'certified_mail';
+    const isCertified = mustGoCertified(letterStageOf(it)) || it.delivery_method === 'certified_mail'; // the letter's actual stage, not its type
     if (!isCertified) continue;
     if (it.status && CERT_SKIP_STATUS.has(String(it.status))) continue; // a rejected/superseded letter isn't going out — nothing to track
     const cur = certifiedByViolation[it.violation_id];
@@ -458,6 +461,7 @@ async function assemble(contactId) {
     ...it,
     author_name: it.sent_by_user_id ? (authorNames[it.sent_by_user_id] || null) : null,
     letter_available: !!(it.content && /\.pdf$/i.test(it.content) && /letter/i.test(it.type || '') && letterWentOut(it)),
+    mail_state: /^letter/.test(it.type || '') ? letterMailState(it) : null,
   }));
 
   // At-attorney summary — spans BOTH tracks so no surface misses one:

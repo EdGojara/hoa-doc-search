@@ -2446,6 +2446,7 @@ router.get('/inspections/:id/coverage', async (req, res) => {
 //     counts: { violations_open, violations_ytd, violations_lifetime, inspections_lifetime, photos_lifetime }
 //   }
 // ---------------------------------------------------------------------------
+const { letterMailState } = require('../lib/enforcement/letter_stage');
 router.get('/inspections/property-detail/:property_id', async (req, res) => {
   try {
     const propertyId = req.params.property_id;
@@ -2484,7 +2485,7 @@ router.get('/inspections/property-detail/:property_id', async (req, res) => {
       // follow_up_due_at so the staff timeline can render dropped email
       // files and overdue follow-up indicators.
       supabase.from('interactions')
-        .select('id, type, direction, subject, sent_at, delivery_method, violation_id, content, attachments, follow_up_due_at, source, notes, status, printed_at, created_at')
+        .select('id, type, direction, subject, sent_at, delivery_method, violation_id, content, attachments, follow_up_due_at, source, notes, status, printed_at, mailed_at, postmark_date, certified_tracking_number, created_at')
         .eq('property_id', propertyId)
         .order('created_at', { ascending: false })
         .limit(50),
@@ -2683,6 +2684,12 @@ router.get('/inspections/property-detail/:property_id', async (req, res) => {
           follow_up_due_at: i.follow_up_due_at,
           source:          i.source,
           logged_by_note:  i.notes,
+          status:          i.status,
+          printed_at:      i.printed_at,
+          mailed_at:       i.mailed_at,
+          certified_tracking_number: i.certified_tracking_number,
+          // Generated / queued / printed / mailed / held: never one "sent" (Ed 2026-10-23).
+          mail_state:      /^letter_/.test(i.type || '') ? letterMailState(i) : null,
         };
       })),
       inspections,

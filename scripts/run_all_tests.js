@@ -61,6 +61,10 @@ const CHECKS = [
   'tests/test_fact_fastpath.js',
   'tests/test_completion_thanks.js',
   'tests/test_builder_letter_validate.js',
+  // Violation letters: the stage on the mail record, certified-mail guards,
+  // mail states and audited reductions (Ed 2026-10-23).
+  'tests/test_stale_letter_guard.js',
+  'tests/test_letter_mail_states.js',
   'tests/test_forecast_engine.js',
   'tests/test_budget_four_columns.js',
   'tests/test_check_receipts.js',
