@@ -316,6 +316,7 @@ const CHECKS = [
   'tests/sql/tb_drilldown_rehearsal.mjs',
   'tests/test_je_transaction_summary.js',
   'tests/test_mail_queue_bundle_print.js',
+  'tests/test_mail_queue_preview_consolidation.js',
   'tests/test_mail_manifest_envelopes.js',
   'tests/test_operator_briefing.js',
   'tests/test_manager_phase1.js',

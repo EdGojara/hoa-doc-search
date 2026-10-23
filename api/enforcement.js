@@ -1270,7 +1270,14 @@ router.post('/violations/manual', upload.array('photos', 6), async (req, res) =>
           },
         );
         if (r && r.error) console.warn('[enforcement.manual] letter draft failed:', r.error);
-        else console.log('[enforcement.manual] drafted courtesy letter for violation', violation.id);
+        else {
+          console.log('[enforcement.manual] drafted courtesy letter for violation', violation.id);
+          // Combine with any other draft at this house NOW, so the operator
+          // reviews the one letter that will ship, not N separate ones
+          // (5127 Waterview Meadow, Ed 2026-10-21: two manual entries minutes
+          // apart were reviewed and approved as two letters).
+          scheduleBundleRebuild(propertyId);
+        }
       } catch (e) { console.warn('[enforcement.manual] letter draft threw:', e.message); }
     })();
 
@@ -2500,12 +2507,19 @@ async function _assembleBundlePdf({ group, letterDate }) {
       try { closeUpBuf = await downloadEvidencePhoto(supabase, ev.storage_path, { label: (v.enforcement_categories && v.enforcement_categories.label) || 'a violation' }); }
       catch (e) { return { ok: false, reason: e.message }; }
     }
+    // Same finding chain as the one-violation letter (_draftLetterForBumpedViolation):
+    // a manual item with no description gets the category sentence instead of
+    // failing validation and holding the WHOLE envelope (5127 Waterview Meadow,
+    // Ed 2026-10-21: a mildew item with no text blocked the combined letter).
+    const _catLabel = v.enforcement_categories && v.enforcement_categories.label;
     const bundleFinding = (o && o.ai_description && o.ai_description.trim().length >= 10)
       ? o.ai_description
-      : _cleanFinding((o && o.reviewer_notes) || '', v.enforcement_categories && v.enforcement_categories.label);
+      : (_cleanFinding((o && o.reviewer_notes) || '', _catLabel)
+        || (_catLabel ? `${_catLabel} observed at this property requiring the owner's attention.` : null));
     violationsCtx.push({
       violation_id: v.id,
-      category_label: v.enforcement_categories && v.enforcement_categories.label,
+      category_label: _catLabel,
+      cure_days_override: Number(v.cure_days_override) > 0 ? Number(v.cure_days_override) : null,
       ai_description: bundleFinding,
       observation_captured_at: ev.captured_at || (o && o.created_at),
       governing_doc: govDoc,
@@ -2600,9 +2614,12 @@ async function _groupLettersIntoEnvelopes(letters, selfHelpVioIds = null) {
     if (d.violation_id && selfHelpVioIds.has(d.violation_id)) continue;
     const isSeparateCertified = d.type === 'letter_209'
       && separateCertifiedCommunities.has(d.community_id);
+    // delivery_method is part of the envelope: a first-class item and a
+    // certified item never share one, even at the same stage (Ed 2026-10-21).
+    const dm = d.delivery_method || 'first_class_mail';
     const key = isSeparateCertified
-      ? `${d.property_id}|${d.type}|${d.id}`  // unique → singleton path
-      : `${d.property_id}|${d.type}`;
+      ? `${d.property_id}|${d.type}|${dm}|${d.id}`  // unique → singleton path
+      : `${d.property_id}|${d.type}|${dm}`;
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key).push(d);
   }
@@ -2651,7 +2668,7 @@ async function runAutoBundle({ communityId = null, force = false, propertyId = n
     // (idempotency check below skips groups already correctly bundled).
     let q = supabase
       .from('interactions')
-      .select('id, type, community_id, property_id, violation_id, observation_id, inspection_id, content, bundle_id, letter_fee_cents')
+      .select('id, type, delivery_method, community_id, property_id, violation_id, observation_id, inspection_id, content, bundle_id, letter_fee_cents')
       .eq('status', 'draft')
       .in('type', letterTypes);
     if (communityId) q = q.eq('community_id', communityId);
@@ -3213,7 +3230,7 @@ router.post('/mail-queue/confirm-mailed', express.json(), async (req, res) => {
     const printedAt = req.body && req.body.printed_at; // scope to ONE print session
     let q = supabase
       .from('interactions')
-      .select('id, type, violation_id, status')
+      .select('id, type, violation_id, status, postmark_date')
       .in('type', _MAIL_LETTER_TYPES)
       .eq('delivery_method', deliveryMethod)
       .not('printed_at', 'is', null)
@@ -3221,9 +3238,16 @@ router.post('/mail-queue/confirm-mailed', express.json(), async (req, res) => {
       .neq('status', 'rejected'); // a held/rejected letter never re-enters the mail run
     if (communityId) q = q.eq('community_id', communityId);
     if (printedAt) q = q.eq('printed_at', printedAt);
-    const { data: letters, error } = await q;
+    const { data: printed, error } = await q;
     if (error) return res.status(500).json({ error: error.message });
-    if (!letters || !letters.length) return res.json({ confirmed: 0, held: 0 });
+    // Never mark mailed a letter that was never LOCKED (no postmark): it has no
+    // re-dated letter, no cure date and no sealed copy, so "mailed" would be a
+    // false record. Left exactly as it is (no write) for an owner decision.
+    // (5127 Waterview Meadow, Ed 2026-10-21.)
+    const notPostmarked = (printed || []).filter((l) => !l.postmark_date);
+    const letters = (printed || []).filter((l) => l.postmark_date);
+    if (notPostmarked.length) console.warn(`[confirm-mailed] left ${notPostmarked.length} never-locked letter(s) untouched:`, notPostmarked.map((l) => l.id.slice(0, 8)).join(', '));
+    if (!letters.length) return res.json({ confirmed: 0, held: 0, not_postmarked: notPostmarked.length });
 
     // Truth cross-check at send time: a letter sealed before an over-escalation
     // correction (or a void) is stale — hold it, never mail, never bill. This is
@@ -3257,7 +3281,7 @@ router.post('/mail-queue/confirm-mailed', express.json(), async (req, res) => {
         .in('id', mailable.map((l) => l.id));
       if (uErr) return res.status(500).json({ error: uErr.message });
     }
-    res.json({ confirmed: mailable.length, held: stale.length });
+    res.json({ confirmed: mailable.length, held: stale.length, not_postmarked: notPostmarked.length });
   } catch (err) {
     console.error('[mail-queue.confirm-mailed]', err);
     res.status(500).json({ error: err.message });
@@ -3388,7 +3412,28 @@ router.post('/mail-queue/cancel', express.json(), async (req, res) => {
   }
 });
 
-router.post('/mail-queue/batch-pdf', express.json(), async (req, res) => {
+// RETIRED (Ed 2026-10-21). "Skip lock / download PDFs" stamped printed_at with
+// no postmark, no cure date and no seal, which moved letters into "Locked -
+// printed, awaiting mail confirmation" where Unapprove/Cancel refuse them and
+// only Confirm-mailed remained (5127 Waterview Meadow). Looking at letters is
+// now POST /mail-queue/preview (writes nothing); printing is lock-and-batch.
+router.post('/mail-queue/batch-pdf', express.json(), (req, res) => {
+  res.status(410).json({ error: 'Download-without-lock has been retired. Use "Preview letters" to look (changes nothing), or "Lock dates + print PDFs" to print for mailing.' });
+});
+
+// ---------------------------------------------------------------------------
+// POST /api/enforcement/mail-queue/preview
+// Body: { delivery_method, community_id?, interaction_ids? }
+//
+// READ-ONLY look at what "Lock dates + print PDFs" would print: the same letter
+// selection and the same envelope grouping (_groupLettersIntoEnvelopes), with a
+// multi-violation envelope rendered as its ONE combined letter, dated today.
+// Writes NOTHING: no status, no printed_at, no bundle_id, no upload, no fee, no
+// seal. Every page is stamped PREVIEW so a preview is never mailed. An envelope
+// that can't be built is reported (X-Bedrock-Preview-Problems), so the operator
+// sees it BEFORE locking. (Ed 2026-10-21.)
+// ---------------------------------------------------------------------------
+router.post('/mail-queue/preview', express.json(), async (req, res) => {
   try {
     const body = req.body || {};
     const deliveryMethod = body.delivery_method;
@@ -3397,12 +3442,10 @@ router.post('/mail-queue/batch-pdf', express.json(), async (req, res) => {
     if (!deliveryMethod || !['first_class_mail', 'certified_mail'].includes(deliveryMethod)) {
       return res.status(400).json({ error: "delivery_method must be 'first_class_mail' or 'certified_mail'" });
     }
-    const letterTypes = ['letter_courtesy_1', 'letter_courtesy_2', 'letter_209', 'letter_postcard_reminder'];
-
     let q = supabase
       .from('interactions')
-      .select('id, content, type, subject, sent_at, community_id, property_id')
-      .in('type', letterTypes)
+      .select('id, content, type, delivery_method, subject, community_id, property_id, violation_id, observation_id, status, bundle_id')
+      .in('type', ['letter_courtesy_1', 'letter_courtesy_2', 'letter_209'])
       .eq('delivery_method', deliveryMethod)
       .in('status', ['approved', 'sent'])
       .is('printed_at', null)
@@ -3410,59 +3453,58 @@ router.post('/mail-queue/batch-pdf', express.json(), async (req, res) => {
     if (communityId) q = q.eq('community_id', communityId);
     if (explicitIds) q = q.in('id', explicitIds);
     const { data: letters, error } = await q;
-    if (error) return res.status(500).json({ error: error.message });
-    if (!letters || letters.length === 0) {
-      return res.status(404).json({ error: 'No pending letters match those filters.' });
-    }
+    if (error) return res.status(500).json({ error: safeErrorMessage(error) });
+    if (!letters || !letters.length) return res.status(404).json({ error: 'No pending letters match those filters.' });
 
-    // Download all the PDFs from storage
-    const { PDFDocument } = require('pdf-lib');
+    const { PDFDocument, StandardFonts, rgb } = require('pdf-lib');
     const out = await PDFDocument.create();
-    let included = [];
-    let skipped = [];
-    // Dedupe by shared PDF path: a bundle's N interactions share one letter PDF,
-    // so a per-interaction merge would print the bundle N times (un-bundling /
-    // extra envelopes). Merge each unique letter once. (Ed 2026-07-29.)
-    const seenPdf = new Set();
-    for (const L of letters) {
-      if (!L.content) { skipped.push({ id: L.id, reason: 'no storage path' }); continue; }
-      if (seenPdf.has(L.content)) { included.push(L.id); continue; }  // same bundle PDF already merged
-      seenPdf.add(L.content);
-      try {
-        const { data: blob } = await supabase.storage.from('violation-letters').download(L.content);
-        if (!blob) { skipped.push({ id: L.id, reason: 'storage missing' }); continue; }
-        const ab = await blob.arrayBuffer();
-        const src = await PDFDocument.load(ab);
-        const copied = await out.copyPages(src, src.getPageIndices());
-        copied.forEach((page) => out.addPage(page));
-        included.push(L.id);
-      } catch (e) {
-        skipped.push({ id: L.id, reason: e.message });
+    const font = await out.embedFont(StandardFonts.HelveticaBold);
+    const problems = [];
+    let envelopes = 0;
+    const addPages = async (bytes) => {
+      const src = await PDFDocument.load(bytes);
+      const copied = await out.copyPages(src, src.getPageIndices());
+      for (const page of copied) {
+        const { height } = page.getSize();
+        page.drawText('PREVIEW - NOT FOR MAILING. Dates are set when the batch is locked.', { x: 36, y: height - 18, size: 8, font, color: rgb(0.75, 0.1, 0.1) });
+        out.addPage(page);
       }
-    }
-    if (included.length === 0) {
-      return res.status(500).json({ error: 'Could not load any letter PDFs.', skipped });
-    }
-    const mergedBytes = await out.save();
+      envelopes += 1;
+    };
 
-    // Mark all included letters as printed
-    const stamp = new Date().toISOString();
-    await supabase
-      .from('interactions')
-      .update({ printed_at: stamp })
-      .in('id', included);
+    const grouped = new Set();
+    const envelopeGroups = await _groupLettersIntoEnvelopes(letters);
+    for (const [, members] of envelopeGroups) {
+      if (members.length < 2) continue;
+      for (const m of members) grouped.add(m.id);
+      let rr = null;
+      try { rr = await _assembleBundlePdf({ group: members, letterDate: new Date() }); }
+      catch (e) { rr = { ok: false, reason: e.message }; }
+      if (!rr || !rr.ok) { problems.push({ interaction_ids: members.map((m) => m.id), reason: `combined letter could not be built: ${(rr && rr.reason) || 'unknown'}` }); continue; }
+      await addPages(rr.pdfBuffer);
+    }
+    // One-violation envelopes: the stored reviewed letter (lock re-dates it).
+    for (const L of letters) {
+      if (grouped.has(L.id)) continue;
+      if (!L.content) { problems.push({ interaction_ids: [L.id], reason: 'no letter PDF on file' }); continue; }
+      try {
+        const { data: blob, error: dErr } = await supabase.storage.from('violation-letters').download(L.content);
+        if (dErr || !blob) { problems.push({ interaction_ids: [L.id], reason: 'letter PDF missing from storage' }); continue; }
+        await addPages(await blob.arrayBuffer());
+      } catch (e) { problems.push({ interaction_ids: [L.id], reason: e.message }); }
+    }
+    if (!envelopes) return res.status(422).json({ error: 'No letter in this selection could be previewed.', problems });
 
-    // Stream the PDF back to the browser
-    const filenameStamp = stamp.replace(/[:.]/g, '-').slice(0, 19);
-    const methodLabel = deliveryMethod === 'certified_mail' ? 'CERTIFIED' : 'first-class';
+    const bytes = await out.save();
     res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `attachment; filename="bedrock-mail-batch-${methodLabel}-${filenameStamp}.pdf"`);
-    res.setHeader('X-Bedrock-Included', included.length);
-    res.setHeader('X-Bedrock-Skipped', skipped.length);
-    res.end(Buffer.from(mergedBytes));
+    res.setHeader('Content-Disposition', 'inline; filename="mail-queue-PREVIEW.pdf"');
+    res.setHeader('X-Bedrock-Preview', '1');
+    res.setHeader('X-Bedrock-Envelopes', envelopes);
+    res.setHeader('X-Bedrock-Preview-Problems', encodeURIComponent(JSON.stringify(problems)));
+    res.end(Buffer.from(bytes));
   } catch (err) {
-    console.error('[mail-queue.batch-pdf]', err);
-    res.status(500).json({ error: err.message });
+    console.error('[mail-queue.preview]', err);
+    res.status(500).json({ error: safeErrorMessage(err) });
   }
 });
 
@@ -3627,7 +3669,7 @@ router.post('/mail-queue/lock-and-batch', express.json(), async (req, res) => {
 
     let q = supabase
       .from('interactions')
-      .select('id, content, type, subject, community_id, property_id, violation_id, observation_id, status, bundle_id')
+      .select('id, content, type, delivery_method, subject, community_id, property_id, violation_id, observation_id, status, bundle_id')
       .in('type', letterTypes)
       .eq('delivery_method', deliveryMethod)
       .in('status', ['approved', 'sent'])
@@ -3722,16 +3764,12 @@ router.post('/mail-queue/lock-and-batch', express.json(), async (req, res) => {
       if (members.length < 2) continue; // one letter → normal per-interaction path
       // One shared bundle_id per physical envelope, persisted so fee / notice /
       // printout de-dup (all keyed on bundle_id below) and the record agree.
+      // The shared id is PERSISTED only after the combined letter is built and
+      // uploaded (below). Writing it first left a held envelope stamped as one
+      // bundle over two separate letters: the manifest's "members disagree on
+      // content" warning at 5127 Waterview Meadow (Ed 2026-10-21).
       const ids = new Set(members.map((m) => m.bundle_id).filter(Boolean));
       const bid = ids.size === 1 && members.every((m) => m.bundle_id) ? [...ids][0] : cryptoMod.randomUUID();
-      if (members.some((m) => m.bundle_id !== bid)) {
-        const { error: bErr } = await supabase.from('interactions').update({ bundle_id: bid }).in('id', members.map((m) => m.id));
-        if (bErr) {
-          for (const m of members) { _heldIds.add(m.id); skipped.push({ id: m.id, reason: 'could not group this address into one envelope (' + bErr.message + ') — nothing printed for it; print again' }); }
-          continue;
-        }
-        for (const m of members) m.bundle_id = bid;
-      }
       let rr = null, lastReason = null;
       for (let attempt = 0; attempt < 2 && !(rr && rr.ok); attempt++) {
         try { rr = await _assembleBundlePdf({ group: members, letterDate: postmarkDate }); if (!rr.ok) lastReason = rr.reason; }
@@ -3747,6 +3785,12 @@ router.post('/mail-queue/lock-and-batch', express.json(), async (req, res) => {
         ({ error: upErr } = await supabase.storage.from('violation-letters')
           .upload(bundlePath, rr.pdfBuffer, { contentType: 'application/pdf', upsert: true }));
         if (upErr) lastReason = 'upload failed: ' + upErr.message;
+      }
+      if (rr && rr.ok && !upErr && members.some((m) => m.bundle_id !== bid)) {
+        const { error: bErr } = await supabase.from('interactions').update({ bundle_id: bid }).in('id', members.map((m) => m.id));
+        if (bErr) lastReason = 'could not group this address into one envelope (' + bErr.message + ')';
+        else for (const m of members) m.bundle_id = bid;
+        if (bErr) upErr = bErr;
       }
       if (!rr || !rr.ok || upErr) {
         console.warn('[lock-and-batch] bundle HELD (not printed)', bid, lastReason);
