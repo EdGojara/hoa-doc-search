@@ -3445,14 +3445,17 @@ router.get('/inspections/observations/confirm-preview', async (req, res) => {
     }
     // 5) One letter fetch for every courtesy_1 case we still need to judge —
     //    matched continuations AND own cases (to see if the first notice was mailed).
+    // Courtesy 2 cases too: whether their second notice was mailed decides §209
+    // eligibility (Ed 2026-10-23). Every letter type, judged by its actual stage.
     const c1Ids = [
-      ...matched.filter((v) => v.current_stage === 'courtesy_1').map((v) => v.id),
+      ...matched.filter((v) => v.current_stage === 'courtesy_1' || v.current_stage === 'courtesy_2').map((v) => v.id),
       ...ownCases.filter((v) => v.current_stage === 'courtesy_1').map((v) => v.id),
     ];
     const lettersByViol = new Map();
     for (let i = 0; i < c1Ids.length; i += 200) {
-      const { data: lts } = await supabase.from('interactions')
-        .select('violation_id, status, mailed_at').in('violation_id', c1Ids.slice(i, i + 200)).eq('type', 'letter_courtesy_1');
+      const { data: lts, error: ltErr } = await supabase.from('interactions')
+        .select('violation_id, type, subject, status, mailed_at').in('violation_id', c1Ids.slice(i, i + 200)).like('type', 'letter%');
+      if (ltErr) throw ltErr;
       for (const l of (lts || [])) (lettersByViol.get(l.violation_id) || lettersByViol.set(l.violation_id, []).get(l.violation_id)).push(l);
     }
 
@@ -3461,14 +3464,14 @@ router.get('/inspections/observations/confirm-preview', async (req, res) => {
     let alreadyNoticed = 0;
     for (const v of ownCases) {
       const mailed = (v.current_stage && v.current_stage !== 'courtesy_1')
-        || (lettersByViol.get(v.id) || []).some((l) => l.status === 'sent' || l.mailed_at);
+        || (lettersByViol.get(v.id) || []).some((l) => /courtesy_1/.test(l.subject || l.type || '') && (l.status === 'sent' || l.mailed_at));
       if (mailed) alreadyNoticed++; else newCount++;
     }
-    const counts = { new: newCount, already_noticed: alreadyNoticed, advance_courtesy_2: 0, recover_courtesy_1: 0, awaiting_first_mail: 0, eligible_209: 0, continuation: 0 };
+    const counts = { new: newCount, already_noticed: alreadyNoticed, advance_courtesy_2: 0, recover_courtesy_1: 0, awaiting_first_mail: 0, awaiting_second_mail: 0, eligible_209: 0, continuation: 0 };
     // Why each "held" case is held, so the UI can spell it out (Ed 2026-09-15).
-    const held_reasons = { already_certified: 0, at_fine: 0, opened_today: 0, first_notice_not_mailed: 0 };
+    const held_reasons = { already_certified: 0, at_fine: 0, opened_today: 0, first_notice_not_mailed: 0, second_notice_not_mailed: 0, second_notice_missing: 0, same_inspection: 0 };
     for (const open of matched) {
-      const { outcome, reason } = await decideReobservationOutcome(supabase, open, { courtesy1Letters: lettersByViol.get(open.id) || [] });
+      const { outcome, reason } = await decideReobservationOutcome(supabase, open, { letters: lettersByViol.get(open.id) || [] });
       counts[outcome] = (counts[outcome] || 0) + 1;
       if (reason && held_reasons[reason] !== undefined) held_reasons[reason] += 1;
     }
@@ -3745,17 +3748,39 @@ router.post('/inspections/observations/:id/confirm', express.json(), async (req,
           return res.json({ ...base, awaiting_first_notice_mail: true });
         }
         if (outcome === 'advance_courtesy_2') {
-          // Courtesy 2 is a reminder: the Courtesy 1 deadline stays exactly as it is
-          // (never shortened, never extended). (Ed 2026-10-23)
-          const now = new Date();
-          const { data: adv } = await supabase.from('violations').update({
-            current_stage: 'courtesy_2',
-            current_stage_started_at: now.toISOString(),
-          }).eq('id', vId).eq('current_stage', 'courtesy_1').select('id').maybeSingle();
-          await markObs('[Re-observed — advanced to Courtesy 2; second notice drafted]');
-          let draftErr = null;
-          if (adv) { const r = await _draftFor('courtesy_2'); draftErr = (r && r.error) || null; }
-          return res.json({ ...base, advanced_to: 'courtesy_2', draft_error: draftErr });
+          // The ONE shared workflow (Ed 2026-10-23): the Courtesy 2 letter is
+          // prepared first and goes to Drafts; only then does the stage change. If
+          // the letter cannot be prepared the case stays at Courtesy 1 and the
+          // reviewer is told why. The Courtesy 1 deadline is not touched.
+          const { _advanceWithStageLetter } = require('./enforcement');
+          let actor = null;
+          try { const { getActingUser } = require('./_acting_user'); actor = await getActingUser(req); } catch (_) {}
+          if (!actor && reviewerUserId) actor = { id: reviewerUserId };
+          const r = await _advanceWithStageLetter({
+            violationId: vId, toStage: 'courtesy_2', actor, source: 'inspection_confirm',
+            reason: reviewerNotes || 'Re-observed on a later inspection, still not corrected',
+            observationId: obs.id, inspectionId: obs.inspection_id,
+          });
+          if (r.ok) {
+            await markObs(r.advanced ? '[Re-observed — advanced to Courtesy 2; second notice in Drafts for approval]' : '[Re-observed — Courtesy 2 already in progress]');
+            return res.json({ ...base, advanced_to: r.advanced ? 'courtesy_2' : null, letter_interaction_id: r.letter_interaction_id || null, message: r.message });
+          }
+          await markObs(`[Re-observed — NOT advanced: ${r.message}]`);
+          return res.json({ ...base, advanced_to: null, advance_blocked: true, code: r.code, message: r.message });
+        }
+        if (outcome === 'awaiting_second_mail') {
+          // Courtesy 2 seen again, but its second notice was never mailed: it is NOT
+          // eligible for §209 until that notice actually goes out.
+          await markObs('[Re-observed at Courtesy 2 — NOT eligible for §209: the second notice has not been mailed]');
+          const { error: nErr } = await supabase.from('interactions').insert({
+            community_id: obs.community_id, property_id: obs.property_id, violation_id: vId,
+            observation_id: obs.id, inspection_id: obs.inspection_id, type: 'observation_note', direction: 'internal',
+            subject: 'Re-observed at Courtesy 2 — second notice not mailed',
+            content: 'Still not corrected, but the Courtesy 2 letter was never mailed (or is missing), so this case is not eligible for a certified §209 notice. Prepare or mail the Courtesy 2 letter first.',
+            sent_at: new Date().toISOString(),
+          });
+          if (nErr) console.warn('[confirm] awaiting-second-mail note failed:', nErr.message);
+          return res.json({ ...base, eligible_for_certified: false, awaiting_second_notice_mail: true, message: 'Not eligible for §209 yet: the Courtesy 2 letter has not been mailed.' });
         }
         if (outcome === 'eligible_209') {
           await markObs('[Re-observed at Courtesy 2 — eligible for §209 certified; staff review]');
@@ -3776,10 +3801,11 @@ router.post('/inspections/observations/:id/confirm', express.json(), async (req,
         return res.json({ ...base, reason: 'continuation_logged_existing_open_violation' });
       }
     } catch (contErr) {
+      // Never open a NEW case because matching the existing one failed: that is
+      // how duplicates were made (Ed 2026-10-23). Stop, say so, leave the
+      // observation pending so it can be confirmed again.
       console.error('[confirm] continuation check failed:', contErr.message);
-      // Fall through to normal open-violation path — don't block the
-      // confirmation on a continuation-check failure. The duplicate-check
-      // surface in the drafts queue is a second safety net.
+      return res.status(500).json({ error: 'continuation_check_failed', message: 'Could not check this house for an existing open case, so nothing was opened or advanced. The observation is still pending: try Confirm again.', detail: contErr.message });
     }
 
     // Compute prior violations for the escalation engine
