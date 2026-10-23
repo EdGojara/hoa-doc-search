@@ -3640,8 +3640,8 @@ router.post('/inspections/observations/:id/confirm', express.json(), async (req,
     // persists post-§209 cure period). See lib/enforcement/find_or_continue_violation.js
     // for the full rationale + caller list. Added 2026-06-13 per Ed.
     // Captured from the continuation check below, used at open time: a
-    // within-6-month recurrence of a cured movable violation (§209.006(d)) opens
-    // straight at certified §209. Null for everything else.
+    // within-6-month repeat of a cured movable violation is flagged for review
+    // (it opens at its normal stage; see the POLICY note at open). Null otherwise.
     let recurrenceSignal = null;
     // Set when findOrContinueViolation reports the only open case is the one THIS
     // observation already opened (analyze auto-drafts the violation, leaves the
@@ -3829,12 +3829,14 @@ router.post('/inspections/observations/:id/confirm', express.json(), async (req,
         return res.json({ ok: true, opened: false, reason: decision.rationale });
       }
 
-      // Recurrence (§209.006(d)): a movable violation cured within 6 months and now
-      // back. Skip the courtesy and open at certified §209 — every community sends
-      // certifieds (only Lakes of Pine Forest fines, so this never auto-fines). An
-      // operator can always restage up or down afterward. (Ed 2026-07-25.)
+      // Repeat of a cured movable violation within 6 months. POLICY (Ed 2026-10-23): a
+      // genuinely cured and closed violation resets the sequence, so it opens at its normal
+      // first stage and is flagged for review. It is never escalated automatically: the §209
+      // repeat exception applies only on a person's decision, and only if a certified §209
+      // notice was actually mailed on an earlier case. Replaces the 2026-07-25 auto-certified rule
+      // (5326 Still Meadow, 7919 Caribou Valley and 11 others opened at certified with no notice).
       const isRepeat = !!(recurrenceSignal && recurrenceSignal.is_repeat);
-      const openStage = isRepeat ? 'certified_209' : decision.stage;
+      const openStage = decision.stage;
       const cureEndsAt = decision.cure_days > 0
         ? new Date(Date.now() + decision.cure_days * 24 * 60 * 60 * 1000).toISOString()
         : null;
@@ -3853,7 +3855,10 @@ router.post('/inspections/observations/:id/confirm', express.json(), async (req,
       if (isRepeat) {
         violationRow.is_recurrence = true;
         violationRow.recurrence_of_violation_id = recurrenceSignal.prior_violation_id;
-        violationRow.review_notes = `Recurrence within 6 months of a cured same/similar violation (Tex. Prop. Code §209.006(d)) — opened at certified §209, skipping courtesy. Review before sending; adjust severity with Advance/Reduce if needed.`;
+        violationRow.review_notes = `Repeat: the same/similar violation was cured on ${String(recurrenceSignal.prior_resolved_at || '').slice(0, 10)} (within 6 months). Opened at the first notice because a cured case resets the sequence. `
+          + (recurrenceSignal.prior_certified_notice
+            ? 'A certified §209 notice was mailed on an earlier case, so the §209 repeat exception may apply: a person may Advance after review.'
+            : 'No certified §209 notice was ever mailed on the earlier case, so the §209 repeat exception does not apply.');
       }
       const insertRes = await supabase
         .from('violations')
