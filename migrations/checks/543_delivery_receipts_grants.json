@@ -1,0 +1,39 @@
+{
+  "migration": "543_delivery_receipts_grants.sql",
+  "summary": "Grants service_role SELECT, INSERT and UPDATE on delivery_receipts, which was created (migration 065) without any grant, so every delivery-receipt write and the Evidence panel read failed with permission denied. No DELETE (evidence trail), nothing to anon/authenticated. No row or structure changes.",
+  "requires": [
+    "065_delivery_receipts_multichannel.sql"
+  ],
+  "preflight": [
+    {
+      "name": "delivery_receipts exists",
+      "sql": "SELECT count(*)::int FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'delivery_receipts'",
+      "expect": 1
+    }
+  ],
+  "expected_changes": [
+    "service_role gains SELECT, INSERT and UPDATE on public.delivery_receipts.",
+    "No other privileges change; no rows change; no tables, columns, constraints or indexes change."
+  ],
+  "objects": {
+    "added": [],
+    "changed": [],
+    "removed": []
+  },
+  "row_changes": {
+    "delivery_receipts": 0
+  },
+  "protected": [
+    {
+      "table": "delivery_receipts",
+      "order_by": "id"
+    }
+  ],
+  "verify": [
+    {
+      "name": "service_role can read, write and update delivery_receipts",
+      "sql": "SELECT (has_table_privilege('service_role', 'public.delivery_receipts', 'SELECT')::int + has_table_privilege('service_role', 'public.delivery_receipts', 'INSERT')::int + has_table_privilege('service_role', 'public.delivery_receipts', 'UPDATE')::int)",
+      "expect": 3
+    }
+  ]
+}
