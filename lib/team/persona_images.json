@@ -656,5 +656,124 @@
         "note": "faces/miranda.webp; pending Ed's separate approval"
       }
     }
+  },
+  "kat": {
+    "name": "Kat Reed",
+    "approved": "2026-10-23",
+    "approved_by": "Ed Gojara",
+    "source_package": "assets/persona_sources/kat/Kat_Office-Life-Collage_2026-10-23.png",
+    "source_note": "Six panels cut at native size from one 1536x1024 collage (about 475-563 x 507-513 each), never upscaled. Supporting images for smaller placements (avatars, cards, signatures-sized uses at 120px or less, small website tiles). Video and large website placements need full-resolution individual originals of the same face, generated when needed. The original collage is kept unmodified at source_package.",
+    "dir": "public/assets/personas/kat",
+    "primary": {
+      "photo": "canonical_square",
+      "path": "public/assets/presentations/team/kat.jpg",
+      "note": "Kat's existing official portrait stays the primary image (Ed 2026-10-23). No canonical_square entry here, so the builder never rewrites it."
+    },
+    "photos": {
+      "kat-professional-portrait": {
+        "use": "supporting portrait, direct to camera in her office (closest to the official portrait)",
+        "alt": "Kat Reed, Bedrock accounting manager",
+        "source": "Kat_Office-Life-Collage_2026-10-23.png (Downloads: \"Professional Office Life Collage (1).png\", 1536x1024, sha256 86dd56c8783b08ab...)",
+        "native_px": [
+          563,
+          513
+        ],
+        "crop_from_collage": {
+          "x": 0,
+          "y": 0,
+          "w": 563,
+          "h": 513
+        }
+      },
+      "kat-reviewing-documents": {
+        "use": "accounting work: reviewing a statement with pen and calculator (reconciliation, invoice review)",
+        "alt": "Kat Reed reviewing financial documents",
+        "source": "Kat_Office-Life-Collage_2026-10-23.png (Downloads: \"Professional Office Life Collage (1).png\", 1536x1024, sha256 86dd56c8783b08ab...)",
+        "native_px": [
+          490,
+          513
+        ],
+        "crop_from_collage": {
+          "x": 567,
+          "y": 0,
+          "w": 490,
+          "h": 513
+        }
+      },
+      "kat-reconciliation-monitors": {
+        "use": "analysis at two monitors of spreadsheets (bank reconciliation, Positive Pay, reports)",
+        "alt": "Kat Reed working at her monitors",
+        "source": "Kat_Office-Life-Collage_2026-10-23.png (Downloads: \"Professional Office Life Collage (1).png\", 1536x1024, sha256 86dd56c8783b08ab...)",
+        "native_px": [
+          475,
+          513
+        ],
+        "crop_from_collage": {
+          "x": 1061,
+          "y": 0,
+          "w": 475,
+          "h": 513
+        }
+      },
+      "kat-explaining": {
+        "use": "explaining or on a call at her laptop (walkthroughs, board or staff questions)",
+        "alt": "Kat Reed explaining at her laptop",
+        "source": "Kat_Office-Life-Collage_2026-10-23.png (Downloads: \"Professional Office Life Collage (1).png\", 1536x1024, sha256 86dd56c8783b08ab...)",
+        "native_px": [
+          554,
+          507
+        ],
+        "crop_from_collage": {
+          "x": 0,
+          "y": 517,
+          "w": 554,
+          "h": 507
+        }
+      },
+      "kat-coffee": {
+        "use": "friendly, relaxed: greetings and casual contexts",
+        "alt": "Kat Reed smiling with a cup of coffee",
+        "source": "Kat_Office-Life-Collage_2026-10-23.png (Downloads: \"Professional Office Life Collage (1).png\", 1536x1024, sha256 86dd56c8783b08ab...)",
+        "native_px": [
+          491,
+          507
+        ],
+        "crop_from_collage": {
+          "x": 559,
+          "y": 517,
+          "w": 491,
+          "h": 507
+        }
+      },
+      "kat-taking-notes": {
+        "use": "taking notes in a notebook at her laptop (follow-ups, meeting notes)",
+        "alt": "Kat Reed taking notes",
+        "source": "Kat_Office-Life-Collage_2026-10-23.png (Downloads: \"Professional Office Life Collage (1).png\", 1536x1024, sha256 86dd56c8783b08ab...)",
+        "native_px": [
+          482,
+          507
+        ],
+        "crop_from_collage": {
+          "x": 1054,
+          "y": 517,
+          "w": 482,
+          "h": 507
+        }
+      }
+    },
+    "placements": {
+      "_about": "Supporting images only. No page, email signature, avatar or public surface is switched to them (Ed 2026-10-23); every surface keeps team/kat.jpg."
+    },
+    "identity_reference": {
+      "authority": "Kat's official portrait: public/assets/presentations/team/kat.jpg",
+      "must_match": [
+        "black rectangular glasses",
+        "shoulder-length dark brown hair with caramel highlights",
+        "navy blouse",
+        "small gold hoop earrings",
+        "small round gold pendant"
+      ],
+      "rule": "A photo is used only if it is visibly the same woman."
+    }
   }
 }

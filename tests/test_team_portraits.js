@@ -66,9 +66,15 @@ check('identity: face v2 is the reference, the excluded high-resolution set is n
 });
 check('the persona image map owns amanda.jpg; every mapped photo exists; no other teammate is mapped', () => {
   const map = JSON.parse(fs.readFileSync(path.join(ROOT, 'lib', 'team', 'persona_images.json'), 'utf8'));
-  assert.deepStrictEqual(Object.keys(map).filter((k) => !k.startsWith('_')), ['amanda', 'paige', 'phoebe', 'maggie', 'claire', 'annie', 'miranda']);
+  assert.deepStrictEqual(Object.keys(map).filter((k) => !k.startsWith('_')), ['amanda', 'paige', 'phoebe', 'maggie', 'claire', 'annie', 'miranda', 'kat']);
   assert.strictEqual(map.amanda.canonical_square.out, 'public/assets/presentations/team/amanda.jpg');
   for (const k of Object.keys(map.amanda.photos)) assert.ok(fs.existsSync(path.join(ROOT, map.amanda.dir, k + '.jpg')), k);
+  // Kat (Ed 2026-10-23): six supporting photos; her official portrait stays primary, so the map
+  // has no canonical_square and the builder can never rewrite team/kat.jpg. The collage is kept.
+  assert.strictEqual(map.kat.canonical_square, undefined, 'kat.jpg is not managed by the builder');
+  assert.strictEqual(Object.keys(map.kat.photos).length, 6);
+  for (const k of Object.keys(map.kat.photos)) assert.ok(fs.existsSync(path.join(ROOT, map.kat.dir, k + '.jpg')), k);
+  assert.ok(fs.existsSync(path.join(ROOT, map.kat.source_package)), 'the original collage is preserved');
 });
 
 check('the old face is preserved byte-identical as amanda_legacy_v1.jpg', () => {
