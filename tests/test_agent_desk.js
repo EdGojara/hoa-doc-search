@@ -159,6 +159,32 @@ const ga = { fetchMessageText: async () => '', fetchMessageRecipients: async (mb
   check('Amanda\'s original desk routes are untouched', /router\.get\('\/inbox'/.test(src('api/amanda_email.js')) && /REPLY_KIND = 'amanda_reply'/.test(src('lib/amanda/email_inbox.js')));
   check('Communications drafting runs the same record check', /require\('\.\.\/lib\/agents\/operational_facts'\)\.checkDraft\(draft\.body, _facts\)/.test(tri));
 
+  // ---- website inquiry replies go to the VERIFIED submitter (Ed 2026-10-23) ----
+  {
+    const FORM = 'New Bedrock website inquiry\nPurpose: prospective\nName: Abigail Gupta\nEmail: abigail@vettedvas.com\nPhone: (224) 599-5483\nCommunity: Abigail\nMessage: We offer trained virtual assistants. Open to discussion?';
+    const web = (id, wi) => msg({ id, mailbox: 'welcome@bedrocktx.com', persona: 'maggie', sender_email: 'notifications@bedrocktxai.com', sender_name: 'Bedrock Website', subject: 'Bedrock website inquiry: prospective', body_full: FORM, recipients: ['welcome@bedrocktx.com'], extracted: { website_inquiry: wi } });
+    T.email_messages.push(
+      web('web-ok', { claimed: true, verified: true, email: 'abigail@vettedvas.com', name: 'Abigail Gupta', owner: 'maggie', intent: 'vendor_solicitation' }),
+      web('web-unverified', { claimed: true, verified: false, reasons: ['dkim_fail'] }),
+      web('web-mismatch', { claimed: true, verified: true, email: 'someone@else.test', name: 'Someone', owner: 'maggie' }));
+    const gaWeb = { fetchMessageText: async () => '', fetchMessageRecipients: async (mbx) => (mbx === 'welcome@bedrocktx.com' ? { to: ['welcome@bedrocktx.com'], cc: [], replyTo: ['abigail@vettedvas.com'] } : ga.fetchMessageRecipients(mbx)) };
+    const WI = require('../lib/email/website_inquiry');
+    const tw = await D.loadThread(db, 'maggie', 'web-ok', { graphAttachments: gaWeb });
+    check('WEBSITE: a verified inquiry replies to the submitter (same resolver as Communications), never the relay or welcome@; nobody copied; customer-facing subject',
+      tw.reply.to === 'abigail@vettedvas.com' && tw.reply.to_name === 'Abigail Gupta' && tw.reply.reply_all_cc.length === 0 && tw.reply.subject === WI.REPLY_SUBJECT && tw.reply.recipient_blocked === null, JSON.stringify(tw.reply));
+    const sw = await D.stageReply(db, 'maggie', { thread: tw, body: 'Thank you, we will pass for now.', createdBy: 'egojara@bedrocktx.com' });
+    const swRow = db.T.outbound_email_drafts.find((x) => x.id === sw.id);
+    check('WEBSITE: the staged draft is addressed to the submitter only', swRow.to_email === 'abigail@vettedvas.com' && !swRow.cc && swRow.subject === WI.REPLY_SUBJECT && !/notifications@|welcome@/.test(JSON.stringify(swRow)), JSON.stringify(swRow));
+    const tu = await D.loadThread(db, 'maggie', 'web-unverified', { graphAttachments: gaWeb });
+    let unv = null; try { await D.stageReply(db, 'maggie', { thread: tu, body: 'x', createdBy: 'egojara@bedrocktx.com' }); } catch (e) { unv = e.code; }
+    check('WEBSITE: an UNVERIFIED inquiry gets no recipient and staging refuses (the body address never redirects a reply)', tu.reply.to === null && tu.reply.recipient_blocked === 'unverified_submitter' && unv === 'recipient_unresolved', JSON.stringify(tu.reply));
+    const tmm = await D.loadThread(db, 'maggie', 'web-mismatch', { graphAttachments: gaWeb });
+    check('WEBSITE: a form address that disagrees with the verified submitter gets no recipient', tmm.reply.to === null && tmm.reply.recipient_blocked === 'submitter_mismatch', JSON.stringify(tmm.reply));
+    const to2 = await D.loadThread(db, 'kat', 'melody', { graphAttachments: ga });
+    check('ORDINARY mail is unchanged: reply to the sender, its own subject, reply-all as before, no website fields',
+      to2.reply.to === 'MHess@newfirst.com' && to2.reply.subject === 'RE: Positive Pay' && to2.reply.reply_all_cc.includes('tessa@bedrocktx.com') && to2.reply.website_inquiry === undefined, JSON.stringify(to2.reply));
+  }
+
   console.log(`\nagent_desk: ${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 })().catch((e) => { console.error(e); process.exit(1); });
