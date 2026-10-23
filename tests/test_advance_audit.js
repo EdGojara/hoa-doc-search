@@ -31,7 +31,7 @@ t('the audit record names the user, time, previous stage, new stage and reason',
 });
 
 t('advance endpoint: actor + reason checked before any change; concurrent change refused; no stage change without its audit record', () => {
-  const adv = between(read('api/enforcement.js'), "router.post('/violations/:violationId/advance-stage'", 6000);
+  const adv = between(read('api/enforcement.js'), "router.post('/violations/:violationId/advance-stage'", 10000);
   const iActor = adv.indexOf('requireActingUser(req, res)');
   const iReason = adv.indexOf('reasonError(req.body && req.body.note)');
   const iUpdate = adv.indexOf('.update(advPatch)');

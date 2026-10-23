@@ -19943,7 +19943,19 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
                  <tr style="border-bottom:${showReviewNotes ? 'none' : '1px solid #f1f5f9'};">
                    <td style="padding:6px 8px;">${v.opened_at ? new Date(v.opened_at).toLocaleDateString() : '—'}</td>
                    <td style="padding:6px 8px;">${escapeHtml(v.category_label || v.category_code || '—')}</td>
-                   <td style="padding:6px 8px; color:${stageColor}; font-weight:600;"${stageTitle ? ` title="${stageTitle}"` : ''}>${stageLabel}</td>
+                   <td style="padding:6px 8px; color:${stageColor}; font-weight:600;"${stageTitle ? ` title="${stageTitle}"` : ''}>${stageLabel}${(() => {
+                     // The case stage and the notices actually MAILED are different
+                     // facts: show both, and flag a stage that has no letter (Ed 2026-10-23).
+                     if (!isOpenStage(stage)) return '';
+                     const _ST = { courtesy_1: 'Courtesy 1', courtesy_2: 'Courtesy 2', certified_209: 'Certified §209', fine_assessed: 'Fine' };
+                     const _stageOfL = (x) => ((/\((courtesy_1|courtesy_2|certified_209|fine_assessed)\)/.exec(x.subject || '') || [])[1]) || ({ letter_courtesy_1: 'courtesy_1', letter_courtesy_2: 'courtesy_2', letter_209: 'certified_209' })[x.type] || null;
+                     const _lv = (d.interactions || []).filter((x) => x.violation_id === v.id && /^letter_/.test(x.type || ''));
+                     const _mailed = _lv.filter((x) => x.mail_state && x.mail_state.state === 'mailed').sort((a, b) => String(b.mailed_at || '').localeCompare(String(a.mailed_at || '')))[0];
+                     const _last = `<div style="font-size:10.5px; color:#64748b; font-weight:400;">Last notice mailed: ${_mailed ? escapeHtml(_ST[_stageOfL(_mailed)] || 'letter') + ' ' + new Date(_mailed.mailed_at).toLocaleDateString() : 'none'}</div>`;
+                     const _needs = (stage === 'courtesy_2' || stage === 'certified_209') && v.source !== 'vantaca_import'
+                       && !_lv.some((x) => _stageOfL(x) === stage && !(x.mail_state && x.mail_state.state === 'held'));
+                     return _last + (_needs ? `<div style="font-size:10.5px; color:#b91c1c; font-weight:700; margin-top:2px;">⚠ No ${_ST[stage]} letter on file <button onclick="inspPrepareStageLetter('${v.id}','${stage}')" style="background:#fff; border:1px solid #fca5a5; color:#b91c1c; padding:1px 6px; border-radius:4px; font-size:10px; font-weight:700; cursor:pointer;" title="Prepare the missing ${_ST[stage]} letter into Drafts for approval. Does not change the stage or mail anything.">Prepare letter</button></div>` : '');
+                   })()}</td>
                    <td style="padding:6px 8px;">${qBadge(v)}${sourceBadge(v.source)}</td>
                    <td style="padding:6px 8px; text-align:right; white-space:nowrap;">
                      ${(() => {
@@ -20693,14 +20705,30 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
         body: JSON.stringify({ note: note.trim() }),
       });
       const j = await r.json();
-      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      if (!r.ok) throw new Error(j.message || j.error || `HTTP ${r.status}`);
       const newStage = (j.new_stage || j.current_stage || nextLabel).toString().replace(/_/g, ' ');
       if (typeof inspPDCurrentPropertyId !== 'undefined' && inspPDCurrentPropertyId) {
         await inspOpenPropertyDetail(inspPDCurrentPropertyId);
       }
-      setTimeout(() => alert('✓ Advanced to ' + newStage + '. Generate the letter for the new stage when ready.'), 100);
+      setTimeout(() => alert(j.message ? '✓ ' + j.message : '✓ Advanced to ' + newStage + '.'), 100);
     } catch (e) {
       alert('Could not advance: ' + e.message);
+    }
+  }
+
+  async function inspPrepareStageLetter(violationId, stage) {
+    const LBL = { courtesy_2: 'Courtesy 2', certified_209: 'Certified §209' };
+    if (!confirm('Prepare the missing ' + (LBL[stage] || stage) + ' letter for this case?\n\nIt goes to Drafts for review and approval. The stage does not change and nothing is mailed.')) return;
+    try {
+      const r = await window._authFetch(`/api/enforcement/violations/${violationId}/prepare-stage-letter`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.message || j.error || `HTTP ${r.status}`);
+      if (typeof inspPDCurrentPropertyId !== 'undefined' && inspPDCurrentPropertyId) await inspOpenPropertyDetail(inspPDCurrentPropertyId);
+      setTimeout(() => alert('✓ ' + (j.message || 'Letter prepared.')), 100);
+    } catch (e) {
+      alert('Could not prepare the letter: ' + e.message);
     }
   }
 
@@ -25015,12 +25043,20 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
     if (!ids.length) return;
     if (!confirm('Confirm ' + ids.length + ' violation' + (ids.length === 1 ? '' : 's') + '? Each opens a violation + creates a draft letter (Step 2).')) return;
     const btn = document.getElementById('revConfirmSelBtn'); if (btn) { btn.disabled = true; btn.textContent = '⏳ Confirming…'; }
-    let ok = 0, fail = 0, drafts = 0, cont = 0, noDraft = 0;
+    let ok = 0, fail = 0, drafts = 0, cont = 0, noDraft = 0, advanced = 0;
+    const blocked = [];
     for (const id of ids) {
       try {
-        const r = await fetch('/api/inspections/observations/' + id + '/confirm', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+        const r = await window._authFetch('/api/inspections/observations/' + id + '/confirm', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
         const j = await r.json().catch(() => ({}));
-        if (r.ok) { ok++; if (j.draft_created || j.draft_pending) drafts++; else if (j.opened === false) cont++; else noDraft++; } else fail++;
+        if (r.ok) {
+          ok++;
+          if (j.draft_created || j.draft_pending) drafts++;
+          else if (j.advanced_to) advanced++;
+          else if (j.advance_blocked) blocked.push(j.message || j.code);
+          else if (j.opened === false) cont++;
+          else noDraft++;
+        } else fail++;
       } catch (_) { fail++; }
     }
     const sa = document.getElementById('revSelectAll'); if (sa) sa.checked = false;
@@ -25029,7 +25065,9 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
     // appear without a manual refresh. (Ed 2026-08-25.)
     if (typeof inspDraftsLoad === 'function') setTimeout(() => { try { inspDraftsLoad(); } catch (_) {} }, 5000);
     alert('Confirmed ' + ok + ' · ' + drafts + ' draft letter' + (drafts === 1 ? '' : 's') + ' generating'
+      + (advanced ? (' · ' + advanced + ' advanced to Courtesy 2 (letter in Drafts)') : '')
       + (cont ? (' · ' + cont + ' continuation' + (cont === 1 ? '' : 's') + ' (house already has an open case — no duplicate letter)') : '')
+      + (blocked.length ? ('\n\n' + blocked.length + ' seen again but NOT advanced:\n• ' + [...new Set(blocked)].join('\n• ')) : '')
       + (noDraft ? (' · ' + noDraft + ' opened but no draft — tell Claude') : '')
       + (fail ? (' · ' + fail + ' error' + (fail === 1 ? '' : 's')) : '')
       + '.\n\nDraft letters appear in Step 2 below in a few seconds.');
@@ -25111,10 +25149,19 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
     const original = btn ? btn.innerHTML : '';
     if (btn) { btn.disabled = true; btn.innerHTML = '⏳…'; }
     try {
-      const r = await fetch(`/api/inspections/observations/${obsId}/confirm`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) });
+      const r = await window._authFetch(`/api/inspections/observations/${obsId}/confirm`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) });
       const j = await r.json();
-      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
-      if (j.opened === false && (j.continuation || /continuation|already/i.test(j.reason || ''))) {
+      if (!r.ok) throw new Error(j.message || j.error || `HTTP ${r.status}`);
+      if (j.opened === false && j.advance_blocked) {
+        // Re-observed, but the case could not move to Courtesy 2: say exactly why
+        // (first notice not mailed, letter could not be prepared). (Ed 2026-10-23)
+        alert('Seen again, but NOT advanced:\n\n' + (j.message || j.code || 'unknown reason'));
+      } else if (j.opened === false && j.advanced_to) {
+        if (btn) { btn.innerHTML = '↗ Courtesy 2 · letter in Drafts'; btn.style.background = '#b45309'; btn.disabled = true; }
+        await new Promise((res) => setTimeout(res, 900));
+      } else if (j.opened === false && j.awaiting_second_notice_mail) {
+        alert(j.message || 'Not eligible for §209 yet: the Courtesy 2 letter has not been mailed.');
+      } else if (j.opened === false && (j.continuation || /continuation|already/i.test(j.reason || ''))) {
         // NOT an error — the house already has an open case for this issue, so
         // the system logged a continuation instead of mailing a duplicate §209
         // letter (correct, and common with 700+ open cases). Don't interrupt
@@ -26882,7 +26929,7 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
         if (!r.ok || j.error) throw new Error(j.error || 'fold failed');
         close();
         if (typeof inspDraftsLoad === 'function') inspDraftsLoad();
-        if (j.advanced_to) setTimeout(() => alert('✓ Linked + escalated the case to ' + j.advanced_to.replace(/_/g, ' ') + '. Generate the letter for the new stage when ready.'), 100);
+        if (j.advanced_to || j.message) setTimeout(() => alert(j.advanced_to ? '✓ Linked and advanced to ' + j.advanced_to.replace(/_/g, ' ') + '. ' + (j.message || '') : 'Linked. ' + j.message), 100);
       } catch (e) { alert('Fold failed: ' + e.message); this.disabled = false; this.textContent = 'Fold & void duplicate'; }
     };
   };
@@ -54692,6 +54739,7 @@ ${questionsPage}
       .then((r) => r.json())
       .then((j) => {
         if (j.ok) {
+          if (j.message) alert('✓ ' + j.message);
           // Refresh the violation history section
           const propertyId = (cmapState.properties.find((p) =>
             cmapState.pinsByPropertyId.get(p.property_id))
@@ -54707,7 +54755,7 @@ ${questionsPage}
             alert(`✓ Advanced to ${label}. Refresh the panel to see the update.`);
           }
         } else {
-          alert('Advance failed: ' + (j.error || 'unknown error'));
+          alert('Advance failed: ' + (j.message || j.error || 'unknown error'));
         }
       })
       .catch((e) => alert('Advance failed: ' + e.message));

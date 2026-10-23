@@ -45,7 +45,7 @@ console.log('courtesy2_reminder:');
   });
 
   await at('classifier: a second observation of the same case on the same inspection never advances it (Courtesy 1 or 2)', async () => {
-    const db = { from() { const q = { select() { return q; }, eq() { return q; }, then(r) { return Promise.resolve({ data: [{ status: 'sent', mailed_at: '2026-09-23T12:00:00Z' }], error: null }).then(r); } }; return q; } };
+    const db = { from() { const q = { select() { return q; }, eq() { return q; }, like() { return q; }, then(r) { return Promise.resolve({ data: [{ type: 'letter_courtesy_1', subject: 'Violation letter (courtesy_1)', status: 'sent', mailed_at: '2026-09-23T12:00:00Z' }, { type: 'letter_courtesy_2', subject: 'Violation letter (courtesy_2)', status: 'sent', mailed_at: '2026-10-05T12:00:00Z' }], error: null }).then(r); } }; return q; } };
     const c1 = { id: 'v', current_stage: 'courtesy_1', current_stage_started_at: '2026-09-22T12:00:00Z' };
     assert.strictEqual((await decideReobservationOutcome(db, c1, { sameInspection: true })).reason, 'same_inspection');
     assert.strictEqual((await decideReobservationOutcome(db, c1, {})).outcome, 'advance_courtesy_2', 'a later inspection advances, cure period or not');

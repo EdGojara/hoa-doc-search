@@ -610,21 +610,24 @@ router.post('/open-violation', express.json(), async (req, res) => {
           inspectionId: obs.inspection_id, excludeObservationId: obs.id,
         });
         let advancedTo = null, eligibleForCertified = false, c1Outcome = null;
+        let advanceMessage = null;
         if (target.current_stage === 'courtesy_1') {
           c1Outcome = (await decideReobservationOutcome(supabase, target, { sameInspection })).outcome;
           if (c1Outcome === 'advance_courtesy_2') {
-            const { data: adv } = await supabase.from('violations').update({
-              current_stage: 'courtesy_2',
-              current_stage_started_at: now.toISOString(),
-            }).eq('id', target.id).eq('current_stage', 'courtesy_1').select('id'); // optimistic race guard
-            if (adv && adv.length) advancedTo = 'courtesy_2';
+            // The ONE shared workflow: letter first (Drafts), then the stage.
+            const r = await _advanceWithStageLetter({ violationId: target.id, toStage: 'courtesy_2', actor, source: 'staff_open_violation', reason: 'Re-observed on a later inspection, still not corrected', observationId: obs.id, inspectionId: obs.inspection_id });
+            if (r.ok && r.advanced) advancedTo = 'courtesy_2';
+            advanceMessage = r.message;
           }
         } else if (readyToEscalate && !sameInspection && target.current_stage === 'courtesy_2') {
-          eligibleForCertified = true;
+          // §209 eligibility needs the second notice actually mailed.
+          eligibleForCertified = (await decideReobservationOutcome(supabase, target, {})).outcome === 'eligible_209';
+          if (!eligibleForCertified) advanceMessage = 'Not eligible for §209: the Courtesy 2 letter has not been mailed.';
         }
 
         const outcomeNote = advancedTo
-          ? 'Re-observed on a later inspection, advanced to Courtesy 2 (a reminder; the Courtesy 1 deadline is unchanged).'
+          ? 'Re-observed on a later inspection, advanced to Courtesy 2 (a reminder; the Courtesy 1 deadline is unchanged). The Courtesy 2 letter is in Drafts for approval.'
+          : advanceMessage ? 'Re-observed. ' + advanceMessage
           : eligibleForCertified
             ? 'Re-observed past the 10-day internal window at Courtesy 2, ELIGIBLE for the certified notice (staff review before sending; the certified notice keeps its 30-day cure).'
             : sameInspection
@@ -5436,13 +5439,13 @@ router.post('/reconcile/apply', express.json(), async (req, res) => {
         skipped.push({ id, reason: `needs_human_${decision.stage || 'review'}` });
         continue;
       }
-      const newCureEnd = _newCureDate(decision);
-      const { error: upErr } = await supabase.from('violations')
-        .update({ current_stage: 'courtesy_2', current_stage_started_at: new Date().toISOString(), cure_period_ends_at: newCureEnd })
-        .eq('id', id).eq('current_stage', 'courtesy_1');
-      if (upErr) { skipped.push({ id, reason: 'bump_failed: ' + upErr.message }); continue; }
-      const letterResult = await _draftLetterForBumpedViolation(v, decision, v.community_id);
-      applied.push({ id, action: 'advanced_to_courtesy_2', letter_drafted: !letterResult.error, letter_error: letterResult.error || null });
+      // The ONE shared workflow: letter first (Drafts), then the stage; a failure
+      // leaves the case at Courtesy 1 with the reason. (Ed 2026-10-23)
+      let _recActor = null;
+      try { const { getActingUser } = require('./_acting_user'); _recActor = await getActingUser(req); } catch (_) {}
+      const r = await _advanceWithStageLetter({ violationId: id, toStage: 'courtesy_2', actor: _recActor || { full_name: actor }, source: 'reconciliation', reason: 'Re-observed on a later drive (reconciliation)' });
+      if (!r.ok) { skipped.push({ id, reason: r.code + ': ' + r.message }); continue; }
+      applied.push({ id, action: r.advanced ? 'advanced_to_courtesy_2' : 'already_courtesy_2', letter_drafted: !!r.letter_interaction_id, letter_interaction_id: r.letter_interaction_id || null });
     }
 
     res.json({ ok: true, action, applied_count: applied.length, skipped_count: skipped.length, applied, skipped });
@@ -6829,8 +6832,10 @@ async function _draftLetterForBumpedViolation(violation, decision, communityId, 
         sender_title: (commRow && commRow.letter_sender_title) || null,
       },
     });
+    // Render check without saving anything (diagnostics, and the shared advance
+    // workflow's pre-flight). (Ed 2026-10-23)
+    if (opts.renderOnly) return { ok: true, render_only: true, bytes: pdfBuffer.length };
 
-    // Upload PDF
     await _ensureLettersBucket();
     const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
     const letterPath = `${violation.id}/${decision.stage}-${stamp}.pdf`;
@@ -6847,11 +6852,12 @@ async function _draftLetterForBumpedViolation(violation, decision, communityId, 
       certified_209: 'letter_209',
       fine_assessed: 'letter_209',
     };
-    const { data: inter } = await supabase.from('interactions').insert({
+    const { data: inter, error: insErr } = await supabase.from('interactions').insert({
       community_id: communityId,
       property_id: violation.property_id,
       violation_id: violation.id,
-      observation_id: violation.opened_from_observation_id,
+      observation_id: opts.observationId || violation.opened_from_observation_id,
+      inspection_id: opts.inspectionId || null,
       type: stageToType[decision.stage] || 'ai_draft',
       direction: 'outbound',
       subject: opts.subject || `Violation letter (${decision.stage}) — cure-lapse escalation`,
@@ -6861,11 +6867,133 @@ async function _draftLetterForBumpedViolation(violation, decision, communityId, 
       ai_drafted: true,
       ai_model: 'cure_lapse_processor',
     }).select('id').single();
+    // A refused insert used to return "success" with no letter (Ed 2026-10-23).
+    if (insErr || !inter) {
+      try { await supabase.storage.from(LETTERS_BUCKET).remove([letterPath]); } catch (_) {}
+      return { error: 'letter record could not be saved: ' + ((insErr && insErr.message) || 'no row returned') };
+    }
 
-    return { letter_path: letterPath, interaction_id: inter && inter.id };
+    return { letter_path: letterPath, interaction_id: inter.id };
   } catch (e) {
     return { error: e.message };
   }
+}
+
+
+// ===========================================================================
+// _advanceWithStageLetter — THE one way a case moves up to Courtesy 2 or to
+// Certified §209, from every entry point (inspection confirm, manual Advance,
+// the staff open-violation path, reconciliation, alias merge, cure lapse).
+// (Ed 2026-10-23: a case must never silently advance without its letter.)
+//
+//   1. The notice before must actually have been MAILED (a confirmed mailing),
+//      or the case was imported with that history from Vantaca.
+//   2. The letter for the new stage is PREPARED FIRST, as a draft in the Drafts
+//      queue. Nothing is ever mailed here.
+//   3. Only then does the stage change, guarded against a concurrent change. If
+//      the letter cannot be prepared, the stage does NOT change and the failure
+//      is written on the case timeline with the reason.
+//   4. Idempotent: if a live letter for the new stage already exists, no second
+//      letter is made; a repeated click, a duplicate photo or an overlapping job
+//      just returns what is there.
+//   5. recoverOnly: a case already AT the stage with no letter (the historical
+//      gap) gets its letter prepared without any stage change.
+// The deadline on the case is never touched here (a Courtesy 2 keeps the
+// Courtesy 1 deadline; a certified letter's deadline is set when it is printed).
+// ===========================================================================
+const _ADV_PREV = { courtesy_2: 'courtesy_1', certified_209: 'courtesy_2' };
+const _ADV_LABEL = { courtesy_1: 'Courtesy 1', courtesy_2: 'Courtesy 2', certified_209: 'Certified §209' };
+const _ADV_DEAD = new Set(['rejected', 'voided', 'failed', 'cancelled', 'superseded', 'error']);
+async function _advanceWithStageLetter({ violationId, toStage, actor = null, source = 'staff', reason = null, observationId = null, inspectionId = null, recoverOnly = false }, deps = {}) {
+  // deps lets the integration tests run this against an in-memory database.
+  const db = deps.db || supabase;
+  const draftLetter = deps.draft || _draftLetterForBumpedViolation;
+  const { letterStageOf, letterMailState } = require('../lib/enforcement/letter_stage');
+  const fromStage = _ADV_PREV[toStage];
+  if (!fromStage) return { ok: false, code: 'unsupported_stage', message: `Advancing to ${toStage} is not handled here.` };
+  const { data: v, error: vErr } = await db.from('violations')
+    .select('id, property_id, community_id, primary_category_id, current_stage, current_stage_started_at, opened_at, opened_from_observation_id, board_priority_at_open, resolved_at, quality_status, source')
+    .eq('id', violationId).maybeSingle();
+  if (vErr) throw vErr;
+  if (!v) return { ok: false, code: 'not_found', message: 'Case not found.' };
+  if (v.resolved_at || ['cured', 'closed', 'voided'].includes(v.current_stage)) return { ok: false, code: 'closed', message: 'The case is closed.' };
+  const atTarget = v.current_stage === toStage;
+  if (!atTarget && v.current_stage !== fromStage) return { ok: false, code: 'wrong_stage', message: `The case is at ${_ADV_LABEL[v.current_stage] || v.current_stage}, not ${_ADV_LABEL[fromStage]}.` };
+  if (recoverOnly && !atTarget) return { ok: false, code: 'not_at_stage', message: `The case is not at ${_ADV_LABEL[toStage]}.` };
+
+  const { data: letters, error: lErr } = await db.from('interactions')
+    .select('id, type, subject, status, sent_at, printed_at, mailed_at, postmark_date, delivery_method, created_at')
+    .eq('violation_id', v.id).like('type', 'letter%');
+  if (lErr) throw lErr;
+  const live = (letters || []).filter((l) => !_ADV_DEAD.has(String(l.status || '')));
+  const ofStage = (st) => live.filter((l) => letterStageOf(l) === st);
+  const who = (actor && (actor.full_name || actor.email)) || (source === 'inspection_confirm' ? 'Inspection review' : 'System');
+  const now = new Date().toISOString();
+  const note = async (subject, content) => {
+    const { error } = await db.from('interactions').insert({
+      community_id: v.community_id, property_id: v.property_id, violation_id: v.id,
+      observation_id: observationId || null, inspection_id: inspectionId || null,
+      type: 'observation_note', direction: 'internal', subject, content,
+      sent_by_user_id: (actor && actor.id) || null, sent_at: now,
+    });
+    if (error) console.warn('[advance-with-letter] note insert failed:', error.message);
+    return !error;
+  };
+
+  // Idempotent: the letter for the new stage already exists.
+  const existing = ofStage(toStage)[0];
+  if (existing && atTarget) return { ok: true, already: true, stage: toStage, letter_interaction_id: existing.id, message: `${_ADV_LABEL[toStage]} letter already on file (${letterMailState(existing).label}).` };
+
+  // Mailing evidence for the notice before (Ed: eligibility depends on actual
+  // notice and mailing, not the stage label). A Vantaca import carries its history.
+  const carriedIn = v.source === 'vantaca_import' && !ofStage(fromStage).length;
+  const priorMailed = ofStage(fromStage).find((l) => l.mailed_at);
+  if (!priorMailed && !carriedIn) {
+    const p = ofStage(fromStage)[0];
+    return {
+      ok: false, code: 'prior_notice_not_mailed',
+      message: p
+        ? `${atTarget ? 'Cannot prepare the ' + _ADV_LABEL[toStage] + ' letter' : 'Not advanced'}: the ${_ADV_LABEL[fromStage]} letter is "${letterMailState(p).label}". Confirm its mailing in the Mail Queue${atTarget ? ', or Reduce the case to ' + _ADV_LABEL[fromStage] : ''}, then try again.`
+        : `${atTarget ? 'Cannot prepare the ' + _ADV_LABEL[toStage] + ' letter' : 'Not advanced'}: no ${_ADV_LABEL[fromStage]} letter has been mailed on this case${atTarget ? '. Reduce the case to ' + _ADV_LABEL[fromStage] + ' or record the earlier mailing' : ''}.`,
+    };
+  }
+
+  // 1) Prepare the letter first (unless one already exists), while the stage is unchanged.
+  let letterId = existing ? existing.id : null;
+  if (!letterId) {
+    const decision = { stage: toStage, mail_type: toStage === 'certified_209' ? 'certified_mail' : 'first_class_mail' };
+    const dr = await draftLetter(v, decision, v.community_id, {
+      subject: `Violation letter (${toStage}) — ${source.replace(/_/g, ' ')}`, observationId, inspectionId,
+    });
+    if (!dr || dr.error || !dr.interaction_id) {
+      const err = (dr && dr.error) || 'no letter returned';
+      await note(`${_ADV_LABEL[toStage]} letter could not be prepared`,
+        `${who}: the ${_ADV_LABEL[toStage]} letter could not be prepared, so the case was ${atTarget ? 'left as it is' : 'NOT advanced and stays at ' + _ADV_LABEL[fromStage]}. Reason: ${err}. Fix the cause and use "Prepare letter" (or Advance) again.`);
+      return { ok: false, code: 'letter_failed', message: `The ${_ADV_LABEL[toStage]} letter could not be prepared (${err}). The case was not changed.`, error: err };
+    }
+    letterId = dr.interaction_id;
+  }
+
+  // 2) Move the stage, guarded. A lost race withdraws the letter just made.
+  if (!atTarget) {
+    const { data: upd, error: uErr } = await db.from('violations')
+      .update({ current_stage: toStage, current_stage_started_at: now })
+      .eq('id', v.id).eq('current_stage', fromStage).select('id');
+    if (uErr || !upd || !upd.length) {
+      if (!existing) await db.from('interactions').update({ status: 'rejected' }).eq('id', letterId).eq('status', 'draft');
+      if (uErr) return { ok: false, code: 'stage_update_failed', message: 'The stage could not be changed: ' + uErr.message + '. The prepared letter was withdrawn.' };
+      return { ok: true, already: true, raced: true, stage: toStage, message: 'The case was already changed by someone else; nothing more was done.' };
+    }
+  }
+
+  // 3) Audit: who, when, from, to, why, and which letter.
+  await note(atTarget ? `${_ADV_LABEL[toStage]} letter prepared (was missing)` : `Stage advanced: ${fromStage} → ${toStage}`,
+    `${who} (${source.replace(/_/g, ' ')})${atTarget ? ' prepared the missing ' + _ADV_LABEL[toStage] + ' letter' : ' advanced this case from ' + _ADV_LABEL[fromStage] + ' to ' + _ADV_LABEL[toStage]} on ${now}.`
+    + (reason ? ` Reason: ${String(reason).trim()}.` : '')
+    + ` Prior notice: ${priorMailed ? _ADV_LABEL[fromStage] + ' mailed ' + String(priorMailed.postmark_date || priorMailed.mailed_at).slice(0, 10) : 'carried in from Vantaca'}.`
+    + ` The ${_ADV_LABEL[toStage]} letter is in Drafts for approval; nothing was mailed.`);
+  return { ok: true, advanced: !atTarget, recovered: atTarget, stage: toStage, letter_interaction_id: letterId,
+    message: atTarget ? `${_ADV_LABEL[toStage]} letter prepared and placed in Drafts for approval.` : `Advanced to ${_ADV_LABEL[toStage]}. Its letter is in Drafts for approval; nothing was mailed.` };
 }
 
 // ---------------------------------------------------------------------------
@@ -7129,38 +7257,31 @@ async function processCureLapses({ communityId = null, dryRun = false, limit = 1
       continue;
     }
 
-    const newCureEnd = _newCureDate(decision);
-    const { error: upErr } = await supabase
-      .from('violations')
-      .update({
-        current_stage: decision.stage,
-        current_stage_started_at: new Date().toISOString(),
-        cure_period_ends_at: newCureEnd,
-      })
-      .eq('id', v.id);
-    if (upErr) {
-      errors.push({ violation_id: v.id, error: 'stage bump failed: ' + upErr.message });
+    // ONE shared workflow (Ed 2026-10-23). Courtesy 1 -> Courtesy 2 prepares its
+    // letter first and needs the first notice mailed. A Courtesy 2 or Certified
+    // case is NEVER escalated by automation (certified notices and fines are staff
+    // decisions): it only gets a review note.
+    if (v.current_stage === 'courtesy_1' && decision.stage === 'courtesy_2') {
+      const r = await _advanceWithStageLetter({ violationId: v.id, toStage: 'courtesy_2', source: 'cure_lapse', reason: 'Courtesy 1 cure period passed without correction' });
+      if (r.ok && r.advanced) bumped += 1;
+      else if (!r.ok) errors.push({ violation_id: v.id, error: r.message });
+      results.push({ ...summary, letter_drafted: !!(r.ok && r.letter_interaction_id), message: r.message });
+      continue;
+    }
+    {
+      const { error: rnErr } = await supabase.from('interactions').insert({
+        community_id: v.community_id, property_id: v.property_id, violation_id: v.id,
+        type: 'observation_note', direction: 'internal',
+        subject: 'Cure period passed — staff review',
+        content: `The ${String(v.current_stage).replace(/_/g, ' ')} cure period passed. Nothing was changed automatically: a certified notice or fine is a staff decision, and needs the earlier notices' mailing evidence.`,
+        sent_at: new Date().toISOString(),
+      });
+      if (rnErr) errors.push({ violation_id: v.id, error: 'review note failed: ' + rnErr.message });
+      flaggedBoard += 1;
+      results.push({ ...summary, flagged_for_staff: true });
       continue;
     }
 
-    if (decision.stage === 'fine_assessed' && fineAmount) {
-      await supabase.from('fine_posting_queue').insert({
-        violation_id: v.id,
-        property_id: v.property_id,
-        community_id: v.community_id,
-        amount: fineAmount,
-        notes: `Auto-assessed via cure-lapse processor (offense ${offenseCount}).`,
-      });
-      finesAssessed += 1;
-    } else {
-      bumped += 1;
-    }
-
-    const letterResult = await _draftLetterForBumpedViolation(v, decision, v.community_id);
-    if (letterResult.error) {
-      errors.push({ violation_id: v.id, error: 'letter draft failed: ' + letterResult.error });
-    }
-    results.push({ ...summary, letter_drafted: !letterResult.error, new_cure_ends_at: newCureEnd });
   }
 
   return {
@@ -8246,6 +8367,18 @@ router.post('/violations/:violationId/advance-stage', upload.single('pdf'), asyn
       }
     }
 
+    // Courtesy 2 and Certified §209 go through the ONE shared workflow: the prior
+    // notice must have been mailed, and the new stage's letter is prepared (in
+    // Drafts) BEFORE the stage changes. (Ed 2026-10-23: on 9/14, 104 Waterview
+    // cases were advanced here with no letter ever made.) Recording a letter that
+    // was already sent outside trustEd (the PDF upload) keeps its own path.
+    const _recordingUpload = !!(req.file && req.body && (req.body.record_letter === 'true' || req.body.record_letter === true));
+    if (!_recordingUpload && (nextStage === 'courtesy_2' || nextStage === 'certified_209')) {
+      const r = await _advanceWithStageLetter({ violationId, toStage: nextStage, actor, source: 'manual_advance', reason: note });
+      if (!r.ok) return res.status(409).json({ error: r.code, message: r.message });
+      return res.json({ ok: true, previous_stage: violation.current_stage, new_stage: nextStage, letter_interaction_id: r.letter_interaction_id || null, already: !!r.already, message: r.message });
+    }
+
     // Update the violation row. (This table has no last_action_at / notes
     // columns — the note rides on an audit interaction below.)
     const nowTs = new Date().toISOString();
@@ -8332,6 +8465,32 @@ router.post('/violations/:violationId/advance-stage', upload.single('pdf'), asyn
   } catch (err) {
     console.error('[violations/advance-stage] failed:', err.message);
     res.status(500).json({ error: err.message });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// POST /api/enforcement/violations/:violationId/prepare-stage-letter
+// Recovery for a case whose stage is ahead of its letters (e.g. the Waterview
+// cases advanced on 2026-09-14 with no Courtesy 2 letter): prepares the missing
+// letter for the CURRENT stage into Drafts, through the same shared workflow.
+// Never changes the stage, never mails. Refuses, with the reason, when the
+// earlier notice was never mailed (then confirm that mailing, or Reduce).
+// ---------------------------------------------------------------------------
+router.post('/violations/:violationId/prepare-stage-letter', express.json(), async (req, res) => {
+  try {
+    const { requireActingUser } = require('./_acting_user');
+    const actor = await requireActingUser(req, res);
+    if (!actor) return;
+    const { data: v, error } = await supabase.from('violations').select('id, current_stage').eq('id', req.params.violationId).maybeSingle();
+    if (error) throw error;
+    if (!v) return res.status(404).json({ error: 'not_found', message: 'Case not found.' });
+    if (!['courtesy_2', 'certified_209'].includes(v.current_stage)) return res.status(400).json({ error: 'unsupported_stage', message: 'Only a Courtesy 2 or Certified §209 case can have its letter prepared here.' });
+    const r = await _advanceWithStageLetter({ violationId: v.id, toStage: v.current_stage, actor, source: 'prepare_missing_letter', reason: (req.body && req.body.note) || null, recoverOnly: true });
+    if (!r.ok) return res.status(409).json({ error: r.code, message: r.message });
+    res.json({ ok: true, letter_interaction_id: r.letter_interaction_id || null, already: !!r.already, message: r.message });
+  } catch (err) {
+    console.error('[violations/prepare-stage-letter] failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
   }
 });
 
@@ -10493,9 +10652,16 @@ async function _reconcileAliasedOpenViolations(canonicalCategoryId) {
       if (!error) { voided++; await _rejectDraftLettersForViolation(l.id, 'folded into aliased survivor'); }
     }
     if (newStage !== survivor.current_stage) {
-      await supabase.from('violations').update({
-        current_stage: newStage, current_stage_started_at: now,
-      }).eq('id', survivor.id);
+      if (survivor.current_stage === 'courtesy_1' && newStage === 'courtesy_2') {
+        // Up to Courtesy 2 only through the ONE shared workflow (letter first,
+        // first notice mailed); otherwise the survivor stays at Courtesy 1.
+        const r = await _advanceWithStageLetter({ violationId: survivor.id, toStage: 'courtesy_2', source: 'alias_merge', reason: `Merged ${vios.length} cases for the same issue seen on ${distinctDays} different days` });
+        if (!(r.ok && r.advanced)) newStage = survivor.current_stage;
+      } else {
+        await supabase.from('violations').update({
+          current_stage: newStage, current_stage_started_at: now,
+        }).eq('id', survivor.id);
+      }
     }
     try {
       await supabase.from('interactions').insert({
@@ -11100,18 +11266,21 @@ router.post('/drafts/:interactionId/fold-into', express.json(), async (req, res)
     const ADVANCE_OK = ['courtesy_2', 'certified_209', 'fine_assessed'];
     let advancedTo = null;
     const adv = req.body && req.body.advance_to_stage;
+    let advanceMessage = null;
     if (adv && ADVANCE_OK.includes(adv) && (STAGE_RANK[adv] > (STAGE_RANK[target.current_stage] ?? 0))) {
-      const { data: comm } = await supabase.from('communities')
-        .select('letter_cure_days_courtesy_2, letter_cure_days_certified_209').eq('id', dup.community_id).maybeSingle();
-      const cureDays = adv === 'courtesy_2'
-        ? Number((comm && comm.letter_cure_days_courtesy_2) || 20)
-        : Number((comm && comm.letter_cure_days_certified_209) || 30);
-      await supabase.from('violations').update({
-        current_stage: adv,
-        current_stage_started_at: new Date().toISOString(),
-        cure_period_ends_at: new Date(Date.now() + cureDays * 86400000).toISOString(),
-      }).eq('id', target.id);
-      advancedTo = adv;
+      // One step at a time, through the ONE shared workflow (letter first, prior
+      // notice mailed, deadline untouched). Skipping stages or reaching a fine is
+      // not done from here (Ed 2026-10-23).
+      const oneStep = (target.current_stage === 'courtesy_1' && adv === 'courtesy_2') || (target.current_stage === 'courtesy_2' && adv === 'certified_209');
+      if (!oneStep) {
+        advanceMessage = `Not advanced: from ${target.current_stage.replace(/_/g, ' ')} a case can only move one step, with its letter. Use Advance on the case.`;
+      } else {
+        let _fActor = null;
+        try { const { getActingUser } = require('./_acting_user'); _fActor = await getActingUser(req); } catch (_) {}
+        const r = await _advanceWithStageLetter({ violationId: target.id, toStage: adv, actor: _fActor, source: 'fold_into', reason: note || 'Duplicate folded in as continuation evidence' });
+        if (r.ok && r.advanced) advancedTo = adv;
+        advanceMessage = r.message;
+      }
     }
 
     // 6) Void the duplicate violation so it doesn't run a parallel clock.
@@ -11132,7 +11301,7 @@ router.post('/drafts/:interactionId/fold-into', express.json(), async (req, res)
       try { await supabase.storage.from('violation-letters').remove([interaction.content]); } catch (_) {}
     }
 
-    res.json({ ok: true, target_violation_id: target.id, continuation_count: newCount, voided_violation_id: dup.id, advanced_to: advancedTo });
+    res.json({ ok: true, target_violation_id: target.id, continuation_count: newCount, voided_violation_id: dup.id, advanced_to: advancedTo, message: advanceMessage });
   } catch (err) {
     console.error('[enforcement] fold-into failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
@@ -12300,4 +12469,4 @@ router.get('/notices-not-sent', async (req, res) => {
   }
 });
 
-module.exports = { router, processCureLapses, processPostcardReminders, _restageOpenViolation, _restageCategoryOpenSiblings, runAutoBundle, detectCategoryAliases, _reconcileAliasedOpenViolations, _draftLetterForBumpedViolation, renderNotCuredBoardLetter, _assembleBundlePdf, _groupLettersIntoEnvelopes };
+module.exports = { router, processCureLapses, _advanceWithStageLetter, processPostcardReminders, _restageOpenViolation, _restageCategoryOpenSiblings, runAutoBundle, detectCategoryAliases, _reconcileAliasedOpenViolations, _draftLetterForBumpedViolation, renderNotCuredBoardLetter, _assembleBundlePdf, _groupLettersIntoEnvelopes };
