@@ -74,6 +74,11 @@ const GROUPS = [
     breaks: 'Staff cannot sign in.',
     vars: ['STAFF_PASSWORD'],
   },
+  {
+    capability: 'Portal sessions',
+    breaks: 'In production, every homeowner and Board portal sign-in is refused (cookie key must be its own secret, not STAFF_PASSWORD).',
+    vars: ['PORTAL_COOKIE_SECRET'],
+  },
 ];
 
 // Names that must never have their length reported either — length alone can
