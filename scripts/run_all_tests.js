@@ -73,6 +73,7 @@ const CHECKS = [
   'tests/test_audit_closures.js',
   'tests/test_courtesy2_reminder.js',
   'tests/test_advance_letter_workflow.js',
+  'tests/test_mailing_evidence.js',
   // Fines: Ed-only approval, board schedule required, posting closed until
   // notice + hearing are recorded, automation never fines (Ed 2026-10-24).
   'tests/test_fine_safeguards.js',

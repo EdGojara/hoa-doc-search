@@ -74,7 +74,7 @@ console.log('advance_letter_workflow:');
     const draft = drafter(db);
     const r = await _advanceWithStageLetter({ violationId: 'v1', toStage: 'courtesy_2', source: 'manual_advance' }, { db, draft });
     assert.strictEqual(r.code, 'prior_notice_not_mailed');
-    assert.match(r.message, /Confirm its mailing in the Mail Queue/);
+    assert.match(r.message, /Confirm its mailing on the Mailing confirmation screen/);
     assert.strictEqual(draft.calls.length, 0);
     assert.strictEqual(db.T.violations[0].current_stage, 'courtesy_1');
   });

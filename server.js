@@ -1045,6 +1045,10 @@ app.use('/api', interactionsRouter);
 // (preview decision) and the violation-open action (writes the violation row).
 const { router: enforcementRouter } = require('./api/enforcement');
 app.use('/api/enforcement', enforcementRouter);
+// Mailing confirmation + violations work queue (Ed 2026-10-24): staff confirm what
+// happened to each print run; the queue shows only what is genuinely left to do.
+const { router: mailingConfirmationRouter } = require('./api/mailing_confirmation');
+app.use('/api/mailing', mailingConfirmationRouter);
 
 // Cron run history — feeds the "Last automatic run" indicators in the UI.
 app.get('/api/cron/runs', async (req, res) => {
@@ -1323,6 +1327,9 @@ app.get('/admin/pool-access', (req, res) => {
 });
 app.get('/admin/violations-list', (req, res) => {
   res.sendFile(require('path').join(__dirname, 'public', 'violations-list.html'));
+});
+app.get('/admin/mailing', (req, res) => {
+  res.sendFile(require('path').join(__dirname, 'public', 'mailing.html'));
 });
 app.get('/admin/homeowner', (req, res) => {
   res.sendFile(require('path').join(__dirname, 'public', 'homeowner.html'));
