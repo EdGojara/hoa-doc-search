@@ -36,6 +36,8 @@ const { expandCategoryToAliases } = require('../lib/enforcement/category_aliases
 const { getLegalFlag } = require('../lib/enforcement/legal_flag');
 const { renderViolationLetterPdf } = require('../lib/enforcement/violation_letter');
 const { partitionMailable } = require('../lib/enforcement/stale_letter_guard');
+// Canonical append-only audit trail (migration 545); throws so callers fail closed.
+const { recordAuditEvent, routeOf: auditRouteOf } = require('../lib/audit/record_event');
 const { renderForceMowLetterPdf } = require('../lib/lawn_force_mow_renderer');
 const { renderPostcardReminderPdf } = require('../lib/enforcement/postcard_reminder');
 const { parseVantacaViolations, parseVantacaViolationsPdf, extractVantacaSummaryTotals } = require('../lib/enforcement/vantaca_violation_import');
@@ -6929,7 +6931,10 @@ function _mailingLabel(letter, eff, letterMailState) {
   if (eff.state === 'excluded') return 'pulled from the mailing';
   return letterMailState(letter).label;
 }
-async function _advanceWithStageLetter({ violationId, toStage, actor = null, source = 'staff', reason = null, observationId = null, inspectionId = null, recoverOnly = false }, deps = {}) {
+// auditHook (optional, the manual Advance passes it): called right after the stage
+// moves; if it throws, the stage change is undone, a letter made by this call is
+// withdrawn, and { ok:false, code:'audit_failed' } is returned.
+async function _advanceWithStageLetter({ violationId, toStage, actor = null, source = 'staff', reason = null, observationId = null, inspectionId = null, recoverOnly = false, auditHook = null }, deps = {}) {
   // deps lets the integration tests run this against an in-memory database.
   const db = deps.db || supabase;
   const draftLetter = deps.draft || _draftLetterForBumpedViolation;
@@ -7024,6 +7029,19 @@ async function _advanceWithStageLetter({ violationId, toStage, actor = null, sou
       if (!existing) await db.from('interactions').update({ status: 'rejected' }).eq('id', letterId).eq('status', 'draft');
       if (uErr) return { ok: false, code: 'stage_update_failed', message: 'The stage could not be changed: ' + uErr.message + '. The prepared letter was withdrawn.' };
       return { ok: true, already: true, raced: true, stage: toStage, message: 'The case was already changed by someone else; nothing more was done.' };
+    }
+    if (auditHook) {
+      try {
+        await auditHook({ violation: v, fromStage, toStage, letterId, at: now });
+      } catch (e) {
+        console.error('[advance-with-letter] audit event failed, undoing advance:', e.message);
+        const { error: rbErr } = await db.from('violations')
+          .update({ current_stage: fromStage, current_stage_started_at: v.current_stage_started_at || null })
+          .eq('id', v.id).eq('current_stage', toStage);
+        if (rbErr) console.error('[advance-with-letter] undo FAILED, case advanced without its audit event:', { id: v.id, error: rbErr.message });
+        if (!existing) await db.from('interactions').update({ status: 'rejected' }).eq('id', letterId).eq('status', 'draft');
+        return { ok: false, code: 'audit_failed', message: 'The audit record could not be written, so the stage was not changed' + (existing ? '.' : ' and the prepared letter was withdrawn.') };
+      }
     }
   }
 
@@ -8427,8 +8445,17 @@ router.post('/violations/:violationId/advance-stage', upload.single('pdf'), asyn
     // was already sent outside trustEd (the PDF upload) keeps its own path.
     const _recordingUpload = !!(req.file && req.body && (req.body.record_letter === 'true' || req.body.record_letter === true));
     if (!_recordingUpload && (nextStage === 'courtesy_2' || nextStage === 'certified_209')) {
-      const r = await _advanceWithStageLetter({ violationId, toStage: nextStage, actor, source: 'manual_advance', reason: note });
-      if (!r.ok) return res.status(409).json({ error: r.code, message: r.message });
+      // Canonical audit event (migration 545), written once the stage has moved; if it
+      // cannot be saved the workflow undoes the stage change and withdraws the new letter.
+      const auditHook = async ({ fromStage, toStage, letterId, at }) => recordAuditEvent(supabase, {
+        community_id: violation.community_id, actor_user_id: actor.id, actor_name: actor.full_name || actor.email || null,
+        entity_type: 'violation', entity_id: violationId, action: 'violation.stage_advanced', field: 'current_stage',
+        previous_value: { current_stage: fromStage, current_stage_started_at: violation.current_stage_started_at || null },
+        new_value: { current_stage: toStage, current_stage_started_at: at, letter_interaction_id: letterId },
+        reason: note, route: auditRouteOf(req),
+      });
+      const r = await _advanceWithStageLetter({ violationId, toStage: nextStage, actor, source: 'manual_advance', reason: note, auditHook });
+      if (!r.ok) return res.status(r.code === 'audit_failed' ? 500 : 409).json({ error: r.code, message: r.message });
       return res.json({ ok: true, previous_stage: violation.current_stage, new_stage: nextStage, letter_interaction_id: r.letter_interaction_id || null, already: !!r.already, message: r.message });
     }
 
@@ -8457,16 +8484,35 @@ router.post('/violations/:violationId/advance-stage', upload.single('pdf'), asyn
     // Audit trail on the property timeline. Required: if it cannot be written,
     // the advance is undone, so no stage change exists without its record.
     const audit = stageChangeAudit({ action: 'advanced', actor, previousStage: violation.current_stage, newStage: nextStage, reason: note, at: nowTs });
-    const { error: auditErr } = await supabase.from('interactions').insert({
+    const { data: auditNote, error: auditErr } = await supabase.from('interactions').insert({
       community_id: violation.community_id, property_id: violation.property_id, violation_id: violationId,
       type: 'observation_note', direction: 'internal',
       ...audit,
-    });
-    if (auditErr) {
-      console.error('[violations/advance-stage] audit insert failed, undoing advance:', auditErr.message);
+    }).select('id').single();
+    // Canonical audit trail (migration 545): also required. If it cannot be saved
+    // the advance is undone and the timeline note just written is removed, so no
+    // record claims a change that did not happen.
+    let canonErr = null;
+    if (!auditErr) {
+      try {
+        await recordAuditEvent(supabase, {
+          community_id: violation.community_id, actor_user_id: actor.id, actor_name: actor.full_name || actor.email || null,
+          entity_type: 'violation', entity_id: violationId, action: 'violation.stage_advanced', field: 'current_stage',
+          previous_value: { current_stage: violation.current_stage, current_stage_started_at: violation.current_stage_started_at || null },
+          new_value: { current_stage: nextStage, current_stage_started_at: nowTs },
+          reason: note, route: auditRouteOf(req),
+        });
+      } catch (e) { canonErr = e; }
+    }
+    if (auditErr || canonErr) {
+      console.error('[violations/advance-stage] audit insert failed, undoing advance:', (auditErr || canonErr).message);
       await supabase.from('violations')
         .update({ current_stage: violation.current_stage, current_stage_started_at: violation.current_stage_started_at || null })
         .eq('id', violationId).eq('current_stage', nextStage);
+      if (canonErr && auditNote && auditNote.id) {
+        const { error: dn } = await supabase.from('interactions').delete().eq('id', auditNote.id).eq('type', 'observation_note');
+        if (dn) console.error('[violations/advance-stage] could not remove the timeline note of the undone advance:', dn.message);
+      }
       return res.status(500).json({ error: 'audit_failed', detail: 'The audit record could not be written, so the stage was not changed.' });
     }
 
@@ -8571,7 +8617,7 @@ router.post('/violations/:violationId/reduce-stage', express.json(), async (req,
 
     const { data: violation, error: vErr } = await supabase
       .from('violations')
-      .select('id, property_id, community_id, primary_category_id, current_stage, current_stage_started_at, cure_period_ends_at, opened_at, resolved_at, quality_status')
+      .select('id, property_id, community_id, primary_category_id, current_stage, current_stage_started_at, cure_period_ends_at, opened_at, resolved_at, quality_status, confidence_weight')
       .eq('id', violationId)
       .maybeSingle();
     if (vErr) throw vErr;
@@ -8615,6 +8661,26 @@ router.post('/violations/:violationId/reduce-stage', express.json(), async (req,
       .select('id');
     if (upErr) throw upErr;
     if (!upd || !upd.length) return res.status(409).json({ error: 'stage_changed', detail: 'The case changed while you were reducing it. Reload and try again.' });
+
+    // Canonical audit trail (migration 545), before anything else moves: if the
+    // event cannot be saved the reduction is undone and no letter is held.
+    try {
+      await recordAuditEvent(supabase, {
+        community_id: violation.community_id, actor_user_id: actor.id, actor_name: actor.full_name || actor.email || null,
+        entity_type: 'violation', entity_id: violationId,
+        action: correction ? 'violation.stage_corrected' : 'violation.stage_reduced', field: 'current_stage',
+        previous_value: { current_stage: violation.current_stage, current_stage_started_at: violation.current_stage_started_at || null, cure_period_ends_at: violation.cure_period_ends_at || null, quality_status: violation.quality_status || null },
+        new_value: { ...patch, held_letter_ids: outranking.map((l) => l.id) },
+        reason: note, route: auditRouteOf(req),
+      });
+    } catch (auditErr) {
+      console.error('[violations/reduce-stage] audit event failed, undoing reduction:', auditErr.message);
+      const undo = { current_stage: violation.current_stage, current_stage_started_at: violation.current_stage_started_at, cure_period_ends_at: violation.cure_period_ends_at || null };
+      if (patch.quality_status) { undo.quality_status = violation.quality_status; if (violation.confidence_weight != null) undo.confidence_weight = violation.confidence_weight; }
+      const { error: rbErr } = await supabase.from('violations').update(undo).eq('id', violationId).eq('current_stage', prevStage);
+      if (rbErr) console.error('[violations/reduce-stage] undo FAILED, case reduced without its audit event:', { id: violationId, error: rbErr.message });
+      return res.status(500).json({ error: 'audit_failed', detail: 'The audit record could not be written, so the stage was not changed.' });
+    }
 
     // Hold the stale letters: never deleted, marked held, mail pieces cancelled
     // with the reason in their history.

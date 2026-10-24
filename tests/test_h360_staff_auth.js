@@ -77,9 +77,27 @@ function from(table) {
   return q;
 }
 const stub = (rel, exports) => { const p = require.resolve(rel); require.cache[p] = { id: p, filename: p, loaded: true, exports }; };
+// Stand-in for close_violation_with_audit (migration 545): close + audit event +
+// timeline note as one unit; FAIL_INSERT.rpc simulates the transaction failing.
+async function rpc(name, p) {
+  if (name !== 'close_violation_with_audit') return { data: null, error: { message: 'unknown function' } };
+  if (FAIL_INSERT.rpc) return { data: null, error: { message: 'transaction rolled back (test)' } };
+  const v = DB.violations.find((x) => x.id === p.p_violation_id);
+  if (!v) return { data: { status: 'not_found' }, error: null };
+  if (v.resolved_at) return { data: { status: 'already_resolved' }, error: null };
+  if (v.current_stage !== p.p_expected_stage) return { data: { status: 'stage_changed' }, error: null };
+  const now = new Date().toISOString(); const prior = v.current_stage;
+  Object.assign(v, { resolved_at: now, resolved_via: p.p_resolved_via, resolved_notes: p.p_resolved_notes, current_stage: 'cured',
+    closure_outcome: p.p_closure_outcome, closure_reason: p.p_closure_reason, duplicate_of_violation_id: p.p_duplicate_of,
+    closed_by_user_id: p.p_actor_user_id, stage_at_closure: prior });
+  (DB.audit_events = DB.audit_events || []).push({ id: 'ae-' + (++seq), actor_user_id: p.p_actor_user_id, actor_name: p.p_actor_name, entity_type: 'violation', entity_id: v.id,
+    action: 'violation.closed', previous_value: { current_stage: prior }, new_value: { current_stage: 'cured', closure_outcome: p.p_closure_outcome, stage_at_closure: prior, evidence: p.p_evidence }, reason: p.p_closure_reason, route: p.p_route });
+  if (p.p_timeline_subject) DB.interactions.push({ id: 'new-' + (++seq), community_id: v.community_id, property_id: v.property_id, violation_id: v.id, type: 'observation_note', direction: 'internal', source: 'manual', subject: p.p_timeline_subject, content: p.p_timeline_content, sent_by_user_id: p.p_actor_user_id, sent_at: now });
+  return { data: { status: 'closed', closed_at: now, prior_stage: prior, audit_event_id: 'ae-' + seq }, error: null };
+}
 stub('@supabase/supabase-js', { createClient: () => ({
   auth: { getUser: async (t) => (TOKENS[t] ? { data: { user: { id: TOKENS[t], email: 'x@bedrocktx.com' } }, error: null } : { data: { user: null }, error: { message: 'invalid' } }) },
-  from,
+  from, rpc,
   storage: { from: () => ({ upload: async () => ({ error: null }), remove: async () => ({ error: null }), createSignedUrl: async () => ({ data: { signedUrl: 'https://signed.example/x' }, error: null }) }) },
 }) });
 
@@ -205,7 +223,7 @@ const check = async (name, fn) => {
   await check('resolve: writes a timeline note naming who, when, why, and the stage before closing', async () => {
     resetDb();
     let j;
-    await quiet(async () => { j = await (await call('POST', '/violations/v1/resolve', { note: 'Photo proof received — cured', resolved_via: 'cured' }, 'martha-token')).json(); });
+    await quiet(async () => { j = await (await call('POST', '/violations/v1/resolve', { note: 'Photo proof received — cured', closure_outcome: 'cured_reported' }, 'martha-token')).json(); });
     assert.strictEqual(j.ok, true); assert.strictEqual(j.prior_stage, 'certified_209');
     const v = DB.violations.find((x) => x.id === 'v1');
     assert.ok(v.resolved_at); assert.strictEqual(v.resolved_via, 'cured');
@@ -218,17 +236,17 @@ const check = async (name, fn) => {
     assert.match(n.content, /Stage before closing: Certified 209 \(certified_209\)/);
     assert.ok(!/^Stage (advanced|corrected|recalculated|reset|recomputed)/i.test(n.subject), 'the 360 timeline filter would hide it');
   });
-  await check('resolve: if the attribution note cannot be saved, the closure is undone (never closed without a name)', async () => {
-    resetDb(); FAIL_INSERT.interactions = true;
+  await check('resolve: if the closure + its records cannot be saved together, nothing changes (never closed without a name)', async () => {
+    resetDb(); FAIL_INSERT.rpc = true;
     let r;
-    await quiet(async () => { r = await call('POST', '/violations/v2/resolve', { note: 'Verified cured in field' }, 'martha-token'); });
+    await quiet(async () => { r = await call('POST', '/violations/v2/resolve', { note: 'Verified cured in field', closure_outcome: 'cured_reported' }, 'martha-token'); });
     assert.strictEqual(r.status, 500); assert.strictEqual((await r.json()).error, 'audit_failed');
     const v = DB.violations.find((x) => x.id === 'v2');
     assert.strictEqual(v.resolved_at, null); assert.strictEqual(v.current_stage, 'courtesy_1');
   });
   await check('resolve: an already-closed case is not closed twice and gets no second note', async () => {
     resetDb(); DB.violations[0].resolved_at = '2026-10-01T00:00:00.000Z';
-    const j = await (await call('POST', '/violations/v1/resolve', { note: 'x' }, 'martha-token')).json();
+    const j = await (await call('POST', '/violations/v1/resolve', { note: 'x', closure_outcome: 'cured_reported' }, 'martha-token')).json();
     assert.strictEqual(j.already_resolved, true);
     assert.ok(!DB.interactions.some((i) => i.violation_id === 'v1'));
   });
@@ -243,12 +261,18 @@ const check = async (name, fn) => {
     assert.ok(warns.some((a) => a[0] === '[homeowner360.auth] unauthenticated write' && /\/api\/homeowner\/:contactId\/note/.test(a[1].route)), 'warn not logged');
     assert.strictEqual(DB.interactions.find((i) => i.content === 'cookie only').sent_by_user_id, null);
   });
-  await check('log mode: resolve still requires a reason and the note says the closer was not signed in', async () => {
-    resetDb();
-    await quiet(async () => { assert.strictEqual((await call('POST', '/violations/v1/resolve', {}, null)).status, 400); });
-    await quiet(() => call('POST', '/violations/v1/resolve', { note: 'Owner corrected — resolved' }, null));
-    const n = DB.interactions.find((i) => i.violation_id === 'v1');
-    assert.match(n.content, /by Unidentified staff \(not signed in\)/); assert.strictEqual(n.sent_by_user_id, null);
+  await check('log mode: the audited routes (resolve, certified #, note edit/delete, file delete) still need a real sign-in, because the audit trail must name a real employee (migration 545)', async () => {
+    resetDb(); const before = JSON.stringify(DB);
+    await quiet(async () => {
+      for (const [m, p, b] of [
+        ['POST', '/violations/v1/resolve', { note: 'Owner corrected', closure_outcome: 'cured_reported' }],
+        ['POST', '/interactions/L1/certified-number', { certified_tracking_number: '9589071052701234567890' }],
+        ['PATCH', '/note/n1', { content: 'edited', reason: 'typo' }],
+        ['DELETE', '/note/n2', { reason: 'mistake' }],
+        ['DELETE', '/attachment/a1', { reason: 'wrong account' }],
+      ]) assert.strictEqual((await call(m, p, b, null)).status, 403, `${m} ${p}`);
+    });
+    assert.strictEqual(JSON.stringify(DB), before, 'a refused request changed data');
   });
   await check('log mode never loosens a route that was already strict: email-letter still needs a sign-in', async () => {
     resetDb();
@@ -288,11 +312,12 @@ const check = async (name, fn) => {
     assert.match(page, /async function hoWrite\(url,opts\)\{[\s\S]{0,200}await hoAuthHeader\(\)/);
     assert.match(page, /r\.status===401\|\|r\.status===403/);
   });
-  await check('STATIC: the Resolve control makes the employee choose a reason before it submits', async () => {
+  await check('STATIC: the Resolve control makes the employee choose an outcome and a reason before it submits', async () => {
     const page = read('public/homeowner.html');
-    assert.match(page, /const opts='<option value="">Choose a reason…<\/option>'\+RESOLVE_NOTES/);
-    const fn = page.slice(page.indexOf('window.doResolve=async function'), page.indexOf('window.doResolve=async function') + 900);
+    assert.match(page, /<option value="">Choose a reason…<\/option>'\+\(RESOLVE_NOTES\[o\]/);
+    const fn = page.slice(page.indexOf('window.doResolve=async function'), page.indexOf('window.doResolve=async function') + 1800);
     assert.ok(fn.indexOf('A reason is required to close this case.') > 0 && fn.indexOf('A reason is required') < fn.indexOf('hoWrite('), 'reason check comes before the request');
+    assert.ok(fn.indexOf('Choose how this case is being closed.') > 0 && fn.indexOf('Choose how this case') < fn.indexOf('hoWrite('), 'outcome check comes before the request');
   });
 
   srv.close();

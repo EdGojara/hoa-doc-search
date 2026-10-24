@@ -1,0 +1,134 @@
+{
+  "migration": "545_audit_events_and_closure_outcomes.sql",
+  "summary": "Permanent audit trail + closure outcomes (Ed 2026-10-24). Creates the canonical append-only audit_events table (service_role SELECT/INSERT only; a trigger rejects UPDATE, DELETE and TRUNCATE), adds nullable closure columns to violations (closure_outcome, closure_reason, duplicate_of_violation_id, closed_by_user_id, stage_at_closure) with CHECKs that keep resolved_via compatible, a trigger that makes stage_at_closure immutable except an audited reopen, and close_violation_with_audit() (service_role only) that closes a case, writes its audit event and its timeline note in one transaction. No existing row is changed or backfilled: every existing closed case keeps closure_outcome NULL (legacy, unclassified).",
+  "requires": [
+    "543_delivery_receipts_grants.sql"
+  ],
+  "preflight": [
+    {
+      "name": "audit_events does not exist yet",
+      "sql": "SELECT count(*)::int FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'audit_events'",
+      "expect": 0
+    },
+    {
+      "name": "the closure columns do not exist yet",
+      "sql": "SELECT count(*)::int FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'violations' AND column_name IN ('closure_outcome','closure_reason','duplicate_of_violation_id','closed_by_user_id','stage_at_closure')",
+      "expect": 0
+    },
+    {
+      "name": "violations.resolved_via still allows cured, withdrawn and voided",
+      "sql": "SELECT count(*)::int FROM pg_constraint WHERE conrelid = 'public.violations'::regclass AND contype = 'c' AND pg_get_constraintdef(oid) ILIKE '%resolved_via%' AND pg_get_constraintdef(oid) ILIKE '%cured%' AND pg_get_constraintdef(oid) ILIKE '%withdrawn%' AND pg_get_constraintdef(oid) ILIKE '%voided%'",
+      "expect": 1
+    },
+    {
+      "name": "user_profiles exists (actor foreign key)",
+      "sql": "SELECT count(*)::int FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'user_profiles'",
+      "expect": 1
+    }
+  ],
+  "expected_changes": [
+    "New table audit_events (empty), RLS on, service_role SELECT + INSERT only; UPDATE/DELETE/TRUNCATE revoked and blocked by triggers trg_audit_events_append_only and trg_audit_events_no_truncate.",
+    "violations: five new nullable columns with no default; CHECKs violations_closure_outcome_check, violations_closure_coherent, violations_duplicate_survivor; FKs to violations(id) and user_profiles(id), ON DELETE RESTRICT; two partial indexes.",
+    "violations: trigger trg_violations_stage_at_closure_guard (BEFORE UPDATE) protects stage_at_closure.",
+    "Function close_violation_with_audit(...) executable by service_role only.",
+    "No row changes in any table; no backfill; every existing closed case keeps closure_outcome NULL."
+  ],
+  "objects": {
+    "added": [
+      "table:audit_events",
+      "column:audit_events.id",
+      "column:audit_events.community_id",
+      "column:audit_events.actor_user_id",
+      "column:audit_events.actor_name",
+      "column:audit_events.entity_type",
+      "column:audit_events.entity_id",
+      "column:audit_events.action",
+      "column:audit_events.field",
+      "column:audit_events.previous_value",
+      "column:audit_events.new_value",
+      "column:audit_events.reason",
+      "column:audit_events.route",
+      "column:audit_events.record_ownership",
+      "column:audit_events.created_at",
+      "column:violations.closure_outcome",
+      "column:violations.closure_reason",
+      "column:violations.duplicate_of_violation_id",
+      "column:violations.closed_by_user_id",
+      "column:violations.stage_at_closure",
+      "constraint:audit_events.audit_events_pkey",
+      "constraint:audit_events.audit_events_community_id_fkey",
+      "constraint:audit_events.audit_events_actor_user_id_fkey",
+      "constraint:audit_events.audit_events_reason_not_blank",
+      "constraint:audit_events.audit_events_text_not_blank",
+      "constraint:audit_events.audit_events_record_ownership_check",
+      "constraint:violations.violations_closure_outcome_check",
+      "constraint:violations.violations_closure_coherent",
+      "constraint:violations.violations_duplicate_survivor",
+      "constraint:violations.violations_duplicate_of_violation_id_fkey",
+      "constraint:violations.violations_closed_by_user_id_fkey",
+      "index:audit_events_pkey",
+      "index:idx_audit_events_entity",
+      "index:idx_audit_events_community",
+      "index:idx_audit_events_actor",
+      "index:idx_violations_duplicate_of",
+      "index:idx_violations_closed_by",
+      "function:audit_events_append_only",
+      "function:violations_stage_at_closure_guard",
+      "function:close_violation_with_audit",
+      "trigger:audit_events.trg_audit_events_append_only",
+      "trigger:audit_events.trg_audit_events_no_truncate",
+      "trigger:violations.trg_violations_stage_at_closure_guard"
+    ],
+    "changed": [],
+    "removed": []
+  },
+  "row_changes": {
+    "violations": 0,
+    "audit_events": 0
+  },
+  "protected": [
+    {
+      "table": "violations",
+      "order_by": "id"
+    }
+  ],
+  "verify": [
+    {
+      "name": "service_role can read and append audit_events",
+      "sql": "SELECT (has_table_privilege('service_role', 'public.audit_events', 'SELECT')::int + has_table_privilege('service_role', 'public.audit_events', 'INSERT')::int)",
+      "expect": 2
+    },
+    {
+      "name": "service_role cannot rewrite or erase audit_events",
+      "sql": "SELECT (has_table_privilege('service_role', 'public.audit_events', 'UPDATE')::int + has_table_privilege('service_role', 'public.audit_events', 'DELETE')::int + has_table_privilege('service_role', 'public.audit_events', 'TRUNCATE')::int)",
+      "expect": 0
+    },
+    {
+      "name": "anon and authenticated have no access to audit_events",
+      "sql": "SELECT (has_table_privilege('anon', 'public.audit_events', 'SELECT')::int + has_table_privilege('anon', 'public.audit_events', 'INSERT')::int + has_table_privilege('authenticated', 'public.audit_events', 'SELECT')::int + has_table_privilege('authenticated', 'public.audit_events', 'INSERT')::int)",
+      "expect": 0
+    },
+    {
+      "name": "only service_role can run close_violation_with_audit",
+      "sql": "SELECT (has_function_privilege('service_role', 'public.close_violation_with_audit(uuid, text, text, text, text, text, uuid, uuid, text, text, jsonb, text, text)', 'EXECUTE')::int * 10 + has_function_privilege('anon', 'public.close_violation_with_audit(uuid, text, text, text, text, text, uuid, uuid, text, text, jsonb, text, text)', 'EXECUTE')::int + has_function_privilege('authenticated', 'public.close_violation_with_audit(uuid, text, text, text, text, text, uuid, uuid, text, text, jsonb, text, text)', 'EXECUTE')::int)",
+      "expect": 10
+    },
+    {
+      "name": "the three guard triggers are present",
+      "sql": "SELECT count(*)::int FROM pg_trigger WHERE NOT tgisinternal AND tgname IN ('trg_audit_events_append_only','trg_audit_events_no_truncate','trg_violations_stage_at_closure_guard')",
+      "expect": 3
+    },
+    {
+      "name": "no historical violation was classified or backfilled",
+      "sql": "SELECT count(*)::int FROM violations WHERE closure_outcome IS NOT NULL OR closure_reason IS NOT NULL OR duplicate_of_violation_id IS NOT NULL OR closed_by_user_id IS NOT NULL OR stage_at_closure IS NOT NULL",
+      "expect": 0
+    },
+    {
+      "name": "audit_events starts empty",
+      "sql": "SELECT count(*)::int FROM audit_events",
+      "expect": 0
+    }
+  ],
+  "api_checks": [],
+  "reload_schema": true
+}

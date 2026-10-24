@@ -38,7 +38,8 @@ t('advance endpoint: actor + reason checked before any change; concurrent change
   assert.ok(iActor > 0 && iReason > iActor && iUpdate > iReason, 'actor, then reason, then the update');
   assert.match(adv, /\.eq\('current_stage', violation\.current_stage\) \/\/ optimistic guard/);
   assert.match(adv, /stageChangeAudit\(\{ action: 'advanced', actor, previousStage: violation\.current_stage, newStage: nextStage, reason: note, at: nowTs \}\)/);
-  assert.match(adv, /if \(auditErr\) \{[\s\S]*?update\(\{ current_stage: violation\.current_stage[\s\S]*?audit_failed/, 'a failed audit write undoes the advance');
+  // (Migration 545: a failed canonical audit_events write undoes it too.)
+  assert.match(adv, /if \(auditErr \|\| canonErr\) \{[\s\S]*?update\(\{ current_stage: violation\.current_stage[\s\S]*?audit_failed/, 'a failed audit write undoes the advance');
   assert.ok(!/audit insert failed:', e\.message\); \}/.test(adv), 'the audit is no longer best-effort');
 });
 

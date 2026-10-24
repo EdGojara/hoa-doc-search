@@ -80,6 +80,42 @@ async function requireStaffWrite(req, res, opts = {}) {
 function centralDate(d = new Date()) {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Chicago', year: 'numeric', month: '2-digit', day: '2-digit' }).format(d);
 }
+// Canonical audit trail (migration 545). recordAuditEvent throws; every caller
+// below fails closed (undoes its change or refuses it) when the event cannot be saved.
+const { recordAuditEvent, routeOf } = require('../lib/audit/record_event');
+const { CLOSURE_OUTCOMES, validateClosureRequest, survivorProblem } = require('../lib/enforcement/closure_outcomes');
+const auditFailed = (res) => res.status(500).json({ error: 'audit_failed', detail: 'Nothing was changed because the record of who made this change could not be saved. Please try again.' });
+// A reason the employee typed (body.reason), trimmed; '' when missing.
+const bodyReason = (req) => String((req.body && req.body.reason) || '').slice(0, 1000).trim();
+
+// Evidence for a verified cure: a photo/document on the account, a photo the
+// homeowner emailed in, or an inspection photo, and it must belong to the same
+// property as the case. Returns { ok, evidence: {type,id,label} } or { ok:false, detail }.
+async function loadClosureEvidence(ev, propertyId) {
+  const bad = (detail) => ({ ok: false, detail });
+  if (!ev || !ev.type || !ev.id) return bad('Pick the photo or inspection that shows the cure.');
+  if (ev.type === 'account_attachment') {
+    const { data, error } = await supabase.from('account_attachments').select('id, property_id, kind, original_name, captured_at').eq('id', ev.id).maybeSingle();
+    if (error) throw error;
+    if (!data || data.property_id !== propertyId) return bad('That file is not on this property.');
+    return { ok: true, evidence: { type: ev.type, id: data.id, label: `${data.kind || 'file'} on the account${data.original_name ? ' (' + data.original_name + ')' : ''}${data.captured_at ? ', added ' + String(data.captured_at).slice(0, 10) : ''}` } };
+  }
+  if (ev.type === 'email_attachment') {
+    const { data, error } = await supabase.from('email_attachments').select('id, resolved_property_id, filename, created_at').eq('id', ev.id).maybeSingle();
+    if (error) throw error;
+    if (!data || data.resolved_property_id !== propertyId) return bad('That emailed file is not linked to this property.');
+    return { ok: true, evidence: { type: ev.type, id: data.id, label: `emailed file${data.filename ? ' (' + data.filename + ')' : ''}${data.created_at ? ', received ' + String(data.created_at).slice(0, 10) : ''}` } };
+  }
+  if (ev.type === 'inspection_photo') {
+    const { data, error } = await supabase.from('inspection_photos').select('id, reviewer_confirmed_property_id, polygon_match_property_id, captured_at, inspection_id').eq('id', ev.id).maybeSingle();
+    if (error) throw error;
+    const prop = data ? (data.reviewer_confirmed_property_id || data.polygon_match_property_id) : null;
+    if (!data || prop !== propertyId) return bad('That inspection photo is not of this property.');
+    return { ok: true, evidence: { type: ev.type, id: data.id, inspection_id: data.inspection_id || null, label: `inspection photo${data.captured_at ? ' taken ' + String(data.captured_at).slice(0, 10) : ''}` } };
+  }
+  return bad('That evidence type is not accepted.');
+}
+
 const STAGE_LABELS = { courtesy_1: 'Courtesy 1', courtesy_2: 'Courtesy 2', certified_209: 'Certified 209', hearing: 'Hearing', fine: 'Fine', cured: 'Cured', closed: 'Closed' };
 function stageLabel(s) { return s ? (STAGE_LABELS[s] || String(s).replace(/_/g, ' ')) : 'unknown'; }
 
@@ -407,6 +443,17 @@ async function assemble(contactId) {
     .select('id, kind, file_path, mime_type, original_name, caption, captured_by, captured_at, property_id')
     .in('property_id', propIds).order('captured_at', { ascending: false }).limit(100)) : [];
 
+  // Recent inspection photos of these properties: the evidence a staffer can point
+  // at when closing a case as "Cured, verified" (migration 545). Newest first.
+  const inspectionPhotosRaw = propIds.length ? await safe(() => supabase.from('inspection_photos')
+    .select('id, inspection_id, captured_at, reviewer_confirmed_property_id, polygon_match_property_id')
+    .or(`reviewer_confirmed_property_id.in.(${propIds.join(',')}),polygon_match_property_id.in.(${propIds.join(',')})`)
+    .order('captured_at', { ascending: false }).limit(30)) : [];
+  // A reviewer's confirmed property wins over the polygon match (same rule as loadClosureEvidence).
+  const inspectionPhotos = inspectionPhotosRaw
+    .map((p) => ({ ...p, property_id: p.reviewer_confirmed_property_id || p.polygon_match_property_id || null }))
+    .filter((p) => propIds.includes(p.property_id));
+
   // What the homeowner has SENT US by email — the photos, sketches, PDFs they
   // attached (migration 328). Matched by resolved contact OR any owned property
   // (mirrors the emails query), so a boundary photo emailed in shows on their
@@ -530,7 +577,7 @@ async function assemble(contactId) {
     drv_categories: drvAtAttorney.map((v) => catLabel[v.primary_category_id] || 'violation'),
   };
 
-  return { contact, properties, ar: { balance_cents, transactions: txns, former_tenures }, amenity, flags, collections, violations, arc, interactions: interactionsOut, emails, calls, poolAccess, paymentPlans, attachments, emailAttachments, at_attorney };
+  return { contact, properties, ar: { balance_cents, transactions: txns, former_tenures }, amenity, flags, collections, violations, arc, interactions: interactionsOut, emails, calls, poolAccess, paymentPlans, attachments, emailAttachments, inspectionPhotos, at_attorney };
 }
 
 // GET /profile/:contactId — the assembled 360 (fast, no AI)
@@ -783,15 +830,39 @@ router.post('/:contactId/attachment', upload.single('file'), async (req, res) =>
 });
 
 // DELETE /attachment/:id — remove a wrongly-added file (mistake correction).
-router.delete('/attachment/:id', async (req, res) => {
+// Audited (migration 545): needs a real sign-in and a reason. The audit event is
+// written FIRST (with a snapshot of what is removed); if it cannot be saved,
+// nothing is removed. The stored file is removed only after the index row is gone.
+router.delete('/attachment/:id', express.json(), async (req, res) => {
   try {
-    const actor = await requireStaffWrite(req, res); if (!actor) return;
-    const { data: row, error: rowErr } = await supabase.from('account_attachments').select('id, file_path').eq('id', req.params.id).maybeSingle();
+    const actor = await requireStaffWrite(req, res, { alwaysEnforce: true }); if (!actor) return;
+    const reason = bodyReason(req);
+    if (!reason) return res.status(400).json({ error: 'reason_required', detail: 'Say why this file is being removed.' });
+    const { data: row, error: rowErr } = await supabase.from('account_attachments')
+      .select('id, file_path, kind, original_name, caption, captured_by, captured_at, property_id, community_id, contact_id').eq('id', req.params.id).maybeSingle();
     if (rowErr) throw rowErr;
     if (!row) return res.status(404).json({ error: 'not_found' });
+    try {
+      await recordAuditEvent(supabase, {
+        community_id: row.community_id || null, actor_user_id: actor.id, actor_name: actor.name,
+        entity_type: 'account_attachment', entity_id: row.id, action: 'attachment.deleted',
+        previous_value: row, new_value: null, reason, route: routeOf(req),
+      });
+    } catch (auditErr) {
+      console.error('[homeowner360] attachment delete audit failed, nothing removed:', auditErr.message);
+      return auditFailed(res);
+    }
     console.log('[homeowner360] attachment removed', { id: req.params.id, file_path: row.file_path, by: actor.name, by_user_id: actor.id });
     const { error } = await supabase.from('account_attachments').delete().eq('id', req.params.id);
-    if (error) throw error;
+    if (error) {
+      // The trail is append-only, so record that the removal did not happen.
+      await recordAuditEvent(supabase, {
+        community_id: row.community_id || null, actor_user_id: actor.id, actor_name: actor.name,
+        entity_type: 'account_attachment', entity_id: row.id, action: 'attachment.delete_failed',
+        reason: `The removal did not complete; the file is still on the account (${String(error.message).slice(0, 200)})`, route: routeOf(req),
+      }).catch((e) => console.error('[homeowner360] attachment delete_failed event not saved:', e.message));
+      throw error;
+    }
     if (row && row.file_path) { try { await supabase.storage.from('documents').remove([row.file_path]); } catch (_) { /* index gone is enough */ } }
     res.json({ ok: true });
   } catch (err) {
@@ -802,17 +873,34 @@ router.delete('/attachment/:id', async (req, res) => {
 
 // PATCH /note/:id — edit a staff note's text. Only internal_note type; keeps the
 // original author (edit changes the words, not who logged it). (Ed 2026-08-14.)
+// Audited (migration 545): needs a real sign-in and a reason; the before and after
+// text are kept in audit_events. If the event cannot be saved the edit is undone.
 router.patch('/note/:id', express.json(), async (req, res) => {
   try {
-    const actor = await requireStaffWrite(req, res); if (!actor) return;
+    const actor = await requireStaffWrite(req, res, { alwaysEnforce: true }); if (!actor) return;
     const content = (req.body && req.body.content ? String(req.body.content) : '').trim();
     if (!content) return res.status(400).json({ error: 'content_required' });
-    const { data: row, error: rowErr } = await supabase.from('interactions').select('id, type').eq('id', req.params.id).maybeSingle();
+    const reason = bodyReason(req);
+    if (!reason) return res.status(400).json({ error: 'reason_required', detail: 'Say why the note is being changed.' });
+    const { data: row, error: rowErr } = await supabase.from('interactions').select('id, type, content, updated_at, community_id').eq('id', req.params.id).maybeSingle();
     if (rowErr) throw rowErr;
     if (!row) return res.status(404).json({ error: 'not_found' });
     if (row.type !== 'internal_note') return res.status(403).json({ error: 'only_notes_editable', detail: 'Only staff notes can be edited here; correspondence records cannot.' });
+    if ((row.content || '').trim() === content) return res.json({ ok: true, unchanged: true });
     const { error } = await supabase.from('interactions').update({ content, updated_at: new Date().toISOString() }).eq('id', req.params.id).eq('type', 'internal_note');
     if (error) throw error;
+    try {
+      await recordAuditEvent(supabase, {
+        community_id: row.community_id || null, actor_user_id: actor.id, actor_name: actor.name,
+        entity_type: 'interaction', entity_id: row.id, action: 'note.edited', field: 'content',
+        previous_value: { content: row.content || null }, new_value: { content }, reason, route: routeOf(req),
+      });
+    } catch (auditErr) {
+      console.error('[homeowner360] note edit audit failed, undoing:', auditErr.message);
+      const { error: re } = await supabase.from('interactions').update({ content: row.content, updated_at: row.updated_at || null }).eq('id', row.id).eq('type', 'internal_note');
+      if (re) console.error('[homeowner360] note edit undo FAILED:', { id: row.id, error: re.message });
+      return auditFailed(res);
+    }
     console.log('[homeowner360] note edited', { id: req.params.id, by: actor.name, by_user_id: actor.id });
     res.json({ ok: true });
   } catch (err) {
@@ -824,15 +912,37 @@ router.patch('/note/:id', express.json(), async (req, res) => {
 // DELETE /note/:id — remove a staff note (mistake / no longer needed). Guarded:
 // only deletes interactions of type internal_note, so letters/emails/calls and
 // other record entries can never be deleted from here.
-router.delete('/note/:id', async (req, res) => {
+// Audited (migration 545): needs a real sign-in and a reason. The audit event,
+// with the full note text, is written FIRST; if it cannot be saved nothing is deleted.
+router.delete('/note/:id', express.json(), async (req, res) => {
   try {
-    const actor = await requireStaffWrite(req, res); if (!actor) return;
-    const { data: row, error: rowErr } = await supabase.from('interactions').select('id, type').eq('id', req.params.id).maybeSingle();
+    const actor = await requireStaffWrite(req, res, { alwaysEnforce: true }); if (!actor) return;
+    const reason = bodyReason(req);
+    if (!reason) return res.status(400).json({ error: 'reason_required', detail: 'Say why the note is being deleted.' });
+    const { data: row, error: rowErr } = await supabase.from('interactions')
+      .select('id, type, subject, content, contact_id, property_id, community_id, sent_by_user_id, created_at').eq('id', req.params.id).maybeSingle();
     if (rowErr) throw rowErr;
     if (!row) return res.status(404).json({ error: 'not_found' });
     if (row.type !== 'internal_note') return res.status(403).json({ error: 'only_notes_deletable', detail: 'Only staff notes can be deleted here; correspondence records cannot.' });
+    try {
+      await recordAuditEvent(supabase, {
+        community_id: row.community_id || null, actor_user_id: actor.id, actor_name: actor.name,
+        entity_type: 'interaction', entity_id: row.id, action: 'note.deleted',
+        previous_value: row, new_value: null, reason, route: routeOf(req),
+      });
+    } catch (auditErr) {
+      console.error('[homeowner360] note delete audit failed, nothing deleted:', auditErr.message);
+      return auditFailed(res);
+    }
     const { error } = await supabase.from('interactions').delete().eq('id', req.params.id).eq('type', 'internal_note');
-    if (error) throw error;
+    if (error) {
+      await recordAuditEvent(supabase, {
+        community_id: row.community_id || null, actor_user_id: actor.id, actor_name: actor.name,
+        entity_type: 'interaction', entity_id: row.id, action: 'note.delete_failed',
+        reason: `The delete did not complete; the note is still on the account (${String(error.message).slice(0, 200)})`, route: routeOf(req),
+      }).catch((e) => console.error('[homeowner360] note delete_failed event not saved:', e.message));
+      throw error;
+    }
     console.log('[homeowner360] note deleted', { id: req.params.id, by: actor.name, by_user_id: actor.id });
     res.json({ ok: true });
   } catch (err) {
@@ -964,49 +1074,80 @@ router.post('/violations/:id/resolve', express.json(), async (req, res) => {
     // Phase 2 (Ed 2026-10-24): the closer is the signed-in employee, a reason is
     // required, and every closure leaves a timeline entry naming who, when, why,
     // and the stage the case was at. (82 earlier closures carry none of that.)
-    // The stage overwrite + outcome values below are unchanged on purpose; a
-    // later PR handles closure outcomes.
-    const actor = await requireStaffWrite(req, res); if (!actor) return;
+    // Closure outcomes (migration 545): the employee also chooses HOW it closed.
+    //   duplicate       must name the surviving case on the same property
+    //   cured_verified  must point at a photo or inspection on file for the property
+    // resolved_via is derived from the outcome (cured_* -> cured; voided_error,
+    // duplicate -> voided; administrative, expired_unverified -> withdrawn) and
+    // current_stage still becomes 'cured' exactly as before. The closure, its
+    // audit_events row and its timeline note commit together in ONE database
+    // transaction (close_violation_with_audit), so a case is never closed without
+    // the record of who closed it. A real sign-in is required whatever
+    // H360_AUTH_MODE says: the audit trail must name a real employee.
+    const actor = await requireStaffWrite(req, res, { alwaysEnforce: true }); if (!actor) return;
     const { id } = req.params;
-    const b = req.body || {};
-    // resolved_via CHECK is ('cured','fine','withdrawn','voided'); a photo-proof
-    // resolution is 'cured' — the only via reachable from this button.
-    const via = ['cured', 'withdrawn', 'voided'].includes(b.resolved_via) ? b.resolved_via : 'cured';
-    const note = (b.note == null ? '' : String(b.note)).slice(0, 1000).trim() || null;
-    if (!note) return res.status(400).json({ error: 'reason_required', detail: 'Pick or type the reason this case is being closed.' });
+    const plan = validateClosureRequest(req.body || {});
+    if (!plan.ok) return res.status(plan.status).json({ error: plan.error, detail: plan.detail });
     const { data: v, error: ve } = await supabase.from('violations')
       .select('id, resolved_at, current_stage, community_id, property_id').eq('id', id).maybeSingle();
     if (ve) throw ve;
     if (!v) return res.status(404).json({ error: 'not_found' });
     if (v.resolved_at) return res.json({ ok: true, already_resolved: true });
-    const priorStage = v.current_stage || null;
-    const nowIso = new Date().toISOString();
-    const { data: updated, error: ue } = await supabase.from('violations').update({
-      resolved_at: nowIso, resolved_via: via, resolved_notes: note, current_stage: 'cured',
-    }).eq('id', id).is('resolved_at', null).select('id'); // guard: never re-close a case someone else just closed
-    if (ue) throw ue;
-    if (!updated || !updated.length) return res.json({ ok: true, already_resolved: true });
 
-    // The attribution record is not best-effort: if it cannot be written, the
-    // closure is undone so no case is ever closed without saying who closed it.
-    const sentence = `Closed from Homeowner 360 by ${actor.name} on ${centralDate(new Date(nowIso))}: ${note}`;
-    const { error: ae } = await supabase.from('interactions').insert({
-      community_id: v.community_id, property_id: v.property_id, violation_id: v.id,
-      type: 'observation_note', direction: 'internal', source: 'manual',
-      subject: sentence.slice(0, 200),
-      content: `${sentence}\nStage before closing: ${stageLabel(priorStage)}${priorStage ? ` (${priorStage})` : ''}. Recorded as: ${via}.`,
-      sent_by_user_id: actor.id, sent_at: nowIso,
-      notes: 'via Homeowner 360 resolve',
-    });
-    if (ae) {
-      console.error('[homeowner360] resolve attribution note failed, undoing closure:', ae.message);
-      const { error: re } = await supabase.from('violations').update({
-        resolved_at: null, resolved_via: null, resolved_notes: null, current_stage: priorStage,
-      }).eq('id', id).eq('resolved_at', nowIso);
-      if (re) console.error('[homeowner360] resolve undo FAILED, case closed without attribution:', { id, error: re.message });
-      return res.status(500).json({ error: 'audit_failed', detail: 'The case was not closed because the record of who closed it could not be saved. Please try again.' });
+    // Duplicate: the surviving case must be another case on the same property.
+    if (plan.outcome === 'duplicate') {
+      const { data: s, error: se } = await supabase.from('violations')
+        .select('id, property_id, closure_outcome').eq('id', plan.duplicate_of_violation_id).maybeSingle();
+      if (se) throw se;
+      const problem = survivorProblem(v, s);
+      if (problem) return res.status(400).json({ error: 'survivor_invalid', detail: problem });
     }
-    res.json({ ok: true, resolved_via: via, note, closed_by: actor.name, prior_stage: priorStage });
+    // Verified cure: the evidence must exist and belong to this property.
+    let evidence = plan.evidence;
+    if (evidence) {
+      const ev = await loadClosureEvidence(evidence, v.property_id);
+      if (!ev.ok) {
+        if (plan.outcome === 'cured_verified') return res.status(400).json({ error: 'evidence_invalid', detail: ev.detail });
+        evidence = null; // optional evidence on another outcome: drop what does not check out
+      } else evidence = ev.evidence;
+    }
+
+    const priorStage = v.current_stage || null;
+    const label = CLOSURE_OUTCOMES[plan.outcome].label;
+    const sentence = `Closed from Homeowner 360 by ${actor.name} on ${centralDate()}: ${plan.reason}`;
+    const content = `${sentence}\nOutcome: ${label}.`
+      + (plan.duplicate_of_violation_id ? ` Duplicate of case ${String(plan.duplicate_of_violation_id).slice(0, 8)}.` : '')
+      + (evidence ? ` Evidence: ${evidence.label}.` : '')
+      + `\nStage before closing: ${stageLabel(priorStage)}${priorStage ? ` (${priorStage})` : ''}. Recorded as: ${plan.resolved_via}.`;
+    const { data: out, error: rpcErr } = await supabase.rpc('close_violation_with_audit', {
+      p_violation_id: v.id,
+      p_expected_stage: priorStage,
+      p_closure_outcome: plan.outcome,
+      p_closure_reason: plan.reason,
+      p_resolved_via: plan.resolved_via,
+      p_resolved_notes: plan.reason,
+      p_duplicate_of: plan.duplicate_of_violation_id,
+      p_actor_user_id: actor.id,
+      p_actor_name: actor.name,
+      p_route: routeOf(req),
+      p_evidence: evidence,
+      p_timeline_subject: sentence.slice(0, 200),
+      p_timeline_content: content,
+    });
+    if (rpcErr) {
+      // One transaction: on any failure nothing was changed.
+      console.error('[homeowner360] resolve failed, case left open:', { id, error: rpcErr.message });
+      return res.status(500).json({ error: 'audit_failed', detail: 'The case was not closed because the record of who closed it could not be saved. Nothing was changed. Please try again.' });
+    }
+    const status = out && out.status;
+    if (status === 'already_resolved') return res.json({ ok: true, already_resolved: true });
+    if (status === 'not_found') return res.status(404).json({ error: 'not_found' });
+    if (status === 'stage_changed') return res.status(409).json({ error: 'stage_changed', detail: 'The case changed while you were closing it. Reload and try again.' });
+    if (status !== 'closed') {
+      console.error('[homeowner360] resolve: unexpected result', { id, out });
+      return res.status(500).json({ error: 'close_failed', detail: 'The case could not be closed. Please try again.' });
+    }
+    res.json({ ok: true, closure_outcome: plan.outcome, resolved_via: plan.resolved_via, note: plan.reason, closed_by: actor.name, prior_stage: priorStage, audit_event_id: out.audit_event_id || null });
   } catch (err) {
     console.error('[homeowner360] resolve violation failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
@@ -1024,7 +1165,8 @@ router.post('/violations/:id/resolve', express.json(), async (req, res) => {
 // needs correcting. Pass an empty number to clear it.
 router.post('/interactions/:id/certified-number', express.json(), async (req, res) => {
   try {
-    const actor = await requireStaffWrite(req, res); if (!actor) return;
+    // Audited (migration 545): a real sign-in is required whatever H360_AUTH_MODE says.
+    const actor = await requireStaffWrite(req, res, { alwaysEnforce: true }); if (!actor) return;
     const { id } = req.params;
     // Keep it to what a USPS label carries (digits + spaces), cap length, allow
     // clearing. Store normalized (no spaces) so the tracking link is clean.
@@ -1036,12 +1178,21 @@ router.post('/interactions/:id/certified-number', express.json(), async (req, re
     const tracking = normalized ? normalized.slice(0, 40) : null;
 
     const { data: ix, error: ie } = await supabase.from('interactions')
-      .select('id, type, delivery_method, notes').eq('id', id).maybeSingle();
+      .select('id, type, delivery_method, notes, certified_tracking_number, community_id').eq('id', id).maybeSingle();
     if (ie) throw ie;
     if (!ix) return res.status(404).json({ error: 'not_found' });
     if (!/^letter/.test(String(ix.type || ''))) {
       return res.status(400).json({ error: 'not_a_letter', detail: 'A certified number can only be recorded on a letter.' });
     }
+    const previousNumber = ix.certified_tracking_number || null;
+    if (previousNumber === tracking) return res.json({ ok: true, certified_tracking_number: tracking, unchanged: true });
+    // Recording the first number explains itself; replacing or clearing one is a
+    // correction and needs the employee's reason.
+    const typedReason = bodyReason(req);
+    if (previousNumber && !typedReason) {
+      return res.status(400).json({ error: 'reason_required', detail: tracking ? 'Say why the certified number is being changed.' : 'Say why the certified number is being cleared.' });
+    }
+    const reason = typedReason || 'Certified number recorded';
 
     // Who recorded it comes from the sign-in; a user_name field sent by the browser is ignored (it was spoofable).
     const who = actor.name.slice(0, 80);
@@ -1058,6 +1209,23 @@ router.post('/interactions/:id/certified-number', express.json(), async (req, re
 
     const { error: ue } = await supabase.from('interactions').update(patch).eq('id', id);
     if (ue) throw ue;
+    try {
+      await recordAuditEvent(supabase, {
+        community_id: ix.community_id || null, actor_user_id: actor.id, actor_name: actor.name,
+        entity_type: 'interaction', entity_id: id,
+        action: tracking ? (previousNumber ? 'letter.certified_number_changed' : 'letter.certified_number_recorded') : 'letter.certified_number_cleared',
+        field: 'certified_tracking_number',
+        previous_value: { certified_tracking_number: previousNumber, delivery_method: ix.delivery_method || null },
+        new_value: { certified_tracking_number: tracking, delivery_method: patch.delivery_method || ix.delivery_method || null },
+        reason, route: routeOf(req),
+      });
+    } catch (auditErr) {
+      console.error('[homeowner360] certified-number audit failed, undoing:', auditErr.message);
+      const { error: re } = await supabase.from('interactions')
+        .update({ certified_tracking_number: previousNumber, notes: ix.notes || null, delivery_method: ix.delivery_method || null }).eq('id', id);
+      if (re) console.error('[homeowner360] certified-number undo FAILED:', { id, error: re.message });
+      return auditFailed(res);
+    }
     res.json({ ok: true, certified_tracking_number: tracking });
   } catch (err) {
     console.error('[homeowner360] certified-number failed:', err.message);

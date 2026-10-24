@@ -3900,6 +3900,14 @@ router.post('/inspections/observations/:id/confirm', express.json(), async (req,
             ? 'A certified §209 notice was mailed on an earlier case, so the §209 repeat exception may apply: a person may Advance after review.'
             : 'No certified §209 notice was ever mailed on the earlier case, so the §209 repeat exception does not apply.');
       }
+      // Legacy prior history (closed before closure outcomes existed, migration 545):
+      // never counted automatically. Flag it so a person confirms or dismisses it,
+      // with a reason, before anything relies on it. The old record is not edited.
+      if (recurrenceSignal && recurrenceSignal.needs_verification) {
+        const ids = (recurrenceSignal.legacy_prior_violation_ids || []).map((x) => String(x).slice(0, 8)).join(', ');
+        violationRow.review_notes = (violationRow.review_notes || '')
+          + `Prior history needs verification: an earlier case for the same/similar violation was closed on ${String(recurrenceSignal.legacy_prior_resolved_at || '').slice(0, 10)} without a recorded closure outcome (case ${ids}). It is not counted as a prior offense until a person confirms it. `;
+      }
       const insertRes = await supabase
         .from('violations')
         .insert(violationRow)
