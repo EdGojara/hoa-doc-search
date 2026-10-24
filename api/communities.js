@@ -430,6 +430,23 @@ router.patch('/:communityId/letter-config', express.json(), async (req, res) => 
       return res.status(400).json({ error: 'no editable fields provided' });
     }
 
+    // Turning fines ON is fine authority: only the fine approver (Ed) may do
+    // it (Ed 2026-10-24). Turning them off, or re-saving the current value
+    // with other settings, stays open to staff.
+    if (patch.fines_enabled === true) {
+      const { data: cur, error: curErr } = await supabase
+        .from('communities').select('fines_enabled').eq('id', communityId).maybeSingle();
+      if (curErr) throw curErr;
+      if (!cur || cur.fines_enabled !== true) {
+        const { getAuthedUser } = require('./_require_admin');
+        const { isFineApprover, NOT_APPROVER } = require('../lib/enforcement/fine_authority');
+        const u = await getAuthedUser(req);
+        if (!isFineApprover(u, communityId)) {
+          return res.status(403).json({ ...NOT_APPROVER, error: 'fine_approver_only', message: 'Only the fine approver (Ed) can turn fines on for a community. Nothing was saved.' });
+        }
+      }
+    }
+
     const { data: updated, error: setErr } = await supabase
       .from('communities')
       .update(patch)
