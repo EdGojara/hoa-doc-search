@@ -88,19 +88,22 @@ const shift = (iso) => new Date(Date.parse(iso) + (Date.now() - Date.parse('2026
 
 (async () => {
   const at = async (name, fn) => { await fn(); passed++; console.log('  ✓', name); };
-  await at('5326 Still Meadow Lane: storage case opened and closed 5/20 (Vantaca, no letter) -> new 10/23 case is a FIRST NOTICE, flagged as a repeat, no certified notice ever given', async () => {
+  await at('5326 Still Meadow Lane: storage case opened and closed 5/20 (Vantaca, no letter, no closure outcome) -> new 10/23 case is a FIRST NOTICE; the legacy prior is NOT counted, it needs verification', async () => {
     const r = await detectRecurrence({ propertyId: 'still-meadow', categoryId: 'storage' }, { db: db({
       priors: [{ id: 'may20', current_stage: 'cured', resolved_at: shift(D('2026-05-20T00:00:00Z')) }], pieces: [] }) });
-    assert.ok(r && r.is_repeat === true, 'detected as a repeat for the reviewer');
+    assert.ok(r, 'surfaced for the reviewer');
+    assert.strictEqual(r.is_repeat, false, 'a legacy (unclassified) closure is never counted automatically (migration 545)');
+    assert.strictEqual(r.needs_verification, true);
+    assert.deepStrictEqual(r.legacy_prior_violation_ids, ['may20']);
     assert.strictEqual(r.escalates, false, 'never escalates by itself');
     assert.strictEqual(r.prior_certified_notice, false);
   });
   await at('7919 Caribou Valley Court: basketball goal closed 1/28 and 4/29, Aug 18 case cured 9/22 (labeled certified, mailed FIRST CLASS) -> new 10/23 case is a FIRST NOTICE; the label is not a certified notice', async () => {
     const r = await detectRecurrence({ propertyId: 'caribou', categoryId: 'goal' }, { db: db({
       priors: [
-        { id: 'aug18', current_stage: 'cured', resolved_at: shift(D('2026-09-22T14:54:44Z')) },
-        { id: 'apr29', current_stage: 'cured', resolved_at: shift(D('2026-04-29T00:00:00Z')) },
-        { id: 'jan28', current_stage: 'cured', resolved_at: shift(D('2026-01-28T00:00:00Z')) },
+        { id: 'aug18', current_stage: 'cured', closure_outcome: 'cured_verified', resolved_at: shift(D('2026-09-22T14:54:44Z')) },
+        { id: 'apr29', current_stage: 'cured', closure_outcome: 'cured_verified', resolved_at: shift(D('2026-04-29T00:00:00Z')) },
+        { id: 'jan28', current_stage: 'cured', closure_outcome: 'cured_verified', resolved_at: shift(D('2026-01-28T00:00:00Z')) },
       ],
       pieces: [{ violation_id: 'aug18', stage_at_send: 'certified_209', delivery_method: 'first_class', status: 'submitted', mailed_at: shift(D('2026-08-18T12:00:00Z')) }] }) });
     assert.ok(r && r.is_repeat === true && r.prior_violation_id === 'aug18');
@@ -109,13 +112,13 @@ const shift = (iso) => new Date(Date.parse(iso) + (Date.now() - Date.parse('2026
   });
   await at('even after a genuinely mailed certified §209 notice, the repeat is only flagged (the exception needs a person\'s decision)', async () => {
     const r = await detectRecurrence({ propertyId: 'p', categoryId: 'c' }, { db: db({
-      priors: [{ id: 'cert', current_stage: 'cured', resolved_at: new Date(Date.now() - 60 * 864e5).toISOString() }],
+      priors: [{ id: 'cert', current_stage: 'cured', closure_outcome: 'cured_verified', resolved_at: new Date(Date.now() - 60 * 864e5).toISOString() }],
       pieces: [{ violation_id: 'cert', stage_at_send: 'certified_209', delivery_method: 'certified_mail', status: 'delivered', delivered_at: new Date(Date.now() - 80 * 864e5).toISOString() }] }) });
     assert.ok(r && r.prior_certified_notice === true && r.prior_certified_violation_id === 'cert');
     assert.strictEqual(r.escalates, false);
   });
   await at('a failed mailing lookup reports no certified notice (fail safe)', async () => {
-    const r = await detectRecurrence({ propertyId: 'p', categoryId: 'c' }, { db: db({ priors: [{ id: 'x', current_stage: 'cured', resolved_at: new Date(Date.now() - 10 * 864e5).toISOString() }], pieces: [], piecesError: 'timeout' }) });
+    const r = await detectRecurrence({ propertyId: 'p', categoryId: 'c' }, { db: db({ priors: [{ id: 'x', current_stage: 'cured', closure_outcome: 'cured_verified', resolved_at: new Date(Date.now() - 10 * 864e5).toISOString() }], pieces: [], piecesError: 'timeout' }) });
     assert.ok(r && r.prior_certified_notice === false && r.escalates === false);
   });
   console.log(`\nrecurrence_escalation: ${passed} passed`);
