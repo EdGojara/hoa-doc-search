@@ -30,6 +30,16 @@ const multer = require('multer');
 const { createClient } = require('@supabase/supabase-js');
 const { categorizePhoto } = require('../lib/enforcement/ai_vision');
 const { getLegalFlag } = require('../lib/enforcement/legal_flag');
+const { getAuthedUser, requireStaff } = require('./_require_admin');
+const closeout = require('../lib/inspections/closeout');
+const { safeErrorMessage } = require('./_safe_error');
+
+// A schema-cache miss on the migration 546 columns (deploy before migration).
+function isMissingCloseoutSchema(err) {
+  const m = String((err && (err.message || err.details)) || '');
+  if (err && (err.code === 'PGRST204' || err.code === '42703')) return true;
+  return /closeout_tracked|started_by_user_id|completed_at|review_completed/i.test(m) && /column|schema cache/i.test(m);
+}
 
 // APPROVAL-FIRST workflow (Ed 2026-07-30): the AI opens violations as UNREVIEWED
 // and does NOT auto-draft letters. A human approves (verifies) each violation,
@@ -123,42 +133,68 @@ router.post('/inspections', async (req, res) => {
     // by device_label so two drivers stay separate). force_new: true bypasses it
     // for a deliberately fresh drive.
     const dev = (device_label && String(device_label).trim().slice(0, 60)) || null;
+    // The employee who starts the drive comes from their own login, never the
+    // body (Ed 2026-10-24): it is who the 5 PM closeout reminder goes to.
+    const starter = await getAuthedUser(req);
+    const starterId = (starter && starter.user && starter.user.id) || null;
     if (force_new !== true) {
       const since = new Date(Date.now() - 12 * 60 * 60 * 1000).toISOString();
       let q = supabase.from('inspections')
         .select('*')
         .eq('community_id', community_id)
         .not('status', 'in', '(closed,voided)')
+        .is('completed_at', null)   // never reopen a drive the inspector completed (mig 546)
         .gte('created_at', since)
         .order('created_at', { ascending: false })
         .limit(1);
       q = dev ? q.eq('device_label', dev) : q.is('device_label', null);
-      const { data: existing, error: exErr } = await q;
+      let { data: existing, error: exErr } = await q;
+      if (exErr && isMissingCloseoutSchema(exErr)) {
+        // Migration 546 not applied yet: resume exactly as before.
+        let q2 = supabase.from('inspections').select('*').eq('community_id', community_id)
+          .not('status', 'in', '(closed,voided)').gte('created_at', since)
+          .order('created_at', { ascending: false }).limit(1);
+        q2 = dev ? q2.eq('device_label', dev) : q2.is('device_label', null);
+        ({ data: existing, error: exErr } = await q2);
+      }
       if (!exErr && existing && existing.length) {
         const drive = existing[0];
         // Flip it back to in_progress so capture continues on the same record.
-        const { data: resumed } = await supabase.from('inspections')
-          .update({ status: 'in_progress', updated_at: new Date().toISOString() })
+        const resumePatch = { status: 'in_progress', updated_at: new Date().toISOString() };
+        if ('closeout_tracked' in drive) {
+          resumePatch.closeout_tracked = true;
+          if (!drive.started_by_user_id && starterId) resumePatch.started_by_user_id = starterId;
+        }
+        const { data: resumed, error: rErr } = await supabase.from('inspections')
+          .update(resumePatch)
           .eq('id', drive.id).select('*').single();
+        if (rErr) console.warn('[inspections.create] resume update failed:', rErr.message);
         return res.json({ inspection: resumed || drive, resumed: true });
       }
     }
 
-    const { data, error } = await supabase
+    const baseRow = {
+      community_id,
+      mode: modeNorm,
+      route_label: route_label || null,
+      operator_id: operator_id || null,
+      // Who's driving — captured at start so each device/tablet is attributed,
+      // even when several share one login (Ed 2026-06-19).
+      device_label: (device_label && String(device_label).trim().slice(0, 60)) || null,
+      notes: notes || null,
+      status: 'in_progress',
+    };
+    // Closeout tracking (mig 546): this drive gets the stage reminders.
+    let { data, error } = await supabase
       .from('inspections')
-      .insert({
-        community_id,
-        mode: modeNorm,
-        route_label: route_label || null,
-        operator_id: operator_id || null,
-        // Who's driving — captured at start so each device/tablet is attributed,
-        // even when several share one login (Ed 2026-06-19).
-        device_label: (device_label && String(device_label).trim().slice(0, 60)) || null,
-        notes: notes || null,
-        status: 'in_progress',
-      })
+      .insert({ ...baseRow, closeout_tracked: true, started_by_user_id: starterId })
       .select('*')
       .single();
+    if (error && isMissingCloseoutSchema(error)) {
+      // Migration 546 not applied yet: a drive must still start in the field.
+      console.warn('[inspections.create] closeout columns missing (migration 546 not applied); starting untracked');
+      ({ data, error } = await supabase.from('inspections').insert(baseRow).select('*').single());
+    }
 
     if (error) return res.status(500).json({ error: error.message });
     res.json({ inspection: data });
@@ -413,11 +449,82 @@ router.get('/inspections/:id/completion-status', async (req, res) => {
   catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ---------------------------------------------------------------------------
+// Inspection stages (Ed 2026-10-24, migration 546; lib/inspections/closeout.js)
+//   GET  /inspections/:id/closeout-preview  counts for the Complete dialog (read-only)
+//   POST /inspections/:id/complete          stage 2, the inspector closes the drive
+//   GET  /inspections/:id/review-gate       may staff mark the review complete?
+//   POST /inspections/:id/review-complete   stage 3, refused while observations pend
+// Neither POST approves a violation, drafts or sends a letter, or advances a
+// case: they write the inspections row only. The actor is the signed-in
+// employee; the body never names who did it.
+// ---------------------------------------------------------------------------
+function closeoutFail(res, e, where) {
+  if (e instanceof closeout.CloseoutError) return res.status(e.status).json({ error: e.code, detail: e.message, ...e.extra });
+  if (isMissingCloseoutSchema(e)) return res.status(503).json({ error: 'migration_546_not_applied', detail: 'Inspection stages are not switched on yet (migration 546).' });
+  console.error(`[inspections.${where}] failed:`, e && e.message);
+  return res.status(500).json({ error: safeErrorMessage(e) });
+}
+
+router.get('/inspections/:id/closeout-preview', async (req, res) => {
+  try {
+    const p = await closeout.previewCloseout(supabase, req.params.id);
+    if (!p) return res.status(404).json({ error: 'not_found' });
+    res.json({
+      ok: true, stage: p.stage,
+      inspected_property_count: p.inspected_property_count,
+      violations_identified: p.violations_identified,
+      skipped_property_count: p.skipped_property_count,
+      skipped_properties: p.skipped_properties,
+      summary: p.summary,
+    });
+  } catch (e) { closeoutFail(res, e, 'closeout-preview'); }
+});
+
+router.post('/inspections/:id/complete', express.json({ limit: '256kb' }), async (req, res) => {
+  try {
+    const actor = await requireStaff(req, res); if (!actor) return;
+    const body = req.body || {};
+    const skipReasons = (body.skip_reasons && typeof body.skip_reasons === 'object' && !Array.isArray(body.skip_reasons)) ? body.skip_reasons : {};
+    const r = await closeout.completeInspection({ supabase, inspectionId: req.params.id, actor, skipReasons, generalReason: body.skip_reason || null });
+    res.json({ ok: true, inspection: r.inspection, stage: r.stage });
+  } catch (e) { closeoutFail(res, e, 'complete'); }
+});
+
+router.get('/inspections/:id/review-gate', async (req, res) => {
+  try {
+    const insp = await closeout.loadInspection(supabase, req.params.id);
+    if (!insp) return res.status(404).json({ error: 'not_found' });
+    const { fetchAllQuery } = require('../lib/db/fetch_all');
+    const obs = await fetchAllQuery(() => supabase.from('property_observations').select('id, reviewer_status').eq('inspection_id', insp.id));
+    res.json({ ok: true, stage: closeout.stageInfo(insp), gate: closeout.reviewGate(insp, obs) });
+  } catch (e) { closeoutFail(res, e, 'review-gate'); }
+});
+
+router.post('/inspections/:id/review-complete', express.json(), async (req, res) => {
+  try {
+    const actor = await requireStaff(req, res); if (!actor) return;
+    const r = await closeout.completeReview({ supabase, inspectionId: req.params.id, actor });
+    res.json({ ok: true, inspection: r.inspection, stage: r.stage });
+  } catch (e) { closeoutFail(res, e, 'review-complete'); }
+});
+
 router.patch('/inspections/:id', async (req, res) => {
   try {
     const { id } = req.params;
     const { status, notes, ended_at } = req.body || {};
     const validStatuses = ['in_progress', 'paused', 'captured', 'ai_analyzed', 'reviewed', 'closed', 'voided'];
+
+    // Stage-tracked drives (mig 546) reach 'closed' only through POST
+    // /review-complete, which refuses while observations are pending and
+    // records who finished the review. A raw PATCH must not skip that gate.
+    if (status === 'closed' || status === 'reviewed') {
+      const { data: tr, error: trErr } = await supabase.from('inspections').select('closeout_tracked').eq('id', id).maybeSingle();
+      if (trErr && !isMissingCloseoutSchema(trErr)) return res.status(500).json({ error: safeErrorMessage(trErr) });
+      if (tr && tr.closeout_tracked) {
+        return res.status(409).json({ error: 'use_review_complete', detail: 'Use Mark review complete. It checks that every observation has a decision.' });
+      }
+    }
 
     // Completing is NOT blocked by unsent letters (Ed 2026-06-29 — complete +
     // reminder, never a hard gate). The UI warns about pending letters before
@@ -2788,7 +2895,9 @@ router.get('/inspections/recent', async (req, res) => {
     const limit = Math.min(parseInt(req.query.limit, 10) || 20, 100);
     let q = supabase
       .from('inspections')
-      .select('id, community_id, mode, route_label, device_label, started_at, ended_at, total_photos, total_observations, status, notes, communities(name)')
+      // '*' so the migration 546 stage columns ride along once applied
+      // without breaking this list before then.
+      .select('*, communities(name)')
       .order('started_at', { ascending: false })
       .limit(limit);
     if (req.query.community_id) q = q.eq('community_id', req.query.community_id);
@@ -2803,7 +2912,12 @@ router.get('/inspections/recent', async (req, res) => {
     // A real inspection always has at least one photo. Active/captured rows are
     // left alone so an in-progress drive is never hidden. (Ed 2026-07-30)
     const rows = (data || []).filter((i) =>
-      !(i.status === 'closed' && !(Number(i.total_photos) > 0)));
+      !(i.status === 'closed' && !(Number(i.total_photos) > 0)))
+      .map((i) => {
+        // Keep the list light: the skipped list is only on the detail view.
+        const { skipped_properties, closeout_summary, ...rest } = i;
+        return { ...rest, stage: closeout.stageInfo(i) };
+      });
     res.json({ inspections: rows });
   } catch (err) {
     console.error('[inspections.recent]', err);
@@ -2936,7 +3050,7 @@ router.get('/inspections/:id', async (req, res, next) => {
       });
     }
 
-    res.json({ inspection: insp, photos: withUrls });
+    res.json({ inspection: insp, stage: closeout.stageInfo(insp), photos: withUrls });
   } catch (err) {
     console.error('[inspections.detail]', err);
     res.status(500).json({ error: err.message || 'failed to load inspection' });

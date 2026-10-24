@@ -27,7 +27,7 @@ const comms = [
   { id: 'l', name: 'Leaving', management_status: 'terminating', management_end_date: '2026-09-30' },
   { id: 'p', name: 'Prospect', management_status: 'prospect' },
 ];
-const empty = () => ({ letters: ok([]), violations: ok([]), acc: ok([]), builder: ok([]), calls: ok([]), drafts: ok([]), work: ok([]), rentals: ok([]) });
+const empty = () => ({ letters: ok([]), violations: ok([]), acc: ok([]), builder: ok([]), calls: ok([]), drafts: ok([]), work: ok([]), rentals: ok([]), inspections: ok([]) });
 const facts = (over) => Object.assign(empty(), over);
 const area = (r, name, key) => (r.managed.concat(r.other).find((b) => b.community.name === name) || { areas: {} }).areas[key];
 

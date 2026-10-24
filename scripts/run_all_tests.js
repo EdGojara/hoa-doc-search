@@ -353,6 +353,8 @@ const CHECKS = [
   'tests/test_data_readiness.js',
   'tests/test_financial_home.js',
   'tests/test_ops_overview.js',
+  // Inspection stages: complete / review-complete / 5 PM reminder / 8 AM flag (mig 546).
+  'tests/test_inspection_closeout.js',
   'tests/test_ap_upload_intake.js',
   'tests/test_ap_invoice_document.js',
   'tests/test_landing.js',
