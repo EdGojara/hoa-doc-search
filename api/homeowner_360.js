@@ -16,6 +16,13 @@
 //   GET /search?q=            name / address / email / phone → candidate people
 //   GET /profile/:contactId   assembled 360 (no AI — fast)
 //   GET /recap/:contactId     AI briefing over the assembled 360
+//
+// WRITE AUTH (Phase 2, Ed 2026-10-24): every POST/PATCH/DELETE here resolves the
+// acting employee from their own trustEd sign-in (Supabase session token) via
+// requireStaffWrite(). The shared staff-password cookie only proves "someone on
+// staff"; it names nobody, so it is never enough to attribute a change. A name
+// is never taken from the request body. tests/test_h360_staff_auth.js fails the
+// build if a write route skips the helper.
 // ============================================================================
 const { route: aiRoute } = require('../lib/ai/router');
 const express = require('express');
@@ -25,11 +32,56 @@ const LedgerLine = require('../lib/ar/ledger_line');
 const { safeErrorMessage } = require('./_safe_error');
 const { evaluateAmenityAccess } = require('../lib/ar/amenity_access');
 const Anthropic = require('../lib/ai/anthropic');
+const { getAuthedUser } = require('./_require_admin');
 
 const router = express.Router();
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 30 * 1024 * 1024 } });
+
+// -- Staff write gate (one place, every write route) -------------------------
+// H360_AUTH_MODE rollout flag:
+//   log     (default) a write with no valid staff sign-in is still accepted, but
+//           logged as '[homeowner360.auth] unauthenticated write' so we can see
+//           who would be locked out before switching. Deploying cannot strand a
+//           staffer mid-task.
+//   enforce a write with no valid staff sign-in gets 403 and a plain message.
+// opts.alwaysEnforce keeps a route that was ALREADY strict (email-letter) strict
+// in log mode too: the rollout flag only ever tightens, never loosens.
+// Returns the actor { id, full_name, email, role, name, authenticated } or null
+// (response already sent).
+const SIGN_IN_EXPIRED = 'Your sign-in expired. Please sign in again.';
+function h360AuthMode() {
+  return String(process.env.H360_AUTH_MODE || 'log').trim().toLowerCase() === 'enforce' ? 'enforce' : 'log';
+}
+async function requireStaffWrite(req, res, opts = {}) {
+  let u = null;
+  try { u = await getAuthedUser(req); } catch (_) { u = null; }
+  if (u && u.user && u.user.id) {
+    return {
+      id: u.user.id, full_name: u.full_name || null, email: u.email || null, role: u.role || 'staff',
+      name: String(u.full_name || u.email || 'Staff').trim().slice(0, 120), authenticated: true,
+    };
+  }
+  const mode = opts.alwaysEnforce ? 'enforce' : h360AuthMode();
+  const route = `${req.method} ${req.baseUrl || ''}${req.route && req.route.path ? req.route.path : req.path}`;
+  if (mode === 'enforce') {
+    console.warn('[homeowner360.auth] refused unauthenticated write', { route, has_auth_header: !!(req.headers && req.headers.authorization) });
+    res.status(403).json({ error: 'sign_in_required', detail: SIGN_IN_EXPIRED });
+    return null;
+  }
+  console.warn('[homeowner360.auth] unauthenticated write', {
+    route, url: req.originalUrl, has_auth_header: !!(req.headers && req.headers.authorization), mode,
+  });
+  return { id: null, full_name: null, email: null, role: null, name: 'Unidentified staff (not signed in)', authenticated: false };
+}
+
+// Calendar date in Central time (YYYY-MM-DD) for human-readable audit lines.
+function centralDate(d = new Date()) {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Chicago', year: 'numeric', month: '2-digit', day: '2-digit' }).format(d);
+}
+const STAGE_LABELS = { courtesy_1: 'Courtesy 1', courtesy_2: 'Courtesy 2', certified_209: 'Certified 209', hearing: 'Hearing', fine: 'Fine', cured: 'Cured', closed: 'Closed' };
+function stageLabel(s) { return s ? (STAGE_LABELS[s] || String(s).replace(/_/g, ' ')) : 'unknown'; }
 
 // Run a query, return [] on any error (missing table/column) so the profile
 // degrades gracefully instead of 500-ing on one weak source.
@@ -154,11 +206,8 @@ router.get('/search', async (req, res) => {
 // check short-circuits to this result. (Ed 2026-07-25.)
 router.post('/verify-identity', express.json(), async (req, res) => {
   try {
-    // The 360 is a staff-cookie-gated surface (like /note). Capture WHO verified
-    // when a Supabase token is present; otherwise record the decision without a
-    // name rather than 403 a legitimate staff action.
-    const { getAuthedUser } = require('./_require_admin');
-    const actor = await getAuthedUser(req);
+    // WHO verified comes from the employee's own sign-in (requireStaffWrite).
+    const actor = await requireStaffWrite(req, res); if (!actor) return;
     const { contact_id_1, contact_id_2, result, notes } = req.body || {};
     if (!contact_id_1 || !contact_id_2 || contact_id_1 === contact_id_2) {
       return res.status(400).json({ error: 'two distinct contact ids required' });
@@ -166,23 +215,24 @@ router.post('/verify-identity', express.json(), async (req, res) => {
     if (!['same_person', 'different_people'].includes(result)) {
       return res.status(400).json({ error: 'result must be same_person or different_people' });
     }
-    const { data: existing } = await supabase.from('identity_verifications')
+    const { data: existing, error: exErr } = await supabase.from('identity_verifications')
       .select('id')
       .or(`and(contact_id_1.eq.${contact_id_1},contact_id_2.eq.${contact_id_2}),and(contact_id_1.eq.${contact_id_2},contact_id_2.eq.${contact_id_1})`)
       .maybeSingle();
+    if (exErr) throw exErr;
     let row;
     if (existing) {
       const { data, error } = await supabase.from('identity_verifications')
-        .update({ result, verified_by: actor?.id || null, verified_at: new Date().toISOString(), notes: notes || null })
+        .update({ result, verified_by: actor.id, verified_at: new Date().toISOString(), notes: notes || null })
         .eq('id', existing.id).select().single();
       if (error) throw error; row = data;
     } else {
       const { data, error } = await supabase.from('identity_verifications')
-        .insert({ contact_id_1, contact_id_2, result, verified_by: actor?.id || null, notes: notes || null })
+        .insert({ contact_id_1, contact_id_2, result, verified_by: actor.id, notes: notes || null })
         .select().single();
       if (error) throw error; row = data;
     }
-    res.json({ ok: true, verification: row, verified_by_name: (actor && (actor.full_name || actor.email)) || 'Staff' });
+    res.json({ ok: true, verification: row, verified_by_name: actor.name });
   } catch (err) {
     console.error('[homeowner360] verify-identity failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
@@ -556,8 +606,8 @@ router.get('/file', async (req, res) => {
 // compose → attach by hand. (Ed 2026-08-01.)
 router.post('/email-letter', express.json(), async (req, res) => {
   try {
-    const { requireStaff, getAuthedUser } = require('./_require_admin');
-    const staff = await requireStaff(req, res); if (!staff) return; // 403 already sent
+    // Was already strict before Phase 2; stays strict whatever H360_AUTH_MODE says.
+    const actor = await requireStaffWrite(req, res, { alwaysEnforce: true }); if (!actor) return; // 403 already sent
     const b = req.body || {};
     const letterPath = b.letter_path;
     const toEmail = String(b.to_email || '').trim();
@@ -579,7 +629,6 @@ router.post('/email-letter', express.json(), async (req, res) => {
 
     const graphSend = require('../lib/email/graph_send');
     const { queueDraft } = require('../lib/email/outbound_drafts');
-    const actor = await getAuthedUser(req).catch(() => null);
     const q = await queueDraft({
       communityId: community && community.id ? community.id : null, communityName: commName,
       persona: 'claire', fromMailbox: graphSend.CLAIRE_MAILBOX,
@@ -591,7 +640,7 @@ router.post('/email-letter', express.json(), async (req, res) => {
       relatedType: 'homeowner_letter', relatedId: b.contact_id || null,
       sourceEmailRef: `homeowner_letter:${letterPath}`, // idempotent: one draft per letter
       draftKind: 'homeowner_letter', draftReason: 'Letter to homeowner — review before sending',
-      createdBy: (actor && (actor.full_name || actor.email)) || 'Staff',
+      createdBy: actor.name,
     });
     if (q.status === 'skipped' && q.reason === 'no_table') return res.status(400).json({ error: 'draft_queue_unavailable', detail: 'The Draft Queue isn’t set up yet.' });
     if (q.status !== 'queued' && q.status !== 'exists') return res.status(500).json({ error: 'queue_failed', detail: q.error || 'Could not draft the email.' });
@@ -667,12 +716,11 @@ If the record is thin, say so plainly ("Not much history on file"). No greeting,
 // homeowner's primary property + community for consistent scoping.
 router.post('/:contactId/note', express.json(), async (req, res) => {
   try {
+    const actor = await requireStaffWrite(req, res); if (!actor) return;
     const body = (req.body && req.body.content ? String(req.body.content) : '').trim();
     if (!body) return res.status(400).json({ error: 'content_required' });
     const props = await ownedProperties(req.params.contactId);
     const primary = props.find((p) => p.is_primary) || props[0] || null;
-    const { getAuthedUser } = require('./_require_admin');
-    const actor = await getAuthedUser(req).catch(() => null); // who's writing it — for attribution
     const { data, error } = await supabase.from('interactions').insert({
       type: 'internal_note', direction: 'internal',
       contact_id: req.params.contactId,
@@ -681,13 +729,13 @@ router.post('/:contactId/note', express.json(), async (req, res) => {
       subject: (req.body && req.body.subject) ? String(req.body.subject).slice(0, 200) : 'Note',
       content: body,
       source: 'manual',
-      sent_by_user_id: actor && actor.id ? actor.id : null,
+      // The author is the signed-in employee. (Before Phase 2 this read actor.id,
+      // which getAuthedUser never set, so no note ever recorded its author.)
+      sent_by_user_id: actor.id,
       notes: 'via Homeowner 360',
     }).select('id, created_at').single();
     if (error) throw error;
-    // Diagnostic: report exactly what the endpoint saw for auth, so we can tell
-    // whether the header arrived and whether the token validated. (Ed 2026-08-14.)
-    res.json({ ok: true, note: data, _auth: { header: !!(req.headers && req.headers.authorization), actor: actor ? (actor.email || actor.id) : null } });
+    res.json({ ok: true, note: data, author: actor.authenticated ? actor.name : null });
   } catch (err) {
     console.error('[homeowner360] note failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
@@ -701,6 +749,7 @@ router.post('/:contactId/note', express.json(), async (req, res) => {
 // defensible record on the account (not an email lost in a thread). (Ed 2026-07-14.)
 router.post('/:contactId/attachment', upload.single('file'), async (req, res) => {
   try {
+    const actor = await requireStaffWrite(req, res); if (!actor) return;
     if (!req.file) return res.status(400).json({ error: 'file_required' });
     const mime = req.file.mimetype || '';
     const isImg = /^image\//.test(mime);
@@ -721,7 +770,8 @@ router.post('/:contactId/attachment', upload.single('file'), async (req, res) =>
       property_id: chosen.property_id, community_id: chosen.community_id, contact_id: req.params.contactId,
       kind: isImg ? 'photo' : 'document', file_path: path, mime_type: mime, original_name: req.file.originalname || null,
       caption: b.caption ? String(b.caption).slice(0, 300) : null,
-      captured_by: b.captured_by ? String(b.captured_by).slice(0, 120) : 'staff',
+      // Who added it comes from the sign-in, never from the form (a captured_by form field is ignored).
+      captured_by: actor.authenticated ? actor.name : 'staff',
       gps_lat: num(b.gps_lat), gps_lng: num(b.gps_lng),
     }).select('id, kind, file_path, caption, captured_at, captured_by, original_name').single();
     if (error) throw error;
@@ -735,7 +785,11 @@ router.post('/:contactId/attachment', upload.single('file'), async (req, res) =>
 // DELETE /attachment/:id — remove a wrongly-added file (mistake correction).
 router.delete('/attachment/:id', async (req, res) => {
   try {
-    const { data: row } = await supabase.from('account_attachments').select('file_path').eq('id', req.params.id).maybeSingle();
+    const actor = await requireStaffWrite(req, res); if (!actor) return;
+    const { data: row, error: rowErr } = await supabase.from('account_attachments').select('id, file_path').eq('id', req.params.id).maybeSingle();
+    if (rowErr) throw rowErr;
+    if (!row) return res.status(404).json({ error: 'not_found' });
+    console.log('[homeowner360] attachment removed', { id: req.params.id, file_path: row.file_path, by: actor.name, by_user_id: actor.id });
     const { error } = await supabase.from('account_attachments').delete().eq('id', req.params.id);
     if (error) throw error;
     if (row && row.file_path) { try { await supabase.storage.from('documents').remove([row.file_path]); } catch (_) { /* index gone is enough */ } }
@@ -750,13 +804,16 @@ router.delete('/attachment/:id', async (req, res) => {
 // original author (edit changes the words, not who logged it). (Ed 2026-08-14.)
 router.patch('/note/:id', express.json(), async (req, res) => {
   try {
+    const actor = await requireStaffWrite(req, res); if (!actor) return;
     const content = (req.body && req.body.content ? String(req.body.content) : '').trim();
     if (!content) return res.status(400).json({ error: 'content_required' });
-    const { data: row } = await supabase.from('interactions').select('id, type').eq('id', req.params.id).maybeSingle();
+    const { data: row, error: rowErr } = await supabase.from('interactions').select('id, type').eq('id', req.params.id).maybeSingle();
+    if (rowErr) throw rowErr;
     if (!row) return res.status(404).json({ error: 'not_found' });
     if (row.type !== 'internal_note') return res.status(403).json({ error: 'only_notes_editable', detail: 'Only staff notes can be edited here; correspondence records cannot.' });
     const { error } = await supabase.from('interactions').update({ content, updated_at: new Date().toISOString() }).eq('id', req.params.id).eq('type', 'internal_note');
     if (error) throw error;
+    console.log('[homeowner360] note edited', { id: req.params.id, by: actor.name, by_user_id: actor.id });
     res.json({ ok: true });
   } catch (err) {
     console.error('[homeowner360] note edit failed:', err.message);
@@ -769,11 +826,14 @@ router.patch('/note/:id', express.json(), async (req, res) => {
 // other record entries can never be deleted from here.
 router.delete('/note/:id', async (req, res) => {
   try {
-    const { data: row } = await supabase.from('interactions').select('id, type').eq('id', req.params.id).maybeSingle();
+    const actor = await requireStaffWrite(req, res); if (!actor) return;
+    const { data: row, error: rowErr } = await supabase.from('interactions').select('id, type').eq('id', req.params.id).maybeSingle();
+    if (rowErr) throw rowErr;
     if (!row) return res.status(404).json({ error: 'not_found' });
     if (row.type !== 'internal_note') return res.status(403).json({ error: 'only_notes_deletable', detail: 'Only staff notes can be deleted here; correspondence records cannot.' });
     const { error } = await supabase.from('interactions').delete().eq('id', req.params.id).eq('type', 'internal_note');
     if (error) throw error;
+    console.log('[homeowner360] note deleted', { id: req.params.id, by: actor.name, by_user_id: actor.id });
     res.json({ ok: true });
   } catch (err) {
     console.error('[homeowner360] note delete failed:', err.message);
@@ -835,6 +895,7 @@ async function resolveFromAbout(parsed, addresses) {
 // operator to confirm (a neighbor complaint can file to both).
 router.post('/import-review', upload.single('file'), async (req, res) => {
   try {
+    const actor = await requireStaffWrite(req, res); if (!actor) return;
     if (!req.file) return res.status(400).json({ error: 'file_required' });
     const parsed = await parseEmailFile(req.file);
     const { classifyAndExtract } = require('../lib/email/triage');
@@ -860,6 +921,7 @@ router.post('/import-review', upload.single('file'), async (req, res) => {
 // One row per link (role 'from'/'about') so it shows on each homeowner's 360.
 router.post('/import-file', express.json({ limit: '2mb' }), async (req, res) => {
   try {
+    const actor = await requireStaffWrite(req, res); if (!actor) return;
     const { email, classification, links } = req.body || {};
     if (!email || !Array.isArray(links) || !links.length) return res.status(400).json({ error: 'email_and_links_required' });
     let filed = 0;
@@ -875,11 +937,13 @@ router.post('/import-file', express.json({ limit: '2mb' }), async (req, res) => 
         received_at: email.received_at || null, has_attachments: false,
         classification: classification || 'imported', classification_confidence: 'high',
         ai_summary: `Imported: ${(email.subject || '').slice(0, 120)}`,
-        extracted: { imported: true, role: l.role || 'from' },
+        // Who filed it, from the sign-in (no schema change: extracted is JSONB).
+        extracted: { imported: true, role: l.role || 'from', imported_by: actor.authenticated ? actor.name : null, imported_by_user_id: actor.id },
         community_id, resolved_contact_id: l.contact_id || null, resolved_property_id: l.property_id || null,
         resolution_confidence: 'high', triage_status: 'linked', record_ownership: 'association_record',
       });
       if (!error) filed += 1;
+      else console.warn('[homeowner360] import-file row failed:', { role: l.role, contact_id: l.contact_id, error: error.message });
     }
     res.json({ ok: true, filed });
   } catch (err) {
@@ -897,22 +961,52 @@ router.post('/import-file', express.json({ limit: '2mb' }), async (req, res) => 
 // sent in, with a drop down of notes".)
 router.post('/violations/:id/resolve', express.json(), async (req, res) => {
   try {
+    // Phase 2 (Ed 2026-10-24): the closer is the signed-in employee, a reason is
+    // required, and every closure leaves a timeline entry naming who, when, why,
+    // and the stage the case was at. (82 earlier closures carry none of that.)
+    // The stage overwrite + outcome values below are unchanged on purpose; a
+    // later PR handles closure outcomes.
+    const actor = await requireStaffWrite(req, res); if (!actor) return;
     const { id } = req.params;
     const b = req.body || {};
     // resolved_via CHECK is ('cured','fine','withdrawn','voided'); a photo-proof
     // resolution is 'cured' — the only via reachable from this button.
     const via = ['cured', 'withdrawn', 'voided'].includes(b.resolved_via) ? b.resolved_via : 'cured';
     const note = (b.note == null ? '' : String(b.note)).slice(0, 1000).trim() || null;
+    if (!note) return res.status(400).json({ error: 'reason_required', detail: 'Pick or type the reason this case is being closed.' });
     const { data: v, error: ve } = await supabase.from('violations')
-      .select('id, resolved_at, current_stage').eq('id', id).maybeSingle();
+      .select('id, resolved_at, current_stage, community_id, property_id').eq('id', id).maybeSingle();
     if (ve) throw ve;
     if (!v) return res.status(404).json({ error: 'not_found' });
     if (v.resolved_at) return res.json({ ok: true, already_resolved: true });
-    const { error: ue } = await supabase.from('violations').update({
-      resolved_at: new Date().toISOString(), resolved_via: via, resolved_notes: note, current_stage: 'cured',
-    }).eq('id', id);
+    const priorStage = v.current_stage || null;
+    const nowIso = new Date().toISOString();
+    const { data: updated, error: ue } = await supabase.from('violations').update({
+      resolved_at: nowIso, resolved_via: via, resolved_notes: note, current_stage: 'cured',
+    }).eq('id', id).is('resolved_at', null).select('id'); // guard: never re-close a case someone else just closed
     if (ue) throw ue;
-    res.json({ ok: true, resolved_via: via, note });
+    if (!updated || !updated.length) return res.json({ ok: true, already_resolved: true });
+
+    // The attribution record is not best-effort: if it cannot be written, the
+    // closure is undone so no case is ever closed without saying who closed it.
+    const sentence = `Closed from Homeowner 360 by ${actor.name} on ${centralDate(new Date(nowIso))}: ${note}`;
+    const { error: ae } = await supabase.from('interactions').insert({
+      community_id: v.community_id, property_id: v.property_id, violation_id: v.id,
+      type: 'observation_note', direction: 'internal', source: 'manual',
+      subject: sentence.slice(0, 200),
+      content: `${sentence}\nStage before closing: ${stageLabel(priorStage)}${priorStage ? ` (${priorStage})` : ''}. Recorded as: ${via}.`,
+      sent_by_user_id: actor.id, sent_at: nowIso,
+      notes: 'via Homeowner 360 resolve',
+    });
+    if (ae) {
+      console.error('[homeowner360] resolve attribution note failed, undoing closure:', ae.message);
+      const { error: re } = await supabase.from('violations').update({
+        resolved_at: null, resolved_via: null, resolved_notes: null, current_stage: priorStage,
+      }).eq('id', id).eq('resolved_at', nowIso);
+      if (re) console.error('[homeowner360] resolve undo FAILED, case closed without attribution:', { id, error: re.message });
+      return res.status(500).json({ error: 'audit_failed', detail: 'The case was not closed because the record of who closed it could not be saved. Please try again.' });
+    }
+    res.json({ ok: true, resolved_via: via, note, closed_by: actor.name, prior_stage: priorStage });
   } catch (err) {
     console.error('[homeowner360] resolve violation failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
@@ -930,6 +1024,7 @@ router.post('/violations/:id/resolve', express.json(), async (req, res) => {
 // needs correcting. Pass an empty number to clear it.
 router.post('/interactions/:id/certified-number', express.json(), async (req, res) => {
   try {
+    const actor = await requireStaffWrite(req, res); if (!actor) return;
     const { id } = req.params;
     // Keep it to what a USPS label carries (digits + spaces), cap length, allow
     // clearing. Store normalized (no spaces) so the tracking link is clean.
@@ -948,7 +1043,8 @@ router.post('/interactions/:id/certified-number', express.json(), async (req, re
       return res.status(400).json({ error: 'not_a_letter', detail: 'A certified number can only be recorded on a letter.' });
     }
 
-    const who = String((req.body || {}).user_name || 'Staff').slice(0, 80);
+    // Who recorded it comes from the sign-in; a user_name field sent by the browser is ignored (it was spoofable).
+    const who = actor.name.slice(0, 80);
     const audit = tracking
       ? `[Certified # recorded ${new Date().toISOString().slice(0, 10)} by ${who}: ${tracking}]`
       : `[Certified # cleared ${new Date().toISOString().slice(0, 10)} by ${who}]`;
@@ -969,4 +1065,4 @@ router.post('/interactions/:id/certified-number', express.json(), async (req, re
   }
 });
 
-module.exports = { router, _test: { assemble } };
+module.exports = { router, requireStaffWrite, _test: { assemble, requireStaffWrite, h360AuthMode } };
