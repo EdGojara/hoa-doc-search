@@ -160,6 +160,33 @@ router.post('/batches/confirm', express.json(), async (req, res) => {
       filled = (up || []).length;
     }
 
+    // Cure-deadline safeguard: a letter confirmed mailed later than the date its
+    // deadline was counted from flags the case; escalation waits for an admin.
+    // The deadline itself is not changed here.
+    let flagged = 0;
+    if (anyMailed) {
+      const mailedLetters = entries.filter(([, o]) => o === 'mailed').map(([id]) => byId.get(id)).filter((l) => l.violation_id);
+      if (mailedLetters.length) {
+        const vids = [...new Set(mailedLetters.map((l) => l.violation_id))];
+        const openCases = await inChunks((ids) => supabase.from('violations').select('id, cure_period_ends_at').in('id', ids).is('resolved_at', null), vids);
+        const cureBy = new Map(openCases.map((v) => [v.id, v.cure_period_ends_at]));
+        const flags = ME.cureDeadlineFlags({ letters: mailedLetters, mailedOn: b.mailed_on, openViolationIds: openCases.map((v) => v.id) });
+        if (flags.length) {
+          const already = new Set((await ME.loadOpenReviewHolds(supabase, { violationIds: flags.map((f) => f.violation_id) })).map((h) => h.violation_id));
+          const rows = flags.filter((f) => !already.has(f.violation_id)).map((f) => ({
+            community_id: b.community_id, violation_id: f.violation_id, interaction_id: f.interaction_id, kind: 'cure_deadline_review',
+            reason: f.reason, basis_date: f.basis_date, confirmed_mailed_on: f.confirmed_mailed_on,
+            cure_period_ends_at_flagged: cureBy.get(f.violation_id) || null, flagged_by_user_id: staff.user.id,
+          }));
+          if (rows.length) {
+            const { error: hErr } = await supabase.from('enforcement_review_holds').insert(rows);
+            if (hErr) console.error('[mailing.confirm] cure-deadline review holds NOT saved (evidence is saved):', hErr.message);
+            else flagged = rows.length;
+          }
+        }
+      }
+    }
+
     // A line on each case timeline so the history reads in one place.
     const LABEL = { mailed: `confirmed mailed on ${b.mailed_on}`, not_mailed: 'confirmed NOT mailed yet', held: 'held, not mailed', excluded: 'pulled from the mailing' };
     const timeline = entries.filter(([id]) => byId.get(id).violation_id).map(([id, o]) => ({
@@ -173,7 +200,7 @@ router.post('/batches/confirm', express.json(), async (req, res) => {
       if (tErr) console.warn('[mailing.confirm] timeline notes failed (evidence is saved):', tErr.message);
     }
 
-    res.json({ ok: true, confirmation_id: conf.id, mailed: count('mailed'), not_mailed: count('not_mailed'), held: count('held'), excluded: count('excluded'), mailed_date_filled: filled });
+    res.json({ ok: true, confirmation_id: conf.id, mailed: count('mailed'), not_mailed: count('not_mailed'), held: count('held'), excluded: count('excluded'), mailed_date_filled: filled, cure_deadline_reviews: flagged });
   } catch (err) {
     console.error('[mailing.confirm] failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
@@ -197,6 +224,53 @@ router.post('/holds/:id/release', express.json(), async (req, res) => {
   }
 });
 
+// POST /api/mailing/review-holds/:id/resolve  (admin only)
+// Body: { resolution: 'keep_deadline' | 'deadline_corrected', reason, new_cure_period_ends_on?: 'YYYY-MM-DD' }
+// Records the decision on the hold (the deadline as flagged stays on the record).
+// A correction changes only violations.cure_period_ends_at, with a timeline note.
+router.post('/review-holds/:id/resolve', express.json(), async (req, res) => {
+  try {
+    const admin = await requireAdmin(req, res); if (!admin) return;
+    const b = req.body || {};
+    const reason = String(b.reason || '').trim();
+    if (!['keep_deadline', 'deadline_corrected'].includes(b.resolution)) return res.status(400).json({ error: 'resolution_required', detail: 'Choose keep the deadline or correct it.' });
+    if (reason.length < 5) return res.status(400).json({ error: 'reason_required', detail: 'Say why.' });
+    let newIso = null;
+    if (b.resolution === 'deadline_corrected') {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(String(b.new_cure_period_ends_on || ''))) return res.status(400).json({ error: 'new_deadline_required', detail: 'Enter the corrected deadline date.' });
+      newIso = `${b.new_cure_period_ends_on}T12:00:00+00:00`;
+    }
+    const { data: h, error: hErr } = await supabase.from('enforcement_review_holds')
+      .select('id, community_id, violation_id, cure_period_ends_at_flagged, resolved_at').eq('id', req.params.id).maybeSingle();
+    if (hErr) throw hErr;
+    if (!h || h.resolved_at) return res.status(404).json({ error: 'hold_not_open' });
+    if (newIso) {
+      const { error: vErr } = await supabase.from('violations').update({ cure_period_ends_at: newIso }).eq('id', h.violation_id).is('resolved_at', null);
+      if (vErr) throw vErr;
+    }
+    const { error: uErr } = await supabase.from('enforcement_review_holds').update({
+      resolved_at: new Date().toISOString(), resolved_by_user_id: admin.user.id, resolution: b.resolution,
+      resolution_reason: reason.slice(0, 1000), new_cure_period_ends_at: newIso,
+    }).eq('id', h.id).is('resolved_at', null);
+    if (uErr) throw uErr;
+    const who = admin.full_name || admin.email;
+    const was = h.cure_period_ends_at_flagged ? ME.centralDate(h.cure_period_ends_at_flagged) : 'none';
+    const { error: nErr } = await supabase.from('interactions').insert({
+      community_id: h.community_id, violation_id: h.violation_id, type: 'observation_note', direction: 'internal',
+      subject: 'Cure deadline review resolved',
+      content: b.resolution === 'keep_deadline'
+        ? `${who} kept the cure deadline (${was}) after review. Reason: ${reason}`
+        : `${who} corrected the cure deadline from ${was} to ${b.new_cure_period_ends_on}. Reason: ${reason}`,
+      sent_by_user_id: admin.user.id, sent_at: new Date().toISOString(),
+    });
+    if (nErr) console.warn('[mailing.review-resolve] timeline note failed (decision is saved):', nErr.message);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[mailing.review-resolve] failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
 router.get('/queue', async (req, res) => {
   try {
     const staff = await requireStaff(req, res); if (!staff) return;
@@ -213,6 +287,8 @@ router.get('/queue', async (req, res) => {
     const all = new Map(); for (const l of caseLetters.concat(printed)) all.set(l.id, l);
     const letters = [...all.values()];
     const ctx = await ME.loadMailingContext(supabase, letters.map((l) => l.id), cids);
+    const addr = new Map(vios.map((v) => [v.id, v.street_address]));
+    ctx.reviewHolds = (await ME.loadOpenReviewHolds(supabase, { communityIds: cids })).map((h) => ({ ...h, street_address: addr.get(h.violation_id) || null }));
     const owners = await fetchAllQuery(() => supabase.from('enforcement_queue_owners').select('id, community_id, bucket, user_id')).catch((e) => { console.warn('[mailing.queue] owners unavailable:', e.message); return []; });
     const profiles = owners.length ? await fetchAllQuery(() => supabase.from('user_profiles').select('id, full_name, email').in('id', [...new Set(owners.map((o) => o.user_id))])) : [];
     const pName = new Map(profiles.map((p) => [p.id, p.full_name || p.email]));

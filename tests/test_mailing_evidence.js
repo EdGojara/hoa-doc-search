@@ -174,18 +174,54 @@ console.log('mailing_evidence:');
     assert.strictEqual(r.code, 'prior_notice_not_mailed');
   });
 
-  // ---- static guarantees on the confirmation route and the migration
   const src = read('api/mailing_confirmation.js');
+  await at('cure-deadline safeguard: a letter confirmed mailed AFTER its letter date flags the open case; same-day does not; closed cases are not flagged', async () => {
+    const ls = [letter({ id: 'A', violation_id: 'v1', postmark_date: '2026-10-19' }), letter({ id: 'B', violation_id: 'v2', postmark_date: '2026-10-19' }), letter({ id: 'C', violation_id: 'v3', postmark_date: '2026-10-19' })];
+    const f = ME.cureDeadlineFlags({ letters: ls, mailedOn: '2026-10-22', openViolationIds: ['v1', 'v2'] });
+    assert.deepStrictEqual(f.map((x) => x.violation_id), ['v1', 'v2']);
+    assert.match(f[0].reason, /dated 2026-10-19 was confirmed mailed on 2026-10-22/);
+    assert.strictEqual(ME.cureDeadlineFlags({ letters: ls, mailedOn: '2026-10-19', openViolationIds: ['v1', 'v2'] }).length, 0);
+    assert.strictEqual(ME.cureDeadlineFlags({ letters: [letter({ id: 'D', violation_id: 'v1', postmark_date: null, printed_at: '2026-10-23T20:26:00Z' })], mailedOn: '2026-10-26', openViolationIds: ['v1'] })[0].basis_date, '2026-10-23', 'falls back to the print day');
+  });
+  await at('a case under cure-deadline review is a correction item for Ed, and its print run no longer needs confirmation', async () => {
+    const q = ME.buildWorkQueue({ letters: [letter({ id: 'A', violation_id: 'v1' })], violations: [vio()], ctx: ctx({ evidence: new Map([['A', ev('A', 'mailed', '2026-10-22')]]), reviewHolds: [{ id: 'r1', violation_id: 'v1', community_id: 'c-lopf', reason: 'late', resolved_at: null }] }), owners });
+    const h = q.items.find((i) => i.kind === 'review_hold');
+    assert.ok(h && h.bucket === 'held_correction' && h.owner.name === 'Ed Gojara' && /Escalation is on hold/.test(h.action));
+    assert.ok(!q.items.some((i) => i.kind === 'batch'));
+  });
+  await at('printed letters confirmed NOT mailed tell staff to review the dates before mailing (nothing is resent automatically)', async () => {
+    const q = ME.buildWorkQueue({ letters: [letter({ id: 'A', violation_id: 'v1' })], violations: [vio()], ctx: ctx({ evidence: new Map([['A', ev('A', 'not_mailed')]]) }), owners });
+    assert.match(q.items[0].action, /check whether the letter date and cure deadline still give the owner the full cure period/);
+    assert.match(q.items[0].action, /Nothing is resent or regenerated automatically/);
+  });
+  await at('advance: an open cure-deadline review holds escalation even when the earlier letter is confirmed mailed', async () => {
+    const db = fakeDb({ violations: [{ ...caseRow }], interactions: [{ ...c1 }] });
+    const r = await _advanceWithStageLetter({ violationId: 'v1', toStage: 'courtesy_2', source: 'cure_lapse' }, { db, draft: drafter(), mailCtx: ctx({ scopes, evidence: new Map([['L1', ev('L1', 'mailed', '2026-10-26')]]) }), reviewHolds: [{ violation_id: 'v1', resolved_at: null }] });
+    assert.strictEqual(r.code, 'cure_deadline_review_pending');
+    assert.strictEqual(db.T.violations[0].current_stage, 'courtesy_1');
+  });
+  await at('resolving a cure-deadline review: admin only, needs a reason, a correction changes only the deadline and leaves a timeline note', async () => {
+    const r = src.slice(src.indexOf("router.post('/review-holds/:id/resolve'"), src.indexOf("router.get('/queue'"));
+    assert.ok(r.includes('requireAdmin(req, res)') && r.includes('reason_required') && r.includes('new_deadline_required'));
+    assert.ok(r.includes("from('violations').update({ cure_period_ends_at: newIso })"), 'only the deadline column changes');
+    assert.ok(/Cure deadline review resolved/.test(r));
+    const m = read('migrations/544_letter_mailing_evidence.sql');
+    assert.ok(/BEFORE UPDATE OR DELETE ON enforcement_review_holds/.test(m) && /cure_period_ends_at_flagged/.test(m), 'the deadline as flagged is kept; only the resolution can be recorded');
+  });
+
+  // ---- static guarantees on the confirmation route and the migration
   const confirmBody = src.slice(src.indexOf("router.post('/batches/confirm'"), src.indexOf("router.post('/holds/"));
   await at('confirming a run never touches deadlines, stages, letters, mail pieces or charges', async () => {
-    for (const forbidden of ['cure_period_ends_at', 'current_stage', 'postmark_date:', 'letter_mail_pieces', 'ar_charges', 'sweepCertifiedViolationFees', 'createCharge', '_assembleBundlePdf', '_sealSentLetter', "from('violations')"]) {
+    assert.ok(!/from\('violations'\)[^;]*\.update\(/.test(confirmBody), 'confirm never updates a case');
+    assert.ok(!/update\(\{[^}]*cure_period_ends_at/.test(confirmBody), 'confirm never changes a cure deadline');
+    for (const forbidden of ['current_stage', 'postmark_date:', 'letter_mail_pieces', 'ar_charges', 'sweepCertifiedViolationFees', 'createCharge', '_assembleBundlePdf', '_sealSentLetter']) {
       assert.ok(!confirmBody.includes(forbidden), `confirm route must not use ${forbidden}`);
     }
     assert.ok(/\.is\('mailed_at', null\)/.test(confirmBody), 'mailed_at is only filled where empty');
   });
   await at('every route uses the employee login; no name is taken from the request', async () => {
     const routes = src.split(/router\.(?:get|post)\(/).slice(1);
-    assert.strictEqual(routes.length, 4);
+    assert.strictEqual(routes.length, 5);
     routes.forEach((r) => assert.ok(/require(Staff|Admin)\(req, res\)/.test(r.slice(0, 400)), 'route checks the login first'));
     assert.ok(!/user_name/.test(src));
     assert.ok(/holds\/:id\/release[\s\S]{0,200}requireAdmin/.test(src), 'only an admin releases a hold');

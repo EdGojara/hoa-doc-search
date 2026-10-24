@@ -145,10 +145,32 @@
         : ((i.street_address || 'Unknown address') + ' - ' + (STAGE_LABEL[i.stage] || i.stage || ''));
       tb.appendChild(el('tr', {}, [
         el('td', { text: i.community || '' }), el('td', { text: what }),
-        el('td', { text: i.action + (i.reason ? ' (' + i.reason + ')' : '') }), el('td', { text: (i.owner && i.owner.name) || 'Unassigned' })
+        el('td', {}, [i.action + (i.reason ? ' (' + i.reason + ')' : ''), i.kind === 'review_hold' ? reviewButtons(i) : null]), el('td', { text: (i.owner && i.owner.name) || 'Unassigned' })
       ]));
     });
     t.appendChild(tb); box.appendChild(t);
+  }
+
+  // Cure-deadline review (admin only; the server refuses anyone else).
+  function reviewButtons(i) {
+    var box = el('div', { style: 'margin-top:6px; display:flex; gap:6px; flex-wrap:wrap' });
+    var resolve = async function (resolution) {
+      var reason = window.prompt(resolution === 'keep_deadline' ? 'Why is the current cure deadline still correct?' : 'Why is the deadline being corrected?');
+      if (!reason) return;
+      var body = { resolution: resolution, reason: reason };
+      if (resolution === 'deadline_corrected') {
+        var d = window.prompt('Corrected cure deadline (YYYY-MM-DD):');
+        if (!d) return;
+        body.new_cure_period_ends_on = d.trim();
+      }
+      try {
+        await api('/api/mailing/review-holds/' + encodeURIComponent(i.review_hold_id) + '/resolve', { method: 'POST', body: JSON.stringify(body) });
+        load();
+      } catch (e) { window.alert(e.message); }
+    };
+    box.appendChild(el('button', { class: 'b-light', type: 'button', text: 'Keep deadline', onclick: function () { resolve('keep_deadline'); } }));
+    box.appendChild(el('button', { class: 'b-light', type: 'button', text: 'Correct deadline', onclick: function () { resolve('deadline_corrected'); } }));
+    return box;
   }
 
   function defaultOutcome(l) {
@@ -215,7 +237,7 @@
             community_id: b.community_id, delivery_method: b.delivery_method, printed_at: b.printed_at,
             mailed_on: date.value || null, outcomes: outcomes, note: note.value || null
           }) });
-          showMsg(msg, 'ok', 'Saved: ' + r.mailed + ' mailed, ' + r.not_mailed + ' not mailed yet, ' + r.held + ' held, ' + r.excluded + ' pulled.');
+          showMsg(msg, 'ok', 'Saved: ' + r.mailed + ' mailed, ' + r.not_mailed + ' not mailed yet, ' + r.held + ' held, ' + r.excluded + ' pulled.' + (r.cure_deadline_reviews ? ' ' + r.cure_deadline_reviews + ' case(s) were mailed after their letter date and now wait for a cure-deadline review by Ed.' : ''));
           setTimeout(load, 900);
         } catch (e) { showMsg(msg, 'err', e.message); save.disabled = false; }
       } });

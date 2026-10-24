@@ -1,6 +1,6 @@
 {
   "migration": "544_letter_mailing_evidence.sql",
-  "summary": "Adds permanent mailing-evidence records so staff can confirm which printed letters were actually mailed and on what date, which were held or pulled. Adds mail holds (seeded with the two Still Creek certified letters Ed held on 10/23), presumed-not-mailed windows for the recent Still Creek and Waterview print runs, and the owners of each work-queue bucket (Martha for mailing, Ed for holds and corrections). No existing row changes; no letter, cure deadline, stage or charge changes.",
+  "summary": "Adds permanent mailing-evidence records so staff can confirm which printed letters were actually mailed and on what date, which were held or pulled. Adds mail holds (seeded with the two Still Creek certified letters Ed held on 10/23), presumed-not-mailed windows for the recent Still Creek and Waterview print runs, and the owners of each work-queue bucket (Martha for mailing, Ed for holds and corrections). Adds cure-deadline review holds: when staff confirm a letter was mailed later than the date its cure deadline was counted from, the case waits for an admin decision before escalating. No existing row changes; no letter, cure deadline, stage or charge changes.",
   "requires": [
     "543_delivery_receipts_grants.sql"
   ],
@@ -18,6 +18,7 @@
   ],
   "expected_changes": [
     "New tables: mailing_batch_confirmations, letter_mailing_evidence, letter_mail_holds, mailing_verification_scopes, enforcement_queue_owners.",
+    "New table enforcement_review_holds (starts empty; only its resolution can be recorded, once).",
     "Confirmations and evidence are append-only (a trigger refuses UPDATE and DELETE). A hold can only be released, once.",
     "2 mail holds (the Still Creek certified letters), 2 presumed-not-mailed windows (Still Creek 10/23-10/24, Waterview 10/8-10/24), 4 default bucket owners.",
     "No existing table, row, letter, deadline or charge changes."
@@ -39,7 +40,11 @@
       "function:letter_mail_holds_guard",
       "trigger:mailing_batch_confirmations.trg_mailing_batch_conf_append_only",
       "trigger:letter_mailing_evidence.trg_letter_mailing_evidence_append_only",
-      "trigger:letter_mail_holds.trg_letter_mail_holds_guard"
+      "trigger:letter_mail_holds.trg_letter_mail_holds_guard",
+      "table:enforcement_review_holds",
+      "index:uq_enforcement_review_hold_open",
+      "function:enforcement_review_holds_guard",
+      "trigger:enforcement_review_holds.trg_enforcement_review_holds_guard"
     ],
     "changed": [],
     "removed": []
@@ -85,8 +90,8 @@
     },
     {
       "name": "evidence is append-only",
-      "sql": "SELECT count(*)::int FROM pg_trigger WHERE tgname IN ('trg_letter_mailing_evidence_append_only', 'trg_mailing_batch_conf_append_only', 'trg_letter_mail_holds_guard')",
-      "expect": 3
+      "sql": "SELECT count(*)::int FROM pg_trigger WHERE tgname IN ('trg_letter_mailing_evidence_append_only', 'trg_mailing_batch_conf_append_only', 'trg_letter_mail_holds_guard', 'trg_enforcement_review_holds_guard')",
+      "expect": 4
     }
   ]
 }

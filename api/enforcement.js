@@ -6988,6 +6988,17 @@ async function _advanceWithStageLetter({ violationId, toStage, actor = null, sou
     };
   }
 
+  // A cure deadline under review (the earlier letter went out after the date its
+  // deadline was counted from) holds escalation until an admin resolves it.
+  const { loadOpenReviewHolds } = require('../lib/enforcement/mailing_evidence');
+  const reviewHolds = deps.reviewHolds || await loadOpenReviewHolds(db, { violationIds: [v.id] });
+  if (reviewHolds.some((h) => h.violation_id === v.id && !h.resolved_at)) {
+    return {
+      ok: false, code: 'cure_deadline_review_pending',
+      message: `${atTarget ? 'Cannot prepare the ' + _ADV_LABEL[toStage] + ' letter' : 'Not advanced'}: the cure deadline on this case is under review because the earlier letter was mailed after the date its deadline was counted from. Ed must resolve the deadline first.`,
+    };
+  }
+
   // 1) Prepare the letter first (unless one already exists), while the stage is unchanged.
   let letterId = existing ? existing.id : null;
   if (!letterId) {

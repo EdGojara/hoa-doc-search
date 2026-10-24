@@ -99,6 +99,56 @@ CREATE TABLE IF NOT EXISTS enforcement_queue_owners (
 COMMENT ON TABLE enforcement_queue_owners IS 'workpaper: which employee owns each violations work-queue bucket (community_id NULL = the default for every community).';
 CREATE UNIQUE INDEX IF NOT EXISTS uq_enforcement_queue_owner ON enforcement_queue_owners (coalesce(community_id, '00000000-0000-0000-0000-000000000000'::uuid), bucket);
 
+-- Cure-deadline review holds (Ed 2026-10-24): when staff confirm a letter was
+-- mailed LATER than the date its cure deadline was counted from, the case is
+-- flagged and escalation waits until an admin resolves the deadline. The flag
+-- keeps the deadline as it stood; a correction is recorded here, never silently.
+CREATE TABLE IF NOT EXISTS enforcement_review_holds (
+  id                          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  community_id                UUID NOT NULL REFERENCES communities(id) ON DELETE RESTRICT,
+  violation_id                UUID NOT NULL REFERENCES violations(id) ON DELETE RESTRICT,
+  interaction_id              UUID NULL REFERENCES interactions(id) ON DELETE RESTRICT,
+  kind                        TEXT NOT NULL CHECK (kind IN ('cure_deadline_review')),
+  reason                      TEXT NOT NULL,
+  basis_date                  DATE NULL,
+  confirmed_mailed_on         DATE NULL,
+  cure_period_ends_at_flagged TIMESTAMPTZ NULL,
+  flagged_by_user_id          UUID NULL REFERENCES user_profiles(id) ON DELETE RESTRICT,
+  created_at                  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  resolved_at                 TIMESTAMPTZ NULL,
+  resolved_by_user_id         UUID NULL REFERENCES user_profiles(id) ON DELETE RESTRICT,
+  resolution                  TEXT NULL CHECK (resolution IN ('keep_deadline', 'deadline_corrected')),
+  resolution_reason           TEXT NULL,
+  new_cure_period_ends_at     TIMESTAMPTZ NULL,
+  CHECK (resolved_at IS NULL OR (resolved_by_user_id IS NOT NULL AND resolution IS NOT NULL AND coalesce(resolution_reason, '') <> '')),
+  CHECK (resolution IS DISTINCT FROM 'deadline_corrected' OR new_cure_period_ends_at IS NOT NULL)
+);
+COMMENT ON TABLE enforcement_review_holds IS 'association_record: a case whose escalation waits for an admin to resolve its cure deadline, and how it was resolved. Only the resolution may be recorded, once.';
+CREATE UNIQUE INDEX IF NOT EXISTS uq_enforcement_review_hold_open ON enforcement_review_holds (violation_id, kind) WHERE resolved_at IS NULL;
+
+CREATE OR REPLACE FUNCTION enforcement_review_holds_guard() RETURNS trigger
+LANGUAGE plpgsql AS $fn$
+BEGIN
+  IF TG_OP = 'DELETE' THEN
+    RAISE EXCEPTION 'review holds are permanent (hold %); resolve it instead', OLD.id;
+  END IF;
+  IF OLD.resolved_at IS NOT NULL THEN
+    RAISE EXCEPTION 'review hold % was already resolved', OLD.id;
+  END IF;
+  IF NEW.violation_id IS DISTINCT FROM OLD.violation_id OR NEW.interaction_id IS DISTINCT FROM OLD.interaction_id
+     OR NEW.kind IS DISTINCT FROM OLD.kind OR NEW.reason IS DISTINCT FROM OLD.reason
+     OR NEW.basis_date IS DISTINCT FROM OLD.basis_date OR NEW.confirmed_mailed_on IS DISTINCT FROM OLD.confirmed_mailed_on
+     OR NEW.cure_period_ends_at_flagged IS DISTINCT FROM OLD.cure_period_ends_at_flagged
+     OR NEW.created_at IS DISTINCT FROM OLD.created_at OR NEW.community_id IS DISTINCT FROM OLD.community_id THEN
+    RAISE EXCEPTION 'only the resolution of review hold % can be recorded', OLD.id;
+  END IF;
+  RETURN NEW;
+END;
+$fn$;
+DROP TRIGGER IF EXISTS trg_enforcement_review_holds_guard ON enforcement_review_holds;
+CREATE TRIGGER trg_enforcement_review_holds_guard BEFORE UPDATE OR DELETE ON enforcement_review_holds
+  FOR EACH ROW EXECUTE FUNCTION enforcement_review_holds_guard();
+
 -- Permanent records: confirmations and evidence can never be edited or deleted.
 CREATE OR REPLACE FUNCTION mailing_evidence_append_only() RETURNS trigger
 LANGUAGE plpgsql AS $fn$
@@ -140,6 +190,7 @@ GRANT SELECT, INSERT ON letter_mailing_evidence TO service_role;
 GRANT SELECT, INSERT, UPDATE ON letter_mail_holds TO service_role;
 GRANT SELECT, INSERT, UPDATE ON mailing_verification_scopes TO service_role;
 GRANT SELECT, INSERT, UPDATE, DELETE ON enforcement_queue_owners TO service_role;
+GRANT SELECT, INSERT, UPDATE ON enforcement_review_holds TO service_role;
 
 -- Seed 1: the two Still Creek certified letters Ed held on 2026-10-23 (print run 10/23 3:26 PM).
 INSERT INTO letter_mail_holds (interaction_id, community_id, reason, directed_by, directed_at)
