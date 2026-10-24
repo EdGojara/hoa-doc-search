@@ -75,9 +75,10 @@ function presentBatch(b, commName) {
   return {
     key: b.key, community_id: b.community_id, community: commName, delivery_method: b.delivery_method, printed_at: b.printed_at,
     letter_count: b.letters.length, needs_confirmation: b.needs_confirmation, presumed_not_mailed: b.presumed_not_mailed, counts: b.counts,
+    categories: b.letters.reduce((m, l) => { const c = ME.mailingCategory(l.effective.state); m[c] = (m[c] || 0) + 1; return m; }, {}),
     letters: b.letters.map((l) => ({
       id: l.id, violation_id: l.violation_id, street_address: l.street_address, stage: l.stage, status: l.status,
-      state: l.effective.state, mailed_on: l.effective.mailed_on || null, verified: !!l.effective.verified,
+      state: l.effective.state, category: ME.mailingCategory(l.effective.state), category_label: ME.CATEGORY_LABEL[ME.mailingCategory(l.effective.state)], mailed_on: l.effective.mailed_on || null, verified: !!l.effective.verified,
       reason: l.effective.reason || null, hold_id: (l.effective.hold && l.effective.hold.id) || null,
       recorded_by: (l.effective.evidence && l.effective.evidence.recorded_by_name) || null,
     })).sort((a, z) => String(a.street_address || '').localeCompare(String(z.street_address || ''))),

@@ -67,6 +67,15 @@ console.log('mailing_evidence:');
     assert.ok(!ME.validateBatchConfirmation({ batchLetters: [letter()], outcomes: { L9: 'mailed' }, mailedOn: '2026-10-20', today: '2026-10-24', ctx: ctx() }).ok);
   });
 
+  await at('every state falls in exactly one of the categories staff see (mailed / needs date confirmation / printed not mailed / not yet printed / held)', async () => {
+    const want = { mailed: 'mailed', printed_unconfirmed: 'needs_date_confirmation', presumed_not_mailed: 'printed_not_mailed', not_mailed: 'printed_not_mailed', draft: 'not_yet_printed', approved: 'not_yet_printed', queued: 'not_yet_printed', on_hold: 'held', held: 'held', excluded: 'held' };
+    for (const [s, c] of Object.entries(want)) assert.strictEqual(ME.mailingCategory(s), c, s);
+    assert.strictEqual(ME.CATEGORY_LABEL.held, 'Held, must not be mailed');
+    const l = letter({ community_id: SCR, printed_at: '2026-10-23T20:26:00Z', mailed_at: '2026-10-23T20:29:00Z' });
+    assert.strictEqual(ME.mailingCategory(ME.effectiveMailing(l, ctx({ scopes })).state), 'printed_not_mailed', 'recent Still Creek run: printed but not mailed');
+    assert.strictEqual(ME.mailingCategory(ME.effectiveMailing(letter(), ctx()).state), 'needs_date_confirmation', 'older printed run: already mailed, needs date confirmation');
+  });
+
   const owners = [
     { community_id: null, bucket: 'confirm_mailing', user_id: 'm', name: 'Martha Bravo' },
     { community_id: null, bucket: 'ready_to_mail', user_id: 'm', name: 'Martha Bravo' },

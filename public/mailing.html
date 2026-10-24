@@ -69,9 +69,12 @@
   var state = { bucket: null, queue: null, batches: [] };
   var BUCKET_ORDER = ['ready_to_mail', 'confirm_mailing', 'held_correction', 'missing_notice'];
   var STATE_LABEL = {
-    mailed: 'Mailed', presumed_not_mailed: 'Presumed not mailed', not_mailed: 'Not mailed yet', on_hold: 'On hold',
-    held: 'Held', excluded: 'Pulled', printed_unconfirmed: 'Printed, not confirmed', queued: 'In mail queue', approved: 'Approved', draft: 'Draft'
+    mailed: 'Mailed', printed_unconfirmed: 'Already mailed, needs date confirmation', presumed_not_mailed: 'Printed but not mailed (presumed)',
+    not_mailed: 'Printed but not mailed', draft: 'Not yet printed (draft)', approved: 'Not yet printed (approved)', queued: 'Not yet printed (in mail queue)',
+    on_hold: 'Held, must not be mailed', held: 'Held, must not be mailed', excluded: 'Held, must not be mailed (pulled)'
   };
+  var CATEGORY_LABEL = { mailed: 'Mailed', needs_date_confirmation: 'Already mailed, needs date confirmation', printed_not_mailed: 'Printed but not mailed', not_yet_printed: 'Not yet printed', held: 'Held, must not be mailed' };
+  var CATEGORY_CLASS = { mailed: 't-ok', needs_date_confirmation: 't-info', printed_not_mailed: 't-warn', not_yet_printed: 't-info', held: 't-hold' };
   var STAGE_LABEL = { courtesy_1: 'Courtesy 1', courtesy_2: 'Courtesy 2', certified_209: 'Certified', fine_assessed: 'Fine', postcard: 'Postcard' };
   var NEEDS = { printed_unconfirmed: 1, presumed_not_mailed: 1, not_mailed: 1 };
 
@@ -158,10 +161,7 @@
     if (!state.batches.length) { box.appendChild(el('div', { class: 'muted', text: 'No print runs are waiting for confirmation.' })); return; }
     state.batches.forEach(function (b) {
       var card = el('div', { class: 'card' });
-      var tags = [];
-      if (b.presumed_not_mailed) tags.push(el('span', { class: 'tag t-warn', text: 'Presumed not mailed' }));
-      if (b.counts.on_hold) tags.push(el('span', { class: 'tag t-hold', text: b.counts.on_hold + ' on hold' }));
-      if (b.counts.mailed) tags.push(el('span', { class: 'tag t-ok', text: b.counts.mailed + ' already mailed' }));
+      var tags = Object.keys(b.categories || {}).map(function (c) { return el('span', { class: 'tag ' + (CATEGORY_CLASS[c] || 't-info'), text: b.categories[c] + ' ' + CATEGORY_LABEL[c].toLowerCase() }); });
       var head = el('div', { class: 'card-h', onclick: function () { card.classList.toggle('open'); } }, [
         el('b', { text: b.community }),
         el('span', { text: 'Printed ' + fmt(b.printed_at) }),
