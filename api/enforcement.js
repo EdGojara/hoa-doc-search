@@ -3269,8 +3269,14 @@ router.post('/mail-queue/confirm-mailed', express.json(), async (req, res) => {
     // (Ed 2026-10-23). It stays printed and unmailed until an admin records the
     // real mailing with an explicit correction reason (📮 Mailing).
     const { deliveryMismatch, letterStageOf } = require('../lib/enforcement/letter_stage');
-    const misrouted = _cleared.filter((l) => deliveryMismatch(l, deliveryMethod));
-    const mailable = _cleared.filter((l) => !deliveryMismatch(l, deliveryMethod));
+    // A letter under a mail hold (letter_mail_holds) is never confirmed as mailed
+    // here; it stays printed and unmailed until an admin releases the hold.
+    const { loadMailingContext } = require('../lib/enforcement/mailing_evidence');
+    const holdCtx = await loadMailingContext(supabase, _cleared.map((l) => l.id), communityId ? [communityId] : []);
+    const onHold = _cleared.filter((l) => holdCtx.holds.has(l.id));
+    if (onHold.length) console.warn(`[confirm-mailed] skipped ${onHold.length} letter(s) under a mail hold`);
+    const misrouted = _cleared.filter((l) => !holdCtx.holds.has(l.id) && deliveryMismatch(l, deliveryMethod));
+    const mailable = _cleared.filter((l) => !holdCtx.holds.has(l.id) && !deliveryMismatch(l, deliveryMethod));
     if (misrouted.length) {
       try {
         const { error: nErr } = await supabase.from('interactions').insert(misrouted.map((l) => ({
@@ -3342,7 +3348,7 @@ router.post('/mail-queue/confirm-mailed', express.json(), async (req, res) => {
         } catch (e) { console.warn('[certified-fee] sweep not started:', e.message); }
       }
     }
-    res.json({ confirmed: mailable.length, held: stale.length, held_wrong_method: misrouted.length });
+    res.json({ confirmed: mailable.length, held: stale.length, held_wrong_method: misrouted.length, on_hold: onHold.length });
   } catch (err) {
     console.error('[mail-queue.confirm-mailed]', err);
     res.status(500).json({ error: err.message });
@@ -6915,6 +6921,14 @@ async function _draftLetterForBumpedViolation(violation, decision, communityId, 
 const _ADV_PREV = { courtesy_2: 'courtesy_1', certified_209: 'courtesy_2' };
 const _ADV_LABEL = { courtesy_1: 'Courtesy 1', courtesy_2: 'Courtesy 2', certified_209: 'Certified §209' };
 const _ADV_DEAD = new Set(['rejected', 'voided', 'failed', 'cancelled', 'superseded', 'error']);
+// Plain wording for a prior letter that does not count as mailed.
+function _mailingLabel(letter, eff, letterMailState) {
+  if (eff.state === 'presumed_not_mailed') return 'presumed not mailed until staff confirm the mailing date';
+  if (eff.state === 'not_mailed') return 'confirmed by staff as not mailed yet';
+  if (eff.state === 'on_hold') return 'on hold, not to be mailed';
+  if (eff.state === 'excluded') return 'pulled from the mailing';
+  return letterMailState(letter).label;
+}
 async function _advanceWithStageLetter({ violationId, toStage, actor = null, source = 'staff', reason = null, observationId = null, inspectionId = null, recoverOnly = false }, deps = {}) {
   // deps lets the integration tests run this against an in-memory database.
   const db = deps.db || supabase;
@@ -6957,15 +6971,31 @@ async function _advanceWithStageLetter({ violationId, toStage, actor = null, sou
 
   // Mailing evidence for the notice before (Ed: eligibility depends on actual
   // notice and mailing, not the stage label). A Vantaca import carries its history.
+  // "Mailed" is the staff-confirmed answer (lib/enforcement/mailing_evidence): a
+  // held letter, one staff said was not mailed, or one in a presumed-not-mailed
+  // print window does not count, even if a confirm click stamped mailed_at.
   const carriedIn = v.source === 'vantaca_import' && !ofStage(fromStage).length;
-  const priorMailed = ofStage(fromStage).find((l) => l.mailed_at);
+  const { effectiveMailing, loadMailingContext } = require('../lib/enforcement/mailing_evidence');
+  const mailCtx = deps.mailCtx || await loadMailingContext(db, ofStage(fromStage).map((l) => l.id), [v.community_id]);
+  const priorMailed = ofStage(fromStage).find((l) => effectiveMailing({ ...l, community_id: v.community_id }, mailCtx).state === 'mailed');
   if (!priorMailed && !carriedIn) {
     const p = ofStage(fromStage)[0];
     return {
       ok: false, code: 'prior_notice_not_mailed',
       message: p
-        ? `${atTarget ? 'Cannot prepare the ' + _ADV_LABEL[toStage] + ' letter' : 'Not advanced'}: the ${_ADV_LABEL[fromStage]} letter is "${letterMailState(p).label}". Confirm its mailing in the Mail Queue${atTarget ? ', or Reduce the case to ' + _ADV_LABEL[fromStage] : ''}, then try again.`
+        ? `${atTarget ? 'Cannot prepare the ' + _ADV_LABEL[toStage] + ' letter' : 'Not advanced'}: the ${_ADV_LABEL[fromStage]} letter is "${_mailingLabel(p, effectiveMailing({ ...p, community_id: v.community_id }, mailCtx), letterMailState)}". Confirm its mailing on the Mailing confirmation screen${atTarget ? ', or Reduce the case to ' + _ADV_LABEL[fromStage] : ''}, then try again.`
         : `${atTarget ? 'Cannot prepare the ' + _ADV_LABEL[toStage] + ' letter' : 'Not advanced'}: no ${_ADV_LABEL[fromStage]} letter has been mailed on this case${atTarget ? '. Reduce the case to ' + _ADV_LABEL[fromStage] + ' or record the earlier mailing' : ''}.`,
+    };
+  }
+
+  // A cure deadline under review (the earlier letter went out after the date its
+  // deadline was counted from) holds escalation until an admin resolves it.
+  const { loadOpenReviewHolds } = require('../lib/enforcement/mailing_evidence');
+  const reviewHolds = deps.reviewHolds || await loadOpenReviewHolds(db, { violationIds: [v.id] });
+  if (reviewHolds.some((h) => h.violation_id === v.id && !h.resolved_at)) {
+    return {
+      ok: false, code: 'cure_deadline_review_pending',
+      message: `${atTarget ? 'Cannot prepare the ' + _ADV_LABEL[toStage] + ' letter' : 'Not advanced'}: the cure deadline on this case is under review because the earlier letter was mailed after the date its deadline was counted from. Ed must resolve the deadline first.`,
     };
   }
 
@@ -7001,7 +7031,7 @@ async function _advanceWithStageLetter({ violationId, toStage, actor = null, sou
   await note(atTarget ? `${_ADV_LABEL[toStage]} letter prepared (was missing)` : `Stage advanced: ${fromStage} → ${toStage}`,
     `${who} (${source.replace(/_/g, ' ')})${atTarget ? ' prepared the missing ' + _ADV_LABEL[toStage] + ' letter' : ' advanced this case from ' + _ADV_LABEL[fromStage] + ' to ' + _ADV_LABEL[toStage]} on ${now}.`
     + (reason ? ` Reason: ${String(reason).trim()}.` : '')
-    + ` Prior notice: ${priorMailed ? _ADV_LABEL[fromStage] + ' mailed ' + String(priorMailed.postmark_date || priorMailed.mailed_at).slice(0, 10) : 'carried in from Vantaca'}.`
+    + ` Prior notice: ${priorMailed ? _ADV_LABEL[fromStage] + ' mailed ' + String(effectiveMailing({ ...priorMailed, community_id: v.community_id }, mailCtx).mailed_on || priorMailed.postmark_date || priorMailed.mailed_at).slice(0, 10) : 'carried in from Vantaca'}.`
     + ` The ${_ADV_LABEL[toStage]} letter is in Drafts for approval; nothing was mailed.`);
   return { ok: true, advanced: !atTarget, recovered: atTarget, stage: toStage, letter_interaction_id: letterId,
     message: atTarget ? `${_ADV_LABEL[toStage]} letter prepared and placed in Drafts for approval.` : `Advanced to ${_ADV_LABEL[toStage]}. Its letter is in Drafts for approval; nothing was mailed.` };

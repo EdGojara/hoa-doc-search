@@ -1,0 +1,97 @@
+{
+  "migration": "544_letter_mailing_evidence.sql",
+  "summary": "Adds permanent mailing-evidence records so staff can confirm which printed letters were actually mailed and on what date, which were held or pulled. Adds mail holds (seeded with the two Still Creek certified letters Ed held on 10/23), presumed-not-mailed windows for the recent Still Creek and Waterview print runs, and the owners of each work-queue bucket (Martha for mailing, Ed for holds and corrections). Adds cure-deadline review holds: when staff confirm a letter was mailed later than the date its cure deadline was counted from, the case waits for an admin decision before escalating. No existing row changes; no letter, cure deadline, stage or charge changes.",
+  "requires": [
+    "543_delivery_receipts_grants.sql"
+  ],
+  "preflight": [
+    {
+      "name": "the two held Still Creek certified letters exist",
+      "sql": "SELECT count(*)::int FROM interactions WHERE id IN ('82d522d4-3fd4-4d98-ba8b-17cc5d003465', 'e7528e44-955b-46b2-ba6c-0b9afecdd5c2')",
+      "expect": 2
+    },
+    {
+      "name": "Martha and Ed have staff profiles",
+      "sql": "SELECT count(*)::int FROM user_profiles WHERE id IN ('387f44df-a73f-40b3-be28-e73b2303b7cf', 'e108ca2f-bae3-48c1-b183-3d790c51a2af')",
+      "expect": 2
+    }
+  ],
+  "expected_changes": [
+    "New tables: mailing_batch_confirmations, letter_mailing_evidence, letter_mail_holds, mailing_verification_scopes, enforcement_queue_owners.",
+    "New table enforcement_review_holds (starts empty; only its resolution can be recorded, once).",
+    "Confirmations and evidence are append-only (a trigger refuses UPDATE and DELETE). A hold can only be released, once.",
+    "2 mail holds (the Still Creek certified letters), 2 presumed-not-mailed windows (Still Creek 10/23-10/24, Waterview 10/8-10/24), 4 default bucket owners.",
+    "No existing table, row, letter, deadline or charge changes."
+  ],
+  "objects": {
+    "added": [
+      "table:mailing_batch_confirmations",
+      "table:letter_mailing_evidence",
+      "table:letter_mail_holds",
+      "table:mailing_verification_scopes",
+      "table:enforcement_queue_owners",
+      "index:idx_mailing_batch_conf_community",
+      "index:idx_letter_mailing_evidence_letter",
+      "index:idx_letter_mailing_evidence_violation",
+      "index:uq_letter_mail_holds_active",
+      "index:uq_mailing_verification_scope",
+      "index:uq_enforcement_queue_owner",
+      "function:mailing_evidence_append_only",
+      "function:letter_mail_holds_guard",
+      "trigger:mailing_batch_confirmations.trg_mailing_batch_conf_append_only",
+      "trigger:letter_mailing_evidence.trg_letter_mailing_evidence_append_only",
+      "trigger:letter_mail_holds.trg_letter_mail_holds_guard",
+      "table:enforcement_review_holds",
+      "index:uq_enforcement_review_hold_open",
+      "function:enforcement_review_holds_guard",
+      "trigger:enforcement_review_holds.trg_enforcement_review_holds_guard"
+    ],
+    "changed": [],
+    "removed": []
+  },
+  "row_changes": {
+    "letter_mail_holds": 2,
+    "mailing_verification_scopes": 2,
+    "enforcement_queue_owners": 4
+  },
+  "protected": [
+    {
+      "table": "interactions",
+      "order_by": "id"
+    },
+    {
+      "table": "violations",
+      "order_by": "id"
+    },
+    {
+      "table": "letter_mail_pieces",
+      "order_by": "id"
+    },
+    {
+      "table": "ar_charges",
+      "order_by": "id"
+    }
+  ],
+  "verify": [
+    {
+      "name": "service_role can read and write the new tables",
+      "sql": "SELECT (has_table_privilege('service_role', 'public.letter_mailing_evidence', 'INSERT')::int + has_table_privilege('service_role', 'public.mailing_batch_confirmations', 'INSERT')::int + has_table_privilege('service_role', 'public.letter_mail_holds', 'UPDATE')::int + has_table_privilege('service_role', 'public.mailing_verification_scopes', 'SELECT')::int + has_table_privilege('service_role', 'public.enforcement_queue_owners', 'SELECT')::int)",
+      "expect": 5
+    },
+    {
+      "name": "two active holds",
+      "sql": "SELECT count(*)::int FROM letter_mail_holds WHERE released_at IS NULL",
+      "expect": 2
+    },
+    {
+      "name": "two presumed-not-mailed windows",
+      "sql": "SELECT count(*)::int FROM mailing_verification_scopes WHERE active",
+      "expect": 2
+    },
+    {
+      "name": "evidence is append-only",
+      "sql": "SELECT count(*)::int FROM pg_trigger WHERE tgname IN ('trg_letter_mailing_evidence_append_only', 'trg_mailing_batch_conf_append_only', 'trg_letter_mail_holds_guard', 'trg_enforcement_review_holds_guard')",
+      "expect": 4
+    }
+  ]
+}
