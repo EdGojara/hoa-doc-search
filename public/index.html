@@ -18279,7 +18279,7 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
             <button type="button" id="inspPhotoFilterBtn" onclick="inspTogglePhotoFilter()" style="background:#fff; border:1px solid #d0d7de; color:#0B1D34; padding:6px 10px; border-radius:6px; font-size:12px; font-weight:600; cursor:pointer;" title="Toggle between violations only and ALL photos taken (including ones AI didn't flag).">📸 All photos</button>
             <button type="button" id="inspPauseBtn" onclick="inspPauseSession()" style="background:#fef3c7; border:1px solid #f59e0b; color:#92400e; padding:6px 12px; border-radius:6px; font-size:12px; font-weight:600; cursor:pointer;">⏸ Pause</button>
             <button type="button" id="inspResumeBtn" onclick="inspResumeSession()" style="display:none; background:#dcfce7; border:1px solid #22c55e; color:#15803d; padding:6px 12px; border-radius:6px; font-size:12px; font-weight:600; cursor:pointer;">▶ Resume</button>
-            <button type="button" onclick="inspEndSession()" style="background: none; border: 1px solid #d0d7de; color: #0B1D34; padding: 6px 12px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer;">End inspection</button>
+            <button type="button" onclick="inspEndSession()" title="Finish the drive. Shows what you inspected, the violations identified and any skipped houses before it records the completion." style="background: #15803d; border: 1px solid #15803d; color: #fff; padding: 6px 12px; border-radius: 6px; font-size: 12px; font-weight: 700; cursor: pointer;">✓ Complete inspection</button>
           </div>
         </div>
         <div id="inspPausedBanner" style="display:none; background:#fef3c7; border:1px solid #f59e0b; color:#92400e; padding:8px 12px; border-radius:8px; font-size:12.5px; margin-bottom:10px; font-weight:600;">
@@ -22893,7 +22893,9 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
     const driverName = (driverEl && driverEl.value.trim()) || me.full_name || me.email || '';
     if (driverName) { try { localStorage.setItem('insp_driver_name', driverName); } catch (_) {} }
     try {
-      const r = await fetch('/api/inspections', {
+      // _authFetch: the server records the signed-in employee who started the
+      // drive (the 5 PM closeout reminder goes to them).
+      const r = await window._authFetch('/api/inspections', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -24610,29 +24612,22 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
 
   async function inspEndSession() {
     if (!inspState.sessionId) return;
-    // Warn if photos are still pending upload
+    // Warn if photos are still pending upload (they are not in the counts yet).
     try {
       const items = await inspQueueList();
       const mine = items.filter((i) => i.metadata && i.metadata.inspection_id === inspState.sessionId);
       if (mine.length > 0) {
-        if (!confirm(`You have ${mine.length} photo${mine.length === 1 ? '' : 's'} still pending upload. End anyway?\n\nPending photos will keep trying in the background — they'll finish whenever signal returns, even after this session is marked ended.`)) return;
-      } else {
-        if (!confirm('End this inspection? You can review captured photos later in Recent inspections.')) return;
+        if (!confirm(`You have ${mine.length} photo${mine.length === 1 ? '' : 's'} still waiting to upload, so they are not in the counts yet. Complete anyway?\n\nWaiting photos keep trying in the background and finish whenever signal returns.`)) return;
       }
-    } catch (_) {
-      if (!confirm('End this inspection?')) return;
-    }
+    } catch (_) { /* queue unreadable: the completion dialog still confirms */ }
+    // Flush the GPS trail first so the inspected / skipped counts include it.
+    try { await inspFlushRoutePings(); } catch (_) {}
+    // Stage 2 (Ed 2026-10-24): the explicit Complete inspection dialog.
+    const done = await inspCloseoutDialog(inspState.sessionId);
+    if (!done) return;
     inspStopUploader();
     inspStopObservationsPoll();
-    // Flush any remaining route pings before tearing down session state
-    try { await inspFlushRoutePings(); } catch (_) {}
-    try {
-      await fetch(`/api/inspections/${inspState.sessionId}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: 'captured', ended_at: new Date().toISOString() }),
-      });
-    } catch (_) { /* still reset locally */ }
+    try { inspClearActiveSession(inspState.sessionId); } catch (_) {}
     if (inspState.gpsWatcher) {
       try { navigator.geolocation.clearWatch(inspState.gpsWatcher); } catch (_) {}
       inspState.gpsWatcher = null;
@@ -29585,12 +29580,13 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
       <div style="display:flex; align-items:center; gap:12px; padding:10px 16px; background:#000; color:#fff; flex-wrap:wrap;">
         <div style="font-weight:700; font-size:14px;">📸 Inspection review</div>
         <div id="inspReviewSummary" style="font-size:12px; color:#cbd5e1; margin-right:10px;"></div>
+        <div id="inspReviewStageInfo" style="font-size:12px; color:#fde68a; margin-right:10px;"></div>
         <button onclick="inspReviewSetFilter('all')" id="inspReviewFilterAll" class="rev-chip" style="background:#fff; color:#0B1D34; border:0; padding:5px 12px; border-radius:14px; font-size:12px; font-weight:600; cursor:pointer;">All</button>
         <button onclick="inspReviewSetFilter('violation')" id="inspReviewFilterViolation" class="rev-chip" style="background:rgba(255,255,255,0.15); color:#fff; border:0; padding:5px 12px; border-radius:14px; font-size:12px; font-weight:600; cursor:pointer;">⚠ Violations</button>
         <button onclick="inspReviewSetFilter('clean')" id="inspReviewFilterClean" class="rev-chip" style="background:rgba(255,255,255,0.15); color:#fff; border:0; padding:5px 12px; border-radius:14px; font-size:12px; font-weight:600; cursor:pointer;">✓ AI said clean</button>
         <button onclick="inspReviewSetFilter('pending')" id="inspReviewFilterPending" class="rev-chip" style="background:rgba(255,255,255,0.15); color:#fff; border:0; padding:5px 12px; border-radius:14px; font-size:12px; font-weight:600; cursor:pointer;">❓ Not analyzed</button>
         <button id="inspReviewAddVioBtn" onclick="inspReviewAddViolation()" title="Add a violation the AI missed on the photo you're looking at — back at the office you often spot more in the same shot. You can add several to one photo." style="margin-left:auto; background:#dc2626; color:#fff; border:0; padding:6px 14px; border-radius:6px; font-size:13px; font-weight:600; cursor:pointer;">+ Add violation (this photo)</button>
-        <button id="inspReviewCompleteBtn" onclick="inspReviewComplete()" title="" style="display:none; margin-left:8px; background:#15803d; color:#fff; border:0; padding:6px 14px; border-radius:6px; font-size:13px; font-weight:700; cursor:pointer;">✓ Complete inspection</button>
+        <button id="inspReviewCompleteBtn" onclick="inspReviewComplete()" title="" style="display:none; margin-left:8px; background:#15803d; color:#fff; border:0; padding:6px 14px; border-radius:6px; font-size:13px; font-weight:700; cursor:pointer;">✓ Mark review complete</button>
         <button onclick="inspCloseReview()" style="margin-left:8px; background:rgba(255,255,255,0.2); color:#fff; border:0; padding:6px 14px; border-radius:6px; font-size:14px; cursor:pointer;">× Close</button>
       </div>
       <!-- Letters-needed checklist: when completion is blocked, the violations
@@ -29906,24 +29902,36 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
     const gate = document.getElementById('inspReviewLetterGate');
     const st = window._inspReview && window._inspReview.status;
     if (!btn || !gate) return;
+    // Stage + who/when, and whether the review can be marked complete
+    // (refused while any observation still needs a decision).
+    const info = document.getElementById('inspReviewStageInfo');
+    let rg = null;
+    try {
+      const gr = await window._authFetch('/api/inspections/' + encodeURIComponent(inspectionId) + '/review-gate');
+      if (gr.ok) rg = await gr.json();
+    } catch (_) {}
+    if (info) info.textContent = rg && rg.stage ? inspStageText(rg.stage) : '';
     if (st === 'closed' || st === 'voided') { btn.style.display = 'none'; gate.style.display = 'none'; return; }
-    // Complete is NEVER disabled (complete + reminder). Always green + clickable;
-    // inspFinalize warns about any unsent letters before closing.
     btn.style.display = ''; btn.disabled = false; btn.style.opacity = '1'; btn.style.cursor = 'pointer';
-    btn.textContent = '✓ Complete inspection';
+    btn.textContent = '✓ Mark review complete';
+    if (rg && rg.gate && !rg.gate.allowed) {
+      btn.disabled = true; btn.style.opacity = '0.55'; btn.style.cursor = 'not-allowed';
+      btn.title = rg.gate.reason;
+      if (info) info.textContent = (info.textContent ? info.textContent + ' · ' : '') + rg.gate.reason;
+    }
     let cs;
     try {
       const cr = await fetch('/api/inspections/' + encodeURIComponent(inspectionId) + '/completion-status');
       cs = await cr.json();
     } catch (_) { gate.style.display = 'none'; return; }
     if (cs.ready) {
-      btn.title = 'All letters sent. Completes the inspection and moves it to Completed.';
+      if (!btn.disabled) btn.title = 'Records that every observation has a decision and moves the inspection to Completed.';
       gate.style.display = 'none';
       return;
     }
     // Not blocked — just a reminder: show what's still unsent + a one-click way
     // to handle it. Completing anyway is fine; letters stay in the Mail Queue.
-    btn.title = `${cs.pending_letters} letter(s) still unsent — you can complete anyway (they stay in the Mail Queue) or generate/print them below first.`;
+    if (!btn.disabled) btn.title = `${cs.pending_letters} letter(s) still unsent. Marking the review complete does not send them; they stay in the Mail Queue.`;
     const esc = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     const rows = (cs.missing || []).map((m) => {
       const action = m.has_draft
@@ -30317,13 +30325,15 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
         const community = i.communities?.name || '—';
         const modeLabel = { foot: '🚶', drive_by: '🚗', mounted_camera: '📷', spot_check: '📍' }[i.mode] || '?';
         const photoStr = `${i.total_photos || 0} photo${i.total_photos === 1 ? '' : 's'}`;
-        const statusLabel = ({
+        const statusLabel = (i.stage && i.stage.stage) ? escapeHtml(inspStageText(i.stage)) : (({
           in_progress: 'In progress',
           captured: 'Captured',
           ai_analyzed: 'Analyzed',
           reviewed: 'Reviewed',
           closed: '✓ Completed',
-        })[i.status] || i.status;
+        })[i.status] || i.status);
+        // Stage 2 not done yet (tracked drive, or a legacy drive still driving).
+        const needsCloseout = !!(i.stage && i.stage.stage === 'in_progress' && (i.stage.tracked || i.status === 'in_progress' || i.status === 'paused'));
         // Closed (finalized) inspections get a Reopen action so staff can
         // un-finalize and edit. Voided inspections are filtered out server-side.
         const isClosed = (i.status === 'closed');
@@ -30394,18 +30404,23 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
           </button>`;
         const endDriveBtn = `
           <button type="button" onclick="inspEndDriveById('${i.id}')"
-                  style="background: #fff; color: #0B1D34; border: 1px solid #cbd5e1; padding: 6px 10px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer;"
-                  title="End the drive — stops capturing and keeps the inspection OPEN for review.">
-            ⏹ End drive
+                  style="background: #fff; color: #15803d; border: 1px solid #86efac; padding: 6px 10px; border-radius: 6px; font-size: 12px; font-weight: 700; cursor: pointer;"
+                  title="The inspector closes the drive. Shows inspected, violations identified and skipped counts first. Approves nothing and sends nothing.">
+            ✓ Complete inspection
           </button>`;
         // Complete — right on the row now (Ed 2026-06-29: no hunting). Never
         // blocked; if letters are still unsent inspFinalize warns first and
         // they stay in the Mail Queue.
-        const completeBtn = `
+        const completeBtn = (needsCloseout && i.stage.tracked) ? `
+          <button type="button" disabled
+                  style="background: #e2e8f0; color: #64748b; border: none; padding: 6px 10px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: not-allowed;"
+                  title="The inspector has not completed this inspection yet. Complete the inspection first.">
+            ✓ Mark review complete
+          </button>` : `
           <button type="button" onclick="inspFinalize('${i.id}')"
                   style="background: #15803d; color: #fff; border: none; padding: 6px 10px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer;"
-                  title="Complete this inspection and move it to Completed. If letters are still unsent you'll get a reminder — they stay in the Mail Queue to send.">
-            ✓ Complete
+                  title="Records that every observation has a decision and moves the inspection to Completed. Refused while observations are pending. Letters stay in the Mail Queue.">
+            ✓ Mark review complete
           </button>`;
         const discardBtn = `
           <button type="button" onclick="inspDiscard('${i.id}')"
@@ -30444,7 +30459,7 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
             ${viewPhotosBtn}
             ${isUnfinished ? resumeBtn : ''}
             ${i.status === 'in_progress' ? pauseBtn : ''}
-            ${isUnfinished ? endDriveBtn : ''}
+            ${(isUnfinished || needsCloseout) ? endDriveBtn : ''}
             ${completeBtn}
             ${moreMenu(`${isUnfinished ? '' : resumeBtn}${analyzeBtn}${backfillBtn}${discardBtn}${adminForceDeleteBtn}`)}
           </div>
@@ -30468,8 +30483,8 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
         <div style="font-size:12px; font-weight:700; color:#0B1D34; letter-spacing:0.04em; text-transform:uppercase; padding:10px 6px 4px;">${title} <span style="color:#94a3b8; font-weight:500; text-transform:none; letter-spacing:0;">${hint}</span></div>
         ${rows.length ? rows.map(rowHtml).join('') : `<div style="color:#94a3b8; font-size:12px; padding:4px 8px 10px;">${emptyMsg}</div>`}`;
       wrap.innerHTML =
-        section('Open inspections', '· drives still in progress — complete after letters print', openOnes, 'Nothing open — every drive is completed.') +
-        section('Completed inspections', '· closed after letters printed', doneOnes, 'No completed inspections yet.');
+        section('Open inspections', '· complete the drive, then finish the review', openOnes, 'Nothing open. Every drive is completed.') +
+        section('Completed inspections', '· review completed', doneOnes, 'No completed inspections yet.');
     } catch (e) {
       wrap.innerHTML = `<div style="color: #b91c1c; font-size: 12px; padding: 12px;">Couldn't load recent inspections.</div>`;
     }
@@ -30856,8 +30871,16 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
   // permanent record for this community walkthrough. Stays visible in the
   // recent list but marked 🔒 Finalized and no longer offers Discard/Finalize.
   async function inspFinalize(id) {
-    // Complete + reminder (never blocked): if letters are still unsent, say so
-    // clearly and let the user decide — they stay in the Mail Queue either way.
+    // Stage 3 (Ed 2026-10-24): Mark review complete. Refused while any
+    // observation still needs a decision; records who finished the review.
+    let gate = null;
+    try {
+      const gr = await window._authFetch('/api/inspections/' + encodeURIComponent(id) + '/review-gate');
+      if (gr.ok) gate = await gr.json();
+    } catch (_) { /* the server re-checks on submit */ }
+    if (gate && gate.gate && !gate.gate.allowed) { alert('The review cannot be marked complete yet.\n\n' + gate.gate.reason); return; }
+    if (gate && gate.gate) return inspReviewCompleteSubmit(id);
+    // Migration 546 not applied yet: the previous Complete behavior below.
     let pending = 0;
     try {
       const cr = await fetch('/api/inspections/' + encodeURIComponent(id) + '/completion-status');
@@ -30885,6 +30908,31 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
   }
   window.inspFinalize = inspFinalize;
 
+  async function inspReviewCompleteSubmit(id) {
+    let pending = 0;
+    try {
+      const cr = await fetch('/api/inspections/' + encodeURIComponent(id) + '/completion-status');
+      const cs = await cr.json();
+      pending = (cs && cs.pending_letters) || 0;
+    } catch (_) {}
+    const letters = pending > 0
+      ? `\n\n${pending} letter${pending === 1 ? '' : 's'} from this drive ${pending === 1 ? 'is' : 'are'} still in Drafts or the Mail Queue. ${pending === 1 ? 'It stays' : 'They stay'} there to approve and mail as usual.`
+      : '';
+    if (!confirm('Mark the review complete?\n\nThis records that every observation has a decision. It does not approve, print or mail any letter.' + letters)) return;
+    try {
+      const r = await window._authFetch('/api/inspections/' + encodeURIComponent(id) + '/review-complete', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.detail || j.error || `review complete failed (${r.status})`);
+      try { inspClearActiveSession(id); } catch (_) {}
+      inspLoadRecent();
+      try { if (typeof inspCloseReview === 'function') inspCloseReview(); } catch (_) {}
+    } catch (e) {
+      alert('Could not mark the review complete: ' + e.message);
+    }
+  }
+
   // Pause a drive from the list (Ed 2026-06-29) — stops the time-on-drive clock.
   async function inspPauseById(id, btn) {
     try {
@@ -30902,7 +30950,130 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
   // End the DRIVE from the list — stop capturing, keep the inspection open for
   // review. Does NOT complete it (that's the gated step on the photos screen).
   async function inspEndDriveById(id) {
-    if (!confirm('End the drive?\n\nThis stops capturing and keeps the inspection OPEN for review. You complete it later from the photos, after the letters print.')) return;
+    // Same explicit Complete inspection dialog as the live drive (stage 2).
+    const done = await inspCloseoutDialog(id);
+    if (!done) return;
+    try { inspClearActiveSession(id); } catch (_) {}
+    inspLoadRecent();
+  }
+  window.inspEndDriveById = inspEndDriveById;
+
+  // ============================================================
+  // INSPECTION STAGES (Ed 2026-10-24, migration 546)
+  //   1. In progress  2. Inspection completed  3. Review completed
+  // Completing never approves a violation, sends a letter or advances a
+  // case; letters keep moving through Drafts and the Mail Queue.
+  // ============================================================
+  function inspStageEsc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+  function inspStageWhen(iso) {
+    return iso ? new Date(iso).toLocaleString('en-US', { timeZone: 'America/Chicago', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '';
+  }
+  // One plain line: stage, who and when, and the completion counts.
+  function inspStageText(st) {
+    if (!st || !st.stage) return '';
+    if (st.stage === 'review_completed') {
+      if (st.review_completed) return `Review completed by ${st.review_completed.by || 'staff'}, ${inspStageWhen(st.review_completed.at)}`;
+      return 'Review completed' + (st.note ? ` (${st.note})` : '');
+    }
+    if (st.stage === 'inspection_completed' && st.completed) {
+      const c = st.counts || {};
+      return `Inspection completed by ${st.completed.by || 'staff'}, ${inspStageWhen(st.completed.at)} · ${c.inspected != null ? c.inspected : '?'} inspected · ${c.violations_identified != null ? c.violations_identified : '?'} violations identified · ${c.skipped != null ? c.skipped : '?'} skipped · review not complete`;
+    }
+    if (st.stage === 'in_progress') return st.tracked ? 'In progress · the inspector has not completed it yet' : 'In progress';
+    return st.label || st.stage;
+  }
+  window.inspStageText = inspStageText;
+
+  // Shows the counts, collects optional skip reasons, then records the
+  // completion as the signed-in employee. Resolves true when completed.
+  async function inspCloseoutDialog(inspectionId) {
+    if (!inspectionId) return false;
+    let pv = null;
+    try {
+      const r = await window._authFetch('/api/inspections/' + encodeURIComponent(inspectionId) + '/closeout-preview');
+      const j = await r.json().catch(() => ({}));
+      if (r.status === 503) return inspCloseoutLegacy(inspectionId);   // migration 546 not applied yet
+      if (!r.ok) throw new Error(j.detail || j.error || ('HTTP ' + r.status));
+      pv = j;
+    } catch (e) {
+      alert('Could not load the inspection counts: ' + e.message + '\n\nNothing was changed. Try again in a moment.');
+      return false;
+    }
+    if (pv.stage && pv.stage.stage !== 'in_progress') {
+      alert('This inspection is already completed.\n\n' + inspStageText(pv.stage));
+      return false;
+    }
+    const SHOW = 200;
+    const skipped = pv.skipped_properties || [];
+    const sm = pv.summary || {};
+    const old = document.getElementById('inspCloseoutModal');
+    if (old) old.remove();
+    const modal = document.createElement('div');
+    modal.id = 'inspCloseoutModal';
+    modal.style.cssText = 'position:fixed; inset:0; background:rgba(11,29,52,0.55); z-index:10000; display:flex; align-items:center; justify-content:center; padding:16px;';
+    const rows = skipped.slice(0, SHOW).map((p) => `
+      <div style="display:flex; gap:8px; align-items:center; padding:4px 0; border-top:1px solid #f1f5f9; flex-wrap:wrap;">
+        <div style="flex:1; min-width:140px; font-size:12.5px; color:#0B1D34;">${inspStageEsc(p.street_address || '(no address)')}<span style="color:#94a3b8; font-size:11px;"> ${p.source === 'not_visited' ? 'not visited' : ''}</span></div>
+        <input data-skip-pid="${inspStageEsc(p.property_id)}" maxlength="300" placeholder="Reason (optional)" style="flex:1; min-width:120px; font-size:12px; padding:4px 6px; border:1px solid #cbd5e1; border-radius:5px;">
+      </div>`).join('');
+    const more = skipped.length > SHOW ? `<div style="font-size:11.5px; color:#64748b; padding-top:6px;">And ${skipped.length - SHOW} more. They use the general reason above.</div>` : '';
+    const basis = sm.coverage_basis === 'photos_only' ? 'No GPS trail was recorded, so only photographed houses count as inspected.' : 'Inspected means photographed or passed on the GPS trail.';
+    modal.innerHTML = `
+      <div style="background:#fff; border-radius:12px; max-width:560px; width:100%; max-height:90vh; display:flex; flex-direction:column; box-shadow:0 12px 40px rgba(0,0,0,0.3);">
+        <div style="padding:16px 18px 8px;">
+          <div style="font-size:16px; font-weight:700; color:#0B1D34;">Complete this inspection?</div>
+          <div style="font-size:12.5px; color:#475569; margin-top:4px;">This records you as the inspector who completed the drive. It does not approve any violation, send any letter or move any case forward. The office reviews the observations next.</div>
+        </div>
+        <div style="display:flex; gap:8px; padding:4px 18px 10px; flex-wrap:wrap;">
+          <div style="flex:1; min-width:120px; background:#f0fdf4; border:1px solid #bbf7d0; border-radius:8px; padding:8px 10px;"><div style="font-size:20px; font-weight:700; color:#15803d;">${pv.inspected_property_count}</div><div style="font-size:11.5px; color:#166534;">properties inspected</div></div>
+          <div style="flex:1; min-width:120px; background:#fef2f2; border:1px solid #fecaca; border-radius:8px; padding:8px 10px;"><div style="font-size:20px; font-weight:700; color:#b91c1c;">${pv.violations_identified}</div><div style="font-size:11.5px; color:#991b1b;">violations identified</div></div>
+          <div style="flex:1; min-width:120px; background:#fffbeb; border:1px solid #fde68a; border-radius:8px; padding:8px 10px;"><div style="font-size:20px; font-weight:700; color:#92400e;">${pv.skipped_property_count}</div><div style="font-size:11.5px; color:#92400e;">properties skipped</div></div>
+        </div>
+        <div style="font-size:11.5px; color:#64748b; padding:0 18px 8px;">${inspStageEsc(basis)}${sm.photos != null ? ` ${sm.photos} photos, ${sm.observations || 0} observations so far.` : ''}</div>
+        ${skipped.length ? `
+        <div style="padding:0 18px 6px;">
+          <label for="inspCloseoutReason" style="font-size:12px; font-weight:600; color:#0B1D34;">Why were properties skipped? (optional, applies to all)</label>
+          <input id="inspCloseoutReason" maxlength="300" placeholder="For example: gate locked, ran out of daylight" style="width:100%; box-sizing:border-box; font-size:12.5px; padding:6px 8px; border:1px solid #cbd5e1; border-radius:6px; margin-top:4px;">
+        </div>
+        <div style="flex:1; overflow-y:auto; padding:0 18px 8px; min-height:60px;">${rows}${more}</div>` : '<div style="padding:0 18px 8px; font-size:12.5px; color:#15803d;">No skipped properties.</div>'}
+        <div id="inspCloseoutErr" style="display:none; color:#b91c1c; font-size:12.5px; padding:0 18px 6px;"></div>
+        <div style="display:flex; gap:8px; justify-content:flex-end; padding:10px 18px 16px; border-top:1px solid #e2e8f0;">
+          <button type="button" id="inspCloseoutCancel" style="background:#fff; color:#0B1D34; border:1px solid #cbd5e1; padding:8px 14px; border-radius:6px; font-size:13px; font-weight:600; cursor:pointer;">Not yet</button>
+          <button type="button" id="inspCloseoutGo" style="background:#15803d; color:#fff; border:0; padding:8px 16px; border-radius:6px; font-size:13px; font-weight:700; cursor:pointer;">✓ Complete inspection</button>
+        </div>
+      </div>`;
+    document.body.appendChild(modal);
+    return new Promise((resolve) => {
+      const close = (v) => { modal.remove(); resolve(v); };
+      modal.querySelector('#inspCloseoutCancel').onclick = () => close(false);
+      modal.querySelector('#inspCloseoutGo').onclick = async () => {
+        const btn = modal.querySelector('#inspCloseoutGo');
+        const err = modal.querySelector('#inspCloseoutErr');
+        btn.disabled = true; btn.textContent = 'Completing...';
+        const reasons = {};
+        modal.querySelectorAll('input[data-skip-pid]').forEach((el) => { const v = el.value.trim(); if (v) reasons[el.getAttribute('data-skip-pid')] = v; });
+        const generalEl = modal.querySelector('#inspCloseoutReason');
+        const general = generalEl ? generalEl.value.trim() : '';
+        try {
+          const r = await window._authFetch('/api/inspections/' + encodeURIComponent(inspectionId) + '/complete', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ skip_reason: general || null, skip_reasons: reasons }),
+          });
+          const j = await r.json().catch(() => ({}));
+          if (!r.ok) throw new Error(j.detail || j.error || ('HTTP ' + r.status));
+          close(true);
+        } catch (e) {
+          err.textContent = 'Not completed: ' + e.message; err.style.display = 'block';
+          btn.disabled = false; btn.textContent = '✓ Complete inspection';
+        }
+      };
+    });
+  }
+  window.inspCloseoutDialog = inspCloseoutDialog;
+
+  // Before migration 546 is applied: the previous End drive behavior.
+  async function inspCloseoutLegacy(id) {
+    if (!confirm('End the drive?\n\nThis stops capturing and keeps the inspection open for review.')) return false;
     try {
       const r = await fetch(`/api/inspections/${encodeURIComponent(id)}`, {
         method: 'PATCH',
@@ -30910,11 +31081,9 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
         body: JSON.stringify({ status: 'captured', ended_at: new Date().toISOString() }),
       });
       if (!r.ok) { const j = await r.json().catch(() => ({})); throw new Error(j.error || `end failed (${r.status})`); }
-      try { inspClearActiveSession(id); } catch (_) {}
-      inspLoadRecent();
-    } catch (e) { alert('Could not end drive: ' + e.message); }
+      return true;
+    } catch (e) { alert('Could not end drive: ' + e.message); return false; }
   }
-  window.inspEndDriveById = inspEndDriveById;
 
   // Auto-load when the Inspect tab is opened.
   // The switchTab function is defined LATER in this file (in the main app

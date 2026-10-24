@@ -1,0 +1,108 @@
+{
+  "migration": "546_inspection_closeout_stages.sql",
+  "summary": "Inspection closeout stages (Ed 2026-10-24). Adds stage columns to inspections (who completed the drive and when, inspected / violations identified / skipped counts, the skipped list, who completed the review and when, and closeout_tracked which is FALSE for every existing row) plus inspection_closeout_notices, the once-per-drive-per-day log for the 5 PM inspector reminder and the 8 AM Amanda flag. No UPDATE runs: no inspection, observation, violation or letter row changes.",
+  "requires": [
+    "211_inspection_pause_segments.sql"
+  ],
+  "preflight": [
+    {
+      "name": "inspections has no closeout columns yet",
+      "sql": "SELECT count(*)::int FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'inspections' AND column_name IN ('closeout_tracked','completed_at','review_completed_at')",
+      "expect": 0
+    },
+    {
+      "name": "the notices table does not exist yet",
+      "sql": "SELECT count(*)::int FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'inspection_closeout_notices'",
+      "expect": 0
+    }
+  ],
+  "expected_changes": [
+    "inspections: 13 new columns (closeout_tracked boolean NOT NULL DEFAULT false, started_by_user_id, completed_at, completed_by_user_id, completed_by_name, inspected_property_count, violations_identified, skipped_property_count, skipped_properties, closeout_summary, review_completed_at, review_completed_by_user_id, review_completed_by_name). Existing rows read closeout_tracked = false and NULL for the rest.",
+    "inspections: four CHECK constraints (non-negative counts, completed actor present with completed_at, review actor present with review_completed_at, skipped list is an array) and one partial index for open tracked drives.",
+    "New empty table inspection_closeout_notices with a once-per-inspection-per-kind-per-day unique key and service_role SELECT/INSERT/UPDATE.",
+    "No rows change in inspections, property_observations, violations or interactions."
+  ],
+  "objects": {
+    "added": [
+      "column:inspections.closeout_tracked",
+      "column:inspections.started_by_user_id",
+      "column:inspections.completed_at",
+      "column:inspections.completed_by_user_id",
+      "column:inspections.completed_by_name",
+      "column:inspections.inspected_property_count",
+      "column:inspections.violations_identified",
+      "column:inspections.skipped_property_count",
+      "column:inspections.skipped_properties",
+      "column:inspections.closeout_summary",
+      "column:inspections.review_completed_at",
+      "column:inspections.review_completed_by_user_id",
+      "column:inspections.review_completed_by_name",
+      "constraint:inspections.inspections_closeout_counts_check",
+      "constraint:inspections.inspections_completed_actor_check",
+      "constraint:inspections.inspections_review_actor_check",
+      "constraint:inspections.inspections_skipped_array_check",
+      "index:idx_inspections_closeout_open",
+      "table:inspection_closeout_notices",
+      "column:inspection_closeout_notices.id",
+      "column:inspection_closeout_notices.inspection_id",
+      "column:inspection_closeout_notices.community_id",
+      "column:inspection_closeout_notices.kind",
+      "column:inspection_closeout_notices.notice_date",
+      "column:inspection_closeout_notices.recipient",
+      "column:inspection_closeout_notices.channel",
+      "column:inspection_closeout_notices.outcome",
+      "column:inspection_closeout_notices.detail",
+      "column:inspection_closeout_notices.work_item_id",
+      "column:inspection_closeout_notices.created_at",
+      "column:inspection_closeout_notices.sent_at",
+      "constraint:inspection_closeout_notices.inspection_closeout_notices_pkey",
+      "constraint:inspection_closeout_notices.inspection_closeout_notices_inspection_fkey",
+      "constraint:inspection_closeout_notices.inspection_closeout_notices_community_fkey",
+      "constraint:inspection_closeout_notices.inspection_closeout_notices_kind_check",
+      "constraint:inspection_closeout_notices.inspection_closeout_notices_channel_check",
+      "constraint:inspection_closeout_notices.inspection_closeout_notices_outcome_check",
+      "constraint:inspection_closeout_notices.inspection_closeout_notices_once_per_day",
+      "index:inspection_closeout_notices_pkey",
+      "index:inspection_closeout_notices_once_per_day",
+      "index:idx_closeout_notices_date"
+    ],
+    "changed": [],
+    "removed": []
+  },
+  "row_changes": {
+    "inspections": 0,
+    "property_observations": 0,
+    "violations": 0,
+    "interactions": 0
+  },
+  "protected": [
+    { "table": "inspections", "order_by": "id" },
+    { "table": "property_observations", "order_by": "id" },
+    { "table": "violations", "order_by": "id" },
+    { "table": "interactions", "order_by": "id" }
+  ],
+  "verify": [
+    {
+      "name": "every existing drive is untracked (no reminder flood)",
+      "sql": "SELECT count(*)::int FROM inspections WHERE closeout_tracked",
+      "expect": 0
+    },
+    {
+      "name": "new drives default to untracked until the API sets it",
+      "sql": "SELECT count(*)::int FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'inspections' AND column_name = 'closeout_tracked' AND column_default = 'false' AND is_nullable = 'NO'",
+      "expect": 1
+    },
+    {
+      "name": "the once-per-day guard exists",
+      "sql": "SELECT count(*)::int FROM pg_constraint WHERE conname = 'inspection_closeout_notices_once_per_day'",
+      "expect": 1
+    },
+    {
+      "name": "no notices yet",
+      "sql": "SELECT count(*)::int FROM inspection_closeout_notices",
+      "expect": 0
+    }
+  ],
+  "api_checks": [],
+  "reload_schema": true
+}
