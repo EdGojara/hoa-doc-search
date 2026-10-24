@@ -60,7 +60,7 @@ async function requireStaff(req, res) {
 // Stricter gate: OWNER only (Ed), not merely "an admin". For personal surfaces
 // like Tessa (Ed's EA) that must never be visible to anyone else, even a future
 // second admin. Matches the authed user's email to OWNER_EMAIL (Ed 2026-07-11).
-const OWNER_EMAIL = (process.env.OWNER_EMAIL || 'egojara@bedrocktx.com').toLowerCase();
+const { OWNER_EMAIL } = require('../lib/auth/owner_email');
 async function requireOwner(req, res) {
   const u = await getAuthedUser(req);
   const email = (u && u.email ? String(u.email) : '').toLowerCase();

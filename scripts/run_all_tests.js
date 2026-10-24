@@ -70,9 +70,11 @@ const CHECKS = [
   // Homeowner 360 writes use the employee's own sign-in, never the shared cookie (Ed 2026-10-24).
   'tests/test_h360_staff_auth.js',
   // Permanent audit trail, closure outcomes, legacy priors never auto-count (Ed 2026-10-24, migration 545).
-  'tests/test_audit_closures.js',
-  'tests/test_courtesy2_reminder.js',
+  'tests/test_audit_closures.js',  'tests/test_courtesy2_reminder.js',
   'tests/test_advance_letter_workflow.js',
+  // Fines: Ed-only approval, board schedule required, posting closed until
+  // notice + hearing are recorded, automation never fines (Ed 2026-10-24).
+  'tests/test_fine_safeguards.js',
   'tests/test_forecast_engine.js',
   'tests/test_budget_four_columns.js',
   'tests/test_check_receipts.js',

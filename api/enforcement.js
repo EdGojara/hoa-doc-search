@@ -545,6 +545,11 @@ router.post('/open-violation', express.json(), async (req, res) => {
       if (!validStages.includes(overrideStage)) {
         return res.status(400).json({ error: 'invalid override_stage' });
       }
+      // A case never OPENS at Fine Assessed: a fine is assessed only by the
+      // fine approver on a Certified case (Ed 2026-10-24).
+      if (overrideStage === 'fine_assessed') {
+        return res.status(409).json({ error: 'fine_requires_approval', message: 'A violation cannot be opened at Fine Assessed. A fine can only be assessed by the fine approver after a Certified §209 notice.' });
+      }
       decision = {
         ...decision,
         stage: overrideStage,
@@ -927,6 +932,11 @@ router.post('/violations/manual', upload.array('photos', 6), async (req, res) =>
     if (files.length > 6) {
       return res.status(400).json({ error: 'max 6 photos per manual violation' });
     }
+    // A case never OPENS at Fine Assessed: a fine is assessed only by the fine
+    // approver on a Certified case (Ed 2026-10-24). Refused before any write.
+    if (body.override_stage === 'fine_assessed') {
+      return res.status(409).json({ error: 'fine_requires_approval', message: 'A violation cannot be opened at Fine Assessed. A fine can only be assessed by the fine approver after a Certified §209 notice.' });
+    }
 
     // Verify the property actually belongs to the named community — never
     // trust client-provided community_id without cross-check. This stops a
@@ -1193,7 +1203,8 @@ router.post('/violations/manual', upload.array('photos', 6), async (req, res) =>
     // quality_status='verified' — full weight, staff put eyes on it.
     const overrideStage = body.override_stage;
     const validStages = ['courtesy_1', 'courtesy_2', 'certified_209', 'fine_assessed'];
-    const stage = (overrideStage && validStages.includes(overrideStage)) ? overrideStage : 'courtesy_1';
+    // fine_assessed was refused at the top of this handler (Ed 2026-10-24).
+    const stage = (overrideStage && validStages.includes(overrideStage) && overrideStage !== 'fine_assessed') ? overrideStage : 'courtesy_1';
 
     const { data: violation, error: vErr } = await supabase
       .from('violations')
@@ -5643,6 +5654,11 @@ router.post('/violations/manual', express.json(), async (req, res) => {
     if (!validStages.includes(stage)) {
       return res.status(400).json({ error: 'invalid current_stage' });
     }
+    // An OPEN case is never created at Fine Assessed (Ed 2026-10-24); a closed
+    // historical record of a past fine is still allowed.
+    if (stage === 'fine_assessed' && !body.resolved_at) {
+      return res.status(409).json({ error: 'fine_requires_approval', message: 'An open violation cannot be created at Fine Assessed. A fine can only be assessed by the fine approver after a Certified §209 notice.' });
+    }
     // Look up community_id from property
     const { data: prop } = await supabase
       .from('properties')
@@ -5786,6 +5802,12 @@ router.get('/fine-schedule/:community_id', async (req, res) => {
 // ---------------------------------------------------------------------------
 router.patch('/fine-schedule/:community_id/community-toggle', express.json(), async (req, res) => {
   try {
+    // Turning fines on or off is the root of fine authority: fine approver only.
+    const { requireStaff } = require('./_require_admin');
+    const user = await requireStaff(req, res);
+    if (!user) return;
+    const FA = require('../lib/enforcement/fine_authority');
+    if (!FA.isFineApprover(user, req.params.community_id)) return res.status(403).json(FA.NOT_APPROVER);
     const communityId = req.params.community_id;
     const body = req.body || {};
     if (typeof body.fines_enabled !== 'boolean') {
@@ -5826,6 +5848,12 @@ router.patch('/fine-schedule/:community_id/community-toggle', express.json(), as
 // ---------------------------------------------------------------------------
 router.put('/fine-schedule/:community_id/row', express.json(), async (req, res) => {
   try {
+    // The fine schedule is what makes a fine possible: fine approver only.
+    const { requireStaff } = require('./_require_admin');
+    const user = await requireStaff(req, res);
+    if (!user) return;
+    const FA = require('../lib/enforcement/fine_authority');
+    if (!FA.isFineApprover(user, req.params.community_id)) return res.status(403).json(FA.NOT_APPROVER);
     const communityId = req.params.community_id;
     const body = req.body || {};
     const categoryId = body.category_id || null;
@@ -5853,6 +5881,7 @@ router.put('/fine-schedule/:community_id/row', express.json(), async (req, res) 
         recurring_offense_amount: body.recurring_offense_amount != null ? Number(body.recurring_offense_amount) : null,
         set_by_board_vote_date:   body.board_vote_date || null,
         board_meeting_minutes_ref: body.board_minutes_ref || null,
+        set_by_user_id: FA.actorId(user),
         notes: body.notes || null,
       })
       .select()
@@ -5866,138 +5895,92 @@ router.put('/fine-schedule/:community_id/row', express.json(), async (req, res) 
 });
 
 // ---------------------------------------------------------------------------
-// Helper — resolve the fine amount for a (community, category, offense_count)
-// triple. Returns { amount, source, community_enabled, category_enabled } so
-// the engine and the manual-assess flow can both reason about it.
-// ---------------------------------------------------------------------------
-async function _resolveFineAmount(communityId, categoryId, offenseCount) {
-  const { data: rows } = await supabase
-    .from('v_resolved_fine_schedule')
-    .select('community_fines_enabled, effective_fines_enabled, first_offense_amount, second_offense_amount, third_offense_amount, recurring_offense_amount, source_row')
-    .eq('community_id', communityId)
-    .eq('category_id', categoryId);
-  if (!rows || rows.length === 0) {
-    return { amount: null, source: 'no_schedule', community_enabled: false, category_enabled: false };
-  }
-  const r = rows[0];
-  const amt = (offenseCount <= 1) ? r.first_offense_amount
-            : (offenseCount === 2) ? r.second_offense_amount
-            : (offenseCount === 3) ? r.third_offense_amount
-            : r.recurring_offense_amount;
-  return {
-    amount: amt,
-    source: r.source_row,
-    community_enabled: r.community_fines_enabled,
-    category_enabled:  r.effective_fines_enabled,
-  };
-}
-
-// ---------------------------------------------------------------------------
 // POST /api/enforcement/violations/:id/assess-fine
-//   Body: { amount?, board_resolution_ref?, override_reason?, user_id? }
-//   Assesses a fine on a violation. If amount is omitted, looks up the
-//   schedule based on the offense count for this (property, category, 12mo).
-//   Required if fines are disabled: board_resolution_ref + override_reason
-//   (since this is a one-off override of board policy).
-//   Side effects:
-//     - violation.current_stage = 'fine_assessed'
-//     - violation.cure_period_ends_at = NULL (cure window has passed)
-//     - fine_posting_queue row created (status='queued')
-//     - interactions row created (type='internal_note' for the assessment record)
+//   Body: {} (nothing in the body decides the fine). Fine approver only.
+//   Puts a fine into the posting queue for a Certified §209 case, at the
+//   amount on the board's fine schedule for this offense number. Refused with
+//   a plain-English reason unless lib/enforcement/fine_authority.js says the
+//   board has authorized it (fines on for the community AND a real schedule
+//   row for the category). There is NO override: board_resolution_ref,
+//   override_reason, amount and user_id in the body are ignored.
+//   Queueing is not a charge. Posting to a homeowner account is closed until
+//   the notice-and-hearing record exists (see PATCH /fine-queue/:id).
+//   Side effects (only when allowed):
+//     - violation.current_stage = 'fine_assessed' (guarded on the prior stage)
+//     - fine_posting_queue row (status='queued'), assessed_by = signed-in user
+//     - internal_note interaction recording who assessed it
 // ---------------------------------------------------------------------------
 router.post('/violations/:id/assess-fine', express.json(), async (req, res) => {
   try {
+    const { requireStaff } = require('./_require_admin');
+    const user = await requireStaff(req, res);
+    if (!user) return;
+    const FA = require('../lib/enforcement/fine_authority');
     const violationId = req.params.id;
-    const body = req.body || {};
     const { data: v, error: vErr } = await supabase
       .from('violations')
-      .select('id, property_id, community_id, primary_category_id, current_stage, quality_status, resolved_at')
+      .select('id, property_id, community_id, primary_category_id, current_stage, current_stage_started_at, cure_period_ends_at, quality_status, resolved_at')
       .eq('id', violationId)
       .maybeSingle();
-    if (vErr || !v) return res.status(404).json({ error: 'violation not found' });
-    if (v.quality_status === 'superseded') {
-      return res.status(400).json({ error: 'violation is superseded; cannot assess fine on corrected record' });
-    }
-    // resolved_at set = the case is closed even if current_stage still reads a
-    // courtesy/certified label (cured rows keep their stage). Never fine a
-    // resolved violation.
-    if (v.resolved_at || v.current_stage === 'cured' || v.current_stage === 'closed' || v.current_stage === 'voided') {
-      return res.status(400).json({ error: `violation is resolved/closed; cannot fine` });
-    }
+    if (vErr) throw vErr;
+    if (!v) return res.status(404).json({ error: 'violation_not_found', message: 'The violation could not be found.' });
+    if (!FA.isFineApprover(user, v.community_id)) return res.status(403).json(FA.NOT_APPROVER);
 
-    // Count prior violations same property + category in last 12mo (this one counts as the current offense)
-    const cutoff = new Date(); cutoff.setMonth(cutoff.getMonth() - 12);
-    const { data: priors } = await supabase
-      .from('violations')
-      .select('id, opened_at, current_stage, quality_status, confidence_weight')
-      .eq('property_id', v.property_id)
-      .eq('primary_category_id', v.primary_category_id)
-      .gte('opened_at', cutoff.toISOString())
-      .neq('quality_status', 'superseded');
-    const offenseCount = (priors || []).filter((p) => p.id !== v.id).length + 1;
+    // Offense number: alias-aware, excludes this case, superseded and voided cases.
+    const aliasIds = await expandCategoryToAliases(v.primary_category_id);
+    const offenseCount = await FA.countOffenses({ supabase, violation: v, aliasIds });
 
-    // Resolve amount + permission
-    const resolved = await _resolveFineAmount(v.community_id, v.primary_category_id, offenseCount);
-    let amount = (typeof body.amount === 'number' && body.amount > 0)
-      ? Number(body.amount)
-      : resolved.amount;
-
-    const finesAreOff = !resolved.community_enabled || !resolved.category_enabled;
-    const overriding = finesAreOff || (typeof body.amount === 'number' && body.amount !== resolved.amount);
-    if (overriding) {
-      if (!body.board_resolution_ref || !body.override_reason) {
-        return res.status(400).json({
-          error: 'board_resolution_ref + override_reason required when assessing fine that overrides schedule or with fines disabled',
-          schedule_state: resolved,
-        });
-      }
+    const authority = await FA.checkFineAuthority({ supabase, violation: v, offenseCount });
+    if (!authority.ok) {
+      return res.status(409).json({ error: authority.reason, message: authority.message, offense_count: offenseCount });
     }
-    if (amount == null || amount <= 0) {
-      return res.status(400).json({
-        error: 'No fine amount could be resolved (no schedule for this category, and no explicit amount provided).',
-        schedule_state: resolved,
-        offense_count: offenseCount,
-      });
-    }
+    const amount = authority.amount;
+    const actorId = FA.actorId(user);
+    const nowTs = new Date().toISOString();
 
-    // Update violation
-    await supabase.from('violations').update({
+    // Stage first, guarded so a concurrent change is refused, then the queue
+    // row; if the queue row fails the stage change is undone.
+    const { data: upd, error: upErr } = await supabase.from('violations').update({
       current_stage: 'fine_assessed',
-      current_stage_started_at: new Date().toISOString(),
+      current_stage_started_at: nowTs,
       cure_period_ends_at: null,
-    }).eq('id', violationId);
+    }).eq('id', violationId).eq('current_stage', v.current_stage).select('id');
+    if (upErr) throw upErr;
+    if (!upd || !upd.length) return res.status(409).json({ error: 'stage_changed', message: 'The case changed while the fine was being assessed. Reload and try again.' });
 
-    // Insert fine queue entry
     const { data: queueEntry, error: qErr } = await supabase
       .from('fine_posting_queue')
       .insert({
         violation_id: violationId,
         property_id: v.property_id,
         community_id: v.community_id,
-        amount: amount,
-        assessed_by_user_id: body.user_id || null,
-        notes: overriding
-          ? `Override assessment. Board res: ${body.board_resolution_ref}. Reason: ${body.override_reason}`
-          : `Auto-assessed per ${resolved.source} schedule (offense ${offenseCount}).`,
+        amount,
+        assessed_by_user_id: actorId,
+        notes: `Assessed per ${authority.source} fine schedule (offense ${offenseCount}) by ${FA.actorName(user)}. Not posted: posting needs the notice and hearing record.`,
       })
       .select()
       .single();
-    if (qErr) return res.status(500).json({ error: 'fine_posting_queue insert failed: ' + qErr.message });
+    if (qErr) {
+      console.error('[violations.assess-fine] queue insert failed, undoing stage:', qErr.message);
+      await supabase.from('violations')
+        .update({ current_stage: v.current_stage, current_stage_started_at: v.current_stage_started_at || null, cure_period_ends_at: v.cure_period_ends_at || null })
+        .eq('id', violationId).eq('current_stage', 'fine_assessed');
+      return res.status(500).json({ error: 'queue_failed', message: 'The fine could not be queued, so the case was left unchanged.' });
+    }
 
-    // Audit interaction (internal note — not customer-facing)
-    await supabase.from('interactions').insert({
+    const { error: iErr } = await supabase.from('interactions').insert({
       community_id: v.community_id,
       property_id: v.property_id,
       violation_id: violationId,
       type: 'internal_note',
       direction: 'internal',
       subject: `Fine assessed: $${amount.toFixed(2)} (offense #${offenseCount})`,
-      content: overriding
-        ? `Override assessment. Board resolution: ${body.board_resolution_ref}. Reason: ${body.override_reason}. Source: ${resolved.source}.`
-        : `Auto-assessed per ${resolved.source} schedule.`,
-      sent_at: new Date().toISOString(),
+      content: `${FA.actorName(user)} assessed this fine per the ${authority.source} fine schedule. It is queued, not posted to the homeowner account.`,
+      sent_by_user_id: actorId,
+      sent_at: nowTs,
       status: 'sent',
     });
+    if (iErr) console.warn('[violations.assess-fine] audit note failed:', iErr.message);
 
     res.json({
       ok: true,
@@ -6005,12 +5988,12 @@ router.post('/violations/:id/assess-fine', express.json(), async (req, res) => {
       fine_amount: amount,
       offense_count: offenseCount,
       queue_entry_id: queueEntry.id,
-      schedule_state: resolved,
-      override: overriding,
+      schedule_source: authority.source,
+      posted: false,
     });
   } catch (err) {
     console.error('[violations.assess-fine]', err);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: safeErrorMessage(err) });
   }
 });
 
@@ -6329,6 +6312,9 @@ router.post('/violations/:id/unset-attorney', express.json(), async (req, res) =
 // ---------------------------------------------------------------------------
 router.get('/fine-queue', async (req, res) => {
   try {
+    const { requireStaff } = require('./_require_admin');
+    const user = await requireStaff(req, res);
+    if (!user) return;
     const communityId = req.query.community_id;
     const status = req.query.status || 'queued';
     let q = supabase
@@ -6345,16 +6331,17 @@ router.get('/fine-queue', async (req, res) => {
     if (communityId) q = q.eq('community_id', communityId);
     if (status !== 'all') q = q.eq('status', status);
     const { data, error } = await q;
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) throw error;
 
     // Fetch property addresses in one round trip
     const propIds = [...new Set((data || []).map((d) => d.property_id))];
     let propMap = new Map();
     if (propIds.length > 0) {
-      const { data: props } = await supabase
+      const { data: props, error: pErr } = await supabase
         .from('v_current_property_owners')
         .select('property_id, street_address, unit, owner_name, owner_mailing_address')
         .in('property_id', propIds);
+      if (pErr) console.warn('[fine-queue.list] address lookup failed:', pErr.message);
       (props || []).forEach((p) => propMap.set(p.property_id, p));
     }
     const enriched = (data || []).map((q) => ({
@@ -6366,42 +6353,66 @@ router.get('/fine-queue', async (req, res) => {
     res.json({ queue: enriched });
   } catch (err) {
     console.error('[fine-queue.list]', err);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: safeErrorMessage(err) });
   }
 });
 
 // ---------------------------------------------------------------------------
 // PATCH /api/enforcement/fine-queue/:id
-//   Body: { status, vantaca_charge_ref?, notes? }
-//   Mark a queued fine as posted to Vantaca (status='posted') or reversed.
+//   Body: { status?, vantaca_charge_ref?, notes? }
+//   Any signed-in staffer may edit notes. Only the fine approver may change
+//   status or the Vantaca reference, and only along the allowed moves in
+//   lib/enforcement/fine_authority.js (queued -> reversed|error,
+//   error -> queued|reversed, posted -> reversed). 'posted' is REFUSED (409
+//   notice_and_hearing_not_recorded) until the notice-and-hearing record
+//   exists. Who acted always comes from the session; body.user_id is ignored.
 // ---------------------------------------------------------------------------
 router.patch('/fine-queue/:id', express.json(), async (req, res) => {
   try {
+    const { requireStaff } = require('./_require_admin');
+    const user = await requireStaff(req, res);
+    if (!user) return;
+    const FA = require('../lib/enforcement/fine_authority');
     const id = req.params.id;
-    const body = req.body || {};
-    const allowedStatuses = ['queued', 'posted', 'reversed', 'error'];
-    if (body.status && !allowedStatuses.includes(body.status)) {
-      return res.status(400).json({ error: 'invalid status' });
-    }
-    const patch = { updated_at: new Date().toISOString() };
-    if (body.status) {
-      patch.status = body.status;
-      if (body.status === 'posted') patch.posted_to_vantaca_at = new Date().toISOString();
-    }
-    if (body.vantaca_charge_ref !== undefined) patch.vantaca_charge_ref = body.vantaca_charge_ref;
-    if (body.notes !== undefined) patch.notes = body.notes;
-    if (body.user_id) patch.posted_by_user_id = body.user_id;
+    const { data: entry, error: eErr } = await supabase
+      .from('fine_posting_queue')
+      .select('id, violation_id, property_id, community_id, amount, status')
+      .eq('id', id)
+      .maybeSingle();
+    if (eErr) throw eErr;
+    const plan = FA.planFineQueuePatch({ user, entry, body: req.body || {} });
+    if (!plan.ok) return res.status(plan.status).json(plan.body);
+
+    // Guarded on the status we read, so two people can't race a change.
     const { data, error } = await supabase
       .from('fine_posting_queue')
-      .update(patch)
+      .update(plan.patch)
       .eq('id', id)
+      .eq('status', entry.status)
       .select()
-      .single();
-    if (error) return res.status(500).json({ error: error.message });
+      .maybeSingle();
+    if (error) throw error;
+    if (!data) return res.status(409).json({ error: 'status_changed', message: 'This fine changed while you were editing it. Reload and try again.' });
+
+    if (plan.statusChange) {
+      const { error: aErr } = await supabase.from('interactions').insert({
+        community_id: entry.community_id,
+        property_id: entry.property_id,
+        violation_id: entry.violation_id,
+        type: 'internal_note',
+        direction: 'internal',
+        subject: `Fine ${plan.statusChange.to}: $${Number(entry.amount || 0).toFixed(2)}`,
+        content: `${FA.actorName(user)} changed this fine from ${plan.statusChange.from} to ${plan.statusChange.to}.`,
+        sent_by_user_id: plan.actor_id,
+        sent_at: new Date().toISOString(),
+        status: 'sent',
+      });
+      if (aErr) console.warn('[fine-queue.patch] audit note failed:', aErr.message);
+    }
     res.json({ ok: true, queue_entry: data });
   } catch (err) {
     console.error('[fine-queue.patch]', err);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: safeErrorMessage(err) });
   }
 });
 
@@ -8383,6 +8394,18 @@ router.post('/violations/:violationId/advance-stage', upload.single('pdf'), asyn
       if (comm && comm.fines_enabled === false) {
         return res.status(400).json({ error: 'This community does not have fines enabled — certified §209 is the ceiling. Enable fines for the community first if you intend to fine.' });
       }
+    }
+    // Fine safeguards (Ed 2026-10-24): reaching Fine Assessed needs the fine
+    // approver AND the board's authority (fines on + a real schedule row for
+    // this category), decided in lib/enforcement/fine_authority.js. Nothing in
+    // the request body can substitute for either.
+    if (nextStage === 'fine_assessed') {
+      const FA = require('../lib/enforcement/fine_authority');
+      if (!FA.isFineApprover(actor, violation.community_id)) return res.status(403).json(FA.NOT_APPROVER);
+      const aliasIds = await expandCategoryToAliases(violation.primary_category_id);
+      const offenseCount = await FA.countOffenses({ supabase, violation, aliasIds });
+      const authority = await FA.checkFineAuthority({ supabase, violation, offenseCount });
+      if (!authority.ok) return res.status(409).json({ error: authority.reason, message: authority.message });
     }
 
     // Courtesy 2 and Certified §209 go through the ONE shared workflow: the prior
