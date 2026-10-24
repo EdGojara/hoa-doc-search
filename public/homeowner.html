@@ -102,6 +102,34 @@ window._hoAuthReady=(async function(){
 })();
 async function hoAuthHeader(){ try{ await window._hoAuthReady; if(window._hoToken) return {Authorization:'Bearer '+window._hoToken}; }catch(_){}; return {}; }
 
+// Every write from this page goes through hoWrite (Phase 2, Ed 2026-10-24): it
+// sends the employee's own sign-in token, and when the server refuses because
+// nobody is signed in it shows a banner that stays on screen. Never a silent
+// failure. tests/test_h360_staff_auth.js fails the build on a bare write fetch.
+const HO_SIGNIN_MSG='Your sign-in expired. Please sign in again.';
+function hoShowSignInExpired(){
+  let b=document.getElementById('hoAuthBanner');
+  if(!b){
+    b=document.createElement('div'); b.id='hoAuthBanner'; b.setAttribute('role','alert');
+    b.style.cssText='position:fixed;top:0;left:0;right:0;z-index:1000;background:#b91c1c;color:#fff;padding:12px 16px;font-weight:700;font-size:14px;text-align:center;box-shadow:0 2px 10px rgba(0,0,0,.25);';
+    document.body.appendChild(b);
+  }
+  const next=encodeURIComponent(location.pathname+location.search);
+  b.innerHTML=esc(HO_SIGNIN_MSG)+' <a href="/login.html?next='+next+'" style="color:#fff;text-decoration:underline;margin-left:8px;">Sign in</a>';
+}
+async function hoWrite(url,opts){
+  const o=Object.assign({},opts||{});
+  o.headers=Object.assign({},o.headers||{},await hoAuthHeader());
+  const r=await fetch(url,o);
+  if(r.status===401||r.status===403){
+    let code=null; try{ const j=await r.clone().json(); code=j&&j.error; }catch(_){}
+    if(r.status===401||!code||code==='sign_in_required'||code==='authentication required'||code==='account_inactive'){ hoShowSignInExpired(); r.hoSignIn=true; }
+  }
+  return r;
+}
+// Message for a failed write: the sign-in message when that was the cause.
+function hoErr(r,j,fallback){ if(r&&r.hoSignIn) return HO_SIGNIN_MSG; return (j&&(j.detail||j.error))||fallback; }
+
 // Inline edit of the homeowner's email / phone / name, right on the 360 — no
 // hunting through property records. Updates the canonical contact. (Ed 2026-07-14.)
 function hoToggleEdit(){
@@ -121,9 +149,9 @@ async function hoSaveContact(cid){
   try{
     const body={ primary_email: email||null, primary_phone: phone||null };
     if(name) body.full_name=name;
-    const r=await fetch('/api/contacts/'+encodeURIComponent(cid),{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-    const j=await r.json();
-    if(!r.ok){ msg.style.color='#b91c1c'; msg.textContent='Could not save: '+(j.error||'error'); return; }
+    const r=await hoWrite('/api/contacts/'+encodeURIComponent(cid),{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    const j=await r.json().catch(()=>({}));
+    if(!r.ok){ msg.style.color='#b91c1c'; msg.textContent=r.hoSignIn?HO_SIGNIN_MSG:'Could not save: '+(j.detail||j.error||'error'); return; }
     openProfile(cid); // refresh the card with the saved values
   }catch(e){ msg.style.color='#b91c1c'; msg.textContent=e.message||'Save failed'; }
 }
@@ -175,9 +203,9 @@ async function doSearch(){
 async function verifyIdentity(id1,id2,result){
   if(result==='same_person' && !confirm('Confirm these two records are the SAME person and should be treated as one owner?')) return;
   try{
-    const r=await fetch(API+'/verify-identity',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({contact_id_1:id1,contact_id_2:id2,result})});
-    const j=await r.json();
-    if(!r.ok) throw new Error(j.error||'save failed');
+    const r=await hoWrite(API+'/verify-identity',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({contact_id_1:id1,contact_id_2:id2,result})});
+    const j=await r.json().catch(()=>({}));
+    if(!r.ok) throw new Error(hoErr(r,j,'save failed'));
     doSearch(); // re-run: the conflict now shows as a verified badge and rows unblock
   }catch(e){ alert('Could not save the verification: '+e.message); }
 }
@@ -188,11 +216,11 @@ window.verifyIdentity=verifyIdentity;
 // cured in the DRV store; resolved_at flows the cure through every surface.
 const RESOLVE_NOTES=['Photo proof received — cured','Verified cured in field','Owner corrected — resolved','No longer observed — resolved','Cured per management (proof on file)'];
 function resolveCtrl(v){
-  const opts=RESOLVE_NOTES.map(n=>`<option value="${esc(n)}">${esc(n)}</option>`).join('')+'<option value="__other__">Other (type below)…</option>';
+  const opts='<option value="">Choose a reason…</option>'+RESOLVE_NOTES.map(n=>`<option value="${esc(n)}">${esc(n)}</option>`).join('')+'<option value="__other__">Other (type below)…</option>';
   return `<div style="margin-top:7px;">
     <button onclick="showResolve('${v.id}')" style="font-size:11.5px;padding:3px 11px;border:1px solid #bbf7d0;border-radius:6px;background:#f0fdf4;color:#166534;cursor:pointer;font-weight:700;">✓ Resolve</button>
     <div id="rv-${v.id}" style="display:none;margin-top:7px;padding:9px 11px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:7px;">
-      <div style="font-size:11px;color:#5a7390;margin-bottom:4px;font-weight:600;">Resolution note</div>
+      <div style="font-size:11px;color:#5a7390;margin-bottom:4px;font-weight:600;">Reason for closing (required, recorded with your name)</div>
       <select id="rv-note-${v.id}" onchange="rvToggleOther('${v.id}')" style="width:100%;padding:6px 8px;border:1px solid #cbd5e1;border-radius:5px;font-size:12px;">${opts}</select>
       <input id="rv-free-${v.id}" placeholder="Add a note…" style="display:none;width:100%;margin-top:6px;padding:6px 8px;border:1px solid #cbd5e1;border-radius:5px;font-size:12px;box-sizing:border-box;">
       <div style="margin-top:8px;display:flex;gap:7px;align-items:center;">
@@ -207,11 +235,12 @@ window.rvToggleOther=function(id){const sel=document.getElementById('rv-note-'+i
 window.doResolve=async function(id){
   const sel=document.getElementById('rv-note-'+id);const free=document.getElementById('rv-free-'+id);
   let note=sel?sel.value:'';if(note==='__other__')note=(free&&free.value.trim())||'';
-  if(!note){alert('Pick or type a resolution note.');return;}
-  const st=document.getElementById('rv-status-'+id);if(st)st.textContent='Saving…';
+  const st=document.getElementById('rv-status-'+id);
+  if(!note){ if(st){st.style.color='#b91c1c';st.textContent='A reason is required to close this case.';} else alert('A reason is required to close this case.'); return; }
+  if(st){st.style.color='#5a7390';st.textContent='Saving…';}
   try{
-    const r=await fetch(API+'/violations/'+encodeURIComponent(id)+'/resolve',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({resolved_via:'cured',note})});
-    const j=await r.json();if(!r.ok)throw new Error(j.error||'failed');
+    const r=await hoWrite(API+'/violations/'+encodeURIComponent(id)+'/resolve',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({resolved_via:'cured',note})});
+    const j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(hoErr(r,j,'failed'));
     if(window._ho&&window._ho.cid)openProfile(window._ho.cid);
   }catch(e){if(st)st.textContent='';alert('Could not resolve: '+e.message);}
 };
@@ -252,9 +281,8 @@ window.saveCert=async function(iid){
   const val=inp?inp.value.trim():'';
   if(st)st.textContent='Saving…';
   try{
-    const hdr=Object.assign({'Content-Type':'application/json'}, await hoAuthHeader());
-    const r=await fetch(API+'/interactions/'+encodeURIComponent(iid)+'/certified-number',{method:'POST',headers:hdr,body:JSON.stringify({certified_tracking_number:val})});
-    const j=await r.json();if(!r.ok)throw new Error(j.detail||j.error||'failed');
+    const r=await hoWrite(API+'/interactions/'+encodeURIComponent(iid)+'/certified-number',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({certified_tracking_number:val})});
+    const j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(hoErr(r,j,'failed'));
     if(window._ho&&window._ho.cid)openProfile(window._ho.cid);
   }catch(e){if(st)st.textContent='';alert('Could not save: '+e.message);}
 };
@@ -418,8 +446,8 @@ async function openProfile(cid){
 
   window.deleteNote=async function(id,cid){
     if(!confirm('Delete this note? This can’t be undone.'))return;
-    const r=await fetch(API+'/note/'+id,{method:'DELETE'});
-    if(r.ok){ openProfile(cid); } else { const j=await r.json().catch(()=>({})); alert(j.detail||'Could not delete'); }
+    const r=await hoWrite(API+'/note/'+id,{method:'DELETE'});
+    if(r.ok){ openProfile(cid); } else { const j=await r.json().catch(()=>({})); alert(hoErr(r,j,'Could not delete')); }
   };
   window.editNote=async function(id,cid){
     const el=document.getElementById('note-txt-'+id);
@@ -428,8 +456,8 @@ async function openProfile(cid){
     if(next===null) return;              // cancelled
     if(!next.trim()){ alert('A note can’t be blank — use ✕ to delete it.'); return; }
     if(next.trim()===cur.trim()) return; // unchanged
-    const r=await fetch(API+'/note/'+id,{method:'PATCH',headers:{'Content-Type':'application/json',...(await hoAuthHeader())},body:JSON.stringify({content:next.trim()})});
-    if(r.ok){ openProfile(cid); } else { const j=await r.json().catch(()=>({})); alert(j.detail||j.error||'Could not save'); }
+    const r=await hoWrite(API+'/note/'+id,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({content:next.trim()})});
+    if(r.ok){ openProfile(cid); } else { const j=await r.json().catch(()=>({})); alert(hoErr(r,j,'Could not save')); }
   };
   // Upload a photo/PDF to the account. On a phone the file input opens the camera
   // (capture=environment). Grabs GPS for field photos (best-effort). (Ed 2026-07-14.)
@@ -441,10 +469,10 @@ async function openProfile(cid){
       const fd=new FormData(); fd.append('file',file);
       if(caption) fd.append('caption',caption);
       if(lat!=null){ fd.append('gps_lat',lat); fd.append('gps_lng',lng); }
-      let r; try{ r=await fetch(API+'/'+cid+'/attachment',{method:'POST',body:fd}); }catch(e){ alert('Upload failed — check your connection.'); return; }
+      let r; try{ r=await hoWrite(API+'/'+cid+'/attachment',{method:'POST',body:fd}); }catch(e){ alert('Upload failed — check your connection.'); return; }
       const j=await r.json().catch(()=>({}));
       const el=document.getElementById('attFile'); if(el) el.value='';
-      if(r.ok){ openProfile(cid); } else { alert(j.detail||j.error||'Could not upload'); }
+      if(r.ok){ openProfile(cid); } else { alert(hoErr(r,j,'Could not upload')); }
     };
     if(navigator.geolocation && (file.type||'').startsWith('image/')){
       navigator.geolocation.getCurrentPosition(p=>send(p.coords.latitude,p.coords.longitude), ()=>send(null,null), {timeout:4000,enableHighAccuracy:true});
@@ -452,8 +480,8 @@ async function openProfile(cid){
   };
   window.deleteAttachment=async function(id,cid){
     if(!confirm('Remove this file from the account?'))return;
-    const r=await fetch(API+'/attachment/'+id,{method:'DELETE'});
-    if(r.ok){ openProfile(cid); } else alert('Could not remove');
+    const r=await hoWrite(API+'/attachment/'+id,{method:'DELETE'});
+    if(r.ok){ openProfile(cid); } else { const j=await r.json().catch(()=>({})); alert(hoErr(r,j,'Could not remove')); }
   };
   let _reviewEmail=null;
   const GDZ_TEXT='📎 Drop an email (.msg/.eml) here to file it to the right homeowner(s) — the system finds who it\'s from and about, you confirm.';
@@ -461,9 +489,9 @@ async function openProfile(cid){
   window.importReview=async function(file){
     const dz=document.getElementById('gdz'); dz.textContent='Reading '+file.name+'…';
     const fd=new FormData(); fd.append('file',file);
-    let r; try{ r=await fetch(API+'/import-review',{method:'POST',body:fd}); }catch(e){ dz.textContent=GDZ_TEXT; alert('Upload failed'); return; }
+    let r; try{ r=await hoWrite(API+'/import-review',{method:'POST',body:fd}); }catch(e){ dz.textContent=GDZ_TEXT; alert('Upload failed'); return; }
     dz.textContent=GDZ_TEXT;
-    if(!r.ok){ const j=await r.json().catch(()=>({})); alert(j.error||'Could not read that email'); return; }
+    if(!r.ok){ const j=await r.json().catch(()=>({})); alert(hoErr(r,j,'Could not read that email')); return; }
     _reviewEmail=await r.json(); renderReview(_reviewEmail);
   };
   let _slotResults={};
@@ -507,16 +535,16 @@ async function openProfile(cid){
     const boxes=[...document.querySelectorAll('#reviewModal .slot-cb:checked')];
     const links=boxes.map(b=>{ const slot=b.closest('.slot'); return {role:slot?slot.dataset.role:'from',contact_id:b.dataset.contact||null,property_id:b.dataset.property||null}; });
     if(!links.length){ alert('Check at least one homeowner to file to.'); return; }
-    const r=await fetch(API+'/import-file',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:_reviewEmail.email,classification:_reviewEmail.classification,links})});
-    const j=await r.json();
+    const r=await hoWrite(API+'/import-file',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:_reviewEmail.email,classification:_reviewEmail.classification,links})});
+    const j=await r.json().catch(()=>({}));
     if(r.ok){ document.getElementById('reviewModal').innerHTML=`<div class="card" style="margin-top:14px;"><div style="font-size:13px;color:#166534;">✅ Filed to ${j.filed} homeowner${j.filed===1?'':'s'}’ history.</div></div>`; }
-    else alert(j.error||'File failed');
+    else alert(hoErr(r,j,'File failed'));
   };
   window.addNote=async function(id){
     const inp=document.getElementById('noteInput'); const content=inp.value.trim(); if(!content)return;
     inp.disabled=true;
-    const r=await fetch(API+'/'+id+'/note',{method:'POST',headers:{'Content-Type':'application/json',...(await hoAuthHeader())},body:JSON.stringify({content})});
-    if(r.ok){ openProfile(id); } else { inp.disabled=false; alert('Could not save note'); }
+    const r=await hoWrite(API+'/'+id+'/note',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({content})});
+    if(r.ok){ openProfile(id); } else { inp.disabled=false; const j=await r.json().catch(()=>({})); alert(hoErr(r,j,'Could not save note')); }
   };
   // Draft an email to the homeowner with a letter attached (queued for review).
   window.emailLetter=function(pathEnc, label){
@@ -549,9 +577,9 @@ async function openProfile(cid){
     if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(to)){ msg.style.color='#b91c1c'; msg.textContent='Enter a valid email address.'; return; }
     btn.disabled=true; btn.textContent='Queuing…'; msg.style.color='#5a7390'; msg.textContent='';
     try{
-      const r=await fetch(API+'/email-letter',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ contact_id:ho.cid||null, property_id:ho.propertyId||null, letter_path:le.path, letter_label:le.label, to_email:to, note })});
+      const r=await hoWrite(API+'/email-letter',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ contact_id:ho.cid||null, property_id:ho.propertyId||null, letter_path:le.path, letter_label:le.label, to_email:to, note })});
       const j=await r.json().catch(()=>({}));
-      if(!r.ok||!j.ok){ msg.style.color='#b91c1c'; msg.textContent=j.detail||j.error||'Could not draft the email.'; btn.disabled=false; btn.textContent='Queue draft'; return; }
+      if(!r.ok||!j.ok){ msg.style.color='#b91c1c'; msg.textContent=hoErr(r,j,'Could not draft the email.'); btn.disabled=false; btn.textContent='Queue draft'; return; }
       msg.style.color='#166534'; msg.innerHTML=(j.already?'Already drafted for '+esc(j.to)+'. ':'✓ Drafted to '+esc(j.to)+'. ')+'Review &amp; send it in the <b>Draft Queue</b>.';
       btn.textContent='Done'; setTimeout(()=>{ const ov=document.getElementById('letterEmailOverlay'); if(ov) ov.remove(); },2400);
     }catch(e){ msg.style.color='#b91c1c'; msg.textContent='Failed to draft.'; btn.disabled=false; btn.textContent='Queue draft'; }
@@ -574,7 +602,7 @@ async function copyPaymentLink(btn){
   const orig = btn ? btn.textContent : '';
   if(btn){ btn.disabled=true; btn.textContent='Generating…'; }
   try{
-    const r = await fetch('/api/payments/payment-link', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ community_id: ho.communityId, property_id: ho.propertyId }) });
+    const r = await hoWrite('/api/payments/payment-link', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ community_id: ho.communityId, property_id: ho.propertyId }) });
     const j = await r.json().catch(()=>({}));
     if(!r.ok || !j.url){ if(btn){ btn.textContent = (j.error==='property_not_in_community') ? 'Property/community mismatch' : (j.error||'Could not generate'); setTimeout(()=>{ btn.disabled=false; btn.textContent=orig; },2400);} return; }
     try{ await navigator.clipboard.writeText(j.url); }catch(_){ window.prompt('Copy the payment link:', j.url); }
