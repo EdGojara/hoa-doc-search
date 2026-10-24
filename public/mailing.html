@@ -1,0 +1,264 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mailing confirmation</title>
+<link rel="stylesheet" href="/brand.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  body { margin: 0; background: #f6f7f9; color: #0B1D34; font-family: var(--font-sans, system-ui, sans-serif); }
+  .wrap { max-width: 1100px; margin: 0 auto; padding: 20px 16px 60px; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  .sub { color: #64748b; font-size: 13px; margin-bottom: 16px; }
+  .bar { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-bottom: 16px; }
+  select, input[type=date], input[type=text], textarea { font: inherit; font-size: 13px; padding: 6px 8px; border: 1px solid #cbd5e1; border-radius: 6px; background: #fff; }
+  .chips { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; margin-bottom: 20px; }
+  .chip { background: #fff; border: 1px solid #e2e8f0; border-radius: 10px; padding: 12px 14px; cursor: pointer; }
+  .chip.on { border-color: #D4AF37; box-shadow: 0 0 0 2px rgba(212,175,55,.25); }
+  .chip .n { font-size: 26px; font-weight: 700; }
+  .chip .l { font-size: 12px; color: #475569; }
+  h2 { font-size: 16px; margin: 24px 0 10px; }
+  .card { background: #fff; border: 1px solid #e2e8f0; border-radius: 10px; margin-bottom: 12px; }
+  .card-h { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; padding: 12px 14px; cursor: pointer; }
+  .card-h b { font-size: 14px; }
+  .muted { color: #64748b; font-size: 12px; }
+  .tag { display: inline-block; font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 999px; }
+  .t-warn { background: #fef3c7; color: #92400e; }
+  .t-hold { background: #fee2e2; color: #991b1b; }
+  .t-ok { background: #dcfce7; color: #166534; }
+  .t-info { background: #e0e7ff; color: #3730a3; }
+  .card-b { border-top: 1px solid #e2e8f0; padding: 12px 14px; display: none; }
+  .card.open .card-b { display: block; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid #f1f5f9; vertical-align: top; }
+  th { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: #64748b; }
+  .row-actions { display: flex; gap: 10px; flex-wrap: wrap; align-items: end; margin-top: 12px; }
+  .row-actions label { font-size: 12px; color: #475569; display: flex; flex-direction: column; gap: 4px; }
+  button { font: inherit; font-size: 13px; font-weight: 700; padding: 7px 14px; border-radius: 6px; border: 0; cursor: pointer; }
+  .b-primary { background: #0B1D34; color: #fff; }
+  .b-light { background: #e2e8f0; color: #0B1D34; }
+  .msg { padding: 10px 12px; border-radius: 8px; margin: 10px 0; font-size: 13px; }
+  .msg.err { background: #fee2e2; color: #991b1b; }
+  .msg.ok { background: #dcfce7; color: #166534; }
+  .table-wrap { overflow-x: auto; }
+  @media (max-width: 640px) { .hide-sm { display: none; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Mailing confirmation</h1>
+  <div class="sub">Tell us what actually happened to each print run. Saving records the real mailing date as a permanent record. It does not change any letter, cure deadline or stage, and it does not create any charge.</div>
+  <div id="authMsg"></div>
+  <div class="bar">
+    <label class="muted">Community
+      <select id="comm"><option value="">All active communities</option></select>
+    </label>
+    <button class="b-light" id="refresh">Refresh</button>
+    <span class="muted" id="asof"></span>
+  </div>
+  <div class="chips" id="chips"></div>
+  <h2>Print runs to confirm</h2>
+  <div id="batches"><div class="muted">Loading...</div></div>
+  <h2 id="queueTitle">Work queue</h2>
+  <div class="table-wrap"><div id="queue"><div class="muted">Loading...</div></div></div>
+</div>
+<script>
+(function () {
+  var token = null;
+  var state = { bucket: null, queue: null, batches: [] };
+  var BUCKET_ORDER = ['ready_to_mail', 'confirm_mailing', 'held_correction', 'missing_notice'];
+  var STATE_LABEL = {
+    mailed: 'Mailed', presumed_not_mailed: 'Presumed not mailed', not_mailed: 'Not mailed yet', on_hold: 'On hold',
+    held: 'Held', excluded: 'Pulled', printed_unconfirmed: 'Printed, not confirmed', queued: 'In mail queue', approved: 'Approved', draft: 'Draft'
+  };
+  var STAGE_LABEL = { courtesy_1: 'Courtesy 1', courtesy_2: 'Courtesy 2', certified_209: 'Certified', fine_assessed: 'Fine', postcard: 'Postcard' };
+  var NEEDS = { printed_unconfirmed: 1, presumed_not_mailed: 1, not_mailed: 1 };
+
+  function el(tag, attrs, kids) {
+    var e = document.createElement(tag);
+    Object.keys(attrs || {}).forEach(function (k) {
+      if (k === 'text') e.textContent = attrs[k];
+      else if (k === 'class') e.className = attrs[k];
+      else if (k.indexOf('on') === 0) e.addEventListener(k.slice(2), attrs[k]);
+      else e.setAttribute(k, attrs[k]);
+    });
+    (kids || []).forEach(function (c) { if (c != null) e.appendChild(typeof c === 'string' ? document.createTextNode(c) : c); });
+    return e;
+  }
+  function fmt(iso) {
+    if (!iso) return '';
+    return new Date(iso).toLocaleString('en-US', { timeZone: 'America/Chicago', weekday: 'short', month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+  }
+  function today() { return new Date().toLocaleDateString('en-CA', { timeZone: 'America/Chicago' }); }
+  function showMsg(where, kind, text) { where.innerHTML = ''; where.appendChild(el('div', { class: 'msg ' + kind, text: text })); }
+
+  async function api(path, opts) {
+    opts = opts || {};
+    opts.headers = Object.assign({ 'Content-Type': 'application/json' }, opts.headers || {}, token ? { Authorization: 'Bearer ' + token } : {});
+    var r = await fetch(path, opts);
+    var j = await r.json().catch(function () { return {}; });
+    if (r.status === 401 || r.status === 403) throw new Error('Your sign-in expired or is missing. Please sign in to TrustEd again, then reload this page.');
+    if (!r.ok) throw new Error(j.detail || j.error || ('Request failed (' + r.status + ')'));
+    return j;
+  }
+
+  async function signIn() {
+    try {
+      var cfg = await fetch('/api/auth/config').then(function (r) { return r.json(); });
+      if (!cfg.supabase_url || !window.supabase) throw new Error('auth unavailable');
+      var supa = window.supabase.createClient(cfg.supabase_url, cfg.supabase_anon_key);
+      var s = await supa.auth.getSession();
+      token = s && s.data && s.data.session ? s.data.session.access_token : null;
+    } catch (e) { token = null; }
+    if (!token) showMsg(document.getElementById('authMsg'), 'err', 'You are not signed in. Open TrustEd, sign in with your own account, then reload this page.');
+  }
+
+  function renderChips() {
+    var box = document.getElementById('chips'); box.innerHTML = '';
+    var q = state.queue; if (!q) return;
+    BUCKET_ORDER.forEach(function (b) {
+      var c = el('div', { class: 'chip' + (state.bucket === b ? ' on' : ''), onclick: function () { state.bucket = state.bucket === b ? null : b; renderChips(); renderQueue(); } }, [
+        el('div', { class: 'n', text: String((q.counts && q.counts[b]) || 0) }),
+        el('div', { class: 'l', text: q.buckets[b] })
+      ]);
+      box.appendChild(c);
+    });
+  }
+
+  function renderQueue() {
+    var box = document.getElementById('queue'); box.innerHTML = '';
+    var q = state.queue; if (!q) return;
+    var items = q.items.filter(function (i) { return !state.bucket || i.bucket === state.bucket; });
+    document.getElementById('queueTitle').textContent = 'Work queue' + (state.bucket ? ': ' + q.buckets[state.bucket] : '') + ' (' + items.length + ')';
+    if (!items.length) { box.appendChild(el('div', { class: 'muted', text: 'Nothing here.' })); return; }
+    var t = el('table', {}, [el('thead', {}, [el('tr', {}, [
+      el('th', { text: 'Community' }), el('th', { text: 'What' }), el('th', { text: 'Action' }), el('th', { text: 'Owner' })
+    ])])]);
+    var tb = el('tbody');
+    items.forEach(function (i) {
+      var what = i.kind === 'batch'
+        ? ('Print run ' + fmt(i.printed_at) + ', ' + i.count + ' letter(s)' + (i.presumed_not_mailed ? ' (presumed not mailed)' : ''))
+        : ((i.street_address || 'Unknown address') + ' - ' + (STAGE_LABEL[i.stage] || i.stage || ''));
+      tb.appendChild(el('tr', {}, [
+        el('td', { text: i.community || '' }), el('td', { text: what }),
+        el('td', { text: i.action + (i.reason ? ' (' + i.reason + ')' : '') }), el('td', { text: (i.owner && i.owner.name) || 'Unassigned' })
+      ]));
+    });
+    t.appendChild(tb); box.appendChild(t);
+  }
+
+  function defaultOutcome(l) {
+    if (l.state === 'presumed_not_mailed' || l.state === 'not_mailed') return 'not_mailed';
+    return 'mailed';
+  }
+
+  function renderBatches() {
+    var box = document.getElementById('batches'); box.innerHTML = '';
+    if (!state.batches.length) { box.appendChild(el('div', { class: 'muted', text: 'No print runs are waiting for confirmation.' })); return; }
+    state.batches.forEach(function (b) {
+      var card = el('div', { class: 'card' });
+      var tags = [];
+      if (b.presumed_not_mailed) tags.push(el('span', { class: 'tag t-warn', text: 'Presumed not mailed' }));
+      if (b.counts.on_hold) tags.push(el('span', { class: 'tag t-hold', text: b.counts.on_hold + ' on hold' }));
+      if (b.counts.mailed) tags.push(el('span', { class: 'tag t-ok', text: b.counts.mailed + ' already mailed' }));
+      var head = el('div', { class: 'card-h', onclick: function () { card.classList.toggle('open'); } }, [
+        el('b', { text: b.community }),
+        el('span', { text: 'Printed ' + fmt(b.printed_at) }),
+        el('span', { class: 'tag t-info', text: b.delivery_method === 'certified_mail' ? 'Certified' : 'First class' }),
+        el('span', { class: 'muted', text: b.needs_confirmation + ' of ' + b.letter_count + ' need an answer' })
+      ].concat(tags));
+      var body = el('div', { class: 'card-b' });
+      var selects = {};
+      var t = el('table', {}, [el('thead', {}, [el('tr', {}, [
+        el('th', { text: 'Address' }), el('th', { text: 'Letter', class: 'hide-sm' }), el('th', { text: 'Now' }), el('th', { text: 'What happened' })
+      ])])]);
+      var tb = el('tbody');
+      b.letters.forEach(function (l) {
+        var cell;
+        if (NEEDS[l.state]) {
+          var s = el('select', {}, [
+            el('option', { value: 'mailed', text: 'Mailed' }),
+            el('option', { value: 'not_mailed', text: 'Not mailed yet' }),
+            el('option', { value: 'held', text: 'Held (keep, do not mail)' }),
+            el('option', { value: 'excluded', text: 'Pulled (wrong address, reprinted, etc.)' })
+          ]);
+          s.value = defaultOutcome(l);
+          selects[l.id] = s; cell = s;
+        } else {
+          cell = el('span', { class: 'muted', text: l.state === 'on_hold' ? ('On hold: ' + (l.reason || 'do not mail')) : (STATE_LABEL[l.state] || l.state) + (l.mailed_on ? ' ' + l.mailed_on : '') + (l.recorded_by ? ' (' + l.recorded_by + ')' : '') });
+        }
+        tb.appendChild(el('tr', {}, [
+          el('td', { text: l.street_address || '' }), el('td', { class: 'hide-sm', text: STAGE_LABEL[l.stage] || l.stage || '' }),
+          el('td', { text: STATE_LABEL[l.state] || l.state }), el('td', {}, [cell])
+        ]));
+      });
+      t.appendChild(tb);
+      var date = el('input', { type: 'date', max: today() });
+      var note = el('input', { type: 'text', placeholder: 'Optional note (who mailed it, receipt, etc.)', style: 'min-width:260px' });
+      var msg = el('div');
+      var allBtn = function (val, label) {
+        return el('button', { class: 'b-light', type: 'button', text: label, onclick: function () { Object.keys(selects).forEach(function (k) { selects[k].value = val; }); } });
+      };
+      var save = el('button', { class: 'b-primary', type: 'button', text: 'Save what happened to this run', onclick: async function () {
+        var outcomes = {}; Object.keys(selects).forEach(function (k) { outcomes[k] = selects[k].value; });
+        var n = { mailed: 0, not_mailed: 0, held: 0, excluded: 0 };
+        Object.keys(outcomes).forEach(function (k) { n[outcomes[k]]++; });
+        if (n.mailed && !date.value) { showMsg(msg, 'err', 'Enter the date the letters were mailed.'); return; }
+        var summary = 'Save for ' + b.community + ', printed ' + fmt(b.printed_at) + ':\n'
+          + n.mailed + ' mailed' + (n.mailed ? ' on ' + date.value : '') + ', ' + n.not_mailed + ' not mailed yet, ' + n.held + ' held, ' + n.excluded + ' pulled.\n\n'
+          + 'This is a permanent record under your name. Letters, deadlines and stages are not changed.';
+        if (!window.confirm(summary)) return;
+        save.disabled = true;
+        try {
+          var r = await api('/api/mailing/batches/confirm', { method: 'POST', body: JSON.stringify({
+            community_id: b.community_id, delivery_method: b.delivery_method, printed_at: b.printed_at,
+            mailed_on: date.value || null, outcomes: outcomes, note: note.value || null
+          }) });
+          showMsg(msg, 'ok', 'Saved: ' + r.mailed + ' mailed, ' + r.not_mailed + ' not mailed yet, ' + r.held + ' held, ' + r.excluded + ' pulled.');
+          setTimeout(load, 900);
+        } catch (e) { showMsg(msg, 'err', e.message); save.disabled = false; }
+      } });
+      body.appendChild(el('div', { class: 'table-wrap' }, [t]));
+      body.appendChild(el('div', { class: 'row-actions' }, [
+        el('label', {}, ['Date mailed', date]), el('label', {}, ['Note', note]),
+        allBtn('mailed', 'All mailed'), allBtn('not_mailed', 'None mailed'), save
+      ]));
+      body.appendChild(msg);
+      card.appendChild(head); card.appendChild(body);
+      box.appendChild(card);
+    });
+  }
+
+  async function load() {
+    var cid = document.getElementById('comm').value;
+    var qs = cid ? ('?community_id=' + encodeURIComponent(cid)) : '';
+    try {
+      var r = await Promise.all([api('/api/mailing/batches' + qs), api('/api/mailing/queue' + qs)]);
+      state.batches = r[0].batches || []; state.queue = r[1];
+      document.getElementById('asof').textContent = 'As of ' + fmt(new Date().toISOString());
+      fillCommunities(); renderChips(); renderBatches(); renderQueue();
+    } catch (e) {
+      showMsg(document.getElementById('batches'), 'err', e.message);
+      document.getElementById('queue').innerHTML = '';
+    }
+  }
+
+  function fillCommunities() {
+    var sel = document.getElementById('comm');
+    if (sel.options.length > 1 || sel.value) return;
+    var names = {};
+    state.batches.forEach(function (b) { names[b.community_id] = b.community; });
+    ((state.queue && state.queue.items) || []).forEach(function (i) { if (i.community) names[i.community_id] = i.community; });
+    Object.keys(names).sort(function (a, z) { return names[a].localeCompare(names[z]); }).forEach(function (id) {
+      sel.appendChild(el('option', { value: id, text: names[id] }));
+    });
+  }
+
+  document.getElementById('refresh').addEventListener('click', load);
+  document.getElementById('comm').addEventListener('change', load);
+  signIn().then(function () { if (token) load(); });
+})();
+</script>
+</body>
+</html>
