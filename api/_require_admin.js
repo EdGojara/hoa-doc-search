@@ -61,14 +61,22 @@ async function requireStaff(req, res) {
 // like Tessa (Ed's EA) that must never be visible to anyone else, even a future
 // second admin. Matches the authed user's email to OWNER_EMAIL (Ed 2026-07-11).
 const { OWNER_EMAIL } = require('../lib/auth/owner_email');
+// Both emails must be the owner's: the profile's (a database row, locked against
+// self-edit by migration 548) AND the sign-in account's (issued by Supabase Auth).
+// Either one alone was forgeable before 548 (Ed 2026-10-26 security fix).
+function isOwnerIdentity(u) {
+  if (!u || u.role !== 'admin') return false;
+  const profileEmail = String(u.email || '').toLowerCase();
+  const signInEmail = String((u.user && u.user.email) || '').toLowerCase();
+  return profileEmail === OWNER_EMAIL && signInEmail === OWNER_EMAIL;
+}
 async function requireOwner(req, res) {
   const u = await getAuthedUser(req);
-  const email = (u && u.email ? String(u.email) : '').toLowerCase();
-  if (!u || u.role !== 'admin' || email !== OWNER_EMAIL) {
+  if (!isOwnerIdentity(u)) {
     res.status(403).json({ error: 'owner_only', detail: 'This is the owner’s personal workspace.' });
     return null;
   }
   return u;
 }
 
-module.exports = { getAuthedUser, requireAdmin, requireStaff, requireOwner, OWNER_EMAIL };
+module.exports = { getAuthedUser, requireAdmin, requireStaff, requireOwner, isOwnerIdentity, OWNER_EMAIL };

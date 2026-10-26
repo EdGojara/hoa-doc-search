@@ -1,0 +1,92 @@
+{
+  "migration": "548_user_profiles_lockdown.sql",
+  "summary": "Security fix (Ed 2026-10-26). user_profiles had no row level security and granted every signed-in user (authenticated) INSERT/UPDATE/DELETE, so a staffer could make themself admin, take the owner's email, or demote/delete the owner through the database API. Enables RLS, revokes all writes from authenticated/anon/PUBLIC, leaves authenticated SELECT limited to its own row. service_role (the server) and the 039 sign-in triggers keep working. No row changes.",
+  "requires": [
+    "546_inspection_closeout_stages.sql"
+  ],
+  "preflight": [
+    {
+      "name": "THE HOLE (live): row level security is OFF on user_profiles",
+      "sql": "SELECT count(*)::int FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'public' AND c.relname = 'user_profiles' AND c.relrowsecurity",
+      "expect": 0
+    },
+    {
+      "name": "THE HOLE (live): signed-in users (authenticated) can UPDATE user_profiles",
+      "sql": "SELECT has_table_privilege('authenticated', 'public.user_profiles', 'UPDATE')::int",
+      "expect": 1
+    },
+    {
+      "name": "the owner is the one and only active admin",
+      "sql": "SELECT (count(*) FILTER (WHERE role = 'admin' AND is_active AND lower(email) = 'egojara@bedrocktx.com'))::int * 10 + (count(*) FILTER (WHERE role = 'admin' AND is_active))::int FROM user_profiles",
+      "expect": 11
+    },
+    {
+      "name": "every profile's email matches its sign-in account (nothing already tampered)",
+      "sql": "SELECT count(*)::int FROM user_profiles p JOIN auth.users u ON u.id = p.id WHERE lower(p.email) IS DISTINCT FROM lower(u.email)",
+      "expect": 0
+    },
+    {
+      "name": "auth.uid() exists (Supabase auth)",
+      "sql": "SELECT count(*)::int FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'auth' AND p.proname = 'uid'",
+      "expect": 1
+    },
+    {
+      "name": "the 039 sign-in triggers are installed on auth.users",
+      "sql": "SELECT count(*)::int FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'auth' AND c.relname = 'users' AND t.tgname IN ('on_auth_user_created', 'on_auth_user_sign_in')",
+      "expect": 2
+    }
+  ],
+  "expected_changes": [
+    "user_profiles: row level security enabled; policy user_profiles_read_own (authenticated may SELECT only id = auth.uid()).",
+    "Privileges: INSERT/UPDATE/DELETE/TRUNCATE/REFERENCES/TRIGGER revoked from authenticated, anon and PUBLIC; SELECT revoked from anon and PUBLIC. service_role keeps SELECT/INSERT/UPDATE/DELETE.",
+    "No row changes; no table, column, constraint, trigger or function changes."
+  ],
+  "objects": {
+    "added": [],
+    "changed": [],
+    "removed": []
+  },
+  "row_changes": {
+    "user_profiles": 0
+  },
+  "protected": [
+    {
+      "table": "user_profiles",
+      "order_by": "id"
+    }
+  ],
+  "verify": [
+    {
+      "name": "row level security is ON",
+      "sql": "SELECT count(*)::int FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'public' AND c.relname = 'user_profiles' AND c.relrowsecurity",
+      "expect": 1
+    },
+    {
+      "name": "signed-in users cannot insert, update or delete profiles",
+      "sql": "SELECT (has_table_privilege('authenticated','public.user_profiles','INSERT')::int + has_table_privilege('authenticated','public.user_profiles','UPDATE')::int + has_table_privilege('authenticated','public.user_profiles','DELETE')::int + has_table_privilege('authenticated','public.user_profiles','TRUNCATE')::int)",
+      "expect": 0
+    },
+    {
+      "name": "anon has no access at all",
+      "sql": "SELECT (has_table_privilege('anon','public.user_profiles','SELECT')::int + has_table_privilege('anon','public.user_profiles','UPDATE')::int)",
+      "expect": 0
+    },
+    {
+      "name": "the server (service_role) keeps full access",
+      "sql": "SELECT (has_table_privilege('service_role','public.user_profiles','SELECT')::int + has_table_privilege('service_role','public.user_profiles','INSERT')::int + has_table_privilege('service_role','public.user_profiles','UPDATE')::int + has_table_privilege('service_role','public.user_profiles','DELETE')::int)",
+      "expect": 4
+    },
+    {
+      "name": "the own-row read policy exists",
+      "sql": "SELECT count(*)::int FROM pg_policies WHERE schemaname = 'public' AND tablename = 'user_profiles' AND policyname = 'user_profiles_read_own' AND cmd = 'SELECT'",
+      "expect": 1
+    },
+    {
+      "name": "the owner is still the one and only active admin",
+      "sql": "SELECT (count(*) FILTER (WHERE role = 'admin' AND is_active AND lower(email) = 'egojara@bedrocktx.com'))::int * 10 + (count(*) FILTER (WHERE role = 'admin' AND is_active))::int FROM user_profiles",
+      "expect": 11
+    }
+  ],
+  "api_checks": [],
+  "reload_schema": true
+}

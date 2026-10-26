@@ -315,6 +315,8 @@ const CHECKS = [
   'tests/sql/547_time_attendance_e2e.mjs',
   'tests/test_time_attendance_hours.js',
   'tests/test_time_attendance_api.js',
+  'tests/sql/548_user_profiles_lockdown_e2e.mjs',
+  'tests/test_user_profiles_lockdown.js',
   'tests/sql/519_apply_one_e2e.mjs',
   'tests/sql/520_apply_one_e2e.mjs',
   'tests/sql/521_apply_one_e2e.mjs',

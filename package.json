@@ -79,7 +79,8 @@
     "test:verify-deploy": "node tests/test_verify_deploy.js",
     "test:public-uploads": "node tests/test_public_upload_limits.js",
     "test:fines": "node tests/test_fine_safeguards.js",
-    "test:time": "node tests/test_time_attendance_hours.js && node tests/test_time_attendance_api.js && node tests/sql/547_time_attendance_e2e.mjs"
+    "test:time": "node tests/test_time_attendance_hours.js && node tests/test_time_attendance_api.js && node tests/sql/547_time_attendance_e2e.mjs",
+    "test:user-profiles": "node tests/test_user_profiles_lockdown.js && node tests/sql/548_user_profiles_lockdown_e2e.mjs"
   },
   "keywords": [],
   "author": "",

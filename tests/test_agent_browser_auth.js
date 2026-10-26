@@ -59,7 +59,10 @@ const tests = []; const check = (n, fn) => tests.push([n, fn]);
     assert.match(server, /app\.get\('\/admin\/agent-browser'/);
     assert.match(fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8'), /href: '\/admin\/agent-browser'/);
     const gate = fs.readFileSync(path.join(__dirname, '..', 'api', '_require_admin.js'), 'utf8');
-    assert.match(gate, /if \(!u \|\| u\.role !== 'admin' \|\| email !== OWNER_EMAIL\)/, 'requireOwner itself is unchanged');
+    // requireOwner: admin role AND both the profile email and the sign-in email are the owner's (548 hardening).
+    assert.match(gate, /if \(!isOwnerIdentity\(u\)\)/, 'requireOwner uses isOwnerIdentity');
+    assert.match(gate, /if \(!u \|\| u\.role !== 'admin'\) return false;/, 'isOwnerIdentity requires the admin role');
+    assert.match(gate, /return profileEmail === OWNER_EMAIL && signInEmail === OWNER_EMAIL;/, 'isOwnerIdentity requires both emails');
   });
 
   let pass = 0, fail = 0;
