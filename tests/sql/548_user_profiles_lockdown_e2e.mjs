@@ -191,11 +191,36 @@ check('sign-in still updates last_sign_in_at through the 039 trigger', !!(await 
 const admins = (await db.query(`SELECT email FROM user_profiles WHERE role = 'admin' AND is_active`)).rows.map((x) => x.email);
 check('Ed is still the one and only active admin', JSON.stringify(admins) === JSON.stringify([OWNER]));
 
-// ---- drift: the plan refuses when the database is not in the expected state -------------
-const drift = await buildWorld({ preApplied: true });
-const plan2 = await A.planMigration({ ...ctx, client: drift.client, filename: F });
-check('drift: RLS already on BLOCKS the plan (no token)', plan2.status !== 'ready' && !plan2.plan_token, JSON.stringify({ status: plan2.status }));
+// ---- production's actual starting state: RLS already ON (enabled outside any migration) ----
+// The 2026-10-26 production Plan showed relrowsecurity = true. 548 must plan and apply
+// cleanly from there too, ending in exactly the same locked state.
+console.log('-- production-like start: RLS already on, 039 grants still in place --');
+const prod = await buildWorld({ preApplied: true });
+const prodBefore = (await prod.db.query(`SELECT string_agg(row_to_json(u)::text, ',' ORDER BY id) j FROM user_profiles u`)).rows[0].j;
+const pw = await as(prod.db, 'authenticated', ANA, `UPDATE user_profiles SET role = 'admin' WHERE id = '${ANA}'`);
+check('prod-like start: with RLS on and no policy, a staffer\'s update already matches no rows (but the write grant is still there)', !pw.err && pw.affected === 0, pw.err || '');
+const planP = await A.planMigration({ ...ctx, client: prod.client, filename: F });
+check('prod-like start: plan is READY; every preflight passes', planP.status === 'ready' && planP.preflight.every((p) => p.ok), JSON.stringify({ status: planP.status, reason: planP.reason, preflight: planP.preflight }).slice(0, 1500));
+const rP = await A.applyMigration({ ...ctx, client: prod.client, planToken: planP.plan_token, log: { error() {} }, apiCheck: async () => ({ ok: true, count: 0 }) });
+check('prod-like start: 548 applied and every verify check passed', rP.status === 'applied', JSON.stringify({ status: rP.status, error: rP.error, detail: rP.detail }).slice(0, 3000));
+await prod.db.exec('RESET ROLE;');
+check('prod-like start: no profile changed', (await prod.db.query(`SELECT string_agg(row_to_json(u)::text, ',' ORDER BY id) j FROM user_profiles u`)).rows[0].j === prodBefore);
+check('prod-like start: the write grant is gone and a staffer reads only their own row',
+  denied(await as(prod.db, 'authenticated', ANA, `UPDATE user_profiles SET role = 'admin' WHERE id = '${ANA}'`))
+  && (await as(prod.db, 'authenticated', ANA, `SELECT id FROM user_profiles`)).rows.length === 1);
+check('prod-like start: the server still reads every profile', (await as(prod.db, 'service_role', '', `SELECT id FROM user_profiles`)).rows.length === 3);
 
-if (db.close) { await db.close(); await drift.db.close(); }
+// ---- the plan refuses a starting state 548 would not fully fix ----------------------------
+// An unknown policy (e.g. one added in the dashboard) could keep giving signed-in users
+// access that 548 does not remove; the plan must stop and say so, changing nothing.
+const drift = await buildWorld({ preApplied: true });
+await drift.db.exec(`RESET ROLE; SET ROLE app_owner; CREATE POLICY dashboard_read_all ON user_profiles FOR SELECT TO authenticated USING (true); SET ROLE app_owner;`);
+const plan2 = await A.planMigration({ ...ctx, client: drift.client, filename: F });
+check('unknown policy on user_profiles BLOCKS the plan (no token), naming the reason',
+  plan2.status !== 'ready' && !plan2.plan_token && /no policies on user_profiles other than/.test(plan2.reason || ''), JSON.stringify({ status: plan2.status, reason: plan2.reason }));
+const already = await A.planMigration({ ...ctx, client: client, filename: F });
+check('re-planning after apply is refused as already applied (no second run)', already.status !== 'ready' && !already.plan_token, JSON.stringify({ status: already.status }));
+
+if (db.close) { await db.close(); await drift.db.close(); await prod.db.close(); }
 console.log(`\n${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);
