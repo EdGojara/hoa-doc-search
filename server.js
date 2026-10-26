@@ -901,6 +901,8 @@ app.get('/app/financial', (req, res) => res.sendFile(require('path').join(__dirn
 app.get('/app/operations', (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'app', 'operations.html')));
 // Mission Control (Ed 2026-10-12): Operations, Platform Buildout, Needs my action.
 app.get('/app/mission-control', (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'app', 'mission-control.html')));
+app.get('/app/time', (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'app', 'time.html')));
+app.get('/app/time-admin', (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'app', 'time-admin.html')));
 app.get('/app/irs-mailing', (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'app', 'irs-mailing.html')));
 // Legal Invoice Review (Issue #9 step 2). Draft only: no GL or owner postings.
 app.get('/app/financial/legal', (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'app', 'legal.html')));
@@ -1364,6 +1366,9 @@ app.use('/api/amanda/email', require('./api/amanda_email'));  // Amanda's email 
 app.use('/api/agents', require('./api/agent_desk'));  // AI employee email desk for every roster agent with email_desk (Ed 2026-10-22)
 app.use('/api/agent-browser', require('./api/agent_browser'));  // owner-only: guarded server-side browser skills for AI employees (Ed 2026-10-23)
 app.use('/api/amanda', require('./api/amanda'));
+// Staff Time & Attendance (Ed 2026-10-26, migration 547): employee routes act as the
+// signed-in employee (their own token, row-level security); /admin routes are owner-only.
+app.use('/api/time', require('./api/time_attendance'));
 // Community Data Readiness — read-only, staff sign-in (Issue #6).
 app.use('/api/readiness', require('./api/readiness'));
 // Operations overview — read-only, staff sign-in (Issue #6).

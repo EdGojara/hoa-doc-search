@@ -1,0 +1,296 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Team Time · Trusted</title>
+<meta name="robots" content="noindex">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/brand.css">
+<link rel="stylesheet" href="/app/tx.css">
+<style>
+  .ta-wrap { padding: 26px 32px 56px; max-width: 1100px; }
+  .ta-wrap h1 { margin: 4px 0 2px; font-family: var(--font-serif); font-weight: 600; font-size: clamp(28px, 4vw, 38px); color: var(--navy); line-height: 1.1; }
+  .ta-card { padding: 18px 20px; margin-top: 14px; }
+  .ta-card h2 { margin: 0 0 4px; font: 600 16px var(--font-sans); color: var(--navy); display: flex; gap: 8px; align-items: center; }
+  .ta-hint { font-size: 13px; color: var(--tx-muted); margin-bottom: 10px; }
+  .ta-tabs { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 16px; }
+  .ta-tab { border: 1px solid var(--tx-rule); background: var(--tx-surface); border-radius: 999px; padding: 8px 14px; font: 600 13.5px var(--font-sans); color: var(--tx-text-2); cursor: pointer; }
+  .ta-tab.is-on { background: var(--navy); color: var(--tx-ivory); border-color: var(--navy); }
+  .ta-tab b { margin-left: 4px; color: var(--gold); }
+  .ta-table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+  .ta-table th { text-align: left; font-weight: 600; font-size: 12px; color: var(--tx-muted); padding: 6px 6px; }
+  .ta-table td { padding: 9px 6px; border-top: 1px solid var(--tx-rule-soft); vertical-align: top; }
+  .ta-table td.n, .ta-table th.n { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .ta-scroll { overflow-x: auto; }
+  .ta-bar { height: 6px; background: var(--tx-subtle); border-radius: 99px; overflow: hidden; margin-top: 4px; min-width: 80px; }
+  .ta-bar i { display: block; height: 100%; background: var(--tx-ok); } .ta-bar.is-warn i { background: var(--gold); } .ta-bar.is-bad i { background: var(--tx-bad); }
+  .ta-req { border-top: 1px solid var(--tx-rule-soft); padding: 12px 0; display: grid; grid-template-columns: minmax(0, 1fr) minmax(260px, 340px); gap: 14px; }
+  .ta-req:first-of-type { border-top: 0; }
+  .ta-req-t { font-weight: 600; font-size: 14.5px; }
+  .ta-req-d { font-size: 13px; color: var(--tx-text-2); margin-top: 3px; line-height: 1.45; }
+  .ta-dec input, .ta-form input, .ta-form select, .ta-form textarea { width: 100%; font: 14px var(--font-sans); padding: 8px 10px; border: 1px solid var(--tx-rule); border-radius: 8px; background: #fff; }
+  .ta-dec .ta-btns { display: flex; gap: 8px; margin-top: 8px; }
+  .ta-quick { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
+  .ta-quick button { border: 1px solid var(--tx-rule); background: var(--tx-subtle); border-radius: 999px; padding: 3px 9px; font: 12px var(--font-sans); cursor: pointer; color: var(--tx-text-2); }
+  .ta-form label { display: block; font: 600 12.5px var(--font-sans); color: var(--tx-text-2); margin: 10px 0 4px; }
+  .ta-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 0 14px; }
+  .ta-err { color: var(--tx-bad); font-size: 13.5px; margin-top: 8px; }
+  .ta-ok { color: var(--tx-ok); font-size: 13.5px; margin-top: 8px; font-weight: 600; }
+  .ta-flag { font-size: 12.5px; margin-top: 2px; }
+  .ta-flag.bad { color: var(--tx-bad); } .ta-flag.warn { color: var(--tx-warn); } .ta-flag.info { color: var(--tx-muted); }
+  .ta-act { border-top: 1px solid var(--tx-rule-soft); padding: 12px 0; font-size: 13.5px; line-height: 1.5; }
+  .ta-act:first-of-type { border-top: 0; }
+  .ta-link { background: none; border: 0; color: var(--tx-info); font: 600 13.5px var(--font-sans); cursor: pointer; padding: 0; text-decoration: underline; text-align: left; }
+  dialog.ta-dlg { border: 0; border-radius: 16px; padding: 0; width: min(860px, calc(100vw - 24px)); max-height: calc(100vh - 40px); box-shadow: var(--tx-shadow); }
+  dialog.ta-dlg::backdrop { background: rgba(11, 29, 52, .35); }
+  .ta-dlg-in { padding: 18px 20px 20px; }
+  @media (max-width: 760px) { .ta-wrap { padding: 16px 16px 40px; } .ta-req { grid-template-columns: 1fr; } .ta-card { padding: 16px; } .ta-hide-sm { display: none; } }
+</style>
+</head>
+<body class="tx-body">
+<div class="tx-shell" id="tx-shell">
+  <main class="tx-main" id="tx-main">
+    <div class="tx-top"><button class="tx-menu-btn" id="tx-menu-btn" aria-label="Open navigation"></button></div>
+    <div class="ta-wrap">
+      <div class="tx-muted" style="font-size:12px;letter-spacing:.08em;text-transform:uppercase">Time &amp; attendance · owner</div>
+      <h1 id="ta-title">Team time</h1>
+      <div class="ta-hint" id="ta-sub"></div>
+      <div class="ta-tabs" id="ta-tabs"></div>
+      <div id="ta-body"></div>
+    </div>
+  </main>
+</div>
+<dialog class="ta-dlg" id="ta-dlg"><div class="ta-dlg-in" id="ta-dlg-in"></div></dialog>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4"></script>
+<script src="/app/tx-icons.js"></script>
+<script src="/app/tx.js"></script>
+<script>if (TX.fixture) document.write('<script src="/app/fixtures/time-admin.fixture.js"><\/script>');</script>
+<script>
+(async function () {
+  'use strict';
+  var esc = TX.esc, $ = function (id) { return document.getElementById(id); };
+  var TZ = 'America/Chicago';
+  var user = await TX.boot({ active: 'time' });
+  if (!user) return;
+  var D = null, tab = 'review', A = null;
+  try { tab = sessionStorage.getItem('ta.tab') || 'review'; } catch (_) {}
+
+  function hm(min) { min = Math.max(0, Math.round(min || 0)); return Math.floor(min / 60) + 'h ' + String(min % 60).padStart(2, '0') + 'm'; }
+  function clock(iso) { return new Date(iso).toLocaleTimeString('en-US', { timeZone: TZ, hour: 'numeric', minute: '2-digit' }); }
+  function when(iso) { return new Date(iso).toLocaleString('en-US', { timeZone: TZ, weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }); }
+  function dayLabel(k) { var p = k.split('-'); return new Date(Date.UTC(+p[0], +p[1] - 1, +p[2], 12)).toLocaleDateString('en-US', { timeZone: 'UTC', weekday: 'short', month: 'short', day: 'numeric' }); }
+  function errBox(r) { return '<div class="ta-err">' + esc((r.body && r.body.detail) || r.error || 'Something went wrong.') + '</div>'; }
+  var DIRS = { in: 'clock-in', out: 'clock-out' };
+
+  async function load() {
+    var r = await TX.get('/api/time/admin/overview');
+    if (!r.ok) {
+      $('ta-title').textContent = r.status === 403 ? 'Owner only' : 'Team time is unavailable';
+      $('ta-sub').textContent = r.status === 403 ? 'Team timesheets and approvals are limited to the account owner. Your own time is on My Time.' : (r.error || '');
+      $('ta-body').innerHTML = '<a class="tx-btn tx-btn--sec" style="margin-top:12px" href="/app/time">Open My Time</a>';
+      return;
+    }
+    D = r.data;
+    render();
+  }
+
+  function counts() {
+    var flags = 0; D.people.forEach(function (p) { flags += p.flags.filter(function (f) { return f.severity !== 'info'; }).length; });
+    return { review: D.pending_corrections.length + D.pending_overtime.length, flags: flags };
+  }
+  function render() {
+    var c = counts();
+    var inNow = D.people.filter(function (p) { return p.clocked_in; }).length;
+    $('ta-sub').textContent = inNow + ' of ' + D.people.filter(function (p) { return p.active && p.tracks_time; }).length + ' clocked in now · week of ' + dayLabel(D.week_start) + ' · ' + (c.review ? c.review + ' waiting for you' : 'nothing waiting for you');
+    var tabs = [['review', 'Approvals', c.review], ['team', 'Team', c.flags], ['activity', 'Activity', 0], ['payroll', 'Payroll export', 0], ['setup', 'Setup', 0]];
+    $('ta-tabs').innerHTML = tabs.map(function (t) { return '<button class="ta-tab' + (t[0] === tab ? ' is-on' : '') + '" data-tab="' + t[0] + '">' + t[1] + (t[2] ? '<b>' + t[2] + '</b>' : '') + '</button>'; }).join('');
+    ({ review: renderReview, team: renderTeam, activity: renderActivity, payroll: renderPayroll, setup: renderSetup })[tab]();
+  }
+
+  // ---- approvals -------------------------------------------------------------
+  function decideBox(kind, id) {
+    return '<div class="ta-dec" data-kind="' + kind + '" data-id="' + id + '"><input placeholder="Reason (required, kept with the record)" maxlength="1000">'
+      + '<div class="ta-quick">' + ['Confirmed with employee', 'Matches the schedule', 'Not supported'].map(function (q) { return '<button type="button" data-q="' + esc(q) + '">' + esc(q) + '</button>'; }).join('') + '</div>'
+      + '<div class="ta-btns"><button class="tx-btn tx-btn--pri" data-decide="approved">Approve</button><button class="tx-btn tx-btn--sec" data-decide="rejected">Reject</button></div><div class="ta-msg"></div></div>';
+  }
+  function correctionText(c) {
+    if (c.kind === 'add_punch') return 'Add a missing ' + DIRS[c.proposed_direction] + ' at ' + when(c.proposed_at) + (c.proposed_worked_during_break ? ' (worked during break)' : '');
+    if (c.kind === 'change_time') return 'Change the ' + DIRS[c.original_direction] + ' from ' + when(c.original_at) + ' to ' + clock(c.proposed_at);
+    return 'Remove the ' + DIRS[c.original_direction] + ' at ' + when(c.original_at);
+  }
+  function renderReview() {
+    var h = '<div class="tx-card ta-card"><h2>' + TX.icon('time', { size: 18 }) + ' Time corrections</h2><div class="ta-hint">The original punch is never changed. Approving applies the correction; both stay on the record with your reason.</div>';
+    h += D.pending_corrections.length ? D.pending_corrections.map(function (c) {
+      return '<div class="ta-req"><div><div class="ta-req-t">' + esc(c.employee) + '</div><div class="ta-req-d">' + esc(correctionText(c)) + '</div><div class="ta-req-d">“' + esc(c.employee_reason) + '” · asked ' + esc(when(c.requested_at)) + '</div>'
+        + '<button class="ta-link" data-sheet="' + c.user_id + '" style="margin-top:6px">See timesheet</button></div>' + decideBox('corrections', c.id) + '</div>';
+    }).join('') : '<div class="ta-hint">No corrections waiting.</div>';
+    h += '</div><div class="tx-card ta-card"><h2>' + TX.icon('alert', { size: 18 }) + ' Overtime requests</h2><div class="ta-hint">Approval is permission to work past the weekly limit. Hours actually worked are always recorded and paid.</div>';
+    h += D.pending_overtime.length ? D.pending_overtime.map(function (o) {
+      return '<div class="ta-req"><div><div class="ta-req-t">' + esc(o.employee) + ' · ' + hm(o.extra_minutes) + ' extra</div><div class="ta-req-d">Week of ' + esc(dayLabel(o.week_start)) + '</div><div class="ta-req-d">“' + esc(o.employee_reason) + '”</div></div>' + decideBox('overtime', o.id) + '</div>';
+    }).join('') : '<div class="ta-hint">No overtime requests waiting.</div>';
+    $('ta-body').innerHTML = h + '</div>';
+  }
+
+  // ---- team ---------------------------------------------------------------------
+  function renderTeam() {
+    var people = D.people.filter(function (p) { return p.active && p.tracks_time; });
+    var h = '<div class="tx-card ta-card"><h2>' + TX.icon('team', { size: 18 }) + ' Team this week</h2><div class="ta-hint">Tap a name for the full timesheet, every punch with its original, and activity summaries.</div><div class="ta-scroll"><table class="ta-table"><thead><tr><th>Employee</th><th>Now</th><th class="n">Today</th><th class="n">Week</th><th class="ta-hide-sm">Needs a look</th></tr></thead><tbody>';
+    h += people.map(function (p) {
+      var pct = Math.min(100, Math.round(p.week_minutes / p.week_threshold * 100));
+      var cls = p.week_minutes > p.week_threshold ? ' is-bad' : p.week_minutes >= p.week_threshold - 240 ? ' is-warn' : '';
+      var fl = p.flags.filter(function (f) { return f.severity !== 'info'; });
+      return '<tr><td><button class="ta-link" data-sheet="' + p.user_id + '">' + esc(p.name) + '</button></td>'
+        + '<td>' + (p.clocked_in ? '<span class="tx-pill tx-pill--ok">In since ' + esc(clock(p.since)) + '</span>' : '<span class="tx-pill tx-pill--mute">Out</span>') + '</td>'
+        + '<td class="n">' + hm(p.today_minutes) + '</td><td class="n">' + hm(p.week_minutes) + '<div class="ta-bar' + cls + '"><i style="width:' + pct + '%"></i></div></td>'
+        + '<td class="ta-hide-sm">' + (fl.length ? fl.slice(0, 3).map(function (f) { return '<div class="ta-flag ' + f.severity + '">' + esc((f.date ? dayLabel(f.date) + ': ' : '') + f.message) + '</div>'; }).join('') + (fl.length > 3 ? '<div class="ta-flag info">and ' + (fl.length - 3) + ' more</div>' : '') : '<span class="tx-muted">–</span>') + '</td></tr>';
+    }).join('');
+    h += '</tbody></table></div>' + (people.length ? '' : '<div class="ta-hint">No one is enrolled yet. Enroll staff under Setup.</div>') + '</div>';
+    $('ta-body').innerHTML = h;
+  }
+
+  async function openSheet(uid) {
+    var dlg = $('ta-dlg');
+    $('ta-dlg-in').innerHTML = '<div class="ta-hint">Loading…</div>';
+    if (dlg.showModal) dlg.showModal(); else dlg.setAttribute('open', '');
+    var r = await TX.get('/api/time/admin/timesheet/' + uid + '?from=' + D.from + '&to=' + D.today);
+    if (!r.ok) { $('ta-dlg-in').innerHTML = errBox(r) + '<div style="margin-top:12px"><button class="tx-btn tx-btn--sec" data-close>Close</button></div>'; return; }
+    var s = r.data, t = s.timesheet;
+    var h = '<div style="display:flex;justify-content:space-between;gap:10px;align-items:start"><div><h2 style="margin:0;font:600 20px var(--font-sans);color:var(--navy)">' + esc(s.employee.name) + '</h2><div class="ta-hint">' + (s.employee.flsa_status === 'exempt' ? 'Salaried' : 'Hourly') + ' · ' + esc(dayLabel(s.from)) + ' to ' + esc(dayLabel(s.to)) + '</div></div><button class="tx-btn tx-btn--sec" data-close>Close</button></div>';
+    h += '<div class="ta-scroll"><table class="ta-table"><thead><tr><th>Day</th><th>Punches (corrected shows original)</th><th class="n">Paid</th><th class="n">OT</th></tr></thead><tbody>';
+    var byDay = {}; s.punches.forEach(function (p) { var k = new Date(p.effective_at).toLocaleDateString('en-CA', { timeZone: TZ }); (byDay[k] = byDay[k] || []).push(p); });
+    var flagsBy = {}; t.flags.forEach(function (f) { if (f.date) (flagsBy[f.date] = flagsBy[f.date] || []).push(f); });
+    var keys = Object.keys(Object.assign({}, byDay, flagsBy, t.days.reduce(function (o, d) { o[d.date] = 1; return o; }, {}))).filter(function (k) { return k >= s.from && k <= s.to; }).sort().reverse();
+    h += keys.map(function (k) {
+      var d = t.days.find(function (x) { return x.date === k; }) || { paid_minutes: 0, overtime_minutes: 0, live_minutes: 0 };
+      var ps = (byDay[k] || []).map(function (p) { return (p.direction === 'in' ? 'In ' : 'Out ') + clock(p.effective_at) + (p.origin === 'correction' ? ' (added)' : p.is_corrected ? ' (was ' + clock(p.original_at) + ')' : ''); }).join(' · ');
+      return '<tr><td>' + esc(dayLabel(k)) + '</td><td>' + esc(ps || '–') + (flagsBy[k] || []).map(function (f) { return '<div class="ta-flag ' + f.severity + '">' + esc(f.message) + '</div>'; }).join('') + '</td><td class="n">' + hm(d.paid_minutes + (d.live_minutes || 0)) + '</td><td class="n">' + (d.overtime_minutes ? hm(d.overtime_minutes) : '–') + '</td></tr>';
+    }).join('');
+    h += '</tbody></table></div>';
+    var decided = s.corrections.filter(function (c) { return c.status !== 'pending'; });
+    if (decided.length) h += '<h3 style="font:600 14px var(--font-sans);margin:16px 0 4px">Correction history</h3>' + decided.slice(0, 20).map(function (c) { return '<div class="ta-act">' + esc(correctionText(c)) + ' · <b>' + esc(c.status) + '</b>' + (c.decided_by_name ? ' by ' + esc(c.decided_by_name) : '') + (c.decided_at ? ' on ' + esc(when(c.decided_at)) : '') + '<div class="tx-muted">Employee: “' + esc(c.employee_reason) + '”' + (c.decision_reason ? ' · Decision: “' + esc(c.decision_reason) + '”' : '') + '</div></div>'; }).join('');
+    if (s.summaries.length) h += '<h3 style="font:600 14px var(--font-sans);margin:16px 0 4px">Activity summaries</h3>' + s.summaries.slice().reverse().map(function (x) { return '<div class="ta-act"><b>' + esc(dayLabel(x.work_date)) + '</b> · ' + esc(x.categories.join(', ')) + '<div>' + esc(x.accomplishments) + '</div><div class="tx-muted">Outstanding: ' + esc(x.outstanding) + '</div></div>'; }).join('');
+    $('ta-dlg-in').innerHTML = h;
+  }
+
+  // ---- activity -------------------------------------------------------------------
+  async function renderActivity() {
+    $('ta-body').innerHTML = '<div class="tx-card ta-card"><div class="ta-hint">Loading…</div></div>';
+    if (!A) { var r = await TX.get('/api/time/admin/activity'); if (!r.ok) { $('ta-body').innerHTML = '<div class="tx-card ta-card">' + errBox(r) + '</div>'; return; } A = r.data; }
+    var byComm = {}; A.rows.forEach(function (x) { x.communities.forEach(function (c) { byComm[c] = (byComm[c] || 0) + 1; }); });
+    var h = '<div class="tx-card ta-card"><h2>' + TX.icon('operations', { size: 18 }) + ' Activity, ' + esc(dayLabel(A.from)) + ' to ' + esc(dayLabel(A.to)) + '</h2><div class="ta-hint">Separate from paid hours. Ask Amanda to summarize it.</div>';
+    if (Object.keys(byComm).length) h += '<div class="ta-hint">Days tagged by community: ' + Object.keys(byComm).sort().map(function (c) { return esc(c) + ' ' + byComm[c]; }).join(' · ') + '</div>';
+    h += A.rows.length ? A.rows.slice().reverse().map(function (x) {
+      return '<div class="ta-act"><b>' + esc(x.employee) + '</b> · ' + esc(dayLabel(x.date)) + ' · ' + esc(x.categories.join(', ')) + (x.communities.length ? ' · <span class="tx-pill tx-pill--info">' + esc(x.communities.join(', ')) + '</span>' : '')
+        + '<div>' + esc(x.accomplishments) + '</div><div class="tx-muted">Outstanding: ' + esc(x.outstanding) + (x.notes ? ' · Notes: ' + esc(x.notes) : '') + '</div></div>';
+    }).join('') : '<div class="ta-hint">No summaries yet.</div>';
+    $('ta-body').innerHTML = h + '</div>';
+  }
+
+  // ---- payroll ----------------------------------------------------------------------
+  function renderPayroll() {
+    var opts = (D.periods || []).map(function (p, i) { return '<option value="' + p.start + '|' + p.end + '"' + (i === 1 ? ' selected' : '') + '>' + esc(dayLabel(p.start)) + ' to ' + esc(dayLabel(p.end)) + (i === 0 ? ' (current)' : '') + '</option>'; }).join('');
+    var h = '<div class="tx-card ta-card"><h2>' + TX.icon('download', { size: 18 }) + ' Payroll export</h2><div class="ta-hint">Hours only, ready for QuickBooks Payroll. Overtime is counted per ' + (['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][D.settings.workweek_start_dow]) + '-start workweek and lands on the day it was worked.'
+      + (D.settings.pay_frequency ? '' : ' No pay schedule is set yet; choose dates, or set the schedule under Setup.') + '</div><div class="ta-form ta-grid">'
+      + (opts ? '<div><label for="ta-per">Pay period</label><select id="ta-per">' + opts + '<option value="">Custom dates…</option></select></div>' : '')
+      + '<div><label for="ta-from">From</label><input type="date" id="ta-from"></div><div><label for="ta-to">To</label><input type="date" id="ta-to"></div></div>'
+      + '<div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap"><button class="tx-btn tx-btn--pri" id="ta-prev">Preview</button></div><div id="ta-pay"></div></div>';
+    $('ta-body').innerHTML = h;
+    function syncPer() { var v = $('ta-per') && $('ta-per').value; if (v) { $('ta-from').value = v.split('|')[0]; $('ta-to').value = v.split('|')[1]; } }
+    if ($('ta-per')) { $('ta-per').onchange = syncPer; syncPer(); }
+    if (!$('ta-from').value) { $('ta-from').value = D.week_start; $('ta-to').value = D.today; }
+    $('ta-prev').onclick = previewPayroll;
+  }
+  async function previewPayroll() {
+    var f = $('ta-from').value, t = $('ta-to').value;
+    $('ta-pay').innerHTML = '<div class="ta-hint" style="margin-top:12px">Loading…</div>';
+    var r = await TX.get('/api/time/admin/payroll?from=' + f + '&to=' + t);
+    if (!r.ok) { $('ta-pay').innerHTML = errBox(r); return; }
+    var p = r.data;
+    var h = '<div class="ta-scroll" style="margin-top:14px"><table class="ta-table"><thead><tr><th>Employee</th><th class="n">Regular</th><th class="n">Overtime</th><th class="n">Total</th><th class="n ta-hide-sm">Paid breaks</th><th class="n ta-hide-sm">OT without approval</th></tr></thead><tbody>'
+      + p.rows.map(function (x) { return '<tr><td>' + esc(x.employee) + '</td><td class="n">' + x.regular_hours.toFixed(2) + '</td><td class="n">' + x.overtime_hours.toFixed(2) + '</td><td class="n"><b>' + x.total_hours.toFixed(2) + '</b></td><td class="n ta-hide-sm">' + x.paid_break_hours.toFixed(2) + '</td><td class="n ta-hide-sm">' + (x.unapproved_overtime_hours ? '<span style="color:var(--tx-bad)">' + x.unapproved_overtime_hours.toFixed(2) + '</span>' : '–') + '</td></tr>'; }).join('')
+      + '<tr><td><b>Total</b></td><td class="n"><b>' + p.totals.regular_hours.toFixed(2) + '</b></td><td class="n"><b>' + p.totals.overtime_hours.toFixed(2) + '</b></td><td class="n"><b>' + p.totals.total_hours.toFixed(2) + '</b></td><td class="ta-hide-sm"></td><td class="ta-hide-sm"></td></tr></tbody></table></div>';
+    if (p.exceptions.length) h += '<div class="tx-err" style="margin-top:12px">' + TX.icon('alert', { size: 16 }) + '<span><b>' + p.exceptions.length + ' open exception' + (p.exceptions.length === 1 ? '' : 's') + '.</b> These hours are incomplete until resolved:<br>' + p.exceptions.map(function (x) { return esc(x.employee + ', ' + dayLabel(x.date) + ': ' + x.message); }).join('<br>') + '</span></div>'
+      + '<div class="ta-form"><label for="ta-ovr">Export anyway? Reason (kept in the audit trail)</label><input id="ta-ovr" maxlength="500" placeholder="e.g. Payroll due today; corrections will be trued up next period"></div>';
+    h += '<div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap"><button class="tx-btn tx-btn--gold" data-dl="csv">Download CSV</button><button class="tx-btn tx-btn--sec" data-dl="xlsx">Download Excel</button></div><div id="ta-dl-msg"></div>';
+    $('ta-pay').innerHTML = h;
+  }
+  async function download(fmt) {
+    var f = $('ta-from').value, t = $('ta-to').value, ovr = $('ta-ovr') ? $('ta-ovr').value.trim() : '';
+    if ($('ta-ovr') && !ovr) { $('ta-dl-msg').innerHTML = '<div class="ta-err">Resolve the exceptions or give a reason to export anyway.</div>'; return; }
+    if (TX.fixture) { $('ta-dl-msg').innerHTML = '<div class="ta-ok">Preview mode: no file.</div>'; return; }
+    try {
+      var tok = await TX.token();
+      var resp = await fetch('/api/time/admin/payroll?from=' + f + '&to=' + t + '&format=' + fmt + (ovr ? '&override_reason=' + encodeURIComponent(ovr) : ''), { headers: tok ? { Authorization: 'Bearer ' + tok } : {}, credentials: 'same-origin' });
+      if (!resp.ok) { var j = {}; try { j = await resp.json(); } catch (_) {} throw new Error(j.detail || j.error || ('HTTP ' + resp.status)); }
+      var url = URL.createObjectURL(await resp.blob()); var a = document.createElement('a');
+      a.href = url; a.download = 'bedrock-payroll-hours_' + f + '_to_' + t + '.' + fmt; document.body.appendChild(a); a.click(); a.remove();
+      $('ta-dl-msg').innerHTML = '<div class="ta-ok">Downloaded. The export is recorded in the audit trail.</div>';
+    } catch (e) { $('ta-dl-msg').innerHTML = '<div class="ta-err">' + esc(e.message) + '</div>'; }
+  }
+
+  // ---- setup --------------------------------------------------------------------------
+  function renderSetup() {
+    var S = D.settings;
+    var days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    var h = '<div class="tx-card ta-card"><h2>Who uses the time clock</h2><div class="ta-hint">Hourly staff clock in. Salaried staff file daily summaries only. You can’t enroll yourself.</div>';
+    h += D.people.map(function (p) {
+      return '<div class="ta-req"><div><div class="ta-req-t">' + esc(p.name) + '</div><div class="ta-req-d">' + (p.active ? (p.flsa_status === 'exempt' ? 'Salaried (summaries only)' : 'Hourly (clocks in)') : 'Inactive') + ' · ' + esc(p.email) + '</div></div>'
+        + '<div class="ta-form" data-enroll="' + p.user_id + '"><select><option value="nonexempt"' + (p.flsa_status !== 'exempt' ? ' selected' : '') + '>Hourly</option><option value="exempt"' + (p.flsa_status === 'exempt' ? ' selected' : '') + '>Salaried</option><option value="inactive">Inactive</option></select>'
+        + '<input placeholder="Reason for the change" maxlength="1000" style="margin-top:6px"><button class="tx-btn tx-btn--sec" style="margin-top:6px" data-save-emp>Save</button><div class="ta-msg"></div></div></div>';
+    }).join('');
+    h += D.not_enrolled.length ? '<h3 style="font:600 14px var(--font-sans);margin:16px 0 4px">Not enrolled</h3>' + D.not_enrolled.map(function (u) {
+      return '<div class="ta-req"><div><div class="ta-req-t">' + esc(u.name) + '</div><div class="ta-req-d">' + esc(u.email || '') + '</div></div><div class="ta-form" data-enroll="' + u.user_id + '"><select><option value="nonexempt">Hourly</option><option value="exempt">Salaried</option></select><input placeholder="Reason (e.g. new hire)" maxlength="1000" style="margin-top:6px"><button class="tx-btn tx-btn--pri" style="margin-top:6px" data-save-emp>Enroll</button><div class="ta-msg"></div></div></div>';
+    }).join('') : '';
+    h += '</div><div class="tx-card ta-card"><h2>Workweek and pay schedule</h2><div class="ta-hint">Overtime uses the fixed workweek. The pay schedule only sets the export periods. Changes are recorded with your reason.</div><div class="ta-form ta-grid">'
+      + '<div><label for="st-dow">Workweek starts</label><select id="st-dow">' + days.map(function (d, i) { return '<option value="' + i + '"' + (i === S.workweek_start_dow ? ' selected' : '') + '>' + d + ' 12:00 AM Central</option>'; }).join('') + '</select></div>'
+      + '<div><label for="st-thr">Weekly limit (hours)</label><input type="number" id="st-thr" min="1" max="100" step="0.5" value="' + (S.weekly_threshold_minutes / 60) + '"></div>'
+      + '<div><label for="st-freq">Pay schedule</label><select id="st-freq"><option value="">Not set yet</option>' + D.frequencies.map(function (f) { return '<option value="' + f + '"' + (S.pay_frequency === f ? ' selected' : '') + '>' + ({ weekly: 'Weekly', biweekly: 'Every two weeks', semimonthly: 'Twice a month (1st-15th, 16th-end)', monthly: 'Monthly' }[f]) + '</option>'; }).join('') + '</select></div>'
+      + '<div><label for="st-anchor">First day of a pay period (weekly / every two weeks)</label><input type="date" id="st-anchor" value="' + (S.pay_period_anchor || '') + '"></div></div>'
+      + '<div class="ta-form"><label for="st-why">Reason for the change</label><input id="st-why" maxlength="1000" placeholder="e.g. Matches the QuickBooks Payroll schedule"></div>'
+      + '<button class="tx-btn tx-btn--pri" style="margin-top:12px" id="st-save">Save</button><div id="st-msg"></div></div>';
+    $('ta-body').innerHTML = h;
+    $('st-save').onclick = async function () {
+      if (String($('st-dow').value) !== String(S.workweek_start_dow) && !confirm('Changing the workweek start changes how overtime is counted from now on. Federal rules expect a fixed workweek; change it only for a lasting reason. Continue?')) return;
+      this.disabled = true;
+      var r = await TX.post('/api/time/admin/settings', { workweek_start_dow: Number($('st-dow').value), weekly_threshold_hours: Number($('st-thr').value), pay_frequency: $('st-freq').value || null, pay_period_anchor: $('st-anchor').value || null, reason: $('st-why').value });
+      this.disabled = false;
+      if (!r.ok) { $('st-msg').innerHTML = errBox(r); return; }
+      $('st-msg').innerHTML = '<div class="ta-ok">Saved.</div>'; await load();
+    };
+  }
+
+  document.addEventListener('click', async function (e) {
+    var t = e.target;
+    var tb = t.closest('[data-tab]'); if (tb) { tab = tb.getAttribute('data-tab'); try { sessionStorage.setItem('ta.tab', tab); } catch (_) {} render(); return; }
+    var sh = t.closest('[data-sheet]'); if (sh) { openSheet(sh.getAttribute('data-sheet')); return; }
+    if (t.closest('[data-close]')) { $('ta-dlg').close(); return; }
+    var q = t.closest('[data-q]'); if (q) { q.closest('.ta-dec').querySelector('input').value = q.getAttribute('data-q'); return; }
+    var dl = t.closest('[data-dl]'); if (dl) { download(dl.getAttribute('data-dl')); return; }
+    var dc = t.closest('[data-decide]');
+    if (dc) {
+      var box = dc.closest('.ta-dec'), reason = box.querySelector('input').value.trim(), msg = box.querySelector('.ta-msg');
+      if (!reason) { msg.innerHTML = '<div class="ta-err">A reason is required.</div>'; return; }
+      box.querySelectorAll('button').forEach(function (b) { b.disabled = true; });
+      var r = await TX.post('/api/time/admin/' + box.getAttribute('data-kind') + '/' + box.getAttribute('data-id') + '/decide', { decision: dc.getAttribute('data-decide'), reason: reason });
+      if (!r.ok) { box.querySelectorAll('button').forEach(function (b) { b.disabled = false; }); msg.innerHTML = errBox(r); return; }
+      await load(); return;
+    }
+    var se = t.closest('[data-save-emp]');
+    if (se) {
+      var f = se.closest('[data-enroll]'), v = f.querySelector('select').value, why = f.querySelector('input').value.trim();
+      if (!why) { f.querySelector('.ta-msg').innerHTML = '<div class="ta-err">A reason is required.</div>'; return; }
+      se.disabled = true;
+      var r2 = await TX.post('/api/time/admin/employees', { user_id: f.getAttribute('data-enroll'), flsa_status: v === 'exempt' ? 'exempt' : 'nonexempt', active: v !== 'inactive', reason: why });
+      se.disabled = false;
+      if (!r2.ok) { f.querySelector('.ta-msg').innerHTML = errBox(r2); return; }
+      await load();
+    }
+  });
+
+  await load();
+})();
+</script>
+</body>
+</html>

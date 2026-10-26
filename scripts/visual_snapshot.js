@@ -29,6 +29,9 @@ const PAGES = [
   { name: 'operations', path: '/app/operations.html?fixture=1' },
   { name: 'legal', path: '/app/legal.html?fixture=1&id=00000000-0000-4000-8000-0000000000e1' },
   { name: 'legal-list', path: '/app/legal.html?fixture=1' },
+  { name: 'time', path: '/app/time.html?fixture=1' },
+  { name: 'time-out', path: '/app/time.html?fixture=1&state=out' },
+  { name: 'time-admin', path: '/app/time-admin.html?fixture=1' },
 ];
 const WIDTHS = [
   { name: 'desktop', width: 1440, height: 900 },

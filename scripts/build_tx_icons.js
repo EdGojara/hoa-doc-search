@@ -38,6 +38,8 @@ const ICONS = {
   alert: 'triangle-alert',
   refresh: 'refresh-cw',
   menu: 'menu',
+  time: 'clock',
+  download: 'download',
   info: 'info',
 };
 
