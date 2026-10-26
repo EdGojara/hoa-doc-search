@@ -32,6 +32,9 @@
     ['projects', 'Mission Control', '/app/mission-control'],
     ['governance', 'Governance', '/#tab=meetings'],
     ['team', 'Team', '/#tab=roster'],
+    // Time & Attendance (Ed 2026-10-26): every staffer's own time clock; the owner's
+    // review screen is reached from it.
+    ['time', 'My Time', '/app/time'],
   ];
 
   function esc(s) {

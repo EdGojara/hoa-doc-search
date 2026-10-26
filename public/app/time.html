@@ -1,0 +1,341 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>My Time · Trusted</title>
+<meta name="robots" content="noindex">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/brand.css">
+<link rel="stylesheet" href="/app/tx.css">
+<style>
+  .tm-wrap { padding: 26px 32px 56px; max-width: 760px; }
+  .tm-wrap h1 { margin: 4px 0 2px; font-family: var(--font-serif); font-weight: 600; font-size: clamp(28px, 5vw, 38px); color: var(--navy); line-height: 1.1; }
+  .tm-sub { color: var(--tx-text-2); font-size: 14px; }
+  .tm-card { padding: 18px 20px; margin-top: 14px; }
+  .tm-card h2 { margin: 0 0 10px; font: 600 15px var(--font-sans); color: var(--navy); }
+  .tm-big { width: 100%; min-height: 64px; font-size: 19px; font-weight: 700; border-radius: 14px; display: flex; align-items: center; justify-content: center; gap: 10px; }
+  .tm-big[disabled] { opacity: .55; }
+  .tm-outs { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .tm-outs .tx-btn { min-height: 56px; font-size: 16px; font-weight: 600; border-radius: 12px; justify-content: center; }
+  .tm-outs .tm-done { grid-column: 1 / -1; }
+  .tm-reason { margin-top: 10px; font-size: 13.5px; color: var(--tx-text-2); display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+  .tm-chip { border: 1px solid var(--tx-rule); background: var(--tx-surface); color: var(--tx-text); border-radius: 999px; padding: 7px 12px; font: 500 13.5px var(--font-sans); cursor: pointer; }
+  .tm-chip.is-on { background: var(--navy); color: var(--tx-ivory); border-color: var(--navy); }
+  .tm-link { background: none; border: 0; color: var(--tx-info); font: 600 13.5px var(--font-sans); cursor: pointer; padding: 4px 0; text-decoration: underline; }
+  .tm-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .tm-stat-k { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--tx-muted); }
+  .tm-stat-v { font-size: 26px; font-weight: 700; color: var(--navy); font-variant-numeric: tabular-nums; }
+  .tm-bar { height: 8px; background: var(--tx-subtle); border-radius: 99px; overflow: hidden; margin-top: 6px; }
+  .tm-bar i { display: block; height: 100%; background: var(--tx-ok); border-radius: 99px; }
+  .tm-bar.is-warn i { background: var(--gold); } .tm-bar.is-bad i { background: var(--tx-bad); }
+  .tm-note { font-size: 13.5px; line-height: 1.5; margin-top: 10px; border-radius: 10px; padding: 10px 12px; }
+  .tm-note.warn { background: var(--tx-warn-bg); color: var(--tx-warn); } .tm-note.bad { background: var(--tx-bad-bg); color: var(--tx-bad); } .tm-note.ok { background: var(--tx-ok-bg); color: var(--tx-ok); } .tm-note.info { background: var(--tx-info-bg); color: var(--tx-info); }
+  .tm-row { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 9px 0; border-top: 1px solid var(--tx-rule-soft); font-size: 14px; }
+  .tm-row:first-of-type { border-top: 0; }
+  .tm-time { font-variant-numeric: tabular-nums; font-weight: 600; min-width: 74px; }
+  .tm-muted { color: var(--tx-muted); font-size: 12.5px; }
+  .tm-form label { display: block; font: 600 12.5px var(--font-sans); color: var(--tx-text-2); margin: 12px 0 4px; }
+  .tm-form input, .tm-form select, .tm-form textarea { width: 100%; font: 15px var(--font-sans); padding: 10px 12px; border: 1px solid var(--tx-rule); border-radius: 10px; background: #fff; }
+  .tm-form textarea { min-height: 70px; resize: vertical; }
+  .tm-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .tm-err { color: var(--tx-bad); font-size: 13.5px; margin-top: 8px; }
+  .tm-ok { color: var(--tx-ok); font-size: 14px; margin-top: 8px; font-weight: 600; }
+  .tm-table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+  .tm-table td, .tm-table th { padding: 7px 4px; border-top: 1px solid var(--tx-rule-soft); text-align: left; }
+  .tm-table th { font-weight: 600; color: var(--tx-muted); font-size: 12px; border-top: 0; }
+  .tm-table td.n { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  dialog.tm-dlg { border: 0; border-radius: 16px; padding: 0; width: min(520px, calc(100vw - 24px)); box-shadow: var(--tx-shadow); }
+  dialog.tm-dlg::backdrop { background: rgba(11, 29, 52, .35); }
+  .tm-dlg-in { padding: 18px 20px 20px; }
+  .tm-dlg-in h3 { margin: 0 0 4px; font: 600 17px var(--font-sans); color: var(--navy); }
+  .tm-actions { display: flex; gap: 10px; margin-top: 16px; justify-content: flex-end; flex-wrap: wrap; }
+  @media (max-width: 640px) { .tm-wrap { padding: 16px 16px 40px; } .tm-card { padding: 16px; } }
+</style>
+</head>
+<body class="tx-body">
+<div class="tx-shell" id="tx-shell">
+  <main class="tx-main" id="tx-main">
+    <div class="tx-top"><button class="tx-menu-btn" id="tx-menu-btn" aria-label="Open navigation"></button></div>
+    <div class="tm-wrap">
+      <div class="tx-muted" style="font-size:12px;letter-spacing:.08em;text-transform:uppercase">My time</div>
+      <h1 id="tm-title">Loading…</h1>
+      <div class="tm-sub" id="tm-sub"></div>
+      <div id="tm-alerts"></div>
+      <div class="tx-card tm-card" id="tm-clock"></div>
+      <div class="tx-card tm-card" id="tm-totals"></div>
+      <div class="tx-card tm-card" id="tm-summary"></div>
+      <div class="tx-card tm-card" id="tm-today"></div>
+      <div class="tx-card tm-card" id="tm-sheet"></div>
+      <div class="tx-card tm-card" id="tm-requests"></div>
+      <div id="tm-owner" style="margin-top:18px"></div>
+    </div>
+  </main>
+</div>
+<dialog class="tm-dlg" id="tm-dlg"><div class="tm-dlg-in" id="tm-dlg-in"></div></dialog>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4"></script>
+<script src="/app/tx-icons.js"></script>
+<script src="/app/tx.js"></script>
+<script>if (TX.fixture) document.write('<script src="/app/fixtures/time.fixture.js"><\/script>');</script>
+<script>
+(async function () {
+  'use strict';
+  var esc = TX.esc, $ = function (id) { return document.getElementById(id); };
+  var TZ = 'America/Chicago';
+  var user = await TX.boot({ active: 'time' });
+  if (!user) return;
+  var D = null, liveTimer = null, busy = false;
+
+  function hm(min) { min = Math.max(0, Math.round(min || 0)); return Math.floor(min / 60) + 'h ' + String(min % 60).padStart(2, '0') + 'm'; }
+  function clock(iso) { return new Date(iso).toLocaleTimeString('en-US', { timeZone: TZ, hour: 'numeric', minute: '2-digit' }); }
+  function dayLabel(k) { var p = k.split('-'); return new Date(Date.UTC(+p[0], +p[1] - 1, +p[2], 12)).toLocaleDateString('en-US', { timeZone: 'UTC', weekday: 'short', month: 'short', day: 'numeric' }); }
+  function reasonLabel(dir, r) { return ((dir === 'in' ? D.in_reasons : D.out_reasons) || {})[r] || String(r || '').replace(/_/g, ' '); }
+  function errBox(r) { return '<div class="tm-err">' + esc((r.body && r.body.detail) || r.error || 'Something went wrong.') + '</div>'; }
+
+  async function load() {
+    var r = await TX.get('/api/time/me');
+    if (!r.ok) { $('tm-title').textContent = 'Time & attendance is unavailable'; $('tm-sub').textContent = r.error || ''; return; }
+    D = r.data;
+    render();
+  }
+
+  function render() {
+    if (!D.enrolled) {
+      $('tm-title').textContent = 'Not set up yet';
+      $('tm-sub').textContent = 'Your account is not enrolled in time & attendance. Ask Ed to enroll you.';
+      ['tm-clock', 'tm-totals', 'tm-summary', 'tm-today', 'tm-sheet', 'tm-requests'].forEach(function (id) { $(id).style.display = 'none'; });
+      renderOwnerLink();
+      return;
+    }
+    var tracks = D.employee.tracks_time;
+    var s = D.status || {};
+    $('tm-title').textContent = !tracks ? 'Daily summary' : s.clocked_in ? 'You’re clocked in' : 'You’re clocked out';
+    $('tm-sub').textContent = !tracks ? 'You are salaried; you don’t clock in. Your daily summary is below.'
+      : s.clocked_in ? 'Since ' + clock(s.since) + ' today.' : (s.last_punch ? 'Last: ' + reasonLabel(s.last_punch.direction, s.last_punch.reason) + ' at ' + clock(s.last_punch.effective_at) + '.' : 'Tap Clock in when you start.');
+    renderAlerts();
+    if (tracks) { renderClock(); renderTotals(); renderToday(); renderSheet(); }
+    else ['tm-clock', 'tm-totals', 'tm-today', 'tm-sheet'].forEach(function (id) { $(id).style.display = 'none'; });
+    renderSummary(); renderRequests(); renderOwnerLink();
+  }
+
+  function renderOwnerLink() {
+    $('tm-owner').innerHTML = user.role === 'admin' ? '<a class="tx-btn tx-btn--sec" href="/app/time-admin">' + TX.icon('team', { size: 16 }) + ' Team timesheets &amp; approvals</a>' : '';
+  }
+
+  function renderAlerts() {
+    var h = '', s = D.status || {}, w = D.week || {};
+    if (s.stale_open) h += '<div class="tm-note bad">You’re still clocked in from ' + esc(dayLabel(new Date(s.stale_open.since).toLocaleDateString('en-CA', { timeZone: TZ }))) + ' at ' + esc(clock(s.stale_open.since)) + '. Those hours aren’t counted until the missing clock-out is approved. <button class="tm-link" data-fix-missing="out">Request the missing clock-out</button></div>';
+    var thr = w.threshold_minutes || 2400, so = w.so_far_minutes || 0, allowed = thr + (w.approved_overtime_minutes || 0);
+    if (so > allowed) h += '<div class="tm-note bad">You’re past ' + hm(thr) + ' this week without approval. Every hour is still recorded and paid; Ed has been notified. <button class="tm-link" data-ot>Request overtime</button></div>';
+    else if (so >= thr - 120 && so <= thr && !(w.approved_overtime_minutes > 0)) h += '<div class="tm-note warn">' + hm(so) + ' this week. You need Ed’s approval to work past ' + hm(thr) + '. <button class="tm-link" data-ot>Request overtime</button></div>';
+    $('tm-alerts').innerHTML = h;
+  }
+
+  function renderClock() {
+    var s = D.status || {}, h;
+    if (s.clocked_in) {
+      h = '<h2>Clock out</h2><div class="tm-outs">'
+        + ['rest_break', 'meal_break', 'personal'].map(function (r) { return '<button class="tx-btn tx-btn--sec" data-out="' + r + '">' + esc(D.out_reasons[r]) + '</button>'; }).join('')
+        + '<button class="tx-btn tx-btn--sec" data-out="other">Other…</button>'
+        + '<button class="tx-btn tx-btn--pri tm-done" data-out="end_of_shift">' + TX.icon('check', { size: 18 }) + ' Done for the day</button></div>'
+        + '<div class="tm-muted" style="margin-top:8px">Breaks under 30 minutes are paid. Lunch is unpaid only when it’s 30 minutes or more with no work.</div>';
+    } else {
+      var r = s.suggested_in_reason || 'start_shift';
+      var fromBreak = r !== 'start_shift';
+      h = '<button class="tx-btn tx-btn--gold tm-big" id="tm-in">' + TX.icon('time', { size: 22 }) + ' Clock in</button>'
+        + '<div class="tm-reason"><span id="tm-in-reason">' + esc(D.in_reasons[r]) + '</span> · <button class="tm-link" id="tm-in-change">change</button></div>'
+        + '<div class="tm-chips" id="tm-in-chips" style="display:none;margin-top:8px">' + Object.keys(D.in_reasons).map(function (k) { return '<button class="tm-chip' + (k === r ? ' is-on' : '') + '" data-in-reason="' + k + '">' + esc(D.in_reasons[k]) + '</button>'; }).join('') + '</div>'
+        + '<div id="tm-in-note-wrap" style="display:none" class="tm-form"><label for="tm-in-note">Note (required for Other)</label><input id="tm-in-note" maxlength="500"></div>'
+        + (fromBreak ? '<label class="tm-reason" style="cursor:pointer"><input type="checkbox" id="tm-worked"> I did work during my break</label>' : '');
+      h += '<div id="tm-clock-msg"></div>';
+    }
+    $('tm-clock').innerHTML = h;
+    var inBtn = $('tm-in');
+    if (inBtn) {
+      var chosen = s.suggested_in_reason || 'start_shift';
+      $('tm-in-change').onclick = function () { $('tm-in-chips').style.display = 'flex'; };
+      $('tm-in-chips').onclick = function (e) {
+        var b = e.target.closest('[data-in-reason]'); if (!b) return;
+        chosen = b.getAttribute('data-in-reason');
+        Array.prototype.forEach.call($('tm-in-chips').children, function (c) { c.classList.toggle('is-on', c === b); });
+        $('tm-in-reason').textContent = D.in_reasons[chosen];
+        $('tm-in-note-wrap').style.display = chosen === 'other' ? '' : 'none';
+      };
+      inBtn.onclick = function () { punch('in', chosen, chosen === 'other' ? $('tm-in-note').value : null, $('tm-worked') ? $('tm-worked').checked : false); };
+    }
+  }
+
+  async function punch(direction, reason, note, worked) {
+    if (busy) return; busy = true;
+    document.querySelectorAll('#tm-clock button').forEach(function (b) { b.disabled = true; });
+    var r = await TX.post('/api/time/punch', { direction: direction, reason: reason, note: note || null, worked_during_break: !!worked });
+    busy = false;
+    if (!r.ok) { document.querySelectorAll('#tm-clock button').forEach(function (b) { b.disabled = false; }); ($('tm-clock-msg') || $('tm-clock')).insertAdjacentHTML('beforeend', errBox(r)); return; }
+    await load();
+    if (direction === 'out' && reason === 'end_of_shift' && !D.today_summary) {
+      $('tm-summary').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  }
+
+  function renderTotals() {
+    var t = D.today_row || {}, w = D.week || {};
+    var thr = w.threshold_minutes || 2400;
+    var todayMin = (t.paid_minutes || 0) + (t.live_minutes || 0);
+    var so = w.so_far_minutes || 0;
+    var pct = Math.min(100, Math.round(so / thr * 100));
+    var cls = so > thr + (w.approved_overtime_minutes || 0) ? ' is-bad' : so >= thr - 240 ? ' is-warn' : '';
+    $('tm-totals').innerHTML = '<div class="tm-stats"><div><div class="tm-stat-k">Today</div><div class="tm-stat-v" id="tm-today-v">' + hm(todayMin) + '</div></div>'
+      + '<div><div class="tm-stat-k">This week</div><div class="tm-stat-v" id="tm-week-v">' + hm(so) + '</div><div class="tm-muted">of ' + hm(thr) + (w.approved_overtime_minutes ? ' + ' + hm(w.approved_overtime_minutes) + ' approved' : '') + '</div></div></div>'
+      + '<div class="tm-bar' + cls + '"><i style="width:' + pct + '%"></i></div>';
+    if (liveTimer) clearInterval(liveTimer);
+    if (D.status && D.status.clocked_in && !TX.fixture) {
+      var start = Date.now();
+      liveTimer = setInterval(function () { var add = (Date.now() - start) / 60000; $('tm-today-v').textContent = hm(todayMin + add); $('tm-week-v').textContent = hm(so + add); }, 30000);
+    }
+  }
+
+  function renderToday() {
+    var today = D.today;
+    var ps = (D.punches || []).filter(function (p) { return new Date(p.effective_at).toLocaleDateString('en-CA', { timeZone: TZ }) === today; });
+    var h = '<h2>Today’s punches</h2>';
+    h += ps.length ? ps.map(function (p) {
+      return '<div class="tm-row"><span class="tm-time">' + esc(clock(p.effective_at)) + '</span><span style="flex:1">' + (p.direction === 'in' ? 'In' : 'Out') + ' · ' + esc(reasonLabel(p.direction, p.reason))
+        + (p.is_corrected ? ' <span class="tx-pill tx-pill--info">corrected' + (p.original_at ? ' from ' + esc(clock(p.original_at)) : '') + '</span>' : '') + '</span>'
+        + (p.punch_id ? '<button class="tm-link" data-fix="' + p.punch_id + '">Fix</button>' : '') + '</div>';
+    }).join('') : '<div class="tm-muted">No punches yet today.</div>';
+    h += '<div style="margin-top:10px"><button class="tm-link" data-fix-missing="">Missing a punch?</button></div>';
+    $('tm-today').innerHTML = h;
+  }
+
+  function renderSheet() {
+    var t = D.timesheet || { days: [], flags: [] };
+    var flagsBy = {}; (t.flags || []).forEach(function (f) { if (f.date && f.severity !== 'info') (flagsBy[f.date] = flagsBy[f.date] || []).push(f); });
+    var days = (t.days || []).slice().reverse();
+    var h = '<h2>Last two weeks</h2>';
+    if (!days.length && !Object.keys(flagsBy).length) { $('tm-sheet').innerHTML = h + '<div class="tm-muted">No time recorded in this range.</div>'; return; }
+    h += '<table class="tm-table"><thead><tr><th>Day</th><th style="text-align:right">Paid</th><th style="text-align:right">Overtime</th></tr></thead><tbody>'
+      + days.map(function (d) {
+        var f = flagsBy[d.date] || [];
+        return '<tr><td>' + esc(dayLabel(d.date)) + (f.length ? '<div class="tm-muted" style="color:var(--tx-warn)">' + f.map(function (x) { return esc(x.message); }).join('<br>') + '</div>' : '') + '</td>'
+          + '<td class="n">' + hm(d.paid_minutes + (d.live_minutes || 0)) + (d.live_minutes ? ' <span class="tm-muted">so far</span>' : '') + '</td><td class="n">' + (d.overtime_minutes ? hm(d.overtime_minutes) : '–') + '</td></tr>';
+      }).join('') + '</tbody></table>';
+    $('tm-sheet').innerHTML = h;
+  }
+
+  function renderSummary() {
+    var s = D.today_summary;
+    if (s && !$('tm-summary').dataset.editing) {
+      $('tm-summary').innerHTML = '<h2>Today’s summary</h2><div class="tm-note ok">Sent at ' + esc(clock(s.submitted_at)) + (s.version > 1 ? ' (version ' + s.version + ')' : '') + '.</div>'
+        + '<div class="tm-muted" style="margin-top:8px"><b>Done:</b> ' + esc(s.accomplishments) + '<br><b>Outstanding:</b> ' + esc(s.outstanding) + '</div>'
+        + '<button class="tm-link" id="tm-sum-edit">Update it</button>';
+      $('tm-sum-edit').onclick = function () { $('tm-summary').dataset.editing = '1'; renderSummary(); };
+      return;
+    }
+    var prev = s || {};
+    var cats = prev.categories || [];
+    var cids = prev.community_ids || [];
+    $('tm-summary').innerHTML = '<h2>Today’s summary</h2><div class="tm-muted">A few lines for Ed. It never changes your hours.</div><div class="tm-form">'
+      + '<label>What did you work on?</label><div class="tm-chips" id="tm-cats">' + D.categories.map(function (c) { return '<button type="button" class="tm-chip' + (cats.indexOf(c.value) >= 0 ? ' is-on' : '') + '" data-v="' + c.value + '">' + esc(c.label) + '</button>'; }).join('') + '</div>'
+      + (D.communities && D.communities.length ? '<label>Which communities? (optional)</label><div class="tm-chips" id="tm-comms">' + D.communities.map(function (c) { return '<button type="button" class="tm-chip' + (cids.indexOf(c.id) >= 0 ? ' is-on' : '') + '" data-v="' + c.id + '">' + esc(c.name) + '</button>'; }).join('') + '</div>' : '')
+      + '<label for="tm-acc">What you accomplished</label><textarea id="tm-acc" maxlength="4000">' + esc(prev.accomplishments || '') + '</textarea>'
+      + '<label for="tm-out">What’s still outstanding</label><textarea id="tm-out" maxlength="4000" placeholder="Write “Nothing” if it’s all done">' + esc(prev.outstanding || '') + '</textarea>'
+      + '<label for="tm-notes">Notes (optional)</label><textarea id="tm-notes" maxlength="4000" style="min-height:44px">' + esc(prev.notes || '') + '</textarea>'
+      + '<button class="tx-btn tx-btn--pri" style="margin-top:12px" id="tm-sum-send">Send summary</button><div id="tm-sum-msg"></div></div>';
+    ['tm-cats', 'tm-comms'].forEach(function (id) { if ($(id)) $(id).onclick = function (e) { var b = e.target.closest('.tm-chip'); if (b) b.classList.toggle('is-on'); }; });
+    $('tm-sum-send').onclick = async function () {
+      var pick = function (id) { return $(id) ? Array.prototype.map.call($(id).querySelectorAll('.is-on'), function (b) { return b.getAttribute('data-v'); }) : []; };
+      this.disabled = true;
+      var r = await TX.post('/api/time/activity', { work_date: D.today, categories: pick('tm-cats'), community_ids: pick('tm-comms'), accomplishments: $('tm-acc').value, outstanding: $('tm-out').value, notes: $('tm-notes').value });
+      this.disabled = false;
+      if (!r.ok) { $('tm-sum-msg').innerHTML = errBox(r); return; }
+      delete $('tm-summary').dataset.editing;
+      await load();
+    };
+  }
+
+  function renderRequests() {
+    var cs = D.corrections || [], os = D.overtime || [];
+    var pill = function (st) { return '<span class="tx-pill ' + ({ pending: 'tx-pill--warn', approved: 'tx-pill--ok', rejected: 'tx-pill--bad', withdrawn: 'tx-pill--mute' }[st] || '') + '">' + esc(st) + '</span>'; };
+    var h = '<h2>My requests</h2>';
+    if (!cs.length && !os.length) h += '<div class="tm-muted">No corrections or overtime requests.</div>';
+    h += cs.slice(0, 10).map(function (c) {
+      var what = c.kind === 'add_punch' ? 'Add ' + (c.proposed_direction === 'in' ? 'clock-in' : 'clock-out') + ' at ' + new Date(c.proposed_at).toLocaleString('en-US', { timeZone: TZ, month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+        : c.kind === 'change_time' ? 'Change ' + new Date(c.original_at).toLocaleString('en-US', { timeZone: TZ, month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) + ' to ' + clock(c.proposed_at)
+        : 'Remove the ' + new Date(c.original_at).toLocaleString('en-US', { timeZone: TZ, month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) + ' punch';
+      return '<div class="tm-row"><span style="flex:1">' + esc(what) + (c.decision_reason ? '<div class="tm-muted">Ed: ' + esc(c.decision_reason) + '</div>' : '') + '</span>' + pill(c.status)
+        + (c.status === 'pending' ? ' <button class="tm-link" data-withdraw="' + c.id + '">Withdraw</button>' : '') + '</div>';
+    }).join('');
+    h += os.slice(0, 5).map(function (o) { return '<div class="tm-row"><span style="flex:1">Overtime: ' + hm(o.extra_minutes) + ', week of ' + esc(dayLabel(o.week_start)) + (o.decision_reason ? '<div class="tm-muted">Ed: ' + esc(o.decision_reason) + '</div>' : '') + '</span>' + pill(o.status) + '</div>'; }).join('');
+    if (D.employee.tracks_time) h += '<div style="margin-top:10px"><button class="tm-link" data-ot>Request overtime</button></div>';
+    $('tm-requests').innerHTML = h;
+  }
+
+  // ---- dialogs ---------------------------------------------------------------
+  function openDlg(html, onSubmit) {
+    $('tm-dlg-in').innerHTML = html + '<div id="tm-dlg-msg"></div><div class="tm-actions"><button class="tx-btn tx-btn--sec" id="tm-dlg-cancel">Cancel</button><button class="tx-btn tx-btn--pri" id="tm-dlg-ok">Send to Ed</button></div>';
+    var dlg = $('tm-dlg'); if (dlg.showModal) dlg.showModal(); else dlg.setAttribute('open', '');
+    $('tm-dlg-cancel').onclick = function () { dlg.close ? dlg.close() : dlg.removeAttribute('open'); };
+    $('tm-dlg-ok').onclick = async function () {
+      this.disabled = true; var r = await onSubmit(); this.disabled = false;
+      if (!r.ok) { $('tm-dlg-msg').innerHTML = errBox(r); return; }
+      dlg.close ? dlg.close() : dlg.removeAttribute('open'); await load();
+    };
+  }
+  function nowParts() { var d = new Date(); return { date: d.toLocaleDateString('en-CA', { timeZone: TZ }), time: d.toLocaleTimeString('en-GB', { timeZone: TZ, hour: '2-digit', minute: '2-digit' }) }; }
+
+  function fixPunch(id) {
+    var p = (D.punches || []).find(function (x) { return x.punch_id === id; }); if (!p) return;
+    var d = new Date(p.effective_at);
+    var date = d.toLocaleDateString('en-CA', { timeZone: TZ }), time = d.toLocaleTimeString('en-GB', { timeZone: TZ, hour: '2-digit', minute: '2-digit' });
+    openDlg('<h3>Fix a punch</h3><div class="tm-muted">' + (p.direction === 'in' ? 'Clock-in' : 'Clock-out') + ' at ' + esc(clock(p.effective_at)) + '. The original stays on record; Ed approves the change.</div><div class="tm-form">'
+      + '<label>What’s wrong?</label><div class="tm-chips" id="tm-fx-kind"><button class="tm-chip is-on" data-v="change_time">Wrong time</button><button class="tm-chip" data-v="void_punch">Shouldn’t be there</button></div>'
+      + '<div id="tm-fx-time"><label for="tm-fx-t">Correct time</label><input type="time" id="tm-fx-t" value="' + time + '"></div>'
+      + '<label for="tm-fx-why">Why</label><textarea id="tm-fx-why" maxlength="1000" placeholder="e.g. I forgot to clock in when I arrived"></textarea></div>', function () {
+      var kind = $('tm-fx-kind').querySelector('.is-on').getAttribute('data-v');
+      return TX.post('/api/time/corrections', { kind: kind, punch_id: id, date: date, time: $('tm-fx-t').value, reason: $('tm-fx-why').value });
+    });
+    $('tm-fx-kind').onclick = function (e) { var b = e.target.closest('.tm-chip'); if (!b) return; Array.prototype.forEach.call(this.children, function (c) { c.classList.toggle('is-on', c === b); }); $('tm-fx-time').style.display = b.getAttribute('data-v') === 'void_punch' ? 'none' : ''; };
+  }
+  function addMissing(dir) {
+    var n = nowParts();
+    var since = D.status && D.status.stale_open ? new Date(D.status.stale_open.since) : null;
+    var date = since ? since.toLocaleDateString('en-CA', { timeZone: TZ }) : n.date;
+    openDlg('<h3>Add a missing punch</h3><div class="tm-muted">Ed approves it before it counts.</div><div class="tm-form">'
+      + '<label>Missing</label><div class="tm-chips" id="tm-ad-dir"><button class="tm-chip' + (dir !== 'out' ? ' is-on' : '') + '" data-v="in">Clock-in</button><button class="tm-chip' + (dir === 'out' ? ' is-on' : '') + '" data-v="out">Clock-out</button></div>'
+      + '<label for="tm-ad-d">Date</label><input type="date" id="tm-ad-d" max="' + n.date + '" value="' + date + '">'
+      + '<label for="tm-ad-t">Time</label><input type="time" id="tm-ad-t" value="' + (since ? '17:00' : n.time) + '">'
+      + '<label for="tm-ad-why">Why</label><textarea id="tm-ad-why" maxlength="1000" placeholder="e.g. Forgot to clock out when I left"></textarea></div>', function () {
+      var d = $('tm-ad-dir').querySelector('.is-on').getAttribute('data-v');
+      return TX.post('/api/time/corrections', { kind: 'add_punch', direction: d, punch_reason: d === 'in' ? 'start_shift' : 'end_of_shift', date: $('tm-ad-d').value, time: $('tm-ad-t').value, reason: $('tm-ad-why').value });
+    });
+    $('tm-ad-dir').onclick = function (e) { var b = e.target.closest('.tm-chip'); if (!b) return; Array.prototype.forEach.call(this.children, function (c) { c.classList.toggle('is-on', c === b); }); };
+  }
+  function requestOt() {
+    openDlg('<h3>Request overtime</h3><div class="tm-muted">Work past ' + hm((D.week && D.week.threshold_minutes) || 2400) + ' this week needs Ed’s approval first. Hours you actually work are always recorded and paid.</div><div class="tm-form">'
+      + '<label for="tm-ot-h">Extra hours needed this week</label><input type="number" id="tm-ot-h" min="0.25" max="40" step="0.25" value="2">'
+      + '<label for="tm-ot-why">Why</label><textarea id="tm-ot-why" maxlength="1000" placeholder="e.g. Month-end close for Canyon Gate"></textarea></div>', function () {
+      return TX.post('/api/time/overtime', { week_start: D.today, hours: $('tm-ot-h').value, reason: $('tm-ot-why').value });
+    });
+  }
+  function otherOut() {
+    $('tm-dlg-in').innerHTML = '<h3>Clock out: other</h3><div class="tm-form"><label for="tm-oo">What for?</label><input id="tm-oo" maxlength="500"></div><div id="tm-dlg-msg"></div><div class="tm-actions"><button class="tx-btn tx-btn--sec" id="tm-dlg-cancel">Cancel</button><button class="tx-btn tx-btn--pri" id="tm-dlg-ok">Clock out</button></div>';
+    var dlg = $('tm-dlg'); if (dlg.showModal) dlg.showModal(); else dlg.setAttribute('open', '');
+    $('tm-dlg-cancel').onclick = function () { dlg.close(); };
+    $('tm-dlg-ok').onclick = function () { var note = $('tm-oo').value; if (!note.trim()) { $('tm-dlg-msg').innerHTML = '<div class="tm-err">Add a short note.</div>'; return; } dlg.close(); punch('out', 'other', note); };
+  }
+
+  document.addEventListener('click', async function (e) {
+    var t = e.target.closest('[data-out],[data-fix],[data-fix-missing],[data-ot],[data-withdraw]'); if (!t) return;
+    if (t.hasAttribute('data-out')) { var r = t.getAttribute('data-out'); if (r === 'other') otherOut(); else punch('out', r); }
+    else if (t.hasAttribute('data-fix')) fixPunch(t.getAttribute('data-fix'));
+    else if (t.hasAttribute('data-fix-missing')) addMissing(t.getAttribute('data-fix-missing'));
+    else if (t.hasAttribute('data-ot')) requestOt();
+    else if (t.hasAttribute('data-withdraw')) { t.disabled = true; var w = await TX.post('/api/time/corrections/' + t.getAttribute('data-withdraw') + '/withdraw'); if (!w.ok) { t.disabled = false; alert(w.error); } else load(); }
+  });
+
+  await load();
+})();
+</script>
+</body>
+</html>

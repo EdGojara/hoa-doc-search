@@ -275,7 +275,7 @@ check('session actor only; proposals only; no background work; board portal unto
   assert.ok(/requireAdmin\(req, res\)/.test(api) && !/router\.(get|put|patch|delete)\(/.test(api), 'admin-gated, POST only');
   const lib = fs.readFileSync(path.join(__dirname, '..', 'lib', 'amanda', 'request.js'), 'utf8');
   assert.ok(!/setInterval|setTimeout|scheduler|register\(/.test(lib), 'no background work');
-  assert.ok(!/require\([^)]*(graph_send|notifications|\/ap\/|acc\/finalize|enforcement|payments|stripe|email)/.test(lib), 'no action or mail modules');
+  assert.ok(!/require\([^)]*(graph_send|notifications|\/ap\/|acc\/finalize|enforcement|payments|stripe|(?<!auth\/owner_)email)/.test(lib), 'no action or mail modules (lib/auth/owner_email is the owner identity, not mail)');
   assert.ok(!/\.from\('(?!objectives|objective_events|communities)[a-z_]+'\)\.(insert|update|upsert|delete)/.test(lib), 'writes only to objectives / objective_events');
   assert.ok(!/lib\/amanda/.test(fs.readFileSync(path.join(__dirname, '..', 'api', 'board_portal.js'), 'utf8')), 'board Ask Amanda does not use the staff contract');
   const cfg = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'lib', 'ai', 'routing.config.json'), 'utf8'));
