@@ -46,6 +46,10 @@ const r = await A.applyMigration({ ...ctx, planToken: plan.plan_token, log: { er
 check('apply: 547 applied and verified through the tool', r.status === 'applied', JSON.stringify({ status: r.status, error: r.error, detail: r.detail }).slice(0, 4000));
 if (r.status !== 'applied') { console.log(`\n${pass} passed, ${fail} failed`); process.exit(1); }
 check('user_profiles is byte-identical after the migration', (await db.query(`SELECT string_agg(row_to_json(u)::text, ',' ORDER BY id) j FROM user_profiles u`)).rows[0].j === profilesBefore);
+check('production shape: the 547 functions are owned by a non-superuser that cannot bypass RLS, and user_profiles has RLS on (as after 548)',
+  (await db.query(`SELECT r.rolsuper, r.rolbypassrls, (SELECT relrowsecurity FROM pg_class WHERE relname = 'user_profiles') AS up_rls
+                     FROM pg_proc p JOIN pg_roles r ON r.oid = p.proowner WHERE p.proname = 'ta_punch'`)).rows
+    .every((x) => x.rolsuper === false && x.rolbypassrls === false && x.up_rls === true));
 
 // ---- role helpers ----------------------------------------------------------
 // as(who, sql): run as the Supabase role, with the JWT subject PostgREST would set.
