@@ -1,18 +1,13 @@
 {
   "migration": "548_user_profiles_lockdown.sql",
-  "summary": "Security fix (Ed 2026-10-26). user_profiles had no row level security and granted every signed-in user (authenticated) INSERT/UPDATE/DELETE, so a staffer could make themself admin, take the owner's email, or demote/delete the owner through the database API. Enables RLS, revokes all writes from authenticated/anon/PUBLIC, leaves authenticated SELECT limited to its own row. service_role (the server) and the 039 sign-in triggers keep working. No row changes.",
+  "summary": "Security fix (Ed 2026-10-26). user_profiles granted every signed-in user (authenticated) INSERT/UPDATE/DELETE, so a staffer could make themself admin, take the owner's email, or demote/delete the owner through the database API. Row level security may or may not already be on (production had it on, outside any migration). Ensures RLS is on, revokes all writes from authenticated/anon/PUBLIC, leaves authenticated SELECT limited to its own row. service_role (the server) and the 039 sign-in triggers keep working. No row changes.",
   "requires": [
     "546_inspection_closeout_stages.sql"
   ],
   "preflight": [
     {
-      "name": "THE HOLE (live): row level security is OFF on user_profiles",
-      "sql": "SELECT count(*)::int FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'public' AND c.relname = 'user_profiles' AND c.relrowsecurity",
-      "expect": 0
-    },
-    {
-      "name": "THE HOLE (live): signed-in users (authenticated) can UPDATE user_profiles",
-      "sql": "SELECT has_table_privilege('authenticated', 'public.user_profiles', 'UPDATE')::int",
+      "name": "user_profiles exists (548 works from either starting state: row level security on or off)",
+      "sql": "SELECT count(*)::int FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'public' AND c.relname = 'user_profiles' AND c.relkind = 'r'",
       "expect": 1
     },
     {
@@ -34,10 +29,15 @@
       "name": "the 039 sign-in triggers are installed on auth.users",
       "sql": "SELECT count(*)::int FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'auth' AND c.relname = 'users' AND t.tgname IN ('on_auth_user_created', 'on_auth_user_sign_in')",
       "expect": 2
+    },
+    {
+      "name": "no policies on user_profiles other than the one 548 installs (548 would not remove an unknown policy; review any first)",
+      "sql": "SELECT count(*)::int FROM pg_policies WHERE schemaname = 'public' AND tablename = 'user_profiles' AND policyname <> 'user_profiles_read_own'",
+      "expect": 0
     }
   ],
   "expected_changes": [
-    "user_profiles: row level security enabled; policy user_profiles_read_own (authenticated may SELECT only id = auth.uid()).",
+    "user_profiles: row level security ensured ON (a no-op where it is already on); policy user_profiles_read_own (authenticated may SELECT only id = auth.uid()).",
     "Privileges: INSERT/UPDATE/DELETE/TRUNCATE/REFERENCES/TRIGGER revoked from authenticated, anon and PUBLIC; SELECT revoked from anon and PUBLIC. service_role keeps SELECT/INSERT/UPDATE/DELETE.",
     "No row changes; no table, column, constraint, trigger or function changes."
   ],
@@ -77,8 +77,13 @@
       "expect": 4
     },
     {
-      "name": "the own-row read policy exists",
-      "sql": "SELECT count(*)::int FROM pg_policies WHERE schemaname = 'public' AND tablename = 'user_profiles' AND policyname = 'user_profiles_read_own' AND cmd = 'SELECT'",
+      "name": "exactly one policy on user_profiles: the own-row read for authenticated",
+      "sql": "SELECT (count(*) FILTER (WHERE policyname = 'user_profiles_read_own' AND cmd = 'SELECT' AND roles = '{authenticated}'::name[] AND qual = '(id = auth.uid())'))::int * 10 + count(*)::int FROM pg_policies WHERE schemaname = 'public' AND tablename = 'user_profiles'",
+      "expect": 11
+    },
+    {
+      "name": "signed-in users keep SELECT (limited to their own row by the policy)",
+      "sql": "SELECT has_table_privilege('authenticated','public.user_profiles','SELECT')::int",
       "expect": 1
     },
     {
