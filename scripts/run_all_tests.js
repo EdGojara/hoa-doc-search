@@ -312,6 +312,8 @@ const CHECKS = [
   'tests/sql/540_apply_one_e2e.mjs',
   'tests/sql/542_apply_one_e2e.mjs',
   'tests/sql/540_541_decision_authority_e2e.mjs',
+  'tests/sql/548_user_profiles_lockdown_e2e.mjs',
+  'tests/test_user_profiles_lockdown.js',
   'tests/sql/519_apply_one_e2e.mjs',
   'tests/sql/520_apply_one_e2e.mjs',
   'tests/sql/521_apply_one_e2e.mjs',
