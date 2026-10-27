@@ -7944,7 +7944,7 @@
       const errorDetail = (j.errors && j.errors.length)
         ? `\n\nFirst few errors:\n${j.errors.slice(0, 3).map(e => `  - [${e.kind}] ${e.message}${e.contact_id ? ' (contact ' + e.contact_id.slice(0,8) + '...)' : ''}`).join('\n')}${j.errors.length > 3 ? `\n  ... and ${j.errors.length - 3} more` : ''}`
         : '';
-      alert(`${j.mailing_updated === 0 && j.name_updated === 0 ? '⚠️ Nothing applied.' : '✓ Applied.'}\n\nMailing: ${j.mailing_updated}\nNames: ${j.name_updated}${j.errors && j.errors.length ? '\nErrors: ' + j.errors.length : ''}${errorDetail}`);
+      alert(`${j.mailing_updated === 0 && j.name_updated === 0 ? '⚠️ Nothing applied.' : '✓ Applied.'}\n\nMailing: ${j.mailing_updated}${j.mailing_kept_staff_address ? ' (' + j.mailing_kept_staff_address + ' kept the address staff entered in Homeowner 360)' : ''}\nNames: ${j.name_updated}${j.errors && j.errors.length ? '\nErrors: ' + j.errors.length : ''}${errorDetail}`);
       // Re-run preview so the operator sees the now-empty delta
       await mailingDeltaPreview();
     } catch (e) {
@@ -8047,7 +8047,7 @@
       const url = table === 'contacts' ? `/api/contacts/${rowId}` : `/api/properties/${rowId}`;
       const body = {}; body[field] = newValue;
       const r = await fetch(url, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      if (!r.ok) { const j = await r.json().catch(() => ({})); throw new Error(j.detail || j.error || `HTTP ${r.status}`); }
       // Reflect change in the in-memory cache so subsequent renders show it.
       for (const p of homesPropertiesCache) {
         if (table === 'properties' && p.property_id === rowId) p[field] = newValue;
@@ -10190,7 +10190,7 @@
       });
       if (!r.ok) {
         const j = await r.json().catch(() => ({}));
-        alert(`Update failed: ${j.error || r.status}`);
+        alert(`Update failed: ${j.detail || j.error || r.status}`);
         return;
       }
       homesOpenContactProfile(contactId);
@@ -10722,7 +10722,7 @@
       ]);
       if (!contactRes.ok) {
         const j = await contactRes.json().catch(() => ({}));
-        throw new Error(`Contact update failed: ${j.error || contactRes.status}`);
+        throw new Error(`Contact update failed: ${j.detail || j.error || contactRes.status}`);
       }
       if (!prefsRes.ok) {
         const j = await prefsRes.json().catch(() => ({}));
@@ -11030,7 +11030,7 @@
       });
       const j = await r.json();
       if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
-      alert(`Applied:\n• ${j.applied.methods_added} contact methods added\n• ${j.applied.methods_primary_flipped} primary-flips applied\n• ${j.applied.methods_inconsistencies_resolved} inconsistencies resolved\n• ${j.applied.mailing_addresses_updated} mailing addresses updated\n${j.applied.errors?.length ? '\n⚠ ' + j.applied.errors.length + ' errors — check Render logs' : ''}`);
+      alert(`Applied:\n• ${j.applied.methods_added} contact methods added\n• ${j.applied.methods_primary_flipped} primary-flips applied\n• ${j.applied.methods_inconsistencies_resolved} inconsistencies resolved\n• ${j.applied.mailing_addresses_updated} mailing addresses updated\n${j.applied.mailing_kept_staff_address ? '• ' + j.applied.mailing_kept_staff_address + ' kept the address staff entered in Homeowner 360 (not overwritten)\n' : ''}${j.applied.errors?.length ? '\n⚠ ' + j.applied.errors.length + ' errors — check Render logs' : ''}`);
       homesMethodsImportDiscard();
       // Refresh the Properties table so newly-added contact info reflects
       if (typeof homesLoadProperties === 'function') homesLoadProperties();

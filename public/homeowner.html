@@ -156,6 +156,89 @@ async function hoSaveContact(cid){
   }catch(e){ msg.style.color='#b91c1c'; msg.textContent=e.message||'Save failed'; }
 }
 
+// Edit mailing address (Ed 2026-10-27, migration 549). Changes ONLY where this
+// homeowner's mail goes: never the property address, ownership or the account.
+// Letters already generated keep their address; any not yet mailed are listed
+// here for a person to check before they go out.
+const MA_IN='padding:6px 9px;border:1px solid #cbd5e1;border-radius:6px;font-size:13px;';
+const MA_STATE={draft:'draft',approved:'approved, not printed',pending_review:'awaiting review',printed_not_mailed:'printed, not mailed',printed:'printed, not mailed'};
+function maFmtAddr(a){ return a&&a.text?esc(a.text).replace(/\n/g,'<br>'):'<i>none</i>'; }
+async function hoOpenMailing(cid){
+  const box=document.getElementById('ho-mailing'); if(!box) return;
+  if(box.style.display!=='none' && box.dataset.cid===cid){ box.style.display='none'; return; }
+  box.dataset.cid=cid; box.style.display='block';
+  box.innerHTML='<div style="margin:8px 0;padding:12px;border:1px solid #e2e8f0;border-radius:8px;background:#f8fafc;font-size:13px;">Loading…</div>';
+  let r, j;
+  try{ r=await fetch(API+'/'+encodeURIComponent(cid)+'/mailing-address'); j=await r.json(); }catch(e){ j={error:e.message}; }
+  if(!r||!r.ok){ box.innerHTML='<div style="margin:8px 0;color:#b91c1c;font-size:13px;">Could not load the mailing address: '+esc((j&&(j.detail||j.error))||'error')+'</div>'; return; }
+  const f=j.fields||{};
+  const src=j.current&&j.current.source;
+  const srcLabel=src==='property_fallback'?'No mailing address on file: mail goes to the property address below.'
+    :src==='none'?'No mailing address on file.'
+    :(j.current&&j.current.staff_entered?'Entered by staff'+(j.current.updated_at?' on '+esc(String(j.current.updated_at).slice(0,10)):'')+'. Imports cannot overwrite it.':'From the roster / import.');
+  const props=(j.properties||[]).map(p=>'<li>'+esc(p.property_address)+(p.community?' · '+esc(p.community):'')
+    +' <span style="color:#64748b;">('+(p.receives_association_mail?'association mail for this lot goes to this person':'association mail for this lot goes to the primary owner')+')</span></li>').join('');
+  const co=(j.co_owners||[]).map(o=>'<li>'+esc(o.name)+(o.is_primary?' (primary)':'')+': '+(o.mailing?esc(o.mailing):'<i>no mailing address</i>')
+    +' <a href="#" onclick="event.preventDefault();openProfile(\''+esc(o.contact_id)+'\')" style="color:#1E2761;">open</a></li>').join('');
+  const toVerify=(j.letters_to_verify||[]).map(v=>'<div style="padding:6px 0;border-top:1px solid #fde68a;">'
+    +(v.letter_kind==='collection_notice'?'Collections notice':'Violation letter')+' · '+esc(MA_STATE[v.letter_state]||v.letter_state)
+    +' · flagged '+esc(String(v.created_at).slice(0,10))+'<br><span style="color:#64748b;">Printed for: '+maFmtAddr(v.previous_address)+' → now: '+maFmtAddr(v.new_address)+'</span>'
+    +'<div style="display:flex;gap:6px;margin-top:4px;flex-wrap:wrap;"><input id="ma-v-'+esc(v.id)+'" placeholder="How you checked it (e.g. envelope re-addressed to new address)" style="'+MA_IN+'flex:1;min-width:240px;">'
+    +'<button onclick="hoVerifyMailingLetter(\''+esc(v.id)+'\',\''+esc(cid)+'\')" style="background:#0B1D34;color:#fff;border:none;padding:6px 12px;border-radius:6px;font-size:12.5px;font-weight:600;cursor:pointer;">Destination verified</button></div></div>').join('');
+  const hist=(j.history||[]).map(h=>'<tr><td style="padding:4px 6px;white-space:nowrap;color:#64748b;">'+esc(String(h.created_at).slice(0,16).replace('T',' '))+'</td>'
+    +'<td style="padding:4px 6px;">'+(h.kind==='sync_blocked'?'<b>Import stopped</b> (kept the staff address)':esc(h.changed_by_name||''))+'</td>'
+    +'<td style="padding:4px 6px;">'+maFmtAddr(h.previous_address)+'</td><td style="padding:4px 6px;">'+maFmtAddr(h.new_address)+'</td>'
+    +'<td style="padding:4px 6px;">'+esc(h.reason||'')+'</td></tr>').join('');
+  box.innerHTML='<div style="margin:8px 0;padding:12px;border:1px solid #cbd5e1;border-radius:8px;background:#f8fafc;font-size:13px;">'
+    +'<div style="font-weight:700;color:#0B1D34;margin-bottom:4px;">✉️ Mailing address</div>'
+    +'<div style="color:#64748b;margin-bottom:8px;">Where this homeowner\'s letters and statements are mailed. The property address, ownership and the account are not changed here. '+srcLabel+'</div>'
+    +(j.migration_applied?'':'<div style="color:#92400e;background:#fffbeb;border:1px solid #fde68a;padding:6px 8px;border-radius:6px;margin-bottom:8px;">Editing turns on once migration 549 is applied.</div>')
+    +'<div style="display:flex;gap:6px;flex-wrap:wrap;">'
+    +'<input id="ma-street" value="'+esc(f.street)+'" placeholder="Street" style="'+MA_IN+'min-width:220px;flex:2;">'
+    +'<input id="ma-unit" value="'+esc(f.unit)+'" placeholder="Unit / suite" style="'+MA_IN+'width:110px;">'
+    +'<input id="ma-city" value="'+esc(f.city)+'" placeholder="City" style="'+MA_IN+'min-width:140px;flex:1;">'
+    +'<input id="ma-state" value="'+esc(f.state)+'" placeholder="State" maxlength="60" style="'+MA_IN+'width:70px;">'
+    +'<input id="ma-zip" value="'+esc(f.zip)+'" placeholder="ZIP" style="'+MA_IN+'width:100px;">'
+    +'<input id="ma-country" value="'+esc(f.country||'US')+'" placeholder="Country" style="'+MA_IN+'width:80px;">'
+    +'</div><div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap;align-items:center;">'
+    +'<input id="ma-reason" placeholder="Reason (required): owner called, returned mail, deed…" style="'+MA_IN+'flex:1;min-width:260px;">'
+    +'<button onclick="hoSaveMailing(\''+esc(cid)+'\')" '+(j.migration_applied?'':'disabled ')+'style="background:#0B1D34;color:#fff;border:none;padding:6px 14px;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer;">Save mailing address</button>'
+    +'<button onclick="document.getElementById(\'ho-mailing\').style.display=\'none\'" style="background:#fff;color:#334155;border:1px solid #cbd5e1;padding:6px 12px;border-radius:6px;font-size:13px;cursor:pointer;">Close</button>'
+    +'<span id="ma-msg" style="font-size:12.5px;"></span></div>'
+    +(props?'<div style="margin-top:10px;"><b>Property address (not changed here)</b><ul style="margin:4px 0 0 18px;padding:0;">'+props+'</ul></div>':'')
+    +(co?'<div style="margin-top:8px;"><b>Co-owners</b> (each keeps their own mailing address)<ul style="margin:4px 0 0 18px;padding:0;">'+co+'</ul></div>':'')
+    +(toVerify?'<div style="margin-top:10px;padding:8px;border:1px solid #fde68a;background:#fffbeb;border-radius:6px;"><b>Letters to check before mailing</b> (generated before the address changed; they keep the address they were printed with)'+toVerify+'</div>':'')
+    +(hist?'<details style="margin-top:10px;"><summary style="cursor:pointer;font-weight:600;">Address history</summary><table style="width:100%;border-collapse:collapse;font-size:12px;margin-top:4px;"><tr style="color:#64748b;text-align:left;"><th style="padding:4px 6px;">When</th><th style="padding:4px 6px;">Who</th><th style="padding:4px 6px;">Before</th><th style="padding:4px 6px;">After</th><th style="padding:4px 6px;">Reason</th></tr>'+hist+'</table></details>':'')
+    +'</div>';
+}
+async function hoSaveMailing(cid){
+  const v=(id)=>(document.getElementById(id).value||'').trim();
+  const msg=document.getElementById('ma-msg');
+  const body={street:v('ma-street'),unit:v('ma-unit'),city:v('ma-city'),state:v('ma-state'),zip:v('ma-zip'),country:v('ma-country'),reason:v('ma-reason')};
+  if(!body.street||!body.city){ msg.style.color='#b91c1c'; msg.textContent='Street and city are required.'; return; }
+  if(!body.reason){ msg.style.color='#b91c1c'; msg.textContent='Enter the reason for the change.'; return; }
+  msg.style.color='#5a7390'; msg.textContent='Saving…';
+  try{
+    const r=await hoWrite(API+'/'+encodeURIComponent(cid)+'/mailing-address',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    const j=await r.json().catch(()=>({}));
+    if(!r.ok){ msg.style.color='#b91c1c'; msg.textContent='Not saved: '+hoErr(r,j,'error'); return; }
+    if(j.status==='unchanged'){ msg.style.color='#5a7390'; msg.textContent='That is already the mailing address on file.'; return; }
+    await openProfile(cid);
+    await hoOpenMailing(cid);
+    const m2=document.getElementById('ma-msg');
+    if(m2){ m2.style.color='#166534'; m2.textContent='Saved.'+(j.letters_flagged?' '+j.letters_flagged+' letter'+(j.letters_flagged===1?'':'s')+' generated earlier need a check before mailing (listed below).':''); }
+  }catch(e){ msg.style.color='#b91c1c'; msg.textContent=e.message||'Save failed'; }
+}
+async function hoVerifyMailingLetter(id,cid){
+  const inp=document.getElementById('ma-v-'+id); const reason=(inp&&inp.value||'').trim();
+  if(reason.length<5){ alert('Say how you checked the destination.'); if(inp) inp.focus(); return; }
+  const r=await hoWrite(API+'/mailing-address-reviews/'+encodeURIComponent(id)+'/verify',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({reason})});
+  const j=await r.json().catch(()=>({}));
+  if(!r.ok){ alert('Not saved: '+hoErr(r,j,'error')); return; }
+  const box=document.getElementById('ho-mailing'); if(box) box.style.display='none';
+  hoOpenMailing(cid);
+}
+
 async function doSearch(){
   const q=document.getElementById('q').value.trim();
   if(q.length<2)return;
@@ -405,7 +488,8 @@ async function openProfile(cid){
           </div>
         </div>
         <div class="ct">${ps.map(p=>esc(p.address)+(p.community?' · '+esc(p.community):'')).join('<br>')||'no property on file'}</div>
-        ${c.mailing_address?`<div class="ct" style="color:#64748b;">✉️ Mailing: ${esc(c.mailing_address)}</div>`:''}
+        <div class="ct" style="color:#64748b;">✉️ Mailing: ${c.mailing_address?esc(c.mailing_address):'<i>none on file (mail goes to the property)</i>'} <a href="#" onclick="event.preventDefault();hoOpenMailing('${c.id}')" style="font-size:12.5px;color:#1E2761;font-weight:600;text-decoration:none;white-space:nowrap;margin-left:6px;">✏️ Edit mailing address</a></div>
+        <div id="ho-mailing" style="display:none;"></div>
         <div class="chips">${balChip}${amenChip}${openChip}${legalChip}${drvAttyChip}${flagChips}</div>
       </div>
     </div></div>

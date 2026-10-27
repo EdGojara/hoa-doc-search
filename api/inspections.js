@@ -30,6 +30,7 @@ const multer = require('multer');
 const { createClient } = require('@supabase/supabase-js');
 const { categorizePhoto } = require('../lib/enforcement/ai_vision');
 const { getLegalFlag } = require('../lib/enforcement/legal_flag');
+const { mailingAddressOf } = require('../lib/mail/mailing_address');
 const { getAuthedUser, requireStaff } = require('./_require_admin');
 const closeout = require('../lib/inspections/closeout');
 const { safeErrorMessage } = require('./_safe_error');
@@ -1167,7 +1168,7 @@ router.post('/inspections/:id/photos', upload.single('photo'), async (req, res) 
                     // Re-fetch the joined data the letter generator needs
                     const { data: pRow } = await supabase
                       .from('v_current_property_owners')
-                      .select('street_address, unit, city, state, zip, lot_number, owner_name, owner_mailing_address')
+                      .select('street_address, unit, city, state, zip, lot_number, owner_name, owner_mailing_address, owner_mailing_street, owner_mailing_city, owner_mailing_state, owner_mailing_zip')
                       .eq('property_id', resolvedPropertyId)
                       .maybeSingle();
                     const { data: catRow } = await supabase
@@ -1249,7 +1250,7 @@ router.post('/inspections/:id/photos', upload.single('photo'), async (req, res) 
                       },
                       owner: {
                         full_name:       pRow.owner_name,
-                        mailing_address: pRow.owner_mailing_address,
+                        mailing_address: mailingAddressOf(pRow, pRow).text,
                       },
                       community: {
                         name:       commRow && commRow.name,
@@ -2563,7 +2564,7 @@ router.get('/inspections/property-detail/:property_id', async (req, res) => {
     // Property + current owner via the view
     const { data: pRow, error: pErr } = await supabase
       .from('v_current_property_owners')
-      .select('property_id, community_id, street_address, unit, city, state, zip, lot_number, property_type, latitude, longitude, owner_contact_id, owner_name, owner_email, owner_phone, owner_mailing_address, owned_since')
+      .select('property_id, community_id, street_address, unit, city, state, zip, lot_number, property_type, latitude, longitude, owner_contact_id, owner_name, owner_email, owner_phone, owner_mailing_address, owner_mailing_street, owner_mailing_city, owner_mailing_state, owner_mailing_zip, owned_since')
       .eq('property_id', propertyId)
       .maybeSingle();
     if (pErr) return res.status(500).json({ error: pErr.message });
@@ -2721,7 +2722,7 @@ router.get('/inspections/property-detail/:property_id', async (req, res) => {
         full_name:       pRow.owner_name,
         email:           pRow.owner_email,
         phone:           pRow.owner_phone,
-        mailing_address: pRow.owner_mailing_address,
+        mailing_address: mailingAddressOf(pRow, pRow).text,
         owned_since:     pRow.owned_since,
       } : null,
       residency: residencyRow ? {
@@ -4078,7 +4079,7 @@ router.post('/inspections/observations/:id/confirm', express.json(), async (req,
 
       const { data: pRow } = await supabase
         .from('v_current_property_owners')
-        .select('street_address, unit, city, state, zip, lot_number, owner_name, owner_mailing_address')
+        .select('street_address, unit, city, state, zip, lot_number, owner_name, owner_mailing_address, owner_mailing_street, owner_mailing_city, owner_mailing_state, owner_mailing_zip')
         .eq('property_id', obs.property_id)
         .maybeSingle();
       const { data: catRow } = await supabase
@@ -4179,7 +4180,7 @@ router.post('/inspections/observations/:id/confirm', express.json(), async (req,
         } : {},
         owner: pRow ? {
           full_name:       pRow.owner_name,
-          mailing_address: pRow.owner_mailing_address,
+          mailing_address: mailingAddressOf(pRow, pRow).text,
         } : {},
         community: {
           name:       commRow && commRow.name,

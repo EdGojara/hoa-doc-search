@@ -725,7 +725,7 @@ router.post('/communities/:id/mailing-delta/apply', (req, res, next) => refusePa
     if (!comm) return res.status(404).json({ error: 'community not found' });
 
     const nowIso = new Date().toISOString();
-    const results = { mailing_updated: 0, name_updated: 0, errors: [] };
+    const results = { mailing_updated: 0, mailing_kept_staff_address: 0, name_updated: 0, errors: [] };
 
     // Compose the legacy single-field mailing_address from the structured
     // fields so back-compat readers stay in sync (matches the pattern in
@@ -756,8 +756,10 @@ router.post('/communities/:id/mailing-delta/apply', (req, res, next) => refusePa
         verified_source: 'mailing_delta',
         updated_at: nowIso,
       };
-      const { error } = await supabase.from('contacts').update(patch).eq('id', u.contact_id);
+      const { data: after, error } = await supabase.from('contacts').update(patch).eq('id', u.contact_id).select('mailing_street').maybeSingle();
       if (error) results.errors.push({ kind: 'mailing', contact_id: u.contact_id, message: error.message });
+      // Migration 549 keeps a staff-entered mailing address: report it, don't count it as updated.
+      else if (after && String(after.mailing_street || '').trim().toLowerCase() !== String(street || '').trim().toLowerCase()) results.mailing_kept_staff_address++;
       else results.mailing_updated++;
     }
 

@@ -1915,12 +1915,27 @@ router.patch('/contacts/:id', express.json(), async (req, res) => {
     const allowed = [
       'full_name','preferred_name',
       'primary_email','primary_phone','secondary_email','secondary_phone',
-      'notification_phone','mailing_address','notes',
+      'notification_phone','notes',
       'preferred_language',
       'sms_opt_in','sms_opt_out','email_opt_out',
     ];
     const patch = { updated_at: new Date().toISOString() };
     allowed.forEach((k) => { if (k in (req.body || {})) patch[k] = req.body[k]; });
+    // The mailing address changes only through Homeowner 360 → Edit mailing
+    // address (migration 549), which records who changed it, why, and flags
+    // letters already generated. A form that re-sends the unchanged value still
+    // saves; a different value is refused before anything is written.
+    if ('mailing_address' in (req.body || {})) {
+      const { data: cur, error: cErr } = await supabase.from('contacts').select('mailing_address').eq('id', req.params.id).maybeSingle();
+      if (cErr) throw cErr;
+      const norm = (s) => String(s || '').replace(/\s+/g, ' ').trim().toLowerCase();
+      if (cur && norm(cur.mailing_address) !== norm(req.body.mailing_address)) {
+        return res.status(409).json({
+          error: 'mailing_address_moved',
+          detail: 'Nothing was saved. Change the mailing address in Homeowner 360 → ✉️ Edit mailing address, which records who changed it and why and flags letters already generated.',
+        });
+      }
+    }
     // Stamp the timestamp side-fields when an opt-in/out flag flips so the
     // audit trail captures WHEN (the boolean alone doesn't tell you).
     const nowIso = new Date().toISOString();
@@ -2425,7 +2440,11 @@ router.post('/contacts/methods/import', upload.single('file'), async (req, res) 
   }
 });
 
-router.post('/contacts/methods/import/:id/apply', (req, res, next) => refusePaused(res, 'contact_methods_import_apply'), express.json({ limit: '50mb' }), async (req, res) => {
+// Same mailing address, ignoring case and spacing. After an import writes an
+// address, a different stored value means migration 549 kept a staff entry.
+const sameMailing = (a, b) => String(a || '').replace(/\s+/g, ' ').trim().toLowerCase() === String(b || '').replace(/\s+/g, ' ').trim().toLowerCase();
+
+router.post('/contacts/methods/import/:id/apply',(req, res, next) => refusePaused(res, 'contact_methods_import_apply'), express.json({ limit: '50mb' }), async (req, res) => {
   try {
     const { data: log, error: logErr } = await supabase
       .from('contact_methods_sync_log')
@@ -2442,6 +2461,7 @@ router.post('/contacts/methods/import/:id/apply', (req, res, next) => refusePaus
       methods_primary_flipped: 0,
       methods_inconsistencies_resolved: 0,
       mailing_addresses_updated: 0,
+      mailing_kept_staff_address: 0,
       errors: [],
     };
 
@@ -2610,8 +2630,10 @@ router.post('/contacts/methods/import/:id/apply', (req, res, next) => refusePaus
       })();
       for (const item of selected) {
         try {
-          const { error: e } = await supabase.from('contacts').update({ mailing_address: item.value, updated_at: today }).eq('id', item.contact_id);
+          const { data: after, error: e } = await supabase.from('contacts').update({ mailing_address: item.value, updated_at: today }).eq('id', item.contact_id).select('mailing_address').maybeSingle();
           if (e) { applied.errors.push({ phase: 'mailing_new', row: item.row, error: e.message }); continue; }
+          // Migration 549 keeps a staff-entered mailing address; say so instead of counting it as updated.
+          if (after && !sameMailing(after.mailing_address, item.value)) { applied.mailing_kept_staff_address += 1; continue; }
           applied.mailing_addresses_updated += 1;
         } catch (e) {
           applied.errors.push({ phase: 'mailing_new', row: item.row, error: e.message });
@@ -2625,8 +2647,9 @@ router.post('/contacts/methods/import/:id/apply', (req, res, next) => refusePaus
         if (!action || action === 'skip' || action === 'keep_db') continue;
         if (action === 'keep_file') {
           try {
-            const { error: e } = await supabase.from('contacts').update({ mailing_address: item.file_value, updated_at: today }).eq('id', item.contact_id);
+            const { data: after, error: e } = await supabase.from('contacts').update({ mailing_address: item.file_value, updated_at: today }).eq('id', item.contact_id).select('mailing_address').maybeSingle();
             if (e) { applied.errors.push({ phase: 'mailing_inconsistent', row: item.row, error: e.message }); continue; }
+            if (after && !sameMailing(after.mailing_address, item.file_value)) { applied.mailing_kept_staff_address += 1; continue; }
             applied.mailing_addresses_updated += 1;
           } catch (e) {
             applied.errors.push({ phase: 'mailing_inconsistent', row: item.row, error: e.message });
