@@ -34,6 +34,7 @@ const { decideEscalation, filterRecentSameCategory } = require('../lib/enforceme
 const { defaultWeightForSource } = require('../lib/enforcement/source_weights');
 const { expandCategoryToAliases } = require('../lib/enforcement/category_aliases');
 const { getLegalFlag } = require('../lib/enforcement/legal_flag');
+const { mailingAddressOf } = require('../lib/mail/mailing_address');
 const { renderViolationLetterPdf } = require('../lib/enforcement/violation_letter');
 const { partitionMailable } = require('../lib/enforcement/stale_letter_guard');
 // Canonical append-only audit trail (migration 545); throws so callers fail closed.
@@ -1557,7 +1558,7 @@ router.post('/generate-letter', express.json(), async (req, res) => {
     // Fetch property + owner from the view
     const { data: pRow, error: pErr } = await supabase
       .from('v_current_property_owners')
-      .select('property_id, street_address, unit, city, state, zip, lot_number, owner_name, owner_email, owner_phone, owner_mailing_address')
+      .select('property_id, street_address, unit, city, state, zip, lot_number, owner_name, owner_email, owner_phone, owner_mailing_address, owner_mailing_street, owner_mailing_city, owner_mailing_state, owner_mailing_zip')
       .eq('property_id', violation.property_id)
       .maybeSingle();
     if (pErr || !pRow) return res.status(404).json({ error: 'property not found' });
@@ -1812,7 +1813,8 @@ router.post('/generate-letter', express.json(), async (req, res) => {
       const ownerName = pRow.owner_name || 'Property Owner';
       const propAddr = `${pRow.street_address || ''}${pRow.unit ? ' #' + pRow.unit : ''}`;
       const cityStateZip = `${pRow.city || ''}, ${pRow.state || 'TX'} ${pRow.zip || ''}`.replace(/\s+,/g, ',').trim();
-      const homeownerBlock = `${ownerName}\n${propAddr}\n${cityStateZip}`;
+      // Address lines from the one mailing-address resolver (mig 549).
+      const homeownerBlock = [ownerName, ...mailingAddressOf(pRow, pRow).lines].join('\n');
       const propertyAddressFull = `${propAddr}, ${cityStateZip}`;
 
       // Hearing-rights gating: §209.006-007 paragraph required when no
@@ -1908,13 +1910,11 @@ router.post('/generate-letter', express.json(), async (req, res) => {
       },
       owner: {
         full_name: pRow.owner_name,
-        // For owner-occupied properties (the common case), mailing_address
-        // IS the property address. Fall back to a constructed string from
-        // property fields when owner_mailing_address is null so the
-        // validator's "required" rule doesn't block letter generation.
-        // Same fallback pattern already used at line 1199 (mailed_to).
-        mailing_address: pRow.owner_mailing_address
-          || `${pRow.street_address || ''}${pRow.unit ? ' #' + pRow.unit : ''}, ${pRow.city || ''} ${pRow.state || 'TX'} ${pRow.zip || ''}`.trim(),
+        // The one mailing-address resolver (lib/mail/mailing_address.js, mig 549):
+        // the owner's mailing address, else the whole property address when no
+        // mailing address is on file (owner-occupied), so the validator's
+        // "required" rule doesn't block letter generation.
+        mailing_address: mailingAddressOf(pRow, pRow).text,
       },
       community: {
         name:       violation.communities && violation.communities.name,
@@ -2020,7 +2020,7 @@ router.post('/generate-letter', express.json(), async (req, res) => {
       letter_url: sd && sd.signedUrl,
       letter_type: letterType,
       delivery_method: isCertified ? 'certified_mail' : 'first_class_mail',
-      mailed_to: pRow.owner_mailing_address || `${pRow.street_address || ''}${pRow.unit ? ' #' + pRow.unit : ''}, ${pRow.city || ''} ${pRow.state || 'TX'} ${pRow.zip || ''}`,
+      mailed_to: mailingAddressOf(pRow, pRow).text,
     });
   } catch (err) {
     // Validation failures are OPERATOR-actionable, not server faults. Surface the
@@ -2121,7 +2121,7 @@ router.get('/drafts', async (req, res) => {
         .select('id, primary_category_id, current_stage, resolved_at, quality_status, cure_period_ends_at, cure_days_override, board_priority_at_open, enforcement_categories(label)')
         .in('id', violationIds.length ? violationIds : ['00000000-0000-0000-0000-000000000000']),
       supabase.from('v_current_property_owners')
-        .select('property_id, street_address, unit, city, owner_name, owner_mailing_address')
+        .select('property_id, street_address, unit, city, owner_name, owner_mailing_address, owner_mailing_street, owner_mailing_city, owner_mailing_state, owner_mailing_zip')
         .in('property_id', propertyIds.length ? propertyIds : ['00000000-0000-0000-0000-000000000000']),
       supabase.from('property_observations')
         .select('id, severity, ai_description, ai_confidence, reviewer_notes, inspection_photo_id, inspection_photos(captured_at, storage_path)')
@@ -2216,7 +2216,7 @@ router.get('/drafts', async (req, res) => {
         } : null,
         owner: p ? {
           full_name: p.owner_name,
-          mailing_address: p.owner_mailing_address,
+          mailing_address: mailingAddressOf(p, p, { allowPropertyFallback: false }).text || null,
         } : null,
         // Ed 2026-06-10 bug #2: previously this was `o ? {...} : null`, which
         // discarded the photo_url whenever the observation chain was empty
@@ -2434,7 +2434,7 @@ async function _assembleBundlePdf({ group, letterDate }) {
       .select('id, ai_description, reviewer_notes, severity, created_at, inspection_photo_id, inspection_photos(captured_at, storage_path, paired_wide_photo_id)')
       .in('id', observationIds.length ? observationIds : ['00000000-0000-0000-0000-000000000000']),
     supabase.from('v_current_property_owners')
-      .select('property_id, street_address, unit, city, state, zip, lot_number, owner_name, owner_mailing_address')
+      .select('property_id, street_address, unit, city, state, zip, lot_number, owner_name, owner_mailing_address, owner_mailing_street, owner_mailing_city, owner_mailing_state, owner_mailing_zip')
       .eq('property_id', propertyId).maybeSingle(),
     supabase.from('communities')
       .select('id, name, legal_name, letter_sender_name, letter_sender_title, letter_fee_courtesy_1_cents, letter_fee_courtesy_2_cents, letter_fee_certified_209_cents, letter_fee_fine_assessed_cents, letter_cure_days_courtesy_1, letter_cure_days_courtesy_2, letter_cure_days_certified_209, letter_payment_url, letter_pay_to_name, letter_pay_to_address, enforcement_authority_citation')
@@ -2551,7 +2551,7 @@ async function _assembleBundlePdf({ group, letterDate }) {
     .reduce((a, b) => Math.max(a, b), 0) || null;
   const pdfBuffer = await renderViolationLetterBundlePdf({
     property: { street_address: pRow.street_address, unit: pRow.unit, city: pRow.city, state: pRow.state, zip: pRow.zip, lot_number: pRow.lot_number },
-    owner: { full_name: pRow.owner_name, mailing_address: pRow.owner_mailing_address },
+    owner: { full_name: pRow.owner_name, mailing_address: mailingAddressOf(pRow, pRow).text },
     community, stage, cure_days_override: _bundleCureOverride,
     // A Courtesy 2 reminder keeps the case deadline. If bundled cases differ, the
     // later date is printed so no owner's deadline is shortened.
@@ -3948,7 +3948,7 @@ router.post('/mail-queue/lock-and-batch', express.json(), async (req, res) => {
         // supplemental notices (email/SMS lookups go through contacts).
         const { data: pRow } = await supabase
           .from('v_current_property_owners')
-          .select('property_id, street_address, unit, city, state, zip, lot_number, owner_name, owner_mailing_address, owner_contact_id')
+          .select('property_id, street_address, unit, city, state, zip, lot_number, owner_name, owner_mailing_address, owner_mailing_street, owner_mailing_city, owner_mailing_state, owner_mailing_zip, owner_contact_id')
           .eq('property_id', vio.property_id)
           .maybeSingle();
         if (!pRow) { skipped.push({ id: L.id, reason: 'property not found' }); continue; }
@@ -4089,7 +4089,8 @@ router.post('/mail-queue/lock-and-batch', express.json(), async (req, res) => {
             community_short_name:    community.declaration_short_name || community.name,
             letter_date:             postmarkIso,                 // anchor the 10-day clock to the postmark, not the draft date
             certified_mail_number:   null,
-            homeowner_names_block:   [pRow.owner_name || '[Owner Name]', shortAddr, cityStateZip].filter(Boolean).join('\n'),
+            // Recipient = the owner's current mailing address (one resolver, mig 549).
+            homeowner_names_block:   [pRow.owner_name || '[Owner Name]', ...mailingAddressOf(pRow, pRow).lines].filter(Boolean).join('\n'),
             property_address_full:   [shortAddr, cityStateZip].filter(Boolean).join(', '),
             property_address_short:  shortAddr,
             declaration_doc_number:  community.declaration_doc_number,
@@ -4124,7 +4125,7 @@ router.post('/mail-queue/lock-and-batch', express.json(), async (req, res) => {
               street_address: pRow.street_address, unit: pRow.unit,
               city: pRow.city, state: pRow.state, zip: pRow.zip, lot_number: pRow.lot_number,
             },
-            owner: { full_name: pRow.owner_name, mailing_address: pRow.owner_mailing_address },
+            owner: { full_name: pRow.owner_name, mailing_address: mailingAddressOf(pRow, pRow).text },
             community,
             observation,
             governing_doc: govDoc,
@@ -4239,7 +4240,7 @@ router.post('/mail-queue/lock-and-batch', express.json(), async (req, res) => {
             property_id:    vio.property_id,
             violation_id:   vio.id,
             channel:        deliveryMethod,
-            to_address:     pRow.owner_mailing_address || pRow.street_address || '',
+            to_address:     mailingAddressOf(pRow, pRow).text,
             status:         'sent',
             vendor:         'usps',
             vendor_message_id: null, // certified tracking number is stamped post-mailing via a separate workflow
@@ -6345,7 +6346,7 @@ router.get('/fine-queue', async (req, res) => {
     if (propIds.length > 0) {
       const { data: props, error: pErr } = await supabase
         .from('v_current_property_owners')
-        .select('property_id, street_address, unit, owner_name, owner_mailing_address')
+        .select('property_id, street_address, unit, owner_name, owner_mailing_address, owner_mailing_street, owner_mailing_city, owner_mailing_state, owner_mailing_zip')
         .in('property_id', propIds);
       if (pErr) console.warn('[fine-queue.list] address lookup failed:', pErr.message);
       (props || []).forEach((p) => propMap.set(p.property_id, p));
@@ -6624,7 +6625,7 @@ async function _draftLetterForBumpedViolation(violation, decision, communityId, 
     // Pull the joined data the letter generator needs
     const [pRowRes, catRes, commRes, prioRes, observationRes] = await Promise.all([
       supabase.from('v_current_property_owners')
-        .select('street_address, unit, city, state, zip, lot_number, owner_name, owner_mailing_address')
+        .select('street_address, unit, city, state, zip, lot_number, owner_name, owner_mailing_address, owner_mailing_street, owner_mailing_city, owner_mailing_state, owner_mailing_zip')
         .eq('property_id', violation.property_id).maybeSingle(),
       supabase.from('enforcement_categories')
         .select('slug, label, description')
@@ -6744,9 +6745,7 @@ async function _draftLetterForBumpedViolation(violation, decision, communityId, 
       }
       const _propAddr = `${pRow.street_address || ''}${pRow.unit ? ' #' + pRow.unit : ''}`;
       const _csz = `${pRow.city || ''}, ${pRow.state || 'TX'} ${pRow.zip || ''}`.replace(/\s+,/g, ',').trim();
-      const _mailing = pRow.owner_mailing_address || `${_propAddr}, ${_csz}`;
-      const _m = String(_mailing).match(/^(.*?),\s*(.*)$/);
-      const _homeownerBlock = [pRow.owner_name || 'Property Owner', _m ? _m[1].trim() : _propAddr, _m ? _m[2].trim() : _csz].join('\n');
+      const _homeownerBlock = [pRow.owner_name || 'Property Owner', ...mailingAddressOf(pRow, pRow).lines].join('\n');
       const _feeCents = (shComm.force_mow_admin_fee_cents != null) ? shComm.force_mow_admin_fee_cents : 2500;
       const _today = new Date().toISOString().slice(0, 10);
       const _obsCond = _cleanFinding(opts.ai_description || (obsRow && obsRow.ai_description), catRow && catRow.label)
@@ -6815,7 +6814,7 @@ async function _draftLetterForBumpedViolation(violation, decision, communityId, 
       property: pRow,
       owner: {
         full_name:       pRow.owner_name,
-        mailing_address: pRow.owner_mailing_address,
+        mailing_address: mailingAddressOf(pRow, pRow).text,
       },
       community: {
         name:       commRow && commRow.name,
@@ -9209,7 +9208,7 @@ router.post('/violations/:violationId/draft-force-mow-letter', async (req, res) 
       // Current owner via the spine view
       supabase
         .from('v_current_property_owners')
-        .select('owner_name, owner_mailing_address')
+        .select('owner_name, owner_mailing_address, owner_mailing_street, owner_mailing_city, owner_mailing_state, owner_mailing_zip')
         .eq('property_id', violation.property_id)
         .maybeSingle(),
     ]);
@@ -9256,15 +9255,13 @@ router.post('/violations/:violationId/draft-force-mow-letter', async (req, res) 
     ].filter(Boolean).join(', ');
     const propertyAddressShort = `${property.street_address}${property.unit ? ' #' + property.unit : ''}`;
 
-    // Homeowner names block — name on line 1, street on line 2, city/state/zip
-    // on line 3 (standard envelope format, Ed 2026-07-09). Alt-mailing block
-    // removed from the letter per Ed.
-    const cityStateZip = `${property.city || ''}, ${property.state || 'TX'} ${property.zip || ''}`
-      .replace(/^,\s*/, '').replace(/\s+/g, ' ').trim();
+    // Homeowner names block — name on line 1, then the address block (standard
+    // envelope format, Ed 2026-07-09). Alt-mailing block removed from the letter
+    // per Ed. The address is the owner's current MAILING address from the one
+    // resolver (mig 549), else the whole property address when none is on file.
     const homeownerNamesBlock = [
       (owner && owner.owner_name) || '[Owner Name]',
-      propertyAddressShort,
-      cityStateZip,
+      ...mailingAddressOf(owner, property).lines,
     ].filter(Boolean).join('\n');
 
     const adminFeeCents = community.force_mow_admin_fee_cents || 2500;
@@ -9691,7 +9688,7 @@ async function processPostcardReminders({ communityId = null, dryRun = false, li
       // Resolve property + owner
       const { data: pRow } = await supabase
         .from('v_current_property_owners')
-        .select('property_id, street_address, unit, city, state, zip, lot_number, owner_name, owner_mailing_address, owner_contact_id')
+        .select('property_id, street_address, unit, city, state, zip, lot_number, owner_name, owner_mailing_address, owner_mailing_street, owner_mailing_city, owner_mailing_state, owner_mailing_zip, owner_contact_id')
         .eq('property_id', v.property_id).maybeSingle();
       if (!pRow) { skipped++; continue; }
 
@@ -9703,7 +9700,7 @@ async function processPostcardReminders({ communityId = null, dryRun = false, li
           street_address: pRow.street_address, unit: pRow.unit,
           city: pRow.city, state: pRow.state, zip: pRow.zip,
         },
-        owner: { full_name: pRow.owner_name, mailing_address: pRow.owner_mailing_address },
+        owner: { full_name: pRow.owner_name, mailing_address: mailingAddressOf(pRow, pRow).text },
         original_letter_date: c1MailedAt,
         cure_by_date: v.cure_period_ends_at,
         community_logo_buffer: logoBuffer,
@@ -10185,7 +10182,7 @@ router.post('/mail/send-via-lob', express.json({ limit: '2mb' }), async (req, re
         // Pull supporting data — property + community + sender
         const [propRes, commRes] = await Promise.all([
           supabase.from('v_current_property_owners')
-            .select('property_id, street_address, unit, city, state, zip, owner_name, owner_mailing_address')
+            .select('property_id, street_address, unit, city, state, zip, owner_name, owner_mailing_address, owner_mailing_street, owner_mailing_city, owner_mailing_state, owner_mailing_zip')
             .eq('property_id', inter.property_id).maybeSingle(),
           supabase.from('communities')
             .select('id, name, legal_name')
@@ -10216,15 +10213,19 @@ router.post('/mail/send-via-lob', express.json({ limit: '2mb' }), async (req, re
         }
         const pdfBuffer = Buffer.from(await pdfBlob.arrayBuffer());
 
-        // Parse recipient mailing address. Owner_mailing_address may be a single
-        // string like "123 Main St, Katy, TX 77450" — parse loosely. Fall back
-        // to the property address if no mailing address is on file.
-        const recipient = _parseMailingAddress(prop.owner_mailing_address) || {
-          address_line1: prop.street_address,
-          city: prop.city,
-          state: prop.state || 'TX',
-          zip: prop.zip,
+        // Recipient = the owner's current mailing address (one resolver, mig 549).
+        // The property address is used only when NO mailing address is on file;
+        // a mailing address that can't be split into street/city/state/ZIP is
+        // refused, never silently replaced by the lot address.
+        const _mail = mailingAddressOf(prop, prop);
+        const recipient = {
+          address_line1: _mail.source === 'contact_text' ? _mail.street : _mail.lines[0],
+          city: _mail.city, state: _mail.state || 'TX', zip: _mail.zip,
         };
+        if (!recipient.address_line1 || !recipient.city || !recipient.zip || _mail.country !== 'US') {
+          results.push({ interaction_id: inter.id, status: 'error', error: 'the mailing address on file is not a complete US street / city / state / ZIP; update it in Homeowner 360 (Edit mailing address) and resend' });
+          continue;
+        }
         recipient.name = prop.owner_name || 'Property Owner';
 
         // Sender = Bedrock as managing agent. This becomes the printed
@@ -11708,21 +11709,6 @@ function _mapInteractionTypeToStage(t) {
     letter_hearing:    'hearing_notice',
     letter_force_mow:  'force_mow',
   })[t] || 'certified_209';
-}
-
-function _parseMailingAddress(addressString) {
-  if (!addressString || typeof addressString !== 'string') return null;
-  // Try "line1, city, state zip"
-  const m = addressString.match(/^(.+?),\s*(.+?),\s*([A-Z]{2})\s+(\d{5}(?:-\d{4})?)/);
-  if (m) {
-    return {
-      address_line1: m[1].trim(),
-      city: m[2].trim(),
-      state: m[3],
-      zip: m[4],
-    };
-  }
-  return null;
 }
 
 // ============================================================================

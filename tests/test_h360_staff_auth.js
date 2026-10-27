@@ -80,6 +80,11 @@ const stub = (rel, exports) => { const p = require.resolve(rel); require.cache[p
 // Stand-in for close_violation_with_audit (migration 545): close + audit event +
 // timeline note as one unit; FAIL_INSERT.rpc simulates the transaction failing.
 async function rpc(name, p) {
+  // Stand-ins for the migration 549 mailing-address functions: record the call.
+  if (name === 'set_contact_mailing_address' || name === 'resolve_mailing_address_letter_review') {
+    (DB.mailing_calls = DB.mailing_calls || []).push({ name, ...p });
+    return { data: { status: name === 'set_contact_mailing_address' ? 'changed' : 'verified', letters_flagged: 0 }, error: null };
+  }
   if (name !== 'close_violation_with_audit') return { data: null, error: { message: 'unknown function' } };
   if (FAIL_INSERT.rpc) return { data: null, error: { message: 'transaction rolled back (test)' } };
   const v = DB.violations.find((x) => x.id === p.p_violation_id);
@@ -118,6 +123,8 @@ const WRITES = [
   ['POST', '/import-file', { email: { subject: 's' }, links: [{ role: 'from', contact_id: 'c1', community_id: 'cm1' }] }],
   ['POST', '/violations/v1/resolve', { note: 'Photo proof received — cured' }],
   ['POST', '/interactions/L1/certified-number', { certified_tracking_number: '9589071052701234567890' }],
+  ['POST', '/c1/mailing-address', { street: '9 Elm Rd', city: 'Dallas', state: 'TX', zip: '75201', reason: 'Owner called' }],
+  ['POST', '/mailing-address-reviews/v1/verify', { reason: 'Envelope checked' }],
 ];
 
 let passed = 0; let failed = 0;
@@ -176,6 +183,19 @@ const check = async (name, fn) => {
   });
 
   // ── attribution from the session ─────────────────────────────────────────
+  await check('mailing address: the actor is the signed-in employee, never a body field, and log mode still requires a sign-in', async () => {
+    resetDb();
+    await quiet(async () => {
+      const r = await call('POST', '/c1/mailing-address', { street: '1 A St', city: 'Austin', state: 'TX', zip: '78701', reason: 'moved', p_actor: 'someone-else', actor: 'someone-else' }, 'martha-token');
+      assert.strictEqual(r.status, 200);
+      const c = (DB.mailing_calls || [])[0];
+      assert.ok(c && c.p_actor && c.p_actor !== 'someone-else' && c.p_contact_id === 'c1' && c.p_reason === 'moved', JSON.stringify(c));
+      assert.strictEqual((await call('POST', '/c1/mailing-address', { street: '1 A St', city: 'Austin', reason: '' }, 'martha-token')).status, 400, 'a change with no reason is refused');
+    });
+    process.env.H360_AUTH_MODE = 'log';
+    try { await quiet(async () => { assert.strictEqual((await call('POST', '/c1/mailing-address', { street: '1 A St', city: 'Austin', reason: 'x' }, null)).status, 403); }); }
+    finally { process.env.H360_AUTH_MODE = 'enforce'; }
+  });
   await check('note: the author is the signed-in employee (sent_by_user_id), which was always blank before', async () => {
     resetDb();
     const r = await quiet(() => call('POST', '/c1/note', { content: 'Called owner', user_name: 'Ed Gojara' }, 'martha-token'));

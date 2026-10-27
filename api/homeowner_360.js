@@ -789,6 +789,137 @@ router.post('/:contactId/note', express.json(), async (req, res) => {
   }
 });
 
+// -- Mailing address (Ed 2026-10-27, migration 549) ---------------------------
+// The homeowner's MAILING address only. The property's physical address, the
+// ownership history and the assessment account are never touched here. Every
+// change goes through set_contact_mailing_address(), which writes the contact,
+// the address history, the letter flags and the audit event in one transaction.
+const { mailingAddressOf } = require('../lib/mail/mailing_address');
+const MAILING_FIELDS = ['street', 'unit', 'city', 'state', 'zip', 'country'];
+// A database refusal from the 549 functions ('mailing_address: ...') -> a 400 the
+// employee can act on; a missing function -> the migration is not applied yet.
+function mailingRpcError(res, error) {
+  const msg = String((error && error.message) || '');
+  if (/mailing_address: /.test(msg)) {
+    const detail = msg.replace(/^.*mailing_address: /, '');
+    const status = /not found/.test(detail) ? 404 : /active employee/.test(detail) ? 403 : /already verified/.test(detail) ? 409 : 400;
+    return res.status(status).json({ error: 'mailing_address_refused', detail: detail.charAt(0).toUpperCase() + detail.slice(1) + '.' });
+  }
+  if (error && (error.code === 'PGRST202' || error.code === '42883')) {
+    return res.status(503).json({ error: 'migration_pending', detail: 'Mailing address editing turns on once migration 549 is applied (Documents → Review → Approve & Apply). Nothing was changed.' });
+  }
+  return null;
+}
+
+// GET /:contactId/mailing-address — the current mailing address (and where it
+// came from), the lots this person receives mail for, co-owners on those lots
+// with their own addresses, the change history and letters awaiting a check.
+router.get('/:contactId/mailing-address', async (req, res) => {
+  try {
+    const cid = req.params.contactId;
+    const { data: c, error } = await supabase.from('contacts').select('*').eq('id', cid).maybeSingle();
+    if (error) throw error;
+    if (!c) return res.status(404).json({ error: 'not_found' });
+    const owns = await safe(() => supabase.from('property_ownerships')
+      .select('property_id, is_primary, properties(id, street_address, unit, city, state, zip, communities(name))')
+      .eq('contact_id', cid).is('end_date', null));
+    const pids = owns.map((o) => o.property_id);
+    const recipients = pids.length ? await safe(() => supabase.from('v_current_property_owners').select('property_id, owner_contact_id').in('property_id', pids)) : [];
+    const coOwners = pids.length ? await safe(() => supabase.from('property_ownerships')
+      .select('property_id, is_primary, contacts(id, full_name, mailing_address, mailing_street, mailing_city, mailing_state, mailing_zip)')
+      .in('property_id', pids).is('end_date', null).neq('contact_id', cid)) : [];
+    let migrationApplied = true;
+    const hist = await supabase.from('contact_mailing_address_changes')
+      .select('id, kind, previous_address, new_address, reason, changed_by_name, writer, created_at')
+      .eq('contact_id', cid).order('created_at', { ascending: false }).limit(50);
+    if (hist.error) migrationApplied = false;
+    const reviews = migrationApplied ? await safe(() => supabase.from('mailing_address_letter_reviews')
+      .select('id, letter_kind, interaction_id, collection_notice_id, letter_state, property_id, created_at, resolved_at, resolution_reason, previous_address, new_address')
+      .eq('contact_id', cid).order('created_at', { ascending: false }).limit(100)) : [];
+    const firstProp = owns[0] && owns[0].properties;
+    const current = mailingAddressOf(c, firstProp || null);
+    res.json({
+      contact_id: c.id, name: c.full_name, migration_applied: migrationApplied,
+      current: { ...current, updated_at: c.mailing_address_updated_at || null },
+      fields: { street: c.mailing_street || '', unit: c.mailing_unit || '', city: c.mailing_city || '', state: c.mailing_state || '', zip: c.mailing_zip || '', country: c.mailing_country || 'US' },
+      properties: owns.filter((o) => o.properties).map((o) => {
+        const p = o.properties;
+        const rec = recipients.find((r) => r.property_id === o.property_id);
+        return {
+          property_id: o.property_id, community: p.communities ? p.communities.name : null, is_primary: o.is_primary,
+          property_address: `${p.street_address}${p.unit ? ' #' + p.unit : ''}, ${p.city || ''} ${p.state || ''} ${p.zip || ''}`.replace(/\s+/g, ' ').trim(),
+          receives_association_mail: !!(rec && rec.owner_contact_id === cid),
+        };
+      }),
+      co_owners: coOwners.filter((o) => o.contacts).map((o) => ({
+        contact_id: o.contacts.id, name: o.contacts.full_name, property_id: o.property_id, is_primary: o.is_primary,
+        mailing: mailingAddressOf(o.contacts, null, { allowPropertyFallback: false }).text || null,
+      })),
+      history: hist.data || [],
+      letters_to_verify: reviews.filter((r) => !r.resolved_at),
+      letters_verified: reviews.filter((r) => r.resolved_at).slice(0, 20),
+    });
+  } catch (err) {
+    console.error('[homeowner360] mailing-address read failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// POST /:contactId/mailing-address — staff change the homeowner's mailing address.
+// Body: { street, unit, city, state, zip, country, reason }. The actor is the
+// signed-in employee (never the body); always enforced, because every change
+// must name who made it.
+router.post('/:contactId/mailing-address', express.json(), async (req, res) => {
+  try {
+    const actor = await requireStaffWrite(req, res, { alwaysEnforce: true }); if (!actor) return;
+    const b = req.body || {};
+    const reason = bodyReason(req);
+    if (!reason) return res.status(400).json({ error: 'reason_required', detail: 'Say why the mailing address is changing (for example: owner called, returned mail, deed shows new address).' });
+    const v = {};
+    for (const k of MAILING_FIELDS) {
+      const raw = b[k] == null ? '' : b[k];
+      if (typeof raw !== 'string') return res.status(400).json({ error: 'invalid_input', detail: `${k} must be text.` });
+      v[k] = raw.trim();
+    }
+    if (!v.street || !v.city) return res.status(400).json({ error: 'invalid_input', detail: 'Street and city are required.' });
+    const { data, error } = await supabase.rpc('set_contact_mailing_address', {
+      p_contact_id: req.params.contactId, p_street: v.street, p_unit: v.unit || null, p_city: v.city, p_state: v.state || null,
+      p_zip: v.zip || null, p_country: v.country || null, p_reason: reason, p_actor: actor.id, p_route: routeOf(req),
+    });
+    if (error) {
+      if (mailingRpcError(res, error)) return;
+      throw error;
+    }
+    console.log('[homeowner360] mailing address', { contact_id: req.params.contactId, status: data && data.status, letters_flagged: data && data.letters_flagged, actor: actor.id });
+    res.json({ ok: true, ...data });
+  } catch (err) {
+    console.error('[homeowner360] mailing-address change failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// POST /mailing-address-reviews/:id/verify — staff confirm they checked a flagged
+// letter's envelope against the current mailing address. Releases only the mail
+// hold the address change placed on that letter. Body: { reason }.
+router.post('/mailing-address-reviews/:id/verify', express.json(), async (req, res) => {
+  try {
+    const actor = await requireStaffWrite(req, res, { alwaysEnforce: true }); if (!actor) return;
+    const reason = bodyReason(req);
+    if (reason.length < 5) return res.status(400).json({ error: 'reason_required', detail: 'Say how the destination was checked.' });
+    const { data, error } = await supabase.rpc('resolve_mailing_address_letter_review', {
+      p_review_id: req.params.id, p_reason: reason, p_actor: actor.id, p_route: routeOf(req),
+    });
+    if (error) {
+      if (mailingRpcError(res, error)) return;
+      throw error;
+    }
+    res.json({ ok: true, ...data });
+  } catch (err) {
+    console.error('[homeowner360] mailing-address verify failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
 // POST /:contactId/attachment — file a photo or PDF against the account. Camera
 // capture on mobile, file upload on desktop. Stores in the 'documents' bucket +
 // indexes in account_attachments, date-stamped with who + an optional caption,

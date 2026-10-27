@@ -1,0 +1,209 @@
+{
+  "migration": "549_mailing_address_management.sql",
+  "summary": "Homeowner mailing address management (Ed 2026-10-27). Adds unit, country and provenance columns to contacts; a permanent history of staff mailing-address changes and of blocked import overwrites; flags for unmailed letters generated before an address change (with a mail hold on violation letters); a contacts trigger that stops imports/syncs from replacing a staff-entered address and keeps the one-line and structured mailing fields in agreement; the staff write function set_contact_mailing_address() and resolve_mailing_address_letter_review(); and four columns appended to v_current_property_owners. No existing address, property, ownership, letter or notice row changes.",
+  "requires": [
+    "545_audit_events_and_closure_outcomes.sql",
+    "548_user_profiles_lockdown.sql"
+  ],
+  "preflight": [
+    {
+      "name": "the tables 549 builds on exist (contacts, properties, property_ownerships, interactions, letter_mail_holds, letter_mailing_evidence, collection_notices, audit_events, user_profiles)",
+      "sql": "SELECT count(*)::int FROM information_schema.tables WHERE table_schema = 'public' AND table_name IN ('contacts', 'properties', 'property_ownerships', 'interactions', 'letter_mail_holds', 'letter_mailing_evidence', 'collection_notices', 'audit_events', 'user_profiles', 'ownership_tenures')",
+      "expect": 10
+    },
+    {
+      "name": "contacts has the 153 structured mailing columns and not yet the 549 ones",
+      "sql": "SELECT (count(*) FILTER (WHERE column_name IN ('mailing_address', 'mailing_street', 'mailing_city', 'mailing_state', 'mailing_zip')))::int * 10 + (count(*) FILTER (WHERE column_name IN ('mailing_unit', 'mailing_country', 'mailing_address_source', 'mailing_address_updated_at', 'mailing_address_updated_by')))::int FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'contacts'",
+      "expect": 50
+    },
+    {
+      "name": "v_current_property_owners has the 27 columns migration 457 defined, ending in tenure_id",
+      "sql": "SELECT (count(*))::int * 10 + (max(ordinal_position) FILTER (WHERE column_name = 'tenure_id') = 27)::int FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'v_current_property_owners'",
+      "expect": 271
+    },
+    {
+      "name": "interactions has the letter columns the flagging reads",
+      "sql": "SELECT count(*)::int FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'interactions' AND column_name IN ('contact_id', 'property_id', 'community_id', 'status', 'delivery_method', 'printed_at', 'mailed_at')",
+      "expect": 7
+    },
+    {
+      "name": "no trigger already guards contacts mailing writes",
+      "sql": "SELECT count(*)::int FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid WHERE c.relname = 'contacts' AND t.tgname = 'trg_contacts_mailing_address_guard'",
+      "expect": 0
+    }
+  ],
+  "expected_changes": [
+    "contacts: 5 columns added (mailing_unit, mailing_country, mailing_address_source, mailing_address_updated_at, mailing_address_updated_by) + CHECK; BEFORE INSERT/UPDATE trigger trg_contacts_mailing_address_guard.",
+    "New tables contact_mailing_address_changes (append-only) and mailing_address_letter_reviews (only the resolution may be recorded, once), both association_record with a community FK.",
+    "New functions: mailing_address_compose, mailing_address_json, contacts_mailing_address_guard, contact_mailing_address_changes_append_only, mailing_address_letter_reviews_guard, set_contact_mailing_address (service_role only), resolve_mailing_address_letter_review (service_role only).",
+    "v_current_property_owners: same 27 columns in the same order, plus owner_mailing_unit, owner_mailing_country, owner_mailing_source, owner_mailing_updated_at appended.",
+    "No row changes in any existing table."
+  ],
+  "objects": {
+    "added": [
+      "column:contact_mailing_address_changes.changed_by_name",
+      "column:contact_mailing_address_changes.changed_by_user_id",
+      "column:contact_mailing_address_changes.community_id",
+      "column:contact_mailing_address_changes.contact_id",
+      "column:contact_mailing_address_changes.created_at",
+      "column:contact_mailing_address_changes.id",
+      "column:contact_mailing_address_changes.kind",
+      "column:contact_mailing_address_changes.new_address",
+      "column:contact_mailing_address_changes.previous_address",
+      "column:contact_mailing_address_changes.reason",
+      "column:contact_mailing_address_changes.writer",
+      "column:contacts.mailing_address_source",
+      "column:contacts.mailing_address_updated_at",
+      "column:contacts.mailing_address_updated_by",
+      "column:contacts.mailing_country",
+      "column:contacts.mailing_unit",
+      "column:mailing_address_letter_reviews.change_id",
+      "column:mailing_address_letter_reviews.collection_notice_id",
+      "column:mailing_address_letter_reviews.community_id",
+      "column:mailing_address_letter_reviews.contact_id",
+      "column:mailing_address_letter_reviews.created_at",
+      "column:mailing_address_letter_reviews.id",
+      "column:mailing_address_letter_reviews.interaction_id",
+      "column:mailing_address_letter_reviews.letter_kind",
+      "column:mailing_address_letter_reviews.letter_state",
+      "column:mailing_address_letter_reviews.mail_hold_id",
+      "column:mailing_address_letter_reviews.new_address",
+      "column:mailing_address_letter_reviews.previous_address",
+      "column:mailing_address_letter_reviews.property_id",
+      "column:mailing_address_letter_reviews.resolution_reason",
+      "column:mailing_address_letter_reviews.resolved_at",
+      "column:mailing_address_letter_reviews.resolved_by_user_id",
+      "constraint:contact_mailing_address_changes.contact_mailing_address_changes_changed_by_user_id_fkey",
+      "constraint:contact_mailing_address_changes.contact_mailing_address_changes_check",
+      "constraint:contact_mailing_address_changes.contact_mailing_address_changes_community_id_fkey",
+      "constraint:contact_mailing_address_changes.contact_mailing_address_changes_contact_id_fkey",
+      "constraint:contact_mailing_address_changes.contact_mailing_address_changes_kind_check",
+      "constraint:contact_mailing_address_changes.contact_mailing_address_changes_pkey",
+      "constraint:contact_mailing_address_changes.contact_mailing_address_changes_reason_check",
+      "constraint:contacts.contacts_mailing_address_source_check",
+      "constraint:contacts.contacts_mailing_address_updated_by_fkey",
+      "constraint:mailing_address_letter_reviews.mailing_address_letter_reviews_change_id_fkey",
+      "constraint:mailing_address_letter_reviews.mailing_address_letter_reviews_check",
+      "constraint:mailing_address_letter_reviews.mailing_address_letter_reviews_check1",
+      "constraint:mailing_address_letter_reviews.mailing_address_letter_reviews_collection_notice_id_fkey",
+      "constraint:mailing_address_letter_reviews.mailing_address_letter_reviews_community_id_fkey",
+      "constraint:mailing_address_letter_reviews.mailing_address_letter_reviews_contact_id_fkey",
+      "constraint:mailing_address_letter_reviews.mailing_address_letter_reviews_interaction_id_fkey",
+      "constraint:mailing_address_letter_reviews.mailing_address_letter_reviews_letter_kind_check",
+      "constraint:mailing_address_letter_reviews.mailing_address_letter_reviews_mail_hold_id_fkey",
+      "constraint:mailing_address_letter_reviews.mailing_address_letter_reviews_pkey",
+      "constraint:mailing_address_letter_reviews.mailing_address_letter_reviews_property_id_fkey",
+      "constraint:mailing_address_letter_reviews.mailing_address_letter_reviews_resolved_by_user_id_fkey",
+      "function:contact_mailing_address_changes_append_only",
+      "function:contacts_mailing_address_guard",
+      "function:mailing_address_compose",
+      "function:mailing_address_json",
+      "function:mailing_address_letter_reviews_guard",
+      "function:resolve_mailing_address_letter_review",
+      "function:set_contact_mailing_address",
+      "index:contact_mailing_address_changes_pkey",
+      "index:idx_contact_mailing_changes_community",
+      "index:idx_contact_mailing_changes_contact",
+      "index:idx_mailing_review_contact",
+      "index:idx_mailing_review_open",
+      "index:mailing_address_letter_reviews_pkey",
+      "index:uq_mailing_review_open_letter",
+      "index:uq_mailing_review_open_notice",
+      "table:contact_mailing_address_changes",
+      "table:mailing_address_letter_reviews",
+      "trigger:contact_mailing_address_changes.trg_contact_mailing_changes_append_only",
+      "trigger:contacts.trg_contacts_mailing_address_guard",
+      "trigger:mailing_address_letter_reviews.trg_mailing_address_letter_reviews_guard"
+    ],
+    "changed": [
+      "view:v_current_property_owners"
+    ],
+    "removed": []
+  },
+  "row_changes": {
+    "contacts": 0,
+    "properties": 0,
+    "property_ownerships": 0,
+    "interactions": 0,
+    "collection_notices": 0,
+    "letter_mail_holds": 0
+  },
+  "protected": [
+    {
+      "table": "contacts",
+      "order_by": "id"
+    },
+    {
+      "table": "properties",
+      "order_by": "id"
+    },
+    {
+      "table": "property_ownerships",
+      "order_by": "id"
+    },
+    {
+      "table": "ownership_tenures",
+      "order_by": "id"
+    },
+    {
+      "table": "interactions",
+      "order_by": "id"
+    },
+    {
+      "table": "collection_notices",
+      "order_by": "id"
+    },
+    {
+      "table": "letter_mail_holds",
+      "order_by": "id"
+    }
+  ],
+  "verify": [
+    {
+      "name": "contacts has the 5 new columns",
+      "sql": "SELECT count(*)::int FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'contacts' AND column_name IN ('mailing_unit', 'mailing_country', 'mailing_address_source', 'mailing_address_updated_at', 'mailing_address_updated_by')",
+      "expect": 5
+    },
+    {
+      "name": "no contact is marked staff-entered yet (the migration changed no address)",
+      "sql": "SELECT count(*)::int FROM contacts WHERE mailing_address_source IS NOT NULL OR mailing_address_updated_at IS NOT NULL OR mailing_unit IS NOT NULL OR mailing_country IS NOT NULL",
+      "expect": 0
+    },
+    {
+      "name": "the guard trigger is on contacts",
+      "sql": "SELECT count(*)::int FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid WHERE c.relname = 'contacts' AND t.tgname = 'trg_contacts_mailing_address_guard' AND t.tgenabled = 'O'",
+      "expect": 1
+    },
+    {
+      "name": "the owner view has 31 columns; the first 27 are unchanged and tenure_id is still 27th",
+      "sql": "SELECT (count(*))::int * 10 + (max(ordinal_position) FILTER (WHERE column_name = 'tenure_id') = 27 AND max(ordinal_position) FILTER (WHERE column_name = 'owner_mailing_updated_at') = 31)::int FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'v_current_property_owners'",
+      "expect": 311
+    },
+    {
+      "name": "the server can read the owner view and both new tables and call both functions; signed-in users cannot call them",
+      "sql": "SELECT (has_table_privilege('service_role', 'public.v_current_property_owners', 'SELECT') AND has_table_privilege('service_role', 'public.contact_mailing_address_changes', 'SELECT') AND has_table_privilege('service_role', 'public.mailing_address_letter_reviews', 'SELECT') AND has_function_privilege('service_role', 'public.set_contact_mailing_address(uuid,text,text,text,text,text,text,text,uuid,text)', 'EXECUTE') AND has_function_privilege('service_role', 'public.resolve_mailing_address_letter_review(uuid,text,uuid,text)', 'EXECUTE') AND NOT has_function_privilege('authenticated', 'public.set_contact_mailing_address(uuid,text,text,text,text,text,text,text,uuid,text)', 'EXECUTE') AND NOT has_function_privilege('anon', 'public.resolve_mailing_address_letter_review(uuid,text,uuid,text)', 'EXECUTE'))::int",
+      "expect": 1
+    },
+    {
+      "name": "the record tables have row level security on and no access for anon or signed-in users",
+      "sql": "SELECT (SELECT count(*) FROM pg_class WHERE relnamespace = 'public'::regnamespace AND relname IN ('contact_mailing_address_changes', 'mailing_address_letter_reviews') AND relrowsecurity)::int * 10 + (has_table_privilege('anon', 'public.contact_mailing_address_changes', 'SELECT') OR has_table_privilege('authenticated', 'public.contact_mailing_address_changes', 'SELECT') OR has_table_privilege('anon', 'public.mailing_address_letter_reviews', 'SELECT') OR has_table_privilege('authenticated', 'public.mailing_address_letter_reviews', 'SELECT') OR has_table_privilege('service_role', 'public.contact_mailing_address_changes', 'DELETE'))::int",
+      "expect": 20
+    },
+    {
+      "name": "the new record tables are empty",
+      "sql": "SELECT (SELECT count(*) FROM contact_mailing_address_changes)::int + (SELECT count(*) FROM mailing_address_letter_reviews)::int",
+      "expect": 0
+    }
+  ],
+  "api_checks": [
+    {
+      "table": "contact_mailing_address_changes",
+      "expect_count": 0
+    },
+    {
+      "table": "mailing_address_letter_reviews",
+      "expect_count": 0
+    }
+  ],
+  "reload_schema": true
+}
