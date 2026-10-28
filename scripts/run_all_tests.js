@@ -317,6 +317,8 @@ const CHECKS = [
   'tests/test_time_attendance_api.js',
   'tests/sql/548_user_profiles_lockdown_e2e.mjs',
   'tests/sql/549_mailing_address_e2e.mjs',
+  'tests/sql/550_vault_documents_e2e.mjs',
+  'tests/test_vault_documents.js',
   'tests/test_mailing_address_resolver.js',
   'tests/test_user_profiles_lockdown.js',
   'tests/sql/519_apply_one_e2e.mjs',

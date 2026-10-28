@@ -1,0 +1,111 @@
+{
+  "migration": "550_vault_documents.sql",
+  "summary": "Owner Vault documents (Ed 2026-10-28). Adds vault_documents: the company records of Bedrock and Ed's other companies (leases, city letters, tax and IRS notices, insurance, contracts), filed per vault entity with the exact bytes' sha256, kept apart from every association and from library_documents. Server-only (service_role SELECT/INSERT/UPDATE, no DELETE); row level security on with no policies; anon and signed-in users revoked. No existing row changes.",
+  "requires": [
+    "365_owner_vault.sql"
+  ],
+  "preflight": [
+    {
+      "name": "the vault entities table exists",
+      "sql": "SELECT count(*)::int FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'vault_entities'",
+      "expect": 1
+    },
+    {
+      "name": "vault_documents does not exist yet",
+      "sql": "SELECT count(*)::int FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'vault_documents'",
+      "expect": 0
+    },
+    {
+      "name": "the shared updated_at trigger function exists",
+      "sql": "SELECT count(*)::int FROM pg_proc WHERE proname = 'trusted_set_updated_at' AND pronamespace = 'public'::regnamespace",
+      "expect": 1
+    }
+  ],
+  "expected_changes": [
+    "New table vault_documents (workpaper, owner-only) with its constraints, index and updated_at trigger.",
+    "Row level security on vault_documents; service_role may SELECT, INSERT, UPDATE (never DELETE); anon and authenticated have nothing.",
+    "No row changes in any existing table."
+  ],
+  "objects": {
+    "added": [
+      "column:vault_documents.archived_at",
+      "column:vault_documents.category",
+      "column:vault_documents.content_type",
+      "column:vault_documents.created_at",
+      "column:vault_documents.created_by",
+      "column:vault_documents.document_date",
+      "column:vault_documents.entity_id",
+      "column:vault_documents.filename",
+      "column:vault_documents.id",
+      "column:vault_documents.notes",
+      "column:vault_documents.original_filename",
+      "column:vault_documents.sha256",
+      "column:vault_documents.size_bytes",
+      "column:vault_documents.storage_path",
+      "column:vault_documents.tax_year",
+      "column:vault_documents.title",
+      "column:vault_documents.updated_at",
+      "constraint:vault_documents.vault_documents_category_check",
+      "constraint:vault_documents.vault_documents_entity_id_fkey",
+      "constraint:vault_documents.vault_documents_entity_sha256_key",
+      "constraint:vault_documents.vault_documents_filename_check",
+      "constraint:vault_documents.vault_documents_pkey",
+      "constraint:vault_documents.vault_documents_sha256_check",
+      "constraint:vault_documents.vault_documents_size_bytes_check",
+      "constraint:vault_documents.vault_documents_storage_path_key",
+      "constraint:vault_documents.vault_documents_tax_year_check",
+      "constraint:vault_documents.vault_documents_title_check",
+      "index:idx_vault_documents_entity_category",
+      "index:vault_documents_entity_sha256_key",
+      "index:vault_documents_pkey",
+      "index:vault_documents_storage_path_key",
+      "table:vault_documents",
+      "trigger:vault_documents.trg_vault_documents_updated"
+    ],
+    "changed": [],
+    "removed": []
+  },
+  "row_changes": {
+    "vault_entities": 0
+  },
+  "protected": [
+    {
+      "table": "vault_entities",
+      "order_by": "id"
+    }
+  ],
+  "verify": [
+    {
+      "name": "vault_documents exists with row level security on",
+      "sql": "SELECT count(*)::int FROM pg_class WHERE relnamespace = 'public'::regnamespace AND relname = 'vault_documents' AND relrowsecurity",
+      "expect": 1
+    },
+    {
+      "name": "the server can read, file and archive documents but never delete them",
+      "sql": "SELECT (has_table_privilege('service_role', 'public.vault_documents', 'SELECT') AND has_table_privilege('service_role', 'public.vault_documents', 'INSERT') AND has_table_privilege('service_role', 'public.vault_documents', 'UPDATE') AND NOT has_table_privilege('service_role', 'public.vault_documents', 'DELETE'))::int",
+      "expect": 1
+    },
+    {
+      "name": "anon and signed-in users have no access at all",
+      "sql": "SELECT (has_table_privilege('anon', 'public.vault_documents', 'SELECT') OR has_table_privilege('anon', 'public.vault_documents', 'INSERT') OR has_table_privilege('authenticated', 'public.vault_documents', 'SELECT') OR has_table_privilege('authenticated', 'public.vault_documents', 'INSERT') OR has_table_privilege('authenticated', 'public.vault_documents', 'UPDATE'))::int",
+      "expect": 0
+    },
+    {
+      "name": "vault_documents has no policies",
+      "sql": "SELECT count(*)::int FROM pg_policies WHERE schemaname = 'public' AND tablename = 'vault_documents'",
+      "expect": 0
+    },
+    {
+      "name": "vault_documents is empty",
+      "sql": "SELECT count(*)::int FROM vault_documents",
+      "expect": 0
+    }
+  ],
+  "api_checks": [
+    {
+      "table": "vault_documents",
+      "expect_count": 0
+    }
+  ],
+  "reload_schema": true
+}
