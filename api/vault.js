@@ -10,6 +10,7 @@
 // AI/search index. See migration 365.
 // ============================================================================
 const express = require('express');
+const crypto = require('crypto');
 const { createClient } = require('@supabase/supabase-js');
 const { requireOwner } = require('./_require_admin');
 const { safeErrorMessage } = require('./_safe_error');
@@ -379,6 +380,114 @@ router.delete('/receipts/:receiptId', async (req, res) => {
     await supabase.from('vault_receipts').delete().eq('id', req.params.receiptId);
     res.json({ ok: true });
   } catch (err) { console.error('[vault] receipt delete failed:', err.message); res.status(500).json({ error: safeErrorMessage(err) }); }
+});
+
+// ---- Documents: each company's own records (migration 550) ----------------
+// Leases, city letters, tax and IRS notices, insurance, contracts. Stored with
+// their exact bytes in the private bucket under owner-vault/<entity>/documents/,
+// never in library_documents, never indexed. Archived, never deleted.
+const DOCS = require('../lib/vault/documents');
+
+// GET /document-categories — the list the page shows.
+router.get('/document-categories', (req, res) => res.json({ categories: DOCS.CATEGORIES }));
+
+// GET /entities/:id/documents — newest first. ?archived=1 lists the archive.
+router.get('/entities/:id/documents', async (req, res) => {
+  try {
+    let q = supabase.from('vault_documents')
+      .select('id, entity_id, category, title, filename, original_filename, document_date, tax_year, notes, content_type, size_bytes, sha256, archived_at, created_by, created_at, updated_at')
+      .eq('entity_id', req.params.id);
+    q = req.query.archived === '1' ? q.not('archived_at', 'is', null) : q.is('archived_at', null);
+    const { data, error } = await q.order('document_date', { ascending: false, nullsFirst: false }).order('created_at', { ascending: false }).limit(2000);
+    if (error) throw error;
+    res.json({ documents: data || [], capped: (data || []).length === 2000 });
+  } catch (err) { console.error('[vault] documents list failed:', err.message); res.status(500).json({ error: safeErrorMessage(err) }); }
+});
+
+// POST /entities/:id/documents — file one document. Fields: file, title,
+// category, document_date, tax_year, notes, filename (the filed name; suggested
+// from the convention when blank). The same file twice for a company -> 409
+// with the copy already filed.
+router.post('/entities/:id/documents', upload.single('file'), async (req, res) => {
+  try {
+    if (!req.file || !req.file.buffer || !req.file.buffer.length) return res.status(400).json({ error: 'file_required' });
+    const entity_id = req.params.id;
+    const { data: ent, error: entErr } = await supabase.from('vault_entities').select('id, name').eq('id', entity_id).maybeSingle();
+    if (entErr) throw entErr;
+    if (!ent) return res.status(404).json({ error: 'entity_not_found' });
+
+    const b = req.body || {};
+    const original = String(req.file.originalname || 'document').slice(0, 200);
+    const v = DOCS.validateFields({ ...b, title: b.title || original.replace(/\.[A-Za-z0-9]{1,8}$/, '') });
+    if (v.error) return res.status(400).json({ error: v.error });
+    const f = v.fields;
+    const filename = DOCS.cleanFiledName(b.filename, original)
+      || DOCS.suggestFiledName({ entityName: ent.name, title: f.title, documentDate: f.document_date, taxYear: f.tax_year, originalFilename: original });
+
+    const sha256 = DOCS.sha256Hex(req.file.buffer);
+    const { data: dup, error: dupErr } = await supabase.from('vault_documents')
+      .select('id, title, filename, archived_at, created_at').eq('entity_id', entity_id).eq('sha256', sha256).maybeSingle();
+    if (dupErr) throw dupErr;
+    if (dup) return res.status(409).json({ error: 'already_filed', document: dup });
+
+    const path = `owner-vault/${entity_id}/documents/${crypto.randomUUID()}-${filename.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 120)}`;
+    const content_type = req.file.mimetype || 'application/octet-stream';
+    const { error: upErr } = await supabase.storage.from('documents').upload(path, req.file.buffer, { contentType: content_type, upsert: false });
+    if (upErr) { console.error('[vault] document store failed:', upErr.message, { entity_id, filename }); return res.status(500).json({ error: 'could_not_store_file' }); }
+
+    const { data: row, error } = await supabase.from('vault_documents').insert({
+      entity_id, ...f, filename, original_filename: original, storage_path: path, content_type,
+      size_bytes: req.file.buffer.length, sha256, created_by: req.owner.email,
+    }).select('*').single();
+    if (error) {
+      // The file landed but the record did not: take the file back out so
+      // storage never holds a document the Vault cannot see.
+      console.error('[vault] document record failed, removing stored file:', error.message, { entity_id, path });
+      try { await supabase.storage.from('documents').remove([path]); } catch (e) { console.warn('[vault] orphan document file left at', path, e.message); }
+      if (/duplicate|unique/i.test(error.message)) return res.status(409).json({ error: 'already_filed' });
+      throw error;
+    }
+    res.json({ ok: true, document: row });
+  } catch (err) { console.error('[vault] document upload failed:', err.message); res.status(500).json({ error: safeErrorMessage(err) }); }
+});
+
+// GET /documents/:docId/open — a five-minute link to the exact stored bytes,
+// downloading under the filed name.
+router.get('/documents/:docId/open', async (req, res) => {
+  try {
+    const { data: d, error } = await supabase.from('vault_documents').select('storage_path, filename').eq('id', req.params.docId).maybeSingle();
+    if (error) throw error;
+    if (!d) return res.status(404).json({ error: 'not_found' });
+    const download = req.query.download === '1' ? { download: d.filename } : {};
+    const { data: s, error: sErr } = await supabase.storage.from('documents').createSignedUrl(d.storage_path, 300, download);
+    if (sErr || !s || !s.signedUrl) { console.error('[vault] document link failed:', sErr && sErr.message, { id: req.params.docId }); return res.status(500).json({ error: 'could_not_open_file' }); }
+    res.json({ url: s.signedUrl });
+  } catch (err) { console.error('[vault] document open failed:', err.message); res.status(500).json({ error: safeErrorMessage(err) }); }
+});
+
+// PATCH /documents/:docId — correct the details, rename, archive / restore.
+// The stored bytes never change.
+router.patch('/documents/:docId', async (req, res) => {
+  try {
+    const b = req.body || {};
+    const v = DOCS.validateFields(b, { partial: true });
+    if (v.error) return res.status(400).json({ error: v.error });
+    const patch = { ...v.fields };
+    if (b.filename !== undefined) {
+      const { data: cur, error: cErr } = await supabase.from('vault_documents').select('original_filename').eq('id', req.params.docId).maybeSingle();
+      if (cErr) throw cErr;
+      if (!cur) return res.status(404).json({ error: 'not_found' });
+      const n = DOCS.cleanFiledName(b.filename, cur.original_filename);
+      if (!n) return res.status(400).json({ error: 'filename_required' });
+      patch.filename = n;
+    }
+    if (b.archived !== undefined) patch.archived_at = b.archived ? new Date().toISOString() : null;
+    if (!Object.keys(patch).length) return res.status(400).json({ error: 'nothing_to_update' });
+    const { data, error } = await supabase.from('vault_documents').update(patch).eq('id', req.params.docId).select('*').maybeSingle();
+    if (error) throw error;
+    if (!data) return res.status(404).json({ error: 'not_found' });
+    res.json({ ok: true, document: data });
+  } catch (err) { console.error('[vault] document update failed:', err.message); res.status(500).json({ error: safeErrorMessage(err) }); }
 });
 
 module.exports = { router };

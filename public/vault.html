@@ -30,6 +30,13 @@
   th{font-size:11px;color:var(--faint);text-transform:uppercase;letter-spacing:.05em;font-weight:600;}
   .row-actions{display:flex;gap:8px;margin-top:14px;}
   a.back{color:var(--faint);text-decoration:none;font-size:12.5px;}
+  .doc-file{overflow-wrap:anywhere;}
+  @media (max-width:600px){
+    .wrap{padding:20px 14px 60px;}
+    .grid2{grid-template-columns:1fr;}
+    .ent.doc{flex-direction:column;align-items:stretch !important;}
+    .ent.doc .doc-acts{justify-content:flex-start !important;}
+  }
 </style>
 
 <div id="app"><div class="wrap"><div class="muted" style="padding:40px;text-align:center;">Unlocking…</div></div></div>
@@ -87,11 +94,11 @@ function renderVault(){
         <div class="ent" onclick="openEntity('${e.id}')">
           <div><div class="n">${esc(e.name)}</div><div class="t">${ETYPE[e.entity_type]||e.entity_type}${e.ein?' · EIN '+esc(e.ein):''}</div></div>
           <div class="pill">Open →</div>
-        </div>`).join(''):'<div class="muted">No companies yet. Add your first below (Bedrock is an S-Corp).</div>'}</div>
+        </div>`).join(''):'<div class="muted">No companies yet. Add your first below.</div>'}</div>
       <div class="row-actions"><button class="ghost" onclick="toggleAdd()">＋ Add company</button></div>
       <div id="addBox" style="display:none;margin-top:14px;border-top:1px solid var(--rule);padding-top:14px;">
         <div class="grid2">
-          <div><label>Company name</label><input id="e-name" placeholder="Bedrock Association Management, Inc."></div>
+          <div><label>Company name</label><input id="e-name" placeholder="Bedrock Association Management, LLC"></div>
           <div><label>Type</label><select id="e-type">${Object.entries(ETYPE).map(([k,v])=>`<option value="${k}"${k==='s_corp'?' selected':''}>${v}</option>`).join('')}</select></div>
           <div><label>EIN (optional)</label><input id="e-ein" placeholder="XX-XXXXXXX"></div>
           <div><label>Fiscal year end</label><input id="e-fye" value="12-31" placeholder="MM-DD"></div>
@@ -120,7 +127,98 @@ window.openEntity=async function(id){
   CUR=ENTITIES.find(e=>e.id===id); if(!CUR) return;
   const [ra,rb]=await Promise.all([api('GET','/entities/'+id+'/accounts'),api('GET','/entities/'+id+'/bank-accounts')]);
   ACCTS=(ra&&ra.accounts)||[]; BANKS=(rb&&rb.bank_accounts)||[];
-  renderEntity(); loadLedger(); loadReceipts();
+  DOC_ARCHIVE=false;
+  if(!DOC_CATS){ const rc=await api('GET','/document-categories'); DOC_CATS=(rc&&rc.categories)||{other:'Other'}; }
+  renderEntity(); loadDocs(); loadLedger(); loadReceipts();
+};
+
+// ---- Documents --------------------------------------------------------------
+let DOC_CATS=null, DOC_ARCHIVE=false, DOCS=[];
+function docCatOptions(sel){
+  return Object.entries(DOC_CATS||{other:'Other'}).sort((a,b)=>a[1].localeCompare(b[1]))
+    .map(([k,v])=>`<option value="${k}"${k===sel?' selected':''}>${esc(v)}</option>`).join('');
+}
+const fmtSize=n=>{ n=Number(n)||0; return n>=1048576?(n/1048576).toFixed(1)+' MB':Math.max(1,Math.round(n/1024))+' KB'; };
+window.docFilePicked=function(){
+  const f=$('d-file').files[0]; if(f&&!$('d-title').value.trim()) $('d-title').value=f.name.replace(/\.[A-Za-z0-9]{1,8}$/,'').replace(/[_-]+/g,' ');
+};
+async function loadDocs(){
+  const box=$('docs'); if(!box) return;
+  const r=await api('GET','/entities/'+CUR.id+'/documents'+(DOC_ARCHIVE?'?archived=1':''));
+  if(!r||!r.documents){ box.innerHTML='<div class="muted" style="color:#b91c1c;">Could not load documents. Reload to try again.</div>'; return; }
+  DOCS=r.documents;
+  if(!DOCS.length){ box.innerHTML=`<div class="muted">${DOC_ARCHIVE?'Nothing archived.':'No documents filed yet.'}</div>`; return; }
+  const groups={}; DOCS.forEach(d=>{ (groups[d.category]=groups[d.category]||[]).push(d); });
+  box.innerHTML=(DOC_ARCHIVE?'<div class="muted" style="margin-bottom:6px;"><b>Archive</b></div>':'')
+    + Object.keys(groups).sort((a,b)=>(DOC_CATS[a]||a).localeCompare(DOC_CATS[b]||b)).map(c=>`
+      <div style="font-size:11px;color:var(--faint);text-transform:uppercase;letter-spacing:.05em;font-weight:600;margin:10px 0 2px;">${esc(DOC_CATS[c]||c)} (${groups[c].length})</div>
+      ${groups[c].map(docRow).join('')}`).join('')
+    + (r.capped?'<div class="muted">Showing the newest 2,000.</div>':'');
+}
+function docRow(d){
+  const when=d.document_date||(d.tax_year?('Tax year '+d.tax_year):'');
+  return `<div class="ent doc" style="cursor:default;align-items:flex-start;gap:12px;" id="doc-${d.id}">
+    <div style="flex:1;min-width:0;">
+      <div class="n">${esc(d.title)}</div>
+      <div class="t doc-file" style="text-transform:none;letter-spacing:0;">${when?esc(when)+' · ':''}${esc(d.filename)} · ${fmtSize(d.size_bytes)}</div>
+      ${d.notes?`<div class="muted" style="margin-top:3px;">${esc(d.notes)}</div>`:''}
+      <div id="docedit-${d.id}"></div>
+    </div>
+    <div class="doc-acts" style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;">
+      <button class="ghost" onclick="openDoc('${d.id}',false)">Open</button>
+      <button class="ghost" onclick="openDoc('${d.id}',true)">Download</button>
+      <button class="ghost" onclick="editDoc('${d.id}')">Edit</button>
+      <button class="ghost" onclick="archiveDoc('${d.id}',${d.archived_at?'false':'true'})">${d.archived_at?'Restore':'Archive'}</button>
+    </div>
+  </div>`;
+}
+window.toggleDocArchive=function(){ DOC_ARCHIVE=!DOC_ARCHIVE; $('d-arch').textContent=DOC_ARCHIVE?'Back to documents':'Show archive'; loadDocs(); };
+window.uploadDoc=async function(id){
+  const f=$('d-file').files[0]; if(!f){ $('d-status').textContent='Pick a file.'; return; }
+  if(f.size>30*1024*1024){ $('d-status').textContent='That file is over 30 MB.'; return; }
+  const fd=new FormData(); fd.append('file',f);
+  [['title','d-title'],['category','d-cat'],['document_date','d-date'],['tax_year','d-year'],['filename','d-name'],['notes','d-notes']]
+    .forEach(([k,el])=>{ const v=$(el).value.trim(); if(v) fd.append(k,v); });
+  $('d-btn').disabled=true; $('d-status').textContent='Filing…';
+  try{
+    const res=await fetch(V+'/entities/'+id+'/documents',{method:'POST',headers:{...(await authHeader())},body:fd});
+    const j=await res.json().catch(()=>({}));
+    if(res.status===409){ $('d-status').textContent='Already filed'+(j.document?': '+j.document.title+(j.document.archived_at?' (in the archive)':''):'')+'.'; return; }
+    if(!res.ok||!j.document){ $('d-status').textContent=docError(j.error)||'Could not file it. Nothing was saved.'; return; }
+    $('d-status').textContent='✓ Filed as '+j.document.filename;
+    ['d-file','d-title','d-date','d-year','d-name','d-notes'].forEach(el=>{ $(el).value=''; });
+    if(DOC_ARCHIVE) toggleDocArchive(); else loadDocs();
+  }catch(_){ $('d-status').textContent='Could not reach the server. Nothing was saved.'; }
+  finally{ $('d-btn').disabled=false; }
+};
+function docError(code){ return ({title_required:'A title is required.',invalid_category:'Pick a category.',invalid_document_date:'That date is not valid.',invalid_tax_year:'Tax year must be a year like 2025.',filename_required:'The filed name cannot be blank.',could_not_store_file:'The file could not be stored. Nothing was saved.'})[code]||''; }
+window.openDoc=async function(docId,download){
+  // Open the tab first so the browser does not block it as a pop-up.
+  const w=download?null:window.open('about:blank','_blank');
+  const r=await api('GET','/documents/'+docId+'/open'+(download?'?download=1':''));
+  if(!r||!r.url){ if(w) w.close(); alert('Could not open that document.'); return; }
+  if(w) w.location=r.url; else window.location=r.url;
+};
+window.editDoc=function(docId){
+  const d=DOCS.find(x=>x.id===docId); const box=$('docedit-'+docId); if(!d||!box) return;
+  if(box.innerHTML){ box.innerHTML=''; return; }
+  box.innerHTML=`<div class="grid2" style="margin-top:8px;">
+    <div><label>Title</label><input id="de-title-${d.id}" value="${esc(d.title)}"></div>
+    <div><label>Category</label><select id="de-cat-${d.id}">${docCatOptions(d.category)}</select></div>
+    <div><label>Document date</label><input type="date" id="de-date-${d.id}" value="${esc(d.document_date||'')}"></div>
+    <div><label>Tax year</label><input id="de-year-${d.id}" value="${esc(d.tax_year||'')}"></div>
+    <div><label>Filed name</label><input id="de-name-${d.id}" value="${esc(d.filename)}"></div>
+    <div><label>Notes</label><input id="de-notes-${d.id}" value="${esc(d.notes||'')}"></div>
+  </div><div class="row-actions"><button class="btn" onclick="saveDoc('${d.id}')">Save</button><span id="de-status-${d.id}" class="muted"></span></div>`;
+};
+window.saveDoc=async function(docId){
+  const g=k=>$('de-'+k+'-'+docId).value.trim();
+  const r=await api('PATCH','/documents/'+docId,{title:g('title'),category:g('cat'),document_date:g('date'),tax_year:g('year'),filename:g('name'),notes:g('notes')});
+  if(r&&r.ok) loadDocs(); else $('de-status-'+docId).textContent=docError(r&&r.error)||'Could not save.';
+};
+window.archiveDoc=async function(docId,archive){
+  const r=await api('PATCH','/documents/'+docId,{archived:archive});
+  if(r&&r.ok) loadDocs(); else alert('Could not '+(archive?'archive':'restore')+' that document.');
 };
 function acctOptions(sel){ return '<option value="">— uncategorized —</option>'+ACCTS.map(a=>`<option value="${a.id}"${a.id===sel?' selected':''}>${esc(a.account_number)} · ${esc(a.account_name)}</option>`).join(''); }
 function renderEntity(){
@@ -129,6 +227,22 @@ function renderEntity(){
     <a class="back" href="#" onclick="event.preventDefault();renderVault()">← All companies</a>
     <h1 style="margin-top:8px;">${esc(CUR.name)}</h1>
     <div class="sub">${ETYPE[CUR.entity_type]||CUR.entity_type}${CUR.ein?' · EIN '+esc(CUR.ein):''} · FYE ${esc(CUR.fiscal_year_end)}</div>
+
+    <div class="card">
+      <h2>Documents</h2>
+      <p class="muted" style="margin-top:-8px;">${esc(CUR.name)}'s own records: leases, letters, tax and IRS notices, insurance, contracts. Kept here only, apart from every association, and never searchable by staff or the AI team.</p>
+      <div class="grid2">
+        <div><label>File</label><input type="file" id="d-file" onchange="docFilePicked()"></div>
+        <div><label>Category</label><select id="d-cat">${docCatOptions('other')}</select></div>
+        <div><label>Title</label><input id="d-title" placeholder="Business Use Letter, City of Sugar Land"></div>
+        <div class="grid2" style="gap:8px;"><div><label>Document date</label><input type="date" id="d-date"></div><div><label>Tax year</label><input id="d-year" inputmode="numeric" placeholder="2025"></div></div>
+        <div><label>Filed name (optional)</label><input id="d-name" placeholder="Blank: Company_Title_Date"></div>
+        <div><label>Notes (optional)</label><input id="d-notes"></div>
+      </div>
+      <div class="row-actions"><button class="btn" id="d-btn" onclick="uploadDoc('${id}')">File document</button><span id="d-status" class="muted"></span></div>
+      <div id="docs" style="margin-top:14px;border-top:1px solid var(--rule);padding-top:10px;"><div class="muted">Loading…</div></div>
+      <div class="row-actions"><button class="ghost" id="d-arch" onclick="toggleDocArchive()">Show archive</button></div>
+    </div>
 
     <div class="card">
       <h2>Import a statement</h2>
