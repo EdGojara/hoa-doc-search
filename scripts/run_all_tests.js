@@ -386,6 +386,8 @@ const CHECKS = [
   'tests/test_acc_finalization_record.js',
   'tests/test_acc_letter_conditions.js',
   'tests/test_acc_decision_authority.js',
+  'tests/test_acc_saved_drafts.js',
+  'tests/test_acc_approval_queue.js',
   'tests/test_onboarding_engine.js',
   'tests/test_onboarding_conversion_primitives.js',
   'tests/onboarding_quail_ridge_local.js',

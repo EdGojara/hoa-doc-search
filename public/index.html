@@ -15215,9 +15215,9 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
         <option value="web">🌐 Web</option>
       </select>
       <select id="acc-filter-status" class="draft-type-select" onchange="accLoadList()">
-        <option value="pending_review">⏳ In the queue (default)</option>
-        <option value="decided">✓ Done</option>
-        <option value="">All</option>
+        <option value="">All sections (default)</option>
+        <option value="open">⏳ Open only (drafts, submitted, pending Ed)</option>
+        <option value="decided">✓ Completed decisions</option>
       </select>
       <input id="acc-search" type="search" placeholder="Reference, name, address…" oninput="accSearchDebounced()" style="flex:1; min-width:240px; padding:7px 12px; border:1px solid #c0d0e0; border-radius:6px; font:inherit; font-size:13px;" />
       <button class="secondary-btn" onclick="accLoadList()" style="font-size:13px;">⟳ Refresh</button>
@@ -15362,9 +15362,34 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
       const j = await r.json();
       if (j.error) throw new Error(j.error);
       accCurrentList = j.decisions || [];
+      // Saved drafts are a separate store (/api/drafts): work started on the
+      // Review screen and never submitted. Shown here so the four kinds of
+      // work sit on one screen (Ed 2026-10-29).
+      accSavedDrafts = [];
+      if (status !== 'decided') {
+        try {
+          const dq = new URLSearchParams({ type: 'acc_review' });
+          if (params.get('community')) dq.set('community', params.get('community'));
+          const dr = await fetch('/api/drafts?' + dq.toString());
+          const dj = await dr.json();
+          if (dr.ok) accSavedDrafts = dj.drafts || [];
+        } catch (e) { console.warn('accLoadList drafts', e); }
+      }
       accRenderList();
       accRenderStats();
-    } catch (err) { console.warn('accLoadList', err); }
+    } catch (err) {
+      console.warn('accLoadList', err);
+      const wrap = document.getElementById('acc-list');
+      if (wrap) wrap.innerHTML = `<div style="color:#b91c1c; font-size:13px; padding:10px;">Could not load applications: ${accEsc(err.message)}</div>`;
+    }
+  }
+  let accSavedDrafts = [];
+  // Section a case belongs in. The server computes it from the authority state
+  // (lib/acc/decision_authority queueStage); the fallback covers an older server.
+  function accStageOf(a) {
+    if (a.queue_stage && a.queue_stage.stage) return a.queue_stage.stage;
+    if (a.status === 'decided') return 'completed';
+    return (a.status === 'pending_review' || a.status === 'awaiting_info' || a.status === 'finalizing') ? 'submitted' : 'completed';
   }
 
   function accRenderStats() {
@@ -15373,6 +15398,7 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
     const all = accCurrentList;
     const queued = all.filter(a => a.status === 'pending_review' || a.status === 'awaiting_info');
     const done = all.filter(a => a.status === 'decided');
+    const pendingEd = all.filter(a => accStageOf(a) === 'pending_ed').length;
     const overdue = queued.filter(a => {
       if (!a.created_at) return false;
       return (Date.now() - new Date(a.created_at).getTime()) / 3600000 > 24;
@@ -15385,7 +15411,8 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
       return `<span class="acc-stats-pill" style="background:${m.bg}; color:${m.fg};">${m.icon} ${bySource[k]}</span>`;
     }).join('');
     wrap.innerHTML = `
-      <span class="acc-stats-pill amber">${queued.length} in queue</span>
+      ${pendingEd > 0 ? `<span class="acc-stats-pill red">${pendingEd} pending Ed's approval</span>` : ''}
+      <span class="acc-stats-pill amber">${queued.length} open</span>
       ${overdue > 0 ? `<span class="acc-stats-pill red">${overdue} over 24h</span>` : ''}
       <span class="acc-stats-pill green">${done.length} done</span>
       ${srcPills ? `<span style="margin-left:8px;">${srcPills}</span>` : ''}
@@ -15395,18 +15422,20 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
   function accRenderList() {
     const wrap = document.getElementById('acc-list');
     const empty = document.getElementById('acc-empty');
-    if (accCurrentList.length === 0) {
+    if (accCurrentList.length === 0 && accSavedDrafts.length === 0) {
       wrap.innerHTML = ''; empty.style.display = ''; return;
     }
     empty.style.display = 'none';
-    // Queue first (oldest first = most urgent), then done (newest first).
-    // "Open" = still being worked: pending_review OR awaiting_info (started, waiting
-    // on the homeowner for more documents — a multi-email application). Ed 2026-07-22.
-    const _isOpen = (a) => a.status === 'pending_review' || a.status === 'awaiting_info';
-    const queued = accCurrentList.filter(_isOpen)
-      .sort((a,b) => new Date(a.created_at||0) - new Date(b.created_at||0));
-    const done = accCurrentList.filter(a => !_isOpen(a))
-      .sort((a,b) => new Date(b.created_at||0) - new Date(a.created_at||0));
+    // Sections (Ed 2026-10-29): Pending Ed's approval, Submitted applications,
+    // Saved drafts, Decided (letter not sent), Completed decisions. Open work
+    // oldest first (most urgent); completed newest first. "Open" still means
+    // pending_review OR awaiting_info (waiting on the homeowner). Ed 2026-07-22.
+    const oldestFirst = (a,b) => new Date(a.created_at||0) - new Date(b.created_at||0);
+    const byStage = (st) => accCurrentList.filter(a => accStageOf(a) === st);
+    const pendingEd = byStage('pending_ed').sort(oldestFirst);
+    const submitted = byStage('submitted').sort(oldestFirst);
+    const readyToSend = byStage('ready_to_send').sort(oldestFirst);
+    const done = byStage('completed').sort((a,b) => new Date(b.created_at||0) - new Date(a.created_at||0));
 
     function rowHtml(a) {
       const created = a.created_at ? new Date(a.created_at) : null;
@@ -15439,21 +15468,46 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
           </div>
           <div>
             <strong style="display:block; color:#5a7390; font-size:11px; text-transform:uppercase; letter-spacing:0.4px; margin-bottom:4px;">Status</strong>
-            ${isQueue ? '<span class="acc-pill acc-pill-pending">⏳ In queue</span>' : '<span class="acc-pill acc-pill-approved">✓ Done</span>'}
+            ${accStageOf(a) === 'pending_ed' ? '<span class="acc-pill" style="background:#fee2e2; color:#991b1b;">✋ Pending Ed</span>'
+              : accStageOf(a) === 'ready_to_send' ? '<span class="acc-pill acc-pill-approved">✓ Decided · not sent</span>'
+              : isQueue ? '<span class="acc-pill acc-pill-pending">⏳ Submitted</span>' : '<span class="acc-pill acc-pill-approved">✓ Done</span>'}
+            ${a.queue_stage && a.queue_stage.detail && accStageOf(a) !== 'completed' ? `<div style="font-size:10.5px; color:#5a7390; margin-top:3px;">${accEsc(a.queue_stage.detail)}</div>` : ''}
             ${a.authority && a.authority.label ? `<div style="margin-top:4px;"><span class="acc-pill" style="background:#fee2e2; color:#991b1b;" title="${accEsc((a.authority.triggers || []).join(', '))}">⚑ ${accEsc(a.authority.label)}</span></div>` : ''}
           </div>
           <div class="acc-age ${ageClass}">${ageTxt}</div>
         </div>`;
     }
 
-    let html = '';
-    if (queued.length) {
-      html += `<div style="font-size:12px; font-weight:700; color:#92400e; text-transform:uppercase; letter-spacing:0.5px; margin:2px 0 8px;">⏳ In the queue — ${queued.length}</div>`;
-      html += queued.map(rowHtml).join('');
+    function draftRowHtml(d) {
+      const fc = Array.isArray(d.file_refs) ? d.file_refs.length : 0;
+      return `
+        <div class="acc-row" style="cursor:default; grid-template-columns: 140px 1fr 130px;">
+          <div><div class="ref">Draft</div><div style="font-size:11px; color:#888; margin-top:3px;">${accEsc(d.community_name || '')}</div></div>
+          <div>
+            <div class="summary" style="margin-top:0;">${accEsc(d.label || '(untitled draft)')}</div>
+            <div class="addr">saved ${accEsc(d.updated_at ? new Date(d.updated_at).toLocaleString() : '')}${fc ? ` · ${fc} file${fc === 1 ? '' : 's'}` : ''} · not submitted for review</div>
+          </div>
+          <div><button type="button" class="secondary-btn" style="font-size:12px; padding:6px 12px;" onclick="event.stopPropagation(); Drafts.load('acc_review', '${accEsc(d.id)}', this).catch(e => alert(e.message))">📂 Open</button></div>
+        </div>`;
     }
-    if (done.length) {
-      html += `<div style="font-size:12px; font-weight:700; color:#166534; text-transform:uppercase; letter-spacing:0.5px; margin:${queued.length ? '20px' : '2px'} 0 8px;">✓ Done — ${done.length}</div>`;
-      html += done.map(rowHtml).join('');
+    const sections = [
+      { key: 'pending_ed', title: "✋ Pending Ed's approval", color: '#991b1b', rows: pendingEd, render: rowHtml,
+        note: 'Annie has recommended an approval or denial, or the case needs your judgment. Nothing is issued until an authorized decision is recorded.' },
+      { key: 'submitted', title: '📥 Submitted applications', color: '#92400e', rows: submitted, render: rowHtml,
+        note: 'Received; not reviewed yet, waiting on the homeowner, or Annie recommends asking for more information.' },
+      { key: 'drafts', title: '🗂️ Saved drafts', color: '#1E2761', rows: accSavedDrafts, render: draftRowHtml,
+        note: 'Started on the Review screen and never submitted. Open resumes it with its files.' },
+      { key: 'ready_to_send', title: '✓ Decided, letter not sent', color: '#166534', rows: readyToSend, render: rowHtml },
+      { key: 'completed', title: '✓ Completed decisions', color: '#166534', rows: done, render: rowHtml },
+    ];
+    let html = '';
+    let first = true;
+    for (const sec of sections) {
+      if (!sec.rows.length) continue;
+      html += `<div data-acc-section="${sec.key}" style="font-size:12px; font-weight:700; color:${sec.color}; text-transform:uppercase; letter-spacing:0.5px; margin:${first ? '2px' : '20px'} 0 ${sec.note ? '2px' : '8px'};">${sec.title} — ${sec.rows.length}</div>`;
+      if (sec.note) html += `<div style="font-size:11.5px; color:#5a7390; margin:0 0 8px;">${sec.note}</div>`;
+      html += sec.rows.map(sec.render).join('');
+      first = false;
     }
     wrap.innerHTML = html;
   }
@@ -53515,15 +53569,26 @@ ${questionsPage}
       return j.draft;
     }
 
-    async function load(type, id) {
+    // `btn` (optional) is the Open button that was clicked. Opening a draft
+    // re-downloads every saved attachment, which takes several seconds; with no
+    // visible change the click read as "nothing happens" (Ed 2026-10-29), so the
+    // button shows progress and the list re-renders to mark the open draft.
+    async function load(type, id, btn) {
       const a = adapters[type];
       if (!a) throw new Error(`No drafts adapter for type "${type}"`);
-      const r = await fetch(`/api/drafts/${id}`);
-      const j = await r.json();
-      if (!r.ok) throw new Error(j.error || 'Load failed');
-      await a.hydrate(j.draft);
-      currentId[type] = id;
-      return j.draft;
+      const btnText = btn ? btn.textContent : null;
+      if (btn) { btn.disabled = true; btn.textContent = '⏳ Opening…'; }
+      try {
+        const r = await fetch(`/api/drafts/${id}`);
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok || !j.draft) throw new Error(j.error || `Could not open the draft (HTTP ${r.status})`);
+        await a.hydrate(j.draft);
+        currentId[type] = id;
+        Drafts.refreshPanel(type);
+        return j.draft;
+      } finally {
+        if (btn && btn.isConnected) { btn.disabled = false; btn.textContent = btnText; }
+      }
     }
 
     async function remove(type, id) {
@@ -53578,7 +53643,7 @@ ${questionsPage}
                   ${d.community_name ? escapeHtml(d.community_name) + ' · ' : ''}saved ${escapeHtml(fmtAgo(d.updated_at))}${fc > 0 ? ` · ${fc} file${fc===1?'':'s'}` : ''}
                 </div>
               </div>
-              <button onclick="Drafts.load('${type}', '${d.id}').catch(e=>alert(e.message))"
+              <button onclick="Drafts.load('${type}', '${d.id}', this).catch(e=>alert(e.message))"
                       style="background:#1E2761; border:1px solid #1E2761; color:#fff; font-size:11.5px; padding:5px 12px; border-radius:6px; cursor:pointer; font-weight:600; white-space:nowrap;">📂 Open</button>
               <button onclick="if(confirm('Delete this draft?')) Drafts.remove('${type}', '${d.id}').catch(e=>alert(e.message))"
                       style="background:none; border:1px solid #d0d7de; color:#b91c1c; font-size:11px; padding:5px 10px; border-radius:6px; cursor:pointer;">Delete</button>
@@ -53610,8 +53675,12 @@ ${questionsPage}
       };
       const files = [];
       const pdfInput = document.getElementById('accPdf');
-      if (pdfInput.files && pdfInput.files[0]) {
-        files.push({ field: 'pdf', file: pdfInput.files[0], name: pdfInput.files[0].name });
+      // A PDF restored from a draft may live only in window._accDraftPdf (when
+      // the browser can't set the file input). Re-saves use replace_files, so
+      // leaving it out here would delete the application PDF from the draft.
+      const pdfFile = (pdfInput.files && pdfInput.files[0]) || window._accDraftPdf || null;
+      if (pdfFile) {
+        files.push({ field: 'pdf', file: pdfFile, name: pdfFile.name });
       }
       (accSelectedFiles || []).forEach((f) => {
         files.push({ field: 'photos', file: f, name: f.name });
@@ -53620,37 +53689,76 @@ ${questionsPage}
     },
     async hydrate(draft) {
       const s = draft.state || {};
+      const status = document.getElementById('accDraftStatus');
+      // Download every saved attachment BEFORE touching the form, so a failed
+      // open leaves the current screen as it was.
+      const refs = Array.isArray(draft.file_refs) ? draft.file_refs : [];
+      const loaded = [];
+      const failed = [];
+      for (const ref of refs) {
+        try {
+          const r = await fetch(ref.url);
+          if (!r.ok) throw new Error(`HTTP ${r.status}`);
+          const blob = await r.blob();
+          loaded.push({ ref, file: new File([blob], ref.name || 'file', { type: ref.type || blob.type }) });
+        } catch (e) {
+          console.warn('[draft hydrate] failed to fetch file', ref, e);
+          failed.push(ref.name || 'file');
+        }
+      }
+
+      // Clear the previous application so nothing from it (its PDF, letter,
+      // homeowner name, decision id) carries into this one. The letter
+      // auto-fill only fills BLANK fields, so a stale homeowner name would
+      // otherwise survive into this draft's letter.
+      const pdfInput = document.getElementById('accPdf');
+      try { pdfInput.value = ''; } catch (_) {}
+      window._accDraftPdf = null;
+      document.getElementById('pdfLabel').textContent = 'Click or drag a PDF application here';
+      document.getElementById('pdfUploadArea').classList.remove('has-file');
+      accSelectedFiles = [];
+      accLastReview = { extracted: {}, decision_id: null };
+      const out = document.getElementById('accOutput');
+      if (out) { out.className = 'output-box placeholder'; out.textContent = 'Fill in application details and click Review.'; }
+      ['copyAccBtn', 'printAccBtn', 'accStaffPanel', 'accLetterSection', 'accDownloadPacketBtn'].forEach((id) => {
+        const el = document.getElementById(id); if (el) el.style.display = 'none';
+      });
+      ['accLetterBody', 'accLetterName', 'accLetterAddress', 'accLetterProject', 'accLetterRef'].forEach((id) => {
+        const el = document.getElementById(id); if (el) el.value = '';
+      });
+      const letterStatus = document.getElementById('accLetterStatus'); if (letterStatus) letterStatus.textContent = '';
+
+      // The review runs against the selected community; restore the draft's.
+      const sel = document.getElementById('communitySelect');
+      if (sel && draft.community_name && sel.value !== draft.community_name
+          && Array.from(sel.options).some((o) => o.value === draft.community_name)) {
+        sel.value = draft.community_name;
+        sel.dispatchEvent(new Event('change'));
+      }
+
       document.getElementById('accDetails').value           = s.details || '';
       document.getElementById('accDecision').value          = s.decision || '';
       document.getElementById('accConditions').value        = s.conditions || '';
       document.getElementById('accContext').value           = s.additionalContext || '';
 
-      // Re-hydrate uploaded files as File objects so the standard review flow
-      // can re-send them. PDFs go back into the file input; photos into
-      // accSelectedFiles + previews.
-      accSelectedFiles = [];
-      const refs = Array.isArray(draft.file_refs) ? draft.file_refs : [];
-      for (const ref of refs) {
-        try {
-          const r = await fetch(ref.url);
-          const blob = await r.blob();
-          const file = new File([blob], ref.name || 'file', { type: ref.type || blob.type });
-          if (ref.field === 'pdf') {
-            // Can't programmatically set <input type=file>.files — keep a side reference instead.
-            window._accDraftPdf = file;
-            document.getElementById('pdfLabel').textContent = `✅ ${file.name} (from draft)`;
-            document.getElementById('pdfUploadArea').classList.add('has-file');
-          } else if (ref.field === 'photos') {
-            accSelectedFiles.push(file);
-          }
-        } catch (e) {
-          console.warn('[draft hydrate] failed to fetch file', ref, e);
+      // PDFs go back into the file input; photos into accSelectedFiles + previews.
+      for (const { ref, file } of loaded) {
+        if (ref.field === 'pdf') {
+          window._accDraftPdf = file;
+          try { const dt = new DataTransfer(); dt.items.add(file); pdfInput.files = dt.files; } catch (_) { /* reviewACC shim re-attaches it */ }
+          document.getElementById('pdfLabel').textContent = `✅ ${file.name} (from draft)`;
+          document.getElementById('pdfUploadArea').classList.add('has-file');
+        } else if (ref.field === 'photos') {
+          accSelectedFiles.push(file);
         }
       }
       renderAccImagePreviews();
       // Make sure the ACC Review sub-view is shown (consolidated 🏗️ ACC tab)
       try { setAccMode('review'); } catch (_) { try { switchTab('acc'); } catch (_) {} }
-      document.getElementById('accDraftStatus').textContent = `Loaded draft from ${new Date(draft.updated_at).toLocaleString()}`;
+      const fileNote = refs.length ? ` · ${loaded.length} of ${refs.length} file${refs.length === 1 ? '' : 's'} restored` : '';
+      status.innerHTML = `<span style="color:#15803d; font-weight:600;">✓ Opened draft</span> saved ${escapeHtml(new Date(draft.updated_at).toLocaleString())}${escapeHtml(fileNote)}`
+        + (failed.length ? `<br><span style="color:#b91c1c;">Could not load: ${escapeHtml(failed.join(', '))}. Re-attach before reviewing.</span>` : '');
+      try { document.getElementById('accDetails').scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch (_) {}
     },
   });
 
