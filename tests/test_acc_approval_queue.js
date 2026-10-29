@@ -112,7 +112,9 @@ check('an "info request" whose text approves is treated as an approval and refus
     await refused({ to: homeowner, subject: 'ACC application', html: '<p>Your architectural application has been denied.</p>' }));
   // The body is often named by abbreviation; these passed unchecked before 2026-10-29.
   for (const t of ['The ACC has approved your architectural application.', 'The ARC approved your request.', 'The ARC has granted approval for your fence.',
-    'The ACC has denied your architectural application.', 'The ARC has denied your request.', 'Your application is not approved by the ACC.']) {
+    'The ACC has denied your architectural application.', 'The ARC has denied your request.', 'Your application is not approved by the ACC.',
+    // Wording of an AI-drafted letter on an open case, and of issued letters on file.
+    'Your roof replacement has been reviewed and approved by the Architectural Control Committee.', 'Architectural Control Committee review. Your approval is subject to the following conditions: 1. Match existing color.']) {
     check(`abbreviated body is caught: "${t}"`, await refused({ to: homeowner, subject: 'Your request', text: t }));
   }
   for (const t of ['We cannot say the ACC has approved anything until we receive the survey.', 'Please send the survey so the ACC can review your architectural application.',

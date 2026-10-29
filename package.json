@@ -79,6 +79,7 @@
     "test:verify-deploy": "node tests/test_verify_deploy.js",
     "test:acc-drafts": "node tests/test_acc_saved_drafts.js",
     "test:acc-queue": "node tests/test_acc_approval_queue.js",
+    "test:acc-attachments": "node tests/test_acc_attachment_guard.js",
     "test:public-uploads": "node tests/test_public_upload_limits.js",
     "test:fines": "node tests/test_fine_safeguards.js",
     "test:time": "node tests/test_time_attendance_hours.js && node tests/test_time_attendance_api.js && node tests/sql/547_time_attendance_e2e.mjs",
