@@ -1730,6 +1730,13 @@ router.post('/:id/send', express.json(), async (req, res) => {
         let a = null;
         try { a = await getDocAttachment(did); } catch (e) { console.error('[email_triage] document attachment failed:', did, e.message); }
         if (!a || !a.attachment) return res.status(502).json({ error: 'attachment_unavailable', message: 'An attached document could not be loaded, so nothing was sent.', sent: false });
+        // A filed ACC record that is a scan cannot be checked by the ACC send
+        // guard (it may be a historical approval or denial), so it never rides
+        // out on a reply. Readable ones are checked by the guard. (Ed 2026-10-29)
+        if (a.category === 'arc_application') {
+          const [f] = await require('../lib/acc/attachment_text').readAttachments([a.attachment]);
+          if (!f || !f.readable) return res.status(409).json({ error: 'acc_decision_not_authorized', message: `Not sent: "${a.name}" is a scanned ACC record that cannot be checked, and it may be an approval or denial. Send ACC decisions from the ACC case.`, sent: false });
+        }
         attachments = [...(attachments || []), a.attachment];
       }
     }

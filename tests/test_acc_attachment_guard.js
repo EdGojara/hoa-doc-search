@@ -71,10 +71,21 @@ async function outcome(args) {
   check('a scan named like an ACC decision -> not sent', !r.sent, JSON.stringify(r));
   r = await outcome({ to: HOMEOWNER, subject: 'Your request', html: NEUTRAL, attachments: [att('decision-WAT-ARC-2026-0033.pdf', scan)] });
   check('the portal\'s decision-<ref>.pdf name -> not sent', !r.sent);
-  r = await outcome({ to: HOMEOWNER, subject: 'Your request', html: NEUTRAL, attachments: [att('Architectural Review Application - Waterview Estates.pdf', scan)] });
-  check('a blank application form (scan) still sends', r.sent, JSON.stringify(r));
-  r = await outcome({ to: HOMEOWNER, subject: 'Your request', html: NEUTRAL, attachments: [att('IMG_2041.jpg', Buffer.from('not really a jpeg'), 'image/jpeg')] });
-  check('a photo still sends', r.sent, JSON.stringify(r));
+  // Real names of scanned ACC decisions filed in the library (unreadable scans).
+  for (const n of ['20018 Cape Clover Trail - Roof - Approved.pdf', '19623 Norfolk Ridge Way-Gazebo Denial.pdf',
+    '5226 Jay Thrush appd remove tree.pdf', '19603 Sandal Grove fence apprvoal with stipulations.pdf']) {
+    r = await outcome({ to: HOMEOWNER, subject: 'Your request', html: NEUTRAL, attachments: [att(n, scan)] });
+    check(`filed scan "${n}" -> not sent`, !r.sent, JSON.stringify(r));
+  }
+  r = await outcome({ to: HOMEOWNER, subject: 'Your ACC application', html: NEUTRAL, attachments: [att('packet.pdf', scan)] });
+  check('any unreadable file in an email about an ACC application -> not sent', !r.sent, JSON.stringify(r));
+  r = await outcome({ to: HOMEOWNER, subject: 'Your request', html: '<p>Regarding your architectural review.</p>', attachments: [att('IMG_2041.jpg', Buffer.from('x'), 'image/jpeg')] });
+  check('...an image included (a letter can be a picture)', !r.sent);
+  const blankForm = await pdf(['Waterview Estates', 'Architectural Review Application', 'Owner name: ____________  Property address: ____________', 'Describe the proposed improvement: ____________']);
+  r = await outcome({ to: HOMEOWNER, subject: 'Your ACC application', html: NEUTRAL, attachments: [att('Architectural Review Application - Waterview Estates.pdf', blankForm)] });
+  check('the blank application form (readable, as every form on file is) still sends', r.sent, JSON.stringify(r));
+  r = await outcome({ to: HOMEOWNER, subject: 'Your request', html: NEUTRAL, attachments: [att('Original Bylaws.pdf', scan), att('IMG_2041.jpg', Buffer.from('x'), 'image/jpeg')] });
+  check('scans and photos in mail that is not about ACC still send', r.sent, JSON.stringify(r));
 
   console.log('\nOrdinary mail is not blocked');
   r = await outcome({ to: HOMEOWNER, subject: 'Your request', html: NEUTRAL, attachments: [att('Request for information.pdf', infoRequest)] });
@@ -96,6 +107,10 @@ async function outcome(args) {
   const calls = src.match(/await accDecisionGuard\(\{[^}]*\}\)/g) || [];
   check('both Graph send paths run the guard', calls.length === 2, String(calls.length));
   check('both pass their attachments to it', calls.length === 2 && calls.every((c) => /\battachments\b/.test(c)), calls.join(' | '));
+
+  const triage = fs.readFileSync(path.join(__dirname, '..', 'api', 'email_triage.js'), 'utf8');
+  check('Communications reply refuses a scanned ACC library record', /a\.category === 'arc_application'[\s\S]{0,300}!f\.readable/.test(triage));
+  check('the library lookup reports the document category', /category: doc\.category/.test(fs.readFileSync(path.join(__dirname, '..', 'lib', 'email', 'doc_attachment.js'), 'utf8')));
 
   console.log(failures ? `\n\x1b[31m${failures} check(s) failed\x1b[0m` : '\n\x1b[32mall ACC attachment-guard checks passed\x1b[0m');
   process.exit(failures ? 1 : 0);
