@@ -19,6 +19,7 @@
 //     - the save goes through the one RPC and nothing else is written.
 // Offline: Supabase and the auth gate are stubbed.
 // ============================================================================
+require('./_support/no_prod_network'); // unit test: loopback only, no production keys (Issue #27 follow-up)
 const assert = require('assert');
 const Module = require('module');
 process.env.SUPABASE_URL = process.env.SUPABASE_URL || 'http://x';
