@@ -6124,59 +6124,10 @@ Generate a complete professional bid request document that:
   }
 });
 
-// Download a polished Word doc RFP for a saved bid request
-app.get('/download-rfp/:bidRequestId', async (req, res) => {
-  try {
-    const { bidRequestId } = req.params;
-
-    const { data: bidRequest, error: loadError } = await supabase
-      .from('bid_requests')
-      .select('*')
-      .eq('id', bidRequestId)
-      .single();
-
-    if (loadError || !bidRequest) {
-      return res.status(404).json({ error: 'Bid request not found.' });
-    }
-
-    let structured = bidRequest.structured_rfp;
-
-    // Fallback: regenerate structured RFP on the fly if it wasn't saved
-    if (!structured || !structured.scopeItems || structured.scopeItems.length === 0) {
-      try {
-        structured = await buildStructuredRFP({
-          community: bidRequest.community || 'HOA Community',
-          vendorType: bidRequest.vendor_type || 'Vendor Services',
-          contractTerm: bidRequest.contract_term || '1 year with option to renew',
-          bidDeadline: bidRequest.bid_deadline,
-          scopeContent: bidRequest.scope_summary || bidRequest.generated_document || '',
-          additionalRequirements: ''
-        });
-
-        await supabase
-          .from('bid_requests')
-          .update({ structured_rfp: structured })
-          .eq('id', bidRequestId);
-      } catch (regenErr) {
-        console.error('Failed to regenerate structured RFP:', regenErr.message);
-        return res.status(500).json({ error: 'Could not build RFP document: ' + regenErr.message });
-      }
-    }
-
-    const docBuffer = await generateRFPDocx(structured);
-
-    const safeCommunity = (bidRequest.community || 'HOA').replace(/[^a-z0-9]/gi, '_');
-    const safeVendorType = (bidRequest.vendor_type || 'RFP').replace(/[^a-z0-9]/gi, '_');
-    const filename = `${safeCommunity}_RFP_${safeVendorType}.docx`;
-
-    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
-    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-    res.send(docBuffer);
-  } catch (err) {
-    console.error('Download RFP error:', err);
-    res.status(500).json({ error: 'Error generating RFP download: ' + err.message });
-  }
-});
+// Download a polished Word doc RFP for a saved bid request. READ-ONLY (Ed 2026-10-20):
+// it renders a stored legacy document and never regenerates, saves or overwrites one.
+// lib/vendors/rfp_download.js; tests/test_rfp_download_read_only.js.
+app.get('/download-rfp/:bidRequestId', require('./lib/vendors/rfp_download').makeRfpDownloadHandler({ supabase, generateDocx: generateRFPDocx }));
 
 // List proposals attached to a bid request
 app.get('/bid-requests/:id/proposals', async (req, res) => {
