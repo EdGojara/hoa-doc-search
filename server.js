@@ -543,6 +543,37 @@ const _STAFF_GATE_PUBLIC = [
   /^\/api\/portal\/autopay$/,                  // GET this owner's standing authorisation
   /^\/api\/portal\/autopay\/(begin|complete|cancel)$/, // enrol / finish / stop
   /^\/api\/portal\/pay\/checkout$/,             // homeowner pays own balance (portal cookie; server derives lot/owner/amount)
+  // Homeowner portal tiles (2026-10-16 launch blockers). These shipped behind
+  // the staff gate, so a homeowner with only a portal cookie got 401 "authentication
+  // required" on every one; staff never saw it because they also carry the staff
+  // cookie. Each handler was checked before listing: it resolves the caller from
+  // the PORTAL cookie and derives property/community scope server-side
+  // (resolveScopedProperty / resolveHomeownerScope / committee membership), never
+  // from the request. tests/test_portal_gate_coverage.js fails the build if a
+  // portal page calls an endpoint that is not listed here.
+  /^\/api\/portal\/transactions$/,             // statement (assertOwnerLikeRole + resolveScopedProperty)
+  /^\/api\/portal\/messages$/,                 // GET list / POST new thread (resolveHomeownerScope; property must be in scope)
+  /^\/api\/portal\/messages\/[0-9a-f-]+$/,     // GET one thread (thread.property_id must be in caller's scope)
+  /^\/api\/portal\/messages\/[0-9a-f-]+\/reply$/, // POST reply (same ownership check)
+  /^\/api\/portal\/arc$/,                      // GET own ARC requests (assertOwnerLikeRole + resolveScopedProperty)
+  /^\/api\/portal\/arc\/submit$/,              // POST ARC request for own property
+  /^\/api\/portal\/acc-reviews$/,              // GET apps for committees the caller sits on
+  /^\/api\/portal\/acc-reviews\/[0-9a-f-]+$/,  // GET one app (active committee seat for that app's community)
+  /^\/api\/portal\/acc-reviews\/[0-9a-f-]+\/vote$/, // POST committee vote (same seat check)
+  /^\/api\/portal\/community-calendar$/,       // Events tile (assertOwnerLikeRole + resolveScopedProperty)
+  /^\/api\/portal\/vendor-directory\/(feed|categories|vendor)$/, // Vendor directory (own community only)
+  /^\/api\/portal\/vendor-categories$/,        // vendor feedback form categories (portal session required)
+  /^\/api\/portal\/vendor-experiences$/,       // POST a vendor experience (own community pinned server-side)
+  /^\/api\/portal\/vendor-experiences\/mine$/, // GET caller's own submissions
+  /^\/api\/portal\/newsletter-submissions$/,   // Share news (resolveUserWithRole + resolveScopedProperty)
+  /^\/api\/portal\/chamber$/,                  // live meeting card (owner-like role, own community)
+  /^\/api\/portal\/chamber\/[0-9a-f-]+\/(speak|viewer)$/, // raise hand / attendance heartbeat (same scope)
+  /^\/api\/portal\/contacts$/,                 // Local Contacts tile (own community; demo community by slug)
+  /^\/api\/portal\/tutorial-dismissed$/,       // POST first-login tutorial dismissal (own portal_users row)
+  /^\/api\/portal\/presentation$/,             // GET presentation-mode flag (no data); POST is manager-role only inside
+  /^\/api\/portal\/manager\/properties$/,      // manager-role portal users only (403 otherwise, checked inside)
+  /^\/api\/portal\/mimic\/stop$/,              // clears the mimic cookie only
+  /^\/api\/portal\/builder\/master-plan-approvals$/, // builder-dashboard.html (portal cookie + builder linkage inside)
   // Board portal API — every handler enforces requireBoardViewer (staff JWT OR
   // a board member's portal magic-link cookie whose email holds an active seat)
   // + canSeeCommunity per-community scope (lib/portal/board_access.js,
@@ -553,6 +584,11 @@ const _STAFF_GATE_PUBLIC = [
   /^\/api\/board-portal\/board-members$/,      // GET roster (scoped inside)
   /^\/api\/board-portal\/community\/[^/]+\/(summary|properties|year|projects|arc|meetings|violations|budget|ar-categorized)$/, // community oversight panels
   /^\/api\/board-portal\/property\/[^/]+$/,    // property detail (authorized by the property's own community)
+  /^\/api\/board-portal\/ask$/,               // Ask Amanda (requireBoardViewer + canSeeCommunity on body.community_id)
+  /^\/api\/board-portal\/speak$/,             // Listen: Amanda's voice for text the page already shows (requireBoardViewer)
+  /^\/api\/board-portal\/learning$/,          // Board Learning library (requireBoardViewer; published modules only)
+  /^\/api\/board-portal\/learning\/ask$/,     // Learning tutor (requireBoardViewer + canSeeCommunity)
+  /^\/api\/board-portal\/learning\/[a-z0-9_-]+$/, // one published module (requireBoardViewer)
   // Community Map — the ONE map (api/community_map.js) shared by staff and board.
   // Each handler enforces requireBoardViewer + canSeeCommunity (board members
   // scoped to their own community; staff see all). Board responses are projected
@@ -1706,6 +1742,12 @@ app.get('/portal/share',     (req, res) => res.sendFile(require('path').join(__d
 app.get('/portal/vendor-feedback', (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'portal-vendor-feedback.html')));
 app.get('/portal/vendor-directory',          (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'portal-vendor-directory.html')));
 app.get('/portal/vendor-directory/vendor',   (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'portal-vendor-detail.html')));
+// Messages + live-meeting pages were linked at their static .html paths, which
+// sit behind the staff gate, so homeowners were bounced to the staff login.
+// Served on the portal path like every other tile (auth is the portal cookie,
+// checked by each /api/portal endpoint the page calls).
+app.get('/portal/messages',  (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'portal-messages.html')));
+app.get('/portal/chamber',   (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'portal-chamber.html')));
 
 // Voice DRV inspector — hands-free dashboard mode. Auth is handled inside
 // the page itself (matches the existing inspector.html pattern).
