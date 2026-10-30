@@ -84,7 +84,9 @@ async function outcome(args) {
     check(`scanned governing document "${n}" in ACC mail still sends`, r.sent, JSON.stringify(r));
   }
   const guidelines = await pdf(['Architectural Control Guidelines', 'No improvement shall be made until the plans, as the Committee may deem',
-    'necessary, shall have been submitted to and approved in writing by the Architectural Committee.', 'All improvements shall have been approved by the Architectural Committee before construction.']);
+    'necessary, shall have been submitted to and approved in writing by the Architectural Committee.', 'All improvements shall have been approved by the Architectural Committee before construction.',
+    'Any application not acted on within forty-five (45) days shall be conclusively presumed to have been disapproved.',
+    'Each decision shall state the conditions under which the application is approved, if any.']);
   r = await outcome({ to: HOMEOWNER, subject: 'Your ACC application', html: NEUTRAL, attachments: [att('ARC-Guidelines.pdf', guidelines)] });
   check('readable guidelines saying plans "shall have been approved" still send', r.sent, JSON.stringify(r));
   const blankForm = await pdf(['Waterview Estates', 'Architectural Review Application', 'Owner name: ____________  Property address: ____________', 'Describe the proposed improvement: ____________']);
