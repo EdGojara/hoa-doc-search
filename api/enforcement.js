@@ -3243,12 +3243,24 @@ router.get('/mail-queue/letter-pdf/:id', async (req, res) => {
 // ---------------------------------------------------------------------------
 router.post('/mail-queue/confirm-mailed', express.json(), async (req, res) => {
   try {
+    // One recording path (Ed 2026-10-29): the employee's own login and the date
+    // the letters ACTUALLY went in the mail are required; the click time is never
+    // used as a mailing date. Evidence + cure-deadline checks go through the same
+    // lib/enforcement/record_mailing.js the Mailing confirmation screen uses.
+    const { requireStaff } = require('./_require_admin');
+    const staff = await requireStaff(req, res); if (!staff) return;
+    const mailedOn = String((req.body && req.body.mailed_on) || '').trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(mailedOn)) {
+      return res.status(400).json({ error: 'mailed_on_required', detail: 'Enter the date the letters actually went in the mail.' });
+    }
+    const todayCentral = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Chicago' });
+    if (mailedOn > todayCentral) return res.status(400).json({ error: 'mailed_on_future', detail: 'The mailing date cannot be in the future.' });
     const deliveryMethod = (req.body && req.body.delivery_method) || 'first_class_mail';
     const communityId = req.body && req.body.community_id;
     const printedAt = req.body && req.body.printed_at; // scope to ONE print session
     let q = supabase
       .from('interactions')
-      .select('id, type, subject, violation_id, status')
+      .select('id, type, subject, violation_id, status, community_id, property_id, printed_at, mailed_at, postmark_date, delivery_method')
       .in('type', _MAIL_LETTER_TYPES)
       .eq('delivery_method', deliveryMethod)
       .not('printed_at', 'is', null)
@@ -3317,22 +3329,45 @@ router.post('/mail-queue/confirm-mailed', express.json(), async (req, res) => {
     }
 
     if (mailable.length) {
-      const { error: uErr } = await supabase
-        .from('interactions')
-        .update({ mailed_at: now, status: 'sent', sent_at: now })
-        .in('id', mailable.map((l) => l.id));
-      if (uErr) return res.status(500).json({ error: uErr.message });
+      // Nothing can be recorded as mailed before it was printed.
+      const firstPrinted = mailable.map((l) => new Date(l.printed_at).toLocaleDateString('en-CA', { timeZone: 'America/Chicago' })).sort()[0];
+      if (firstPrinted && mailedOn < firstPrinted) {
+        return res.status(400).json({ error: 'mailed_before_print', detail: `The mailing date cannot be before the letters were printed (${firstPrinted}).` });
+      }
+      // Record each print run through the one path: evidence, the real date in
+      // mailed_at (only where empty), cure-deadline review holds, timeline notes.
+      const { recordRunConfirmation } = require('../lib/enforcement/record_mailing');
+      const runs = new Map();
+      for (const l of mailable) {
+        const k = `${l.community_id}|${l.printed_at}`;
+        if (!runs.has(k)) runs.set(k, []);
+        runs.get(k).push(l);
+      }
+      let reviews = 0;
+      for (const [k, ls] of runs) {
+        const [cid, pAt] = k.split('|');
+        const outcomes = Object.fromEntries(ls.map((l) => [l.id, 'mailed']));
+        try {
+          const r = await recordRunConfirmation({ db: supabase, staff, communityId: cid, method: deliveryMethod, printedAt: pAt, mailedOn, outcomes, batchLetters: ls, note: 'Confirmed from the Mail Queue' });
+          reviews += r.cure_deadline_reviews || 0;
+        } catch (e) {
+          console.error('[confirm-mailed] could not record run', k, e.message);
+          return res.status(500).json({ error: 'not_recorded', detail: e.code === 'evidence_not_saved' ? e.message : 'The mailing could not be recorded. Nothing was changed for the remaining runs.' });
+        }
+      }
+      res.locals.cureReviews = reviews;
+      const mailedIso = `${mailedOn}T12:00:00+00:00`;
 
-      // The mail piece becomes "mailed" only now, at the person's confirmation;
-      // lock-and-batch leaves it queued (printed, not mailed).
+      // The mail piece becomes "mailed" only now, at the person's confirmation,
+      // with the date they entered; lock-and-batch leaves it queued.
       try {
         const { data: pcs, error: pErr } = await supabase.from('letter_mail_pieces')
           .select('id, status, events').in('interaction_id', mailable.map((l) => l.id));
         if (pErr) throw pErr;
         for (const p of (pcs || []).filter((x) => x.status === 'queued')) {
           const { error: e2 } = await supabase.from('letter_mail_pieces').update({
-            status: 'submitted', submitted_at: now, mailed_at: now,
-            events: [...(Array.isArray(p.events) ? p.events : []), { ts: now, type: 'mailing_confirmed', note: `Confirmed mailed in the ${deliveryMethod} run` }],
+            status: 'submitted', submitted_at: mailedIso, mailed_at: mailedIso,
+            events: [...(Array.isArray(p.events) ? p.events : []), { ts: now, type: 'mailing_confirmed', by: staff.full_name || staff.email, note: `Confirmed mailed on ${mailedOn} in the ${deliveryMethod} run` }],
           }).eq('id', p.id).eq('status', 'queued');
           if (e2) console.warn('[confirm-mailed] piece update failed:', p.id, e2.message);
         }
@@ -3341,16 +3376,14 @@ router.post('/mail-queue/confirm-mailed', express.json(), async (req, res) => {
       // The certified-letter fee posts on a CONFIRMED certified mailing, never at print.
       if (deliveryMethod === 'certified_mail') {
         try {
-          const { getActingUser } = require('./_acting_user');
-          const actor = await getActingUser(req).catch(() => null);
           const { sweepCertifiedViolationFees } = require('../lib/enforcement/certified_fee');
-          sweepCertifiedViolationFees(supabase, { postedByUserId: actor && actor.id })
+          sweepCertifiedViolationFees(supabase, { postedByUserId: staff.user.id })
             .then((sum) => { if (sum.posting) console.log(`[certified-fee] posted ${sum.posting} fee(s), $${(sum.total_cents / 100).toFixed(2)}`); })
             .catch((e) => console.warn('[certified-fee] sweep failed (non-fatal):', e.message));
         } catch (e) { console.warn('[certified-fee] sweep not started:', e.message); }
       }
     }
-    res.json({ confirmed: mailable.length, held: stale.length, held_wrong_method: misrouted.length, on_hold: onHold.length });
+    res.json({ confirmed: mailable.length, held: stale.length, held_wrong_method: misrouted.length, on_hold: onHold.length, mailed_on: mailedOn, cure_deadline_reviews: res.locals.cureReviews || 0 });
   } catch (err) {
     console.error('[mail-queue.confirm-mailed]', err);
     res.status(500).json({ error: err.message });

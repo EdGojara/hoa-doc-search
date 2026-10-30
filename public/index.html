@@ -28078,6 +28078,18 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
   }
   window.inspMailQueueRedownload = inspMailQueueRedownload;
 
+  // The date the letters ACTUALLY went in the mail (Ed 2026-10-29): the click
+  // time is never recorded as a mailing date. Returns YYYY-MM-DD or null.
+  function inspMailQueueAskMailedOn(scope) {
+    const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Chicago' });
+    const v = prompt(`What date did ${scope} actually go in the mail? (YYYY-MM-DD)\n\nUse the real mailing date, not today, unless they went out today. To mark some letters held or not mailed, use the Mailing confirmation screen instead.`, today);
+    if (v == null) return null;
+    const d = String(v).trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) { alert('Enter the date as YYYY-MM-DD.'); return null; }
+    if (d > today) { alert('The mailing date cannot be in the future.'); return null; }
+    return d;
+  }
+
   // Confirm a locked batch was physically printed + mailed. Sets mailed_at so
   // it leaves "awaiting confirmation" — nothing is deleted; it stays as sent
   // history.
@@ -28085,15 +28097,17 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
     const label = deliveryMethod === 'certified_mail' ? 'certified' : 'first-class';
     const filterCid = (typeof inspQueueEffectiveCid === 'function') ? inspQueueEffectiveCid() : '';
     const scope = printedAt ? `this ${label} print run` : `the ${label} batch`;
-    if (!confirm(`Confirm ${scope} was printed and physically mailed?\n\nThis marks them mailed and clears them from "awaiting confirmation." They stay in the system as sent history and can still be reviewed. Only do this once they're actually in the mail.`)) return;
+    const mailedOn = inspMailQueueAskMailedOn(scope);
+    if (!mailedOn) return;
+    if (!confirm(`Confirm ${scope} was physically mailed on ${mailedOn}?\n\nThis is recorded under your name with that date. Letters, deadlines and stages are not changed.`)) return;
     try {
       const r = await window._authFetch('/api/enforcement/mail-queue/confirm-mailed', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ delivery_method: deliveryMethod, printed_at: printedAt || undefined, community_id: filterCid || undefined }),
+        body: JSON.stringify({ delivery_method: deliveryMethod, printed_at: printedAt || undefined, community_id: filterCid || undefined, mailed_on: mailedOn }),
       });
       const j = await r.json();
-      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
-      alert(`✓ ${j.confirmed} letter${j.confirmed === 1 ? '' : 's'} confirmed mailed.`);
+      if (!r.ok) throw new Error(j.detail || j.error || `HTTP ${r.status}`);
+      alert(`✓ ${j.confirmed} letter${j.confirmed === 1 ? '' : 's'} confirmed mailed on ${mailedOn}.` + (j.cure_deadline_reviews ? ` ${j.cure_deadline_reviews} case(s) now wait for a cure-deadline review by Ed.` : ''));
       await inspMailQueueLoad();
     } catch (e) { alert('Confirm failed: ' + e.message); }
   }
@@ -28115,16 +28129,19 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
     const filterCid = (typeof inspQueueEffectiveCid === 'function') ? inspQueueEffectiveCid() : '';
     let msg = `Confirm ${boxes.length} selected batch${boxes.length === 1 ? '' : 'es'} were printed and physically mailed?\n\nThis marks their letters mailed and clears them from “awaiting confirmation.” Only do this once they're actually in the mail.`;
     if (hasCert) msg += '\n\n⚠ Your selection includes CERTIFIED §209 letters — only confirm those if they truly went out certified.';
+    const mailedOn = inspMailQueueAskMailedOn('the selected batches');
+    if (!mailedOn) return;
+    msg += `\n\nMailing date: ${mailedOn}. Recorded under your name.`;
     if (!confirm(msg)) return;
     let confirmed = 0, held = 0, failed = 0;
     for (const b of boxes) {
       try {
         const r = await window._authFetch('/api/enforcement/mail-queue/confirm-mailed', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ delivery_method: b.dataset.method, printed_at: b.dataset.printed || undefined, community_id: filterCid || undefined }),
+          body: JSON.stringify({ delivery_method: b.dataset.method, printed_at: b.dataset.printed || undefined, community_id: filterCid || undefined, mailed_on: mailedOn }),
         });
         const j = await r.json();
-        if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+        if (!r.ok) throw new Error(j.detail || j.error || `HTTP ${r.status}`);
         confirmed += (j.confirmed || 0); held += (j.held || 0);
       } catch (e) { failed++; console.warn('[mail-queue.confirm-selected]', e.message); }
     }
