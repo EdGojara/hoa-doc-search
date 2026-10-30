@@ -2901,6 +2901,11 @@ app.get('/acc-review/decisions', async (req, res) => {
   // Migration 479: the current review's recommendation (re-run on the documents
   // now on the case) so the queue doesn't show a stale one (Issue #14).
   const WITH_CURRENT = `${WITH_ACK}, current_ai_recommendation, current_review_at`;
+  // Migration 540: the authority fields, so the queue's "Owner Review Required"
+  // tag clears once Ed reviews and each case lands in the right section
+  // (Pending Ed's approval / Submitted / Completed). Without them the tag was
+  // computed from the request text alone and never cleared.
+  const WITH_AUTHORITY = `${WITH_CURRENT}, decision_record, owner_review, approval_gate, approval_gate_reason`;
   const run = async (cols) => {
     const { address, community, q, status, source } = req.query;
     let query = supabase
@@ -2912,7 +2917,8 @@ app.get('/acc-review/decisions', async (req, res) => {
     // 'archived' (a duplicate we retired) and 'withdrawn' rows are kept for the
     // record but don't belong in the working queue or the answered history —
     // exclude them unless the caller explicitly asks for that status. (Ed 2026-09-03)
-    if (status) query = query.eq('status', status);
+    if (status === 'open') query = query.in('status', ['pending_review', 'awaiting_info', 'finalizing']);
+    else if (status) query = query.eq('status', status);
     else query = query.not('status', 'in', '("archived","withdrawn")');
     if (source) query = query.eq('source', source);
     if (address) query = query.ilike('homeowner_address', `%${address}%`);
@@ -2921,7 +2927,8 @@ app.get('/acc-review/decisions', async (req, res) => {
     return query;
   };
   try {
-    let { data, error } = await run(WITH_CURRENT);
+    let { data, error } = await run(WITH_AUTHORITY);
+    if (error && /decision_record|owner_review|approval_gate|does not exist/i.test(error.message || '')) ({ data, error } = await run(WITH_CURRENT));
     if (error && /current_ai_recommendation|current_review_at|does not exist/i.test(error.message || '')) ({ data, error } = await run(WITH_ACK));
     if (error && /acknowledged_at|acknowledgment_error|does not exist/i.test(error.message || '')) {
       console.warn('[acc-review/decisions] ack columns missing (migration 298 not applied) — serving without them');
@@ -2931,9 +2938,12 @@ app.get('/acc-review/decisions', async (req, res) => {
     // Escalation badge (Ed 2026-10-20): a driveway / paving expansion shows
     // "Owner Review Required" in the queue. Computed from the scope text.
     const DA = require('./lib/acc/decision_authority');
-    const decisions = (data || []).map((r) => {
-      const a = DA.authorityFor(r);
-      return a.escalated && a.open ? { ...r, authority: { label: a.label, triggers: a.triggers } } : r;
+    // The authority internals (record, owner review) stay server-side; the list
+    // gets the label and the computed section only.
+    const decisions = (data || []).map(({ decision_record, owner_review, approval_gate, approval_gate_reason, ...r }) => {
+      const a = DA.authorityFor({ ...r, decision_record, owner_review, approval_gate, approval_gate_reason });
+      const out = { ...r, queue_stage: DA.queueStage({ ...r, decision_record }, a) };
+      return a.escalated && a.open ? { ...out, authority: { label: a.label, triggers: a.triggers } } : out;
     });
     res.json({ decisions });
   } catch (err) {
