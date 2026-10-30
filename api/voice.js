@@ -45,6 +45,11 @@ const router = express.Router();
 // We need this parser specifically for the voice routes.
 router.use(express.urlencoded({ extended: false, limit: '64kb' }));
 
+// Twilio webhooks must prove they came from Twilio (X-Twilio-Signature). ON in
+// production by default; see lib/voice/twilio_signature.js for the flag.
+const { requireTwilioSignature } = require('../lib/voice/twilio_signature');
+const twilioOnly = requireTwilioSignature();
+
 // ----------------------------------------------------------------------------
 // POST /api/voice/incoming — Twilio webhook for a new inbound call
 // ----------------------------------------------------------------------------
@@ -52,7 +57,7 @@ router.use(express.urlencoded({ extended: false, limit: '64kb' }));
 // Custom parameters (call_sid, to_phone) ride along so the bridge knows
 // which community to scope to.
 // ----------------------------------------------------------------------------
-router.post('/incoming', async (req, res) => {
+router.post('/incoming', twilioOnly, async (req, res) => {
   try {
     const callSid = req.body.CallSid;
     const fromPhone = req.body.From;
@@ -478,7 +483,7 @@ router.post('/incoming', async (req, res) => {
 // ----------------------------------------------------------------------------
 // POST /api/voice/status — Twilio call status webhook
 // ----------------------------------------------------------------------------
-router.post('/status', async (req, res) => {
+router.post('/status', twilioOnly, async (req, res) => {
   try {
     const callSid = req.body.CallSid;
     const status = req.body.CallStatus; // 'ringing' | 'in-progress' | 'completed' | 'busy' | 'failed' | 'no-answer'
