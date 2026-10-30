@@ -1760,7 +1760,18 @@ router.post('/:id/send', express.json(), async (req, res) => {
       } catch (e) { console.error('[email_triage] attachment error:', u.storage_path, e.message); }
       if (!buf) return res.status(502).json({ error: 'attachment_unavailable', message: `The attached file "${String(u.name || 'file')}" could not be loaded, so nothing was sent.`, sent: false });
       if (buf.length > 15 * 1024 * 1024) return res.status(413).json({ error: 'attachment_too_large', message: `"${String(u.name || 'file')}" is over 15 MB, so nothing was sent.`, sent: false });
-      attachments = [...(attachments || []), { '@odata.type': '#microsoft.graph.fileAttachment', name: String(u.name || 'attachment').slice(0, 150), contentType: u.mime || 'application/octet-stream', contentBytes: buf.toString('base64') }];
+      const upAtt = { '@odata.type': '#microsoft.graph.fileAttachment', name: String(u.name || 'attachment').slice(0, 150), contentType: u.mime || 'application/octet-stream', contentBytes: buf.toString('base64') };
+      // A file from the operator's computer that cannot be read (a scan or an
+      // image) cannot be checked by the ACC send guard, so it does not ride on
+      // ACC mail: it could be a decision letter. Governing documents attached
+      // from the library still go. (Ed 2026-10-29)
+      const aboutAcc = (m && m.classification === 'acc_request')
+        || require('../lib/acc/decision_authority').mentionsAcc([subject, sendBody, m && m.subject, upAtt.name].filter(Boolean).join(' '));
+      if (aboutAcc) {
+        const [f] = await require('../lib/acc/attachment_text').readAttachments([upAtt]);
+        if (f && !f.readable) return res.status(409).json({ error: 'acc_decision_not_authorized', message: `Not sent: "${upAtt.name}" is a scan that cannot be checked, and this email is about an architectural application. Attach a readable copy, or attach governing documents from the document library. ACC decisions are sent from the ACC case.`, sent: false });
+      }
+      attachments = [...(attachments || []), upAtt];
     }
 
     // Quote the ORIGINAL message (and the prior thread) beneath the reply, so the

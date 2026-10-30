@@ -77,10 +77,16 @@ async function outcome(args) {
     r = await outcome({ to: HOMEOWNER, subject: 'Your request', html: NEUTRAL, attachments: [att(n, scan)] });
     check(`filed scan "${n}" -> not sent`, !r.sent, JSON.stringify(r));
   }
-  r = await outcome({ to: HOMEOWNER, subject: 'Your ACC application', html: NEUTRAL, attachments: [att('packet.pdf', scan)] });
-  check('any unreadable file in an email about an ACC application -> not sent', !r.sent, JSON.stringify(r));
-  r = await outcome({ to: HOMEOWNER, subject: 'Your request', html: '<p>Regarding your architectural review.</p>', attachments: [att('IMG_2041.jpg', Buffer.from('x'), 'image/jpeg')] });
-  check('...an image included (a letter can be a picture)', !r.sent);
+  // Scanned governing documents are routinely attached to ACC answers (a library
+  // check on 2026-10-29: most guidelines, CC&Rs and policies on file are scans).
+  for (const n of ['CC&Rs.pdf', 'ACC Guidelines.pdf', 'Architectural Guidelines.pdf', '2013 Collection Policy .pdf']) {
+    r = await outcome({ to: HOMEOWNER, subject: 'Your ACC application', html: NEUTRAL, attachments: [att(n, scan)] });
+    check(`scanned governing document "${n}" in ACC mail still sends`, r.sent, JSON.stringify(r));
+  }
+  const guidelines = await pdf(['Architectural Control Guidelines', 'No improvement shall be made until the plans, as the Committee may deem',
+    'necessary, shall have been submitted to and approved in writing by the Architectural Committee.', 'All improvements shall have been approved by the Architectural Committee before construction.']);
+  r = await outcome({ to: HOMEOWNER, subject: 'Your ACC application', html: NEUTRAL, attachments: [att('ARC-Guidelines.pdf', guidelines)] });
+  check('readable guidelines saying plans "shall have been approved" still send', r.sent, JSON.stringify(r));
   const blankForm = await pdf(['Waterview Estates', 'Architectural Review Application', 'Owner name: ____________  Property address: ____________', 'Describe the proposed improvement: ____________']);
   r = await outcome({ to: HOMEOWNER, subject: 'Your ACC application', html: NEUTRAL, attachments: [att('Architectural Review Application - Waterview Estates.pdf', blankForm)] });
   check('the blank application form (readable, as every form on file is) still sends', r.sent, JSON.stringify(r));
@@ -108,7 +114,27 @@ async function outcome(args) {
   check('both Graph send paths run the guard', calls.length === 2, String(calls.length));
   check('both pass their attachments to it', calls.length === 2 && calls.every((c) => /\battachments\b/.test(c)), calls.join(' | '));
 
+  console.log('\nAn authorized decision goes only to its own applicant');
+  const DA = require('../lib/acc/decision_authority');
+  const ED = { id: 'ed-id', email: 'egojara@bedrocktx.com', role: 'admin', is_active: true, full_name: 'Ed Gojara' };
+  const rec = DA.ownerDecisionRecord(ED, { outcome: 'approved_with_conditions', authority_kind: 'written_delegation', authority_reference: 'Guidelines 1.4.4.1, p. 2', authority_library_document_id: '00000000-0000-0000-0000-0000000000d1', clearly_compliant: true });
+  const caseA = { id: 'a', status: 'pending_review', project_summary: 'Roof replacement, same color', submitter_email: 'owner.a@example.com', correspondent_emails: ['spouse.a@example.com'], decision_record: rec };
+  const approves = DA.checkOutboundText('Your architectural application has been approved.');
+  const denies = DA.checkOutboundText('Your architectural application has been denied.');
+  check("case A's approval to case A's applicant: allowed", DA.authorizesOutbound(caseA, approves, ['owner.a@example.com']).ok);
+  check('...to an address the case corresponded with: allowed', DA.authorizesOutbound(caseA, approves, ['spouse.a@example.com']).ok);
+  check('...matching ignores letter case and spaces', DA.authorizesOutbound(caseA, approves, [' Owner.A@Example.com ']).ok);
+  const other = DA.authorizesOutbound(caseA, approves, ['owner.b@example.com']);
+  check("case A's approval sent to another homeowner: refused", !other.ok && /not the applicant/.test(other.reason), JSON.stringify(other));
+  check('...or with another homeowner copied: refused', !DA.authorizesOutbound(caseA, approves, ['owner.a@example.com', 'owner.b@example.com']).ok);
+  check('a denial email under an approved case: refused', !DA.authorizesOutbound(caseA, denies, ['owner.a@example.com']).ok);
+  check('a case with nothing recorded: refused', !DA.authorizesOutbound({ ...caseA, decision_record: null }, approves, ['owner.a@example.com']).ok);
+  check('a case with no applicant email on file: refused', !DA.authorizesOutbound({ ...caseA, submitter_email: null, correspondent_emails: [] }, approves, ['owner.a@example.com']).ok);
+  check('no case at all: refused', !DA.authorizesOutbound(null, approves, ['owner.a@example.com']).ok);
+  check('the guard uses this check for every case-named send', /DA\.authorizesOutbound\(/.test(src));
+
   const triage = fs.readFileSync(path.join(__dirname, '..', 'api', 'email_triage.js'), 'utf8');
+  check('Communications reply holds an unreadable file from the computer on ACC mail', /const aboutAcc = \(m && m\.classification === 'acc_request'\)[\s\S]{0,400}if \(f && !f\.readable\) return res\.status\(409\)/.test(triage));
   check('Communications reply refuses a scanned ACC library record', /a\.category === 'arc_application'[\s\S]{0,300}!f\.readable/.test(triage));
   check('the library lookup reports the document category', /category: doc\.category/.test(fs.readFileSync(path.join(__dirname, '..', 'lib', 'email', 'doc_attachment.js'), 'utf8')));
 
