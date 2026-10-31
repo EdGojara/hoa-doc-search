@@ -146,26 +146,32 @@ async function loadApprovalPackage() {
   const el = $('approvalPkg'); if (!el) return;
   try { _pkg = await api('/api/onboarding/approval-package'); }
   catch (e) { el.innerHTML = e.status === 403 || e.status === 401 ? '' : '<div class="banner warn">Approval package: ' + esc(e.message) + '</div>'; return; }
-  const bs = (_pkg.batches || []).filter((b) => b.objects.length || b.bridge.length || b.other.length);
+  const bs = (_pkg.batches || []).filter((b) => b.objects.length || b.bridge.length || b.other.length || (b.approved || []).length || (b.answered || []).length);
+  // Three states, never mixed: APPROVED (recorded, listed apart), PENDING and included (ticked), PENDING and excluded (unticked: stays pending).
+  const statePill = (on) => on ? '<span class="pill BLOCKED" data-state>Pending · included</span>' : '<span class="pill WAIVED" data-state>Pending · excluded (stays pending)</span>';
   if (!bs.length) { el.innerHTML = '<div class="card muted">Owner approval package: nothing is waiting for you.</div>'; return; }
   const kindText = (o) => o.object_type === 'policy' ? (POLICY_TEXT[o.kind] || label(o.kind)) : label(o.kind) + (o.adjustment_no ? ' #' + esc(o.adjustment_no) : '');
   const recPill = (r) => r ? '<span class="pill ' + (r.basis === 'engine' ? 'WAIVED' : 'PASS') + '">' + (r.basis === 'engine' ? 'Engine suggestion' : 'Recommended') + '</span>' : '<span class="pill BLOCKED">No recommendation: decide or leave out</span>';
   let html = '<h2>Owner approval package</h2><div class="card" style="border-left:4px solid var(--gold)"><div class="muted" style="font-size:13px">Recommendations are pre-selected from treatments already reviewed; <b>nothing here is approved until you press Approve</b>. Each selected item is recorded under your name as its own decision, with the exact fingerprint or bridge result shown. Unticked items stay pending. Preflight approval and executing a conversion stay separate.</div></div>';
   bs.forEach((b, bi) => {
     html += '<div class="card"><div style="font-weight:800;color:var(--navy)">' + esc(commName(b.community_id)) + ' <span class="muted">' + esc(b.batch_code) + ' · cutoff ' + esc(b.as_of_date) + ' · stage ' + esc(label(b.stage)) + '</span></div>';
-    if (b.objects.length) html += '<div style="margin-top:6px;font-weight:700">Conversion adjustments and policies (' + b.objects.length + ')</div><div class="tablewrap"><table><thead><tr><th>Include</th><th>Decision</th><th class="num">Impact</th><th>Recommended treatment</th><th>Evidence</th><th>Fingerprint</th></tr></thead><tbody>'
-      + b.objects.map((o, i) => '<tr><td><input type="checkbox" data-pkg="obj" data-b="' + bi + '" data-i="' + i + '"' + (o.recommendation ? ' checked' : '') + '></td>'
+    if (b.objects.length) html += '<div style="margin-top:6px;font-weight:700">Conversion adjustments and policies (' + b.objects.length + ')</div><div class="tablewrap"><table><thead><tr><th>Include</th><th>Status</th><th>Decision</th><th class="num">Impact</th><th>Recommended treatment</th><th>Evidence</th><th>Fingerprint</th></tr></thead><tbody>'
+      + b.objects.map((o, i) => '<tr><td><input type="checkbox" data-pkg="obj" data-b="' + bi + '" data-i="' + i + '"' + (o.recommendation ? ' checked' : '') + '></td><td>' + statePill(!!o.recommendation) + '</td>'
         + '<td><b>' + kindText(o) + '</b>' + (o.lines ? '<div class="muted" style="font-size:12px">' + o.lines.map((l) => esc(l.account) + ' ' + (Number(l.amount_cents) > 0 ? 'Dr ' + money(l.amount_cents) : 'Cr ' + money(-Number(l.amount_cents)))).join(' · ') + '</div>' : '<div class="mono" style="font-size:11px">' + esc(JSON.stringify(o.value)).slice(0, 220) + '</div>') + '</td>'
         + '<td class="num">' + (o.amount_cents != null ? money(o.amount_cents) : '<span class="muted">instruction</span>') + '</td>'
         + '<td>' + recPill(o.recommendation) + ' ' + (o.recommendation ? 'Approve' : '') + '<div style="font-size:12.5px">' + esc(o.recommendation ? o.recommendation.reason : '') + '</div></td>'
         + '<td style="font-size:12.5px">' + esc(o.reason) + (o.evidence ? '<div class="muted" style="font-size:12px">' + esc(o.evidence.description || '') + (o.evidence.locator ? ' · ' + esc(o.evidence.locator) : '') + '</div>' : '') + '</td>'
         + '<td class="mono" style="font-size:11px" title="' + esc(o.fingerprint) + '">' + esc(String(o.fingerprint).slice(0, 12)) + '…</td></tr>').join('') + '</tbody></table></div>';
-    if (b.bridge.length) html += '<div style="margin-top:8px;font-weight:700">Bridge questions (' + b.bridge.length + ')</div><div class="tablewrap"><table><thead><tr><th>Include</th><th>Question</th><th class="num">Amount</th><th>Your answer</th><th>Why</th></tr></thead><tbody>'
+    if (b.bridge.length) html += '<div style="margin-top:8px;font-weight:700">Bridge questions (' + b.bridge.length + ')</div><div class="tablewrap"><table><thead><tr><th>Include</th><th>Status</th><th>Question</th><th class="num">Amount</th><th>Your answer</th><th>Why</th></tr></thead><tbody>'
       + b.bridge.map((q, i) => { const r = q.recommendation; const reviewed = r && r.basis !== 'engine';
-        return '<tr><td><input type="checkbox" data-pkg="br" data-b="' + bi + '" data-i="' + i + '"' + (reviewed ? ' checked' : '') + '></td><td style="font-size:13px">' + esc(q.question) + (q.context && q.context.length ? '<div class="muted" style="font-size:12px">' + q.context.map(esc).join(' · ') + '</div>' : '') + '</td>'
+        return '<tr><td><input type="checkbox" data-pkg="br" data-b="' + bi + '" data-i="' + i + '"' + (reviewed ? ' checked' : '') + '></td><td>' + statePill(!!reviewed) + '</td><td style="font-size:13px">' + esc(q.question) + (q.context && q.context.length ? '<div class="muted" style="font-size:12px">' + q.context.map(esc).join(' · ') + '</div>' : '') + '</td>'
           + '<td class="num">' + money(q.amount_cents) + '<div class="muted" style="font-size:12px">' + esc(q.event_date || '') + '</div></td>'
           + '<td><select data-pkgchoice="' + bi + ':' + i + '">' + (r ? '' : '<option value="">(choose)</option>') + q.choices.map((c) => '<option value="' + esc(c.key) + '"' + (r && r.choice === c.key ? ' selected' : '') + '>' + esc(c.label) + '</option>').join('') + '</select></td>'
           + '<td>' + recPill(r) + '<div style="font-size:12.5px">' + esc(r ? r.reason : '') + '</div></td></tr>'; }).join('') + '</tbody></table></div>';
+    const done = (b.approved || []).length + (b.answered || []).length;
+    if (done) html += '<details style="margin-top:8px"><summary><span class="pill PASS">Approved</span> ' + done + ' already recorded (not part of this approval)</summary><ul style="font-size:12.5px">'
+      + (b.approved || []).map((x) => '<li><b>' + esc(x.object_type === 'policy' ? (POLICY_TEXT[x.kind] || label(x.kind)) : label(x.kind)) + '</b> approved by ' + esc(x.approved_by) + ', ' + esc(String(x.approved_at || '').slice(0, 16).replace('T', ' ')) + (x.note ? ' <span class="muted">(' + esc(x.note) + ')</span>' : '') + '</li>').join('')
+      + (b.answered || []).map((d) => '<li>Bridge answer <b>' + esc(d.choice) + '</b> by ' + esc(d.decided_by) + ', ' + esc(String(d.decided_at || '').slice(0, 16).replace('T', ' ')) + (d.reason ? ' <span class="muted">(' + esc(d.reason) + ')</span>' : '') + '</li>').join('') + '</ul></details>';
     if (b.other.length) html += '<div class="muted" style="margin-top:6px;font-size:12.5px">Not in this package (handled on the batch page): ' + b.other.map((x) => esc(x.text || x.type)).join('; ') + '</div>';
     html += '</div>';
   });
@@ -182,7 +188,10 @@ async function loadApprovalPackage() {
     return { objects, bridge, missing };
   };
   const count = () => { const s = selected(); $('pkgCount').textContent = s.objects.length + ' approvals + ' + s.bridge.length + ' bridge answers selected' + (s.missing ? ' (' + s.missing + ' ticked without an answer)' : ''); };
-  el.querySelectorAll('input[data-pkg], select[data-pkgchoice]').forEach((x) => { x.onchange = count; }); count();
+  el.querySelectorAll('input[data-pkg], select[data-pkgchoice]').forEach((x) => { x.onchange = () => {
+    if (x.matches('input[data-pkg]')) { const p = x.closest('tr').querySelector('[data-state]'); if (p) p.outerHTML = statePill(x.checked); }
+    count(); }; });
+  count();
   $('pkgApprove').onclick = async () => {
     const s = selected();
     if (s.missing) return say('Choose an answer for every ticked bridge question, or untick it.', 'bad');
@@ -191,8 +200,12 @@ async function loadApprovalPackage() {
     $('pkgApprove').disabled = true;
     try {
       const r = await api('/api/onboarding/approval-package/approve', json(s));
-      $('pkgResult').innerHTML = '<div class="banner ' + (r.failed ? 'warn' : 'ok') + '" style="margin-top:8px">Package <span class="mono">' + esc(r.package_id) + '</span>: ' + r.approved + ' recorded, ' + r.failed + ' not recorded.'
-        + (r.failed ? '<ul>' + r.results.filter((x) => !x.ok).map((x) => '<li>' + esc(x.kind) + ' ' + esc(String(x.id).slice(0, 12)) + ': ' + esc(x.error) + '</li>').join('') + '</ul>' : '')
+      // Every selected item is reported: recorded ones and refused ones (refused items stay pending; nothing is hidden).
+      const nameOf = (x) => { const b = bs.find((y) => y.batch_id === x.batch_id) || {}; const o = (b.objects || []).find((y) => y.id === x.id); const q = (b.bridge || []).find((y) => y.event_key === x.id);
+        return esc(b.batch_code || '') + ' · ' + (o ? esc(o.object_type === 'policy' ? (POLICY_TEXT[o.kind] || label(o.kind)) : label(o.kind)) + (o.amount_cents != null ? ' ' + money(o.amount_cents) : '') : q ? esc(q.question).slice(0, 120) : esc(x.kind + ' ' + String(x.id).slice(0, 12))); };
+      $('pkgResult').innerHTML = '<div class="banner ' + (r.failed ? 'bad' : 'ok') + '" style="margin-top:8px"><b>' + (r.failed ? 'PARTIALLY RECORDED' : 'ALL RECORDED') + '</b> · package <span class="mono">' + esc(r.package_id) + '</span>: ' + r.approved + ' recorded under your name, ' + r.failed + ' not recorded (still pending).'
+        + '<div style="margin-top:4px"><b>Recorded (' + r.approved + ')</b><ul style="margin:2px 0">' + r.results.filter((x) => x.ok).map((x) => '<li>' + nameOf(x) + '</li>').join('') + '</ul></div>'
+        + (r.failed ? '<div><b>Not recorded (' + r.failed + ')</b><ul style="margin:2px 0">' + r.results.filter((x) => !x.ok).map((x) => '<li>' + nameOf(x) + ': ' + esc(x.error) + '</li>').join('') + '</ul></div>' : '')
         + '<div class="muted" style="font-size:12px">The operator continued each batch: ' + r.operated.map((x) => esc(x.ok ? (x.stage || 'ran') : 'failed: ' + x.error)).join('; ') + '</div></div>';
       setTimeout(() => { loadApprovalPackage(); loadList(); }, 1500);
     } catch (e) { say(e.message, 'bad'); $('pkgApprove').disabled = false; }
