@@ -1,0 +1,52 @@
+{
+  "migration": "551_vantaca_receipts_idempotency.sql",
+  "summary": "Post-cutover Vantaca homeowner receipts post once: a unique index on homeowner_transactions (community_id, raw_row_jsonb->>'vantaca_ref') for rows from the receipts import, a unique index on journal_entries (community_id, source_reference) for 'VRCPT:' references, and two report types (vantaca_pay_payouts, deposit_register) in the vantaca_imports source registry. No existing row qualifies for either index; no row changes.",
+  "requires": [
+    "535_conversion_primitives.sql"
+  ],
+  "preflight": [
+    {
+      "name": "no receipts-import ledger rows exist yet",
+      "sql": "SELECT count(*)::int FROM homeowner_transactions WHERE raw_row_jsonb->>'source' = 'vantaca_receipt'",
+      "expect": 0
+    },
+    {
+      "name": "no VRCPT journal references exist yet",
+      "sql": "SELECT count(*)::int FROM journal_entries WHERE source_reference LIKE 'VRCPT:%'",
+      "expect": 0
+    }
+  ],
+  "expected_changes": [
+    "Index uq_homeowner_txn_vantaca_receipt and index uq_journal_entries_vantaca_receipt_ref (partial, unique).",
+    "vantaca_imports_report_type_check also allows vantaca_pay_payouts and deposit_register.",
+    "No row changes in any table."
+  ],
+  "objects": {
+    "added": [
+      "index:uq_homeowner_txn_vantaca_receipt",
+      "index:uq_journal_entries_vantaca_receipt_ref"
+    ],
+    "changed": [
+      "constraint:vantaca_imports.vantaca_imports_report_type_check"
+    ],
+    "removed": []
+  },
+  "row_changes": {
+    "homeowner_transactions": 0,
+    "journal_entries": 0,
+    "vantaca_imports": 0
+  },
+  "protected": [
+    {
+      "table": "vantaca_imports",
+      "order_by": "id"
+    }
+  ],
+  "verify": [
+    {
+      "name": "both unique indexes exist",
+      "sql": "SELECT count(*)::int FROM pg_indexes WHERE indexname IN ('uq_homeowner_txn_vantaca_receipt','uq_journal_entries_vantaca_receipt_ref')",
+      "expect": 2
+    }
+  ]
+}
