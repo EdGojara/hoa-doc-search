@@ -103,7 +103,7 @@ for (const F of ['500_transfer_assessment_proration.sql', '501_conversion_builde
   await db.exec(lf(`${REPO}/migrations/${F}`)); await db.query(`INSERT INTO schema_migrations (filename, sha256) VALUES ($1, 'recorded')`, [F]);
 }
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'm535-e2e-')); fs.mkdirSync(path.join(dir, 'checks'));
-const FILES = ['535_conversion_primitives.sql', '536_conversion_execute_establishment.sql'];
+const FILES = ['535_conversion_primitives.sql', '536_conversion_execute_establishment.sql', '554_owner_delegated_approvals.sql'];
 for (const F of FILES) {
   fs.writeFileSync(path.join(dir, F), lf(`${REPO}/migrations/${F}`));
   const cf = `${REPO}/migrations/checks/${F.replace('.sql', '.json')}`;
@@ -457,6 +457,63 @@ if (res && res.status === 'executed') {
   check('PACKAGE: a non-owner or another channel records nothing', /OWNER_ONLY|only the owner/.test((await code(() => svc.approvePackage({ kind: 'human', id: 'staff', role: 'admin' }, { objects: [{ batch_id: Bp, object_type: 'adjustment', id: P2.id, fingerprint: P2.fingerprint }] }, { channel: 'in_app' }))) || '')
     && /in the app|IN_APP/.test((await code(() => svc.approvePackage(ED, { objects: [{ batch_id: Bp, object_type: 'adjustment', id: P2.id, fingerprint: P2.fingerprint }] }, { channel: 'chat' }))) || '')
     && (await one(`SELECT status FROM conversion_adjustments WHERE id = $1`, [P2.id])).status === 'proposed');
+}
+
+// ======================================== 554: owner-authorized, agent-executed approvals
+{
+  const OA = require(`${REPO}/lib/onboarding/owner_authorization.js`);
+  const Bd = await toPreflight('DLG-' + SRC.slice(0, 6));
+  const pa = (body) => rpc('conversion_propose_adjustment', { p_batch: Bd, p_adjustment: body, p_actor_kind: 'agent', p_actor_id: 'agent-1' });
+  const D1 = await pa({ adjustment_no: 1, kind: 'opening_correction', effect: 'opening', lines: [{ account: '3050', amount_cents: 100 }, { account: '2000', amount_cents: -100 }], resolves: [], reason: 'A paid bill never entered left a debit in AP', evidence: EVID });
+  const D2 = await rpc('conversion_propose_policy', { p_batch: Bd, p_policy: { policy_kind: 'legacy_owner_routing', value: { presentation: 'control_accounts' }, reason: 'prior owners stay in the control accounts on legacy records' }, p_actor_kind: 'agent', p_actor_id: 'agent-1' });
+  const D3 = await pa({ adjustment_no: 2, kind: 'equity_normalization', effect: 'post_opening', allow_sign_change: true, lines: [{ account: '3000', amount_cents: 600 }, { account: '3050', amount_cents: -600 }], reason: 'Not part of the authorization (must stay pending)', evidence: EVID });
+  const items = [{ object_type: 'adjustment', object_id: D1.id, fingerprint: D1.fingerprint, batch_id: Bd }, { object_type: 'policy', object_id: D2.id, fingerprint: D2.fingerprint, batch_id: Bd }];
+  check('554 REQUEST: refuses an item that is not proposed with the listed fingerprint', /not proposed with that fingerprint/.test((await code(() => rpc('owner_authorization_request', { p_subject: 'x', p_summary: 'a request summary', p_items: [{ ...items[0], fingerprint: 'f'.repeat(64) }], p_owner_email: 'owner@example.test', p_requested_by: OA.AGENT_ID, p_hours: 72 }))) || ''));
+  const sent = [];
+  const req = await OA.requestAuthorization({ rpc, send: async (m) => { sent.push(m); return { sent: true }; }, items, ownerEmail: 'owner@example.test', fromMailbox: 'tessa@example.test', summary: 'Two reviewed conversion items' });
+  const row = await one(`SELECT * FROM owner_authorizations WHERE id = $1`, [req.id]);
+  check('554 REQUEST: recorded as a request (nothing authorized), the email lists every id and fingerprint', row.status === 'requested' && !row.authorized_at && sent.length === 1
+    && items.every((i) => sent[0].text.includes(i.object_id) && sent[0].text.includes(i.fingerprint)) && /Reply "approved"/.test(sent[0].text) && /no conversion is executed/.test(sent[0].text));
+  const exec = (o) => rpc('conversion_decide_object_delegated', { p_authorization: req.id, p_object_type: 'adjustment', p_object_id: D1.id, p_fingerprint: D1.fingerprint, p_agent_id: OA.AGENT_ID, p_agent_label: OA.AGENT_LABEL, ...o });
+  check('554 EXECUTE before the owner authorized: refused', /no authorized owner authorization/.test((await code(() => exec({}))) || ''));
+  check('554 a request cannot be set authorized directly, nor its items changed', /only through their functions/.test((await code(() => db.query(`UPDATE owner_authorizations SET status = 'authorized' WHERE id = $1`, [req.id]))) || '')
+    && /request is fixed/.test((await code(() => db.query(`UPDATE owner_authorizations SET items = '[]' WHERE id = $1`, [req.id]))) || ''));
+  const ev = { internet_message_id: '<reply-1@example.test>', graph_id: 'g1', received_at: new Date().toISOString(), auth_as: 'Internal', reply_excerpt: 'approved' };
+  check('554 AUTHORIZE: refused from another address, without the message id, or from outside the tenant',
+    /only the owner the request was sent to/.test((await code(() => rpc('owner_authorization_record', { p_id: req.id, p_user_id: 'owner-user-id', p_email: 'someone@example.test', p_evidence: ev }))) || '')
+    && /message id and an internal/.test((await code(() => rpc('owner_authorization_record', { p_id: req.id, p_user_id: 'owner-user-id', p_email: 'owner@example.test', p_evidence: { ...ev, internet_message_id: undefined } }))) || '')
+    && /internal/.test((await code(() => rpc('owner_authorization_record', { p_id: req.id, p_user_id: 'owner-user-id', p_email: 'owner@example.test', p_evidence: { ...ev, auth_as: 'Anonymous' } }))) || ''));
+  // The reply matcher (pure): every condition must hold.
+  const reqRow = { ...row, expires_at: row.expires_at instanceof Date ? row.expires_at.toISOString() : row.expires_at };
+  const msg = { id: 'g1', internetMessageId: '<reply-1@example.test>', receivedDateTime: new Date().toISOString(), subject: 'RE: ' + row.subject, from: { emailAddress: { address: 'owner@example.test' } }, replyText: 'Approved.\n\nFrom: Tessa' };
+  const H = [{ name: 'X-MS-Exchange-Organization-AuthAs', value: 'Internal' }, { name: 'X-MS-Exchange-Organization-AuthSource', value: 'mail.example.test' }];
+  const okv = OA.authorizationFromReply(msg, { requests: [reqRow], ownerEmail: 'owner@example.test', headers: H });
+  check('554 REPLY: the owner’s internal "approved" reply to that subject matches; spoofed, external, unrelated, negated or late replies do not',
+    okv.match && okv.request.id === req.id && okv.evidence.auth_as === 'Internal'
+    && !OA.authorizationFromReply({ ...msg, from: { emailAddress: { address: 'x@evil.test' } } }, { requests: [reqRow], ownerEmail: 'owner@example.test', headers: H }).match
+    && !OA.authorizationFromReply(msg, { requests: [reqRow], ownerEmail: 'owner@example.test', headers: [{ name: 'X-MS-Exchange-Organization-AuthAs', value: 'Anonymous' }] }).match
+    && !OA.authorizationFromReply({ ...msg, subject: 'RE: something else' }, { requests: [reqRow], ownerEmail: 'owner@example.test', headers: H }).match
+    && !OA.authorizationFromReply({ ...msg, replyText: 'Do not approve yet' }, { requests: [reqRow], ownerEmail: 'owner@example.test', headers: H }).match
+    && !OA.authorizationFromReply({ ...msg, replyText: 'Looks fine' }, { requests: [reqRow], ownerEmail: 'owner@example.test', headers: H }).match
+    && !OA.authorizationFromReply({ ...msg, receivedDateTime: '2999-01-01T00:00:00Z' }, { requests: [reqRow], ownerEmail: 'owner@example.test', headers: H }).match);
+  await rpc('owner_authorization_record', { p_id: req.id, p_user_id: 'owner-user-id', p_email: 'owner@example.test', p_evidence: okv.evidence });
+  check('554 an unlisted item, or a listed item with another fingerprint, is refused', /did not authorize this adjustment/.test((await code(() => exec({ p_object_id: D3.id, p_fingerprint: D3.fingerprint }))) || '')
+    && /did not authorize/.test((await code(() => exec({ p_fingerprint: 'e'.repeat(64) }))) || ''));
+  const auth = await one(`SELECT * FROM owner_authorizations WHERE id = $1`, [req.id]);
+  const out = await OA.executeAuthorization({ rpc, operate: async () => ({ stopped_at: 'preflight' }), authorization: auth });
+  const a1 = await one(`SELECT status, approved_by_user_id, approved_by_label, approval_channel, decision_note FROM conversion_adjustments WHERE id = $1`, [D1.id]);
+  const p2 = await one(`SELECT status, approved_by_user_id, approval_channel FROM conversion_policies WHERE id = $1`, [D2.id]);
+  const evs = await q(`SELECT object_id, actor_kind, actor_id, channel, detail FROM conversion_object_events WHERE batch_id = $1 AND event = 'approved' ORDER BY seq`, [Bd]);
+  check('554 EXECUTE: exactly the authorized items are approved; approver = the owner; executed by = the agent; each audit event carries the authorization and the reply’s message id',
+    out.approved === 2 && out.failed === 0 && a1.status === 'approved' && a1.approved_by_user_id === 'owner-user-id' && a1.approval_channel === 'owner_delegation' && /authorized by email reply; executed by Claude/.test(a1.approved_by_label)
+    && new RegExp(req.id).test(a1.decision_note) && p2.status === 'approved' && p2.approved_by_user_id === 'owner-user-id'
+    && evs.length === 2 && evs.every((e) => e.actor_kind === 'agent' && e.actor_id === OA.AGENT_ID && e.channel === 'owner_delegation' && e.detail.authorization_id === req.id && e.detail.evidence_message_id === '<reply-1@example.test>' && e.detail.authorized_by_user_id === 'owner-user-id'),
+    JSON.stringify({ out, a1, p2, evs }).slice(0, 900));
+  check('554 the unlisted item stays proposed; the authorization is closed and cannot be reused',
+    (await one(`SELECT status FROM conversion_adjustments WHERE id = $1`, [D3.id])).status === 'proposed' && (await one(`SELECT status FROM owner_authorizations WHERE id = $1`, [req.id])).status === 'executed'
+    && /no authorized owner authorization/.test((await code(() => exec({ p_object_id: D3.id, p_fingerprint: D3.fingerprint }))) || ''));
+  check('554 an agent approval without an authorization is refused by the audit check itself', /decision_human|check/.test((await code(() => db.query(`INSERT INTO conversion_object_events (batch_id, community_id, object_type, object_id, event, fingerprint, actor_kind, actor_id, channel, detail) VALUES ($1, $2, 'adjustment', $3, 'approved', $4, 'agent', 'x', 'owner_delegation', '{}')`, [Bd, COMM, D3.id, D3.fingerprint]))) || '')
+    && /only a human/.test((await code(() => rpc('conversion_decide_object', { p_object_type: 'adjustment', p_object_id: D3.id, p_decision: 'approved', p_fingerprint: D3.fingerprint, p_channel: 'in_app', p_actor_kind: 'agent', p_actor_id: 'x', p_actor_label: 'x', p_note: null }))) || ''));
 }
 
 console.log(`\n${pass} passed, ${fail} failed (source system ${SRC})`);

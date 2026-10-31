@@ -1,0 +1,113 @@
+{
+  "migration": "554_owner_delegated_approvals.sql",
+  "summary": "Owner-authorized, agent-executed conversion approvals. New owner_authorizations: an agent requests an exact list of conversion adjustments/policies (type, id, fingerprint) that are proposed now; the owner authorizes it by replying \"approved\" from the owner's own mailbox, and the server records that with its evidence (message id, Exchange AuthAs Internal), bound to the owner's user id; an agent then approves each listed item through conversion_decide_object_delegated, which refuses anything not listed with that exact fingerprint, unauthorized, expired, not proposed or in a closed batch. The approval names the owner as approver (channel owner_delegation, note = the authorization id); its audit event names the agent as executor and carries the authorization id and the reply's message id. The approval-channel and audit-event checks accept exactly that shape. The in-app path, rejections, bridge decisions, waivers, preflight approval and EXECUTE are unchanged. No existing row changes.",
+  "requires": [
+    "535_conversion_primitives.sql"
+  ],
+  "preflight": [
+    {
+      "name": "conversion primitives exist (535 applied)",
+      "sql": "SELECT count(*)::int FROM information_schema.tables WHERE table_schema = 'public' AND table_name IN ('conversion_adjustments', 'conversion_policies', 'conversion_object_events')",
+      "expect": 3
+    },
+    {
+      "name": "554 not applied yet",
+      "sql": "SELECT count(*)::int FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'owner_authorizations'",
+      "expect": 0
+    },
+    {
+      "name": "every existing approval is in-app",
+      "sql": "SELECT ((SELECT count(*) FROM conversion_adjustments WHERE status = 'approved' AND approval_channel IS DISTINCT FROM 'in_app') + (SELECT count(*) FROM conversion_policies WHERE status = 'approved' AND approval_channel IS DISTINCT FROM 'in_app'))::int",
+      "expect": 0
+    }
+  ],
+  "expected_changes": [
+    "New append-only table owner_authorizations (association_record) with its guard: created as a request; authorized only through owner_authorization_record with the reply evidence; executed only through owner_authorization_mark_executed; the request (items, fingerprints, subject, expiry) never changes.",
+    "New service-role-only functions owner_authorization_request, owner_authorization_record, conversion_decide_object_delegated, owner_authorization_mark_executed.",
+    "conversion_adjustments / conversion_policies approval_channel may also be owner_delegation (approver still required); conversion_object_events accepts an 'approved' event by an agent ONLY on channel owner_delegation with the authorization id and evidence message id.",
+    "No existing row changes; the in-app approval path is unchanged."
+  ],
+  "objects": {
+    "added": [
+      "column:owner_authorizations.authorized_at",
+      "column:owner_authorizations.authorized_by_email",
+      "column:owner_authorizations.authorized_by_user_id",
+      "column:owner_authorizations.evidence",
+      "column:owner_authorizations.executed_at",
+      "column:owner_authorizations.execution",
+      "column:owner_authorizations.expires_at",
+      "column:owner_authorizations.id",
+      "column:owner_authorizations.items",
+      "column:owner_authorizations.items_sha256",
+      "column:owner_authorizations.owner_email",
+      "column:owner_authorizations.requested_at",
+      "column:owner_authorizations.requested_by",
+      "column:owner_authorizations.scope",
+      "column:owner_authorizations.status",
+      "column:owner_authorizations.subject",
+      "column:owner_authorizations.summary",
+      "constraint:owner_authorizations.owner_authorizations_authorized_shape",
+      "constraint:owner_authorizations.owner_authorizations_items_check",
+      "constraint:owner_authorizations.owner_authorizations_pkey",
+      "constraint:owner_authorizations.owner_authorizations_requested_by_check",
+      "constraint:owner_authorizations.owner_authorizations_scope_check",
+      "constraint:owner_authorizations.owner_authorizations_status_check",
+      "constraint:owner_authorizations.owner_authorizations_subject_unique",
+      "constraint:owner_authorizations.owner_authorizations_summary_check",
+      "function:conversion_decide_object_delegated",
+      "function:owner_authorization_mark_executed",
+      "function:owner_authorization_record",
+      "function:owner_authorization_request",
+      "function:owner_authorizations_guard",
+      "index:owner_authorizations_pkey",
+      "index:owner_authorizations_subject_unique",
+      "table:owner_authorizations",
+      "trigger:owner_authorizations.trg_owner_authorizations_guard"
+    ],
+    "changed": [
+      "constraint:conversion_adjustments.conversion_adjustments_approval_channel_check",
+      "constraint:conversion_adjustments.conversion_adjustments_approved",
+      "constraint:conversion_object_events.conversion_object_events_channel_check",
+      "constraint:conversion_object_events.conversion_object_events_decision_human",
+      "constraint:conversion_policies.conversion_policies_approval_channel_check",
+      "constraint:conversion_policies.conversion_policies_approved"
+    ],
+    "removed": []
+  },
+  "row_changes": {},
+  "protected": [
+    {
+      "table": "conversion_adjustments",
+      "order_by": "id"
+    },
+    {
+      "table": "conversion_policies",
+      "order_by": "id"
+    },
+    {
+      "table": "conversion_object_events",
+      "order_by": "id"
+    },
+    {
+      "table": "journal_entries",
+      "order_by": "id"
+    }
+  ],
+  "verify": [
+    {
+      "name": "owner_authorizations exists, empty",
+      "sql": "SELECT count(*)::int FROM owner_authorizations",
+      "expect": 0
+    },
+    {
+      "name": "the delegated decision function exists and is not executable by authenticated users",
+      "sql": "SELECT (count(*) FILTER (WHERE proname = 'conversion_decide_object_delegated') * 10 + count(*) FILTER (WHERE proname = 'conversion_decide_object_delegated' AND has_function_privilege('authenticated', oid, 'EXECUTE')))::int FROM pg_proc WHERE proname = 'conversion_decide_object_delegated'",
+      "expect": 10
+    },
+    {
+      "name": "the audit check names the delegated shape",
+      "sql": "SELECT count(*)::int FROM pg_constraint WHERE conname = 'conversion_object_events_decision_human' AND pg_get_constraintdef(oid) LIKE '%owner_delegation%' AND pg_get_constraintdef(oid) LIKE '%authorization_id%'",
+      "expect": 1
+    }
+  ]
+}
