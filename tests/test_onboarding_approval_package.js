@@ -124,6 +124,8 @@ check('the review screen: one Approve action, recommendations labeled apart from
   assert.ok(/\/api\/onboarding\/approval-package\/approve/.test(fn) && /id="pkgApprove"/.test(fn));
   assert.ok(/nothing here is approved until you press Approve/.test(fn) && /'Recommended'/.test(fn) && /Engine suggestion/.test(fn));
   assert.ok(/Unticked items stay pending/.test(fn));
+  assert.ok(/Pending · included/.test(fn) && /Pending · excluded \(stays pending\)/.test(fn) && /'Approved'|>Approved</.test(fn), 'approved, pending-included and pending-excluded are three distinct labels');
+  assert.ok(/PARTIALLY RECORDED/.test(fn) && /<b>Recorded \(/.test(fn) && /<b>Not recorded \(/.test(fn), 'every selected item is reported as recorded or not recorded');
   assert.ok(!/\/execute|\/batches\/.*\/approve'|approveByHash|pfExecute/.test(fn), 'no preflight approval or execute in the package');
 });
 

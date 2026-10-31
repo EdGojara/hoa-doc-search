@@ -434,6 +434,31 @@ if (res && res.status === 'executed') {
   check('after EXECUTE no adjustment or policy can be proposed or decided on the batch', /fixed once the batch enters execute/.test((await code(() => proposeP({ policy_kind: 'preserve_source_coding', value: { account: '5000', note: 'keep the source coding as is' }, reason: 'owner decision to keep it' }))) || ''));
 }
 
+// ======================================== owner approval package (Ed 2026-10-31): ONE action, one audit record per item
+{
+  const Bp = await toPreflight('PKG-' + SRC.slice(0, 6));
+  const pa = (body) => rpc('conversion_propose_adjustment', { p_batch: Bp, p_adjustment: body, p_actor_kind: 'agent', p_actor_id: 'agent-1' });
+  const P1 = await pa({ adjustment_no: 1, kind: 'opening_correction', effect: 'opening', lines: [{ account: '3050', amount_cents: 100 }, { account: '2000', amount_cents: -100 }], resolves: [], reason: 'A paid bill never entered left a debit in AP', evidence: EVID });
+  const P2 = await pa({ adjustment_no: 2, kind: 'equity_normalization', effect: 'post_opening', allow_sign_change: true, lines: [{ account: '3000', amount_cents: 600 }, { account: '3050', amount_cents: -600 }], reason: 'The opening fund balance was never closed to 3050', evidence: EVID });
+  const P3 = await rpc('conversion_propose_policy', { p_batch: Bp, p_policy: { policy_kind: 'legacy_owner_routing', value: { presentation: 'control_accounts' }, reason: 'prior owners stay in the control accounts on legacy records' }, p_actor_kind: 'agent', p_actor_id: 'agent-1' });
+  const res = await svc.approvePackage(ED, { objects: [
+    { batch_id: Bp, object_type: 'adjustment', id: P1.id, fingerprint: P1.fingerprint },
+    { batch_id: Bp, object_type: 'adjustment', id: P2.id, fingerprint: 'f'.repeat(64) },            // not the fingerprint shown: refused
+    { batch_id: Bp, object_type: 'policy', id: P3.id, fingerprint: P3.fingerprint }] }, { channel: 'in_app' });
+  const st = await q(`SELECT id, status, approved_by_user_id, approval_channel, decision_note FROM conversion_adjustments WHERE batch_id = $1 UNION ALL SELECT id, status, approved_by_user_id, approval_channel, decision_note FROM conversion_policies WHERE batch_id = $1`, [Bp]);
+  const by = (id) => st.find((x) => x.id === id);
+  const evs = await q(`SELECT object_id, event, actor_kind, actor_id, channel, detail FROM conversion_object_events WHERE batch_id = $1 AND event = 'approved' ORDER BY seq`, [Bp]);
+  check('PACKAGE: one action records each selected item as its own approval (owner id, in_app, tagged with the package id)',
+    evs.length === 2 && evs.every((e) => e.actor_kind === 'human' && e.actor_id === 'owner-user-id' && e.channel === 'in_app' && new RegExp(res.package_id).test(JSON.stringify(e.detail)))
+    && [P1.id, P3.id].every((id) => by(id).status === 'approved' && by(id).approved_by_user_id === 'owner-user-id' && new RegExp(res.package_id).test(by(id).decision_note || '')), JSON.stringify({ evs, st }).slice(0, 800));
+  check('PACKAGE: a refused item stays proposed with no approval record, and the result names exactly what was and was not recorded',
+    by(P2.id).status === 'proposed' && !evs.some((e) => e.object_id === P2.id) && res.approved === 2 && res.failed === 1
+    && res.results.find((x) => x.id === P2.id).ok === false && /fingerprint/.test(res.results.find((x) => x.id === P2.id).error) && res.results.filter((x) => x.ok).map((x) => x.id).sort().join() === [P1.id, P3.id].sort().join(), JSON.stringify(res).slice(0, 600));
+  check('PACKAGE: a non-owner or another channel records nothing', /OWNER_ONLY|only the owner/.test((await code(() => svc.approvePackage({ kind: 'human', id: 'staff', role: 'admin' }, { objects: [{ batch_id: Bp, object_type: 'adjustment', id: P2.id, fingerprint: P2.fingerprint }] }, { channel: 'in_app' }))) || '')
+    && /in the app|IN_APP/.test((await code(() => svc.approvePackage(ED, { objects: [{ batch_id: Bp, object_type: 'adjustment', id: P2.id, fingerprint: P2.fingerprint }] }, { channel: 'chat' }))) || '')
+    && (await one(`SELECT status FROM conversion_adjustments WHERE id = $1`, [P2.id])).status === 'proposed');
+}
+
 console.log(`\n${pass} passed, ${fail} failed (source system ${SRC})`);
 // Re-run the whole file under a synthetic non-Vantaca source system (fresh database).
 if (!process.env.CONV_E2E_SOURCE_SYSTEM) {
