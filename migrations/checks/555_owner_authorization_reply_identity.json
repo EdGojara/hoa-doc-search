@@ -1,0 +1,65 @@
+{
+  "migration": "555_owner_authorization_reply_identity.sql",
+  "summary": "An owner authorization (554) is accepted only as a verified reply to the exact request email: the request email's Microsoft 365 Internet message id and conversation id are recorded once when it is sent (owner_authorization_sent; an unsent request cannot be authorized), and owner_authorization_record requires the reply's In-Reply-To or References to name that message, the same conversation id, From and Sender both the owner, and Exchange's authenticated-inside-the-tenant stamp (AuthAs Internal with AuthSource and AuthMechanism). The stored authorization shape requires the same evidence. Only owner_authorizations changes; no row changes.",
+  "requires": [
+    "554_owner_delegated_approvals.sql"
+  ],
+  "preflight": [
+    {
+      "name": "owner_authorizations exists (554 applied) and 555 is not",
+      "sql": "SELECT ((SELECT count(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'owner_authorizations') * 10 + (SELECT count(*) FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'owner_authorizations' AND column_name = 'request_message_id'))::int",
+      "expect": 10
+    },
+    {
+      "name": "no owner authorization has been authorized yet (the stricter evidence applies to all)",
+      "sql": "SELECT count(*)::int FROM owner_authorizations WHERE status <> 'requested' OR evidence IS NOT NULL",
+      "expect": 0
+    }
+  ],
+  "expected_changes": [
+    "owner_authorizations gains request_message_id, request_conversation_id, request_sent_at (written once by owner_authorization_sent).",
+    "owner_authorization_record requires a verified reply to that exact email (In-Reply-To/References + conversation id), From and Sender = the owner, and AuthAs Internal with AuthSource and AuthMechanism; the authorized-shape CHECK requires the same.",
+    "No row changes."
+  ],
+  "objects": {
+    "added": [
+      "column:owner_authorizations.request_conversation_id",
+      "column:owner_authorizations.request_message_id",
+      "column:owner_authorizations.request_sent_at",
+      "function:owner_authorization_sent"
+    ],
+    "changed": [
+      "constraint:owner_authorizations.owner_authorizations_authorized_shape",
+      "function:owner_authorization_record",
+      "function:owner_authorizations_guard"
+    ],
+    "removed": []
+  },
+  "row_changes": {},
+  "protected": [
+    {
+      "table": "owner_authorizations",
+      "order_by": "id"
+    },
+    {
+      "table": "conversion_adjustments",
+      "order_by": "id"
+    },
+    {
+      "table": "conversion_policies",
+      "order_by": "id"
+    }
+  ],
+  "verify": [
+    {
+      "name": "the authorized shape requires the reply relationship and the authenticated identity",
+      "sql": "SELECT count(*)::int FROM pg_constraint WHERE conname = 'owner_authorizations_authorized_shape' AND pg_get_constraintdef(oid) LIKE '%request_message_id%' AND pg_get_constraintdef(oid) LIKE '%auth_mechanism%' AND pg_get_constraintdef(oid) LIKE '%conversation_id%'",
+      "expect": 1
+    },
+    {
+      "name": "owner_authorization_sent exists and is not executable by authenticated users",
+      "sql": "SELECT (count(*) * 10 + count(*) FILTER (WHERE has_function_privilege('authenticated', oid, 'EXECUTE')))::int FROM pg_proc WHERE proname = 'owner_authorization_sent'",
+      "expect": 10
+    }
+  ]
+}

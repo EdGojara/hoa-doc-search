@@ -39,7 +39,7 @@ const must = async (q, what) => { const { data, error } = await q; if (error) th
   console.log(`${items.length} items:`); for (const i of items) console.log(`  ${i.batch_code} ${i.object_type} ${i.object_id} ${i.fingerprint.slice(0, 12)}… ${i.treatment}`);
   if (!send) { console.log('\nDry run: nothing recorded or sent. Re-run with --send.'); return; }
   const rpc = async (name, args) => { const { data, error } = await sb.rpc(name, args); if (error) throw new Error(`${name}: ${error.message}`); return data; };
-  const r = await OA.requestAuthorization({ rpc, send: graphSend.sendAs, items, ownerEmail: graphSend.ED_MAILBOX, fromMailbox: graphSend.TESSA_MAILBOX,
+  const r = await OA.requestAuthorization({ rpc, send: (m) => OA.graphSendTracked(graphSend, m), items, ownerEmail: graphSend.ED_MAILBOX, fromMailbox: graphSend.TESSA_MAILBOX,
     summary: `${items.length} reviewed conversion approvals (Still Creek and Waterview 7/31/2026), as listed in the owner approval package` });
   console.log(`\nRequest ${r.id} recorded and emailed: "${r.subject}" (items sha ${r.items_sha256.slice(0, 12)}…). Nothing is authorized until the owner replies "approved".`);
 })().catch((e) => { console.error('FAILED', e.message); process.exit(1); });

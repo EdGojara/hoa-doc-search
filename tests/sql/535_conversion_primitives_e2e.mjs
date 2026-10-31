@@ -103,7 +103,7 @@ for (const F of ['500_transfer_assessment_proration.sql', '501_conversion_builde
   await db.exec(lf(`${REPO}/migrations/${F}`)); await db.query(`INSERT INTO schema_migrations (filename, sha256) VALUES ($1, 'recorded')`, [F]);
 }
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'm535-e2e-')); fs.mkdirSync(path.join(dir, 'checks'));
-const FILES = ['535_conversion_primitives.sql', '536_conversion_execute_establishment.sql', '554_owner_delegated_approvals.sql'];
+const FILES = ['535_conversion_primitives.sql', '536_conversion_execute_establishment.sql', '554_owner_delegated_approvals.sql', '555_owner_authorization_reply_identity.sql'];
 for (const F of FILES) {
   fs.writeFileSync(path.join(dir, F), lf(`${REPO}/migrations/${F}`));
   const cf = `${REPO}/migrations/checks/${F.replace('.sql', '.json')}`;
@@ -470,32 +470,44 @@ if (res && res.status === 'executed') {
   const items = [{ object_type: 'adjustment', object_id: D1.id, fingerprint: D1.fingerprint, batch_id: Bd }, { object_type: 'policy', object_id: D2.id, fingerprint: D2.fingerprint, batch_id: Bd }];
   check('554 REQUEST: refuses an item that is not proposed with the listed fingerprint', /not proposed with that fingerprint/.test((await code(() => rpc('owner_authorization_request', { p_subject: 'x', p_summary: 'a request summary', p_items: [{ ...items[0], fingerprint: 'f'.repeat(64) }], p_owner_email: 'owner@example.test', p_requested_by: OA.AGENT_ID, p_hours: 72 }))) || ''));
   const sent = [];
-  const req = await OA.requestAuthorization({ rpc, send: async (m) => { sent.push(m); return { sent: true }; }, items, ownerEmail: 'owner@example.test', fromMailbox: 'tessa@example.test', summary: 'Two reviewed conversion items' });
+  const REQ_MID = '<req-1@example.test>', REQ_CONV = 'CONV-abcdef123456';
+  // A request that was never sent cannot be authorized (555).
+  const unsent = await rpc('owner_authorization_request', { p_subject: 'Owner authorization 0000UNSE: test', p_summary: 'an unsent request summary', p_items: [items[0]], p_owner_email: 'owner@example.test', p_requested_by: OA.AGENT_ID, p_hours: 72 });
+  const req = await OA.requestAuthorization({ rpc, send: async (m) => { sent.push(m); return { sent: true, internetMessageId: REQ_MID, conversationId: REQ_CONV }; }, items, ownerEmail: 'owner@example.test', fromMailbox: 'tessa@example.test', summary: 'Two reviewed conversion items' });
   const row = await one(`SELECT * FROM owner_authorizations WHERE id = $1`, [req.id]);
-  check('554 REQUEST: recorded as a request (nothing authorized), the email lists every id and fingerprint', row.status === 'requested' && !row.authorized_at && sent.length === 1
+  check('554/555 REQUEST: recorded as a request (nothing authorized) with the sent email’s message id and conversation; the email lists every id and fingerprint',
+    row.status === 'requested' && !row.authorized_at && row.request_message_id === REQ_MID && row.request_conversation_id === REQ_CONV && sent.length === 1
     && items.every((i) => sent[0].text.includes(i.object_id) && sent[0].text.includes(i.fingerprint)) && /Reply "approved"/.test(sent[0].text) && /no conversion is executed/.test(sent[0].text));
+  check('555 the request email identity is recorded once', /recorded once|already recorded/.test((await code(() => rpc('owner_authorization_sent', { p_id: req.id, p_message_id: '<other@example.test>', p_conversation_id: 'CONV-other-0000' }))) || ''));
   const exec = (o) => rpc('conversion_decide_object_delegated', { p_authorization: req.id, p_object_type: 'adjustment', p_object_id: D1.id, p_fingerprint: D1.fingerprint, p_agent_id: OA.AGENT_ID, p_agent_label: OA.AGENT_LABEL, ...o });
   check('554 EXECUTE before the owner authorized: refused', /no authorized owner authorization/.test((await code(() => exec({}))) || ''));
   check('554 a request cannot be set authorized directly, nor its items changed', /only through their functions/.test((await code(() => db.query(`UPDATE owner_authorizations SET status = 'authorized' WHERE id = $1`, [req.id]))) || '')
     && /request is fixed/.test((await code(() => db.query(`UPDATE owner_authorizations SET items = '[]' WHERE id = $1`, [req.id]))) || ''));
-  const ev = { internet_message_id: '<reply-1@example.test>', graph_id: 'g1', received_at: new Date().toISOString(), auth_as: 'Internal', reply_excerpt: 'approved' };
-  check('554 AUTHORIZE: refused from another address, without the message id, or from outside the tenant',
-    /only the owner the request was sent to/.test((await code(() => rpc('owner_authorization_record', { p_id: req.id, p_user_id: 'owner-user-id', p_email: 'someone@example.test', p_evidence: ev }))) || '')
-    && /message id and an internal/.test((await code(() => rpc('owner_authorization_record', { p_id: req.id, p_user_id: 'owner-user-id', p_email: 'owner@example.test', p_evidence: { ...ev, internet_message_id: undefined } }))) || '')
-    && /internal/.test((await code(() => rpc('owner_authorization_record', { p_id: req.id, p_user_id: 'owner-user-id', p_email: 'owner@example.test', p_evidence: { ...ev, auth_as: 'Anonymous' } }))) || ''));
-  // The reply matcher (pure): every condition must hold.
+  const ev = { internet_message_id: '<reply-1@example.test>', graph_id: 'g1', received_at: new Date().toISOString(), from: 'owner@example.test', sender: 'owner@example.test', auth_as: 'Internal', auth_source: 'mail.example.test', auth_mechanism: '04', in_reply_to: REQ_MID, references: REQ_MID, conversation_id: REQ_CONV, reply_excerpt: 'approved' };
+  const rec = (e, o = {}) => code(() => rpc('owner_authorization_record', { p_id: req.id, p_user_id: 'owner-user-id', p_email: 'owner@example.test', p_evidence: e, ...o }));
+  check('555 AUTHORIZE (database): refused for an unsent request, another address or Sender, no message id, outside the tenant, not a reply to the request email, or another conversation',
+    /never sent/.test((await code(() => rpc('owner_authorization_record', { p_id: unsent.id, p_user_id: 'owner-user-id', p_email: 'owner@example.test', p_evidence: ev }))) || '')
+    && /only the owner/.test((await rec(ev, { p_email: 'someone@example.test' })) || '') && /only the owner/.test((await rec({ ...ev, sender: 'assistant@example.test' })) || '')
+    && /authenticated inside the tenant/.test((await rec({ ...ev, internet_message_id: undefined })) || '') && /authenticated inside the tenant/.test((await rec({ ...ev, auth_as: 'Anonymous' })) || '')
+    && /authenticated inside the tenant/.test((await rec({ ...ev, auth_mechanism: undefined })) || '')
+    && /does not answer the request email/.test((await rec({ ...ev, in_reply_to: '<other@example.test>', references: '<other@example.test>' })) || '')
+    && /conversation/.test((await rec({ ...ev, conversation_id: 'CONV-other-0000' })) || ''));
+  // The reply matcher (pure): Microsoft 365's authenticated identity AND the verified reply relationship.
   const reqRow = { ...row, expires_at: row.expires_at instanceof Date ? row.expires_at.toISOString() : row.expires_at };
-  const msg = { id: 'g1', internetMessageId: '<reply-1@example.test>', receivedDateTime: new Date().toISOString(), subject: 'RE: ' + row.subject, from: { emailAddress: { address: 'owner@example.test' } }, replyText: 'Approved.\n\nFrom: Tessa' };
-  const H = [{ name: 'X-MS-Exchange-Organization-AuthAs', value: 'Internal' }, { name: 'X-MS-Exchange-Organization-AuthSource', value: 'mail.example.test' }];
-  const okv = OA.authorizationFromReply(msg, { requests: [reqRow], ownerEmail: 'owner@example.test', headers: H });
-  check('554 REPLY: the owner’s internal "approved" reply to that subject matches; spoofed, external, unrelated, negated or late replies do not',
-    okv.match && okv.request.id === req.id && okv.evidence.auth_as === 'Internal'
-    && !OA.authorizationFromReply({ ...msg, from: { emailAddress: { address: 'x@evil.test' } } }, { requests: [reqRow], ownerEmail: 'owner@example.test', headers: H }).match
-    && !OA.authorizationFromReply(msg, { requests: [reqRow], ownerEmail: 'owner@example.test', headers: [{ name: 'X-MS-Exchange-Organization-AuthAs', value: 'Anonymous' }] }).match
-    && !OA.authorizationFromReply({ ...msg, subject: 'RE: something else' }, { requests: [reqRow], ownerEmail: 'owner@example.test', headers: H }).match
-    && !OA.authorizationFromReply({ ...msg, replyText: 'Do not approve yet' }, { requests: [reqRow], ownerEmail: 'owner@example.test', headers: H }).match
-    && !OA.authorizationFromReply({ ...msg, replyText: 'Looks fine' }, { requests: [reqRow], ownerEmail: 'owner@example.test', headers: H }).match
-    && !OA.authorizationFromReply({ ...msg, receivedDateTime: '2999-01-01T00:00:00Z' }, { requests: [reqRow], ownerEmail: 'owner@example.test', headers: H }).match);
+  const msg = { id: 'g1', internetMessageId: '<reply-1@example.test>', receivedDateTime: new Date().toISOString(), subject: 'RE: ' + row.subject, conversationId: REQ_CONV,
+    from: { emailAddress: { address: 'owner@example.test' } }, sender: { emailAddress: { address: 'owner@example.test' } }, replyText: 'Approved.\n\nFrom: Tessa' };
+  const H = [{ name: 'X-MS-Exchange-Organization-AuthAs', value: 'Internal' }, { name: 'X-MS-Exchange-Organization-AuthSource', value: 'mail.example.test' }, { name: 'X-MS-Exchange-Organization-AuthMechanism', value: '04' },
+    { name: 'In-Reply-To', value: REQ_MID }, { name: 'References', value: REQ_MID }];
+  const ctx = { requests: [reqRow], ownerEmail: 'owner@example.test', headers: H };
+  const okv = OA.authorizationFromReply(msg, ctx);
+  const no = (m, c = ctx) => !OA.authorizationFromReply(m, c).match;
+  check('555 REPLY: only the owner’s authenticated reply TO the request email, in its conversation, saying approved, before expiry, matches',
+    okv.match && okv.request.id === req.id && okv.evidence.in_reply_to === REQ_MID && okv.evidence.conversation_id === REQ_CONV && okv.evidence.auth_mechanism === '04'
+    && no({ ...msg, from: { emailAddress: { address: 'x@evil.test' } } }) && no({ ...msg, sender: { emailAddress: { address: 'delegate@example.test' } } })
+    && no(msg, { ...ctx, headers: H.filter((x) => x.name !== 'X-MS-Exchange-Organization-AuthMechanism') }) && no(msg, { ...ctx, headers: [{ name: 'X-MS-Exchange-Organization-AuthAs', value: 'Anonymous' }] })
+    && no(msg, { ...ctx, headers: H.filter((x) => !/In-Reply-To|References/.test(x.name)) }) && no({ ...msg, conversationId: 'CONV-other-0000' })
+    && no({ ...msg, subject: 'RE: something else' }) && no({ ...msg, replyText: 'Do not approve yet' }) && no({ ...msg, replyText: 'Looks fine' })
+    && no({ ...msg, receivedDateTime: '2999-01-01T00:00:00Z' }));
   await rpc('owner_authorization_record', { p_id: req.id, p_user_id: 'owner-user-id', p_email: 'owner@example.test', p_evidence: okv.evidence });
   check('554 an unlisted item, or a listed item with another fingerprint, is refused', /did not authorize this adjustment/.test((await code(() => exec({ p_object_id: D3.id, p_fingerprint: D3.fingerprint }))) || '')
     && /did not authorize/.test((await code(() => exec({ p_fingerprint: 'e'.repeat(64) }))) || ''));
