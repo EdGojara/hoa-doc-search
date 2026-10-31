@@ -73,7 +73,7 @@ check('in-period invoice the legacy books lack -> the only question is the perio
   assert.ok(it.evidence.identifier_elsewhere_in_source.length === 2 && it.evidence.identifier_elsewhere_in_source.every((r) => r.source_type === 'Owner Charge'));
   const d = it.evidence.decision;
   assert.strictEqual(d.question, 'Example Law Firm invoice EX-5501 ($61.50, dated 7/31/2026) is real but is not in the legacy books. Record it after the cutoff, or on 7/31/2026?');
-  assert.deepStrictEqual(d.choices.map((c) => c.key), ['record_after_cutoff', 'record_on_document_date']); assert.strictEqual(d.recommended, 'record_after_cutoff');
+  assert.deepStrictEqual(d.choices.map((c) => c.key), ['record_after_cutoff', 'record_on_document_date', 'already_in_legacy_books']); assert.strictEqual(d.recommended, 'record_after_cutoff');
   assert.ok(d.context.some((c) => /appear in the legacy books on 7\/31\/2026 as Owner Charge/.test(c)) && d.context.some((c) => /not yet paid \(approved\)/.test(c)));
   assert.ok(!/—/.test(JSON.stringify(d)), 'no em-dashes in the question');
 });

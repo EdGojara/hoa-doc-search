@@ -229,6 +229,20 @@ function buildRouter({ service, auth, listCommunities }) {
     catch (e) { fail(res, e, 'decide conversion object'); }
   });
 
+  // ---- Owner approval package: every pending owner decision across the open batches, approved in ONE
+  // authenticated action through the same decideObject / decide calls (each one audited on its own).
+  // Owner from the session; channel 'in_app' set HERE; the body names only the selected items.
+  router.get('/approval-package', async (req, res) => {
+    try { const o = await owner(req, res); if (!o) return; res.json(await service.approvalPackage(o)); }
+    catch (e) { fail(res, e, 'approval package'); }
+  });
+  router.post('/approval-package/approve', express.json({ limit: '64kb' }), async (req, res) => {
+    try { const o = await owner(req, res); if (!o) return; const b = req.body || {};
+      const pick = (x) => ({ batch_id: String(x.batch_id || ''), object_type: x.object_type, id: x.id, fingerprint: x.fingerprint, completion_id: x.completion_id, event_key: x.event_key, choice: x.choice, reason: x.reason || null });
+      res.json(await service.approvePackage(o, { objects: (b.objects || []).map(pick), bridge: (b.bridge || []).map(pick) }, { channel: 'in_app' })); }
+    catch (e) { fail(res, e, 'approve package'); }
+  });
+
   router.get('/batches/:id/execution', async (req, res) => {
     try { if (!(await admin(req, res))) return; res.json({ executions: await service.getExecution(req.params.id) }); }
     catch (e) { fail(res, e, 'execution'); }

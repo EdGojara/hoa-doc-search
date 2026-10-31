@@ -407,6 +407,7 @@ const CHECKS = [
   'tests/test_cutoff_adjustments.js',
   'tests/test_source_controls_owner_model.js',
   'tests/test_onboarding_api.js',
+  'tests/test_onboarding_approval_package.js',
   'tests/test_onboarding_snapshot.js',
   'tests/test_onboarding_bridge.js',
   'tests/test_onboarding_bridge_evidence.js',
