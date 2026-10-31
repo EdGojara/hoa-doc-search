@@ -204,7 +204,7 @@ async function run() {
         .from('property_ownerships').insert({
           property_id: fix.property_id,
           contact_id: realContact.id,
-          start_date: today,
+          start_date: null,   // title date unknown; never the fix date (mig 553)
           is_primary: true,
           source: 'fix_placeholder_owners',
           notes: `Replaces placeholder ownership (was contact ${fix.placeholder_id} "${fix.placeholder_name}")`,

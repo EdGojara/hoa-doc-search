@@ -318,6 +318,7 @@ const CHECKS = [
   'tests/sql/548_user_profiles_lockdown_e2e.mjs',
   'tests/sql/549_mailing_address_e2e.mjs',
   'tests/sql/550_vault_documents_e2e.mjs',
+  'tests/sql/553_ownership_start_dates_e2e.mjs',
   'tests/test_vault_documents.js',
   'tests/test_mailing_address_resolver.js',
   'tests/test_user_profiles_lockdown.js',

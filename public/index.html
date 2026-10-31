@@ -9849,7 +9849,7 @@
             </div>
             ${legalPill ? `<div style="margin-top:6px;">${legalPill}</div>` : ''}
             <div style="font-size:11px; color:#6B7280; margin-top:4px;">
-              ${escapeHtml(cname)} · Owned since ${escapeHtml(entry.ownership.start_date || '')}${entry.ownership.vesting ? ' · ' + escapeHtml(entry.ownership.vesting) : ''}${entry.ownership.is_primary ? ' · <strong style="color:#1E2761;">Primary contact</strong>' : ''}
+              ${escapeHtml(cname)} · ${entry.ownership.start_date ? 'Owned since ' + escapeHtml(entry.ownership.start_date) : 'Ownership start not on record'}${entry.ownership.vesting ? ' · ' + escapeHtml(entry.ownership.vesting) : ''}${entry.ownership.is_primary ? ' · <strong style="color:#1E2761;">Primary contact</strong>' : ''}
             </div>
           </div>`;
       });
