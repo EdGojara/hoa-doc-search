@@ -377,7 +377,7 @@ async function run() {
           .from('property_ownerships').insert({
             property_id: propertyId,
             contact_id: contactId,
-            start_date: TODAY,
+            start_date: null,   // title date unknown from the roster; never the import date (mig 553)
             is_primary: true,
             source: 'import_canyon_gate',
           });

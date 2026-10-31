@@ -113,5 +113,29 @@ t('migration 460 only relaxes same-day for transfer-created, named-seller tenure
   assert.ok(!/ALTER TABLE|UPDATE ownership_tenures SET chain|chain_seq/.test(sql.split('CREATE OR REPLACE FUNCTION')[0]), 'no schema/backfill changes');
 });
 
+// Mig 553 scar: every roster load wrote its own date as each owner's start date (4,000+ false dates
+// that then blocked real transfers). An import does not know when someone took title: NULL, never "today".
+t('no ownership insert stamps the run date as the start date', () => {
+  const files = [...appFiles, ...walk('scripts')];
+  const bad = [];
+  for (const f of files) {
+    const src = read(f);
+    const re = /from\('property_ownerships'\)\s*\.(insert|upsert)\(\s*(\{[\s\S]*?\}|\[[\s\S]*?\])\s*[,)]/g;
+    let m;
+    while ((m = re.exec(src))) {
+      const sd = /start_date\s*:\s*([^,\n}]+)/.exec(m[2]);
+      if (sd && /\b(today|TODAY|now|NOW)\b|new Date\(|toISOString|CURRENT_DATE/.test(sd[1])) bad.push(`${f}: start_date: ${sd[1].trim()}`);
+    }
+  }
+  assert.deepStrictEqual(bad, [], 'ownership start = run date: ' + bad.join('; '));
+});
+
+t('migration 553 corrects only the listed roster-load periods and leaves the tenure guard on', () => {
+  const sql = read('migrations/553_ownership_start_dates_county.sql');
+  assert.ok(/ALTER TABLE ownership_tenures DISABLE TRIGGER trg_ownership_tenures_guard;[\s\S]*?ALTER TABLE ownership_tenures ENABLE TRIGGER trg_ownership_tenures_guard;/.test(sql));
+  assert.ok(/t\.origin = 'backfill_current'/.test(sql) && /IF n <> 2332 THEN RAISE EXCEPTION 'guard: % ownership periods updated/.test(sql));
+  assert.ok(!/\b(Davis|Hamilton|Travertine)\b/i.test(sql), 'no homeowner names in a public migration');
+});
+
 console.log(failed ? `\n${failed} failure(s)` : '\nall passed');
 process.exitCode = failed ? 1 : 0;

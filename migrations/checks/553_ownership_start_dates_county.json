@@ -1,0 +1,172 @@
+{
+  "migration": "553_ownership_start_dates_county.sql",
+  "summary": "Replaces the roster-load dates recorded as ownership start dates in Quail Ridge, Waterview, Still Creek and Canyon Gate (2,332 listed current ownership periods). 1,216 get the Fort Bend CAD deed date where the county roll matches one parcel, the owner name agrees and the date passes validation (basis county_deed: recording evidence, not a confirmed closing date); 1,116 become NULL (unknown, before trustEd history). Every change is recorded in the new append-only ownership_start_date_corrections with the prior date, reason and county evidence. property_ownerships.start_date becomes nullable; ownership_tenures gains start_date_basis. No owner, contact, account number, end date, balance, ledger row, GL entry, proposal or home sale changes. Unblocks the pending Waterview transfer 0f146aca (settlement 2026-05-04).",
+  "requires": [
+    "459_ownership_transfer_single_path.sql"
+  ],
+  "preflight": [
+    {
+      "name": "553 not applied yet (no start_date_basis column, no corrections table)",
+      "sql": "SELECT ((SELECT count(*) FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'ownership_tenures' AND column_name = 'start_date_basis') + (SELECT count(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'ownership_start_date_corrections'))::int",
+      "expect": 0
+    },
+    {
+      "name": "property_ownerships.start_date is still NOT NULL",
+      "sql": "SELECT count(*)::int FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'property_ownerships' AND column_name = 'start_date' AND is_nullable = 'NO'",
+      "expect": 1
+    },
+    {
+      "name": "the reconciled roster-load periods are all still in place (QR 101 on 5/18, WV 972 on 5/19 + 195 on 5/26, SCR 344 on 5/21, CG 720 on 5/26)",
+      "sql": "SELECT count(*)::int FROM ownership_tenures t WHERE t.kind = 'owner' AND t.origin = 'backfill_current' AND t.end_date IS NULL AND t.created_by_proposal_id IS NULL AND (t.community_id, t.start_date) IN (('a0000000-0000-4000-8000-000000000005'::uuid, DATE '2026-05-18'), ('a0000000-0000-4000-8000-000000000001'::uuid, DATE '2026-05-19'), ('a0000000-0000-4000-8000-000000000001'::uuid, DATE '2026-05-26'), ('a0000000-0000-4000-8000-000000000006'::uuid, DATE '2026-05-21'), ('a0000000-0000-4000-8000-000000000003'::uuid, DATE '2026-05-26'))",
+      "expect": 2332
+    },
+    {
+      "name": "none of those periods carries an approved-transfer or title-report ownership",
+      "sql": "SELECT count(*)::int FROM property_ownerships o JOIN ownership_tenures t ON t.id = o.tenure_id WHERE o.end_date IS NULL AND o.source IN ('ownership_proposal_approval', 'vantaca_transfer_report', 'title_transfer') AND t.origin = 'backfill_current' AND t.end_date IS NULL AND (t.community_id, t.start_date) IN (('a0000000-0000-4000-8000-000000000005'::uuid, DATE '2026-05-18'), ('a0000000-0000-4000-8000-000000000001'::uuid, DATE '2026-05-19'), ('a0000000-0000-4000-8000-000000000001'::uuid, DATE '2026-05-26'), ('a0000000-0000-4000-8000-000000000006'::uuid, DATE '2026-05-21'), ('a0000000-0000-4000-8000-000000000003'::uuid, DATE '2026-05-26'))",
+      "expect": 0
+    },
+    {
+      "name": "the pending Waterview transfer 0f146aca (settlement 2026-05-04) is still blocked by the 2026-05-19 load date",
+      "sql": "SELECT count(*)::int FROM ownership_change_proposals pr JOIN ownership_tenures t ON t.property_id = pr.property_id AND t.kind = 'owner' AND t.end_date IS NULL WHERE pr.id = '0f146aca-ec7f-4dd7-ad09-81b7b8459e4e' AND pr.status = 'pending' AND pr.effective_start_date = DATE '2026-05-04' AND t.start_date = DATE '2026-05-19'",
+      "expect": 1
+    },
+    {
+      "name": "the seller account on that lot holds its -$56.37 credit",
+      "sql": "SELECT coalesce(sum(balance_cents), 0)::int FROM v_homeowner_current_balance WHERE community_id = 'a0000000-0000-4000-8000-000000000001' AND vantaca_account_id = '10111325'",
+      "expect": -5637
+    }
+  ],
+  "expected_changes": [
+    "property_ownerships.start_date allows NULL (not known; before trustEd history).",
+    "ownership_tenures gains start_date_basis (settlement / county_deed / unknown) with a check constraint.",
+    "New append-only table ownership_start_date_corrections (association_record): one row per corrected period with the prior date, corrected date or NULL, reason and county evidence; service_role read only.",
+    "2,332 listed current ownership periods: 1,216 start on the county deed date (basis county_deed), 1,116 start NULL (basis unknown). Their open ownership rows get the same start.",
+    "No owner, contact, account number, end date, balance, ledger row, GL entry, proposal or home sale changes; no start date outside the list changes."
+  ],
+  "objects": {
+    "added": [
+      "column:ownership_start_date_corrections.action",
+      "column:ownership_start_date_corrections.community_id",
+      "column:ownership_start_date_corrections.corrected_start_date",
+      "column:ownership_start_date_corrections.created_at",
+      "column:ownership_start_date_corrections.evidence",
+      "column:ownership_start_date_corrections.id",
+      "column:ownership_start_date_corrections.migration",
+      "column:ownership_start_date_corrections.ownership_ids",
+      "column:ownership_start_date_corrections.prior_start_date",
+      "column:ownership_start_date_corrections.property_id",
+      "column:ownership_start_date_corrections.reason",
+      "column:ownership_start_date_corrections.tenure_id",
+      "column:ownership_tenures.start_date_basis",
+      "constraint:ownership_start_date_corrections.ownership_start_date_corrections_action_check",
+      "constraint:ownership_start_date_corrections.ownership_start_date_corrections_community_id_fkey",
+      "constraint:ownership_start_date_corrections.ownership_start_date_corrections_one_per_tenure",
+      "constraint:ownership_start_date_corrections.ownership_start_date_corrections_pkey",
+      "constraint:ownership_start_date_corrections.ownership_start_date_corrections_property_id_fkey",
+      "constraint:ownership_start_date_corrections.ownership_start_date_corrections_reason_check",
+      "constraint:ownership_start_date_corrections.ownership_start_date_corrections_shape",
+      "constraint:ownership_start_date_corrections.ownership_start_date_corrections_tenure_id_fkey",
+      "constraint:ownership_tenures.ownership_tenures_start_date_basis_check",
+      "function:ownership_start_date_corrections_guard",
+      "index:idx_ownership_start_date_corrections_community",
+      "index:idx_ownership_start_date_corrections_property",
+      "index:ownership_start_date_corrections_one_per_tenure",
+      "index:ownership_start_date_corrections_pkey",
+      "table:ownership_start_date_corrections",
+      "trigger:ownership_start_date_corrections.trg_ownership_start_date_corrections_guard"
+    ],
+    "changed": [
+      "column:property_ownerships.start_date"
+    ],
+    "removed": []
+  },
+  "row_changes": {
+    "ownership_tenures": 0,
+    "property_ownerships": 0,
+    "ownership_start_date_corrections": 2332
+  },
+  "protected": [
+    {
+      "table": "homeowner_transactions",
+      "order_by": "id"
+    },
+    {
+      "table": "transaction_upload_batches",
+      "order_by": "id"
+    },
+    {
+      "table": "journal_entries",
+      "order_by": "id"
+    },
+    {
+      "table": "journal_entry_lines",
+      "order_by": "id"
+    },
+    {
+      "table": "properties",
+      "order_by": "id"
+    },
+    {
+      "table": "contacts",
+      "order_by": "id"
+    },
+    {
+      "table": "ownership_change_proposals",
+      "order_by": "id"
+    },
+    {
+      "table": "home_sales",
+      "order_by": "id"
+    },
+    {
+      "table": "ar_charges",
+      "order_by": "id"
+    },
+    {
+      "table": "ar_payments",
+      "order_by": "id"
+    }
+  ],
+  "verify": [
+    {
+      "name": "2,332 corrections: 1,216 county deed dates, 1,116 cleared to unknown",
+      "sql": "SELECT count(*)::text || '/' || count(*) FILTER (WHERE action = 'county_deed_date')::text || '/' || count(*) FILTER (WHERE action = 'cleared_unknown')::text FROM ownership_start_date_corrections",
+      "expect": "2332/1216/1116"
+    },
+    {
+      "name": "by community (deed dates/cleared): CG 441/279, QR 38/63, SCR 182/162, WV 555/612",
+      "sql": "SELECT string_agg(k, ' ' ORDER BY k) FROM (SELECT CASE community_id WHEN 'a0000000-0000-4000-8000-000000000003' THEN 'CG' WHEN 'a0000000-0000-4000-8000-000000000005' THEN 'QR' WHEN 'a0000000-0000-4000-8000-000000000006' THEN 'SCR' WHEN 'a0000000-0000-4000-8000-000000000001' THEN 'WV' ELSE 'OTHER' END || ':' || count(*) FILTER (WHERE action = 'county_deed_date') || '/' || count(*) FILTER (WHERE action = 'cleared_unknown') AS k FROM ownership_start_date_corrections GROUP BY community_id) x",
+      "expect": "CG:441/279 QR:38/63 SCR:182/162 WV:555/612"
+    },
+    {
+      "name": "no current period in the four communities still starts on a roster-load date",
+      "sql": "SELECT count(*)::int FROM ownership_tenures t WHERE t.kind = 'owner' AND t.origin = 'backfill_current' AND t.end_date IS NULL AND (t.community_id, t.start_date) IN (('a0000000-0000-4000-8000-000000000005'::uuid, DATE '2026-05-18'), ('a0000000-0000-4000-8000-000000000001'::uuid, DATE '2026-05-19'), ('a0000000-0000-4000-8000-000000000001'::uuid, DATE '2026-05-26'), ('a0000000-0000-4000-8000-000000000006'::uuid, DATE '2026-05-21'), ('a0000000-0000-4000-8000-000000000003'::uuid, DATE '2026-05-26'))",
+      "expect": 0
+    },
+    {
+      "name": "every corrected period matches its record and its basis",
+      "sql": "SELECT count(*)::int FROM ownership_tenures t JOIN ownership_start_date_corrections c ON c.tenure_id = t.id WHERE t.start_date IS NOT DISTINCT FROM c.corrected_start_date AND t.start_date_basis = CASE WHEN c.corrected_start_date IS NULL THEN 'unknown' ELSE 'county_deed' END",
+      "expect": 2332
+    },
+    {
+      "name": "the tenure immutability guard is enabled again",
+      "sql": "SELECT count(*)::int FROM pg_trigger WHERE tgname = 'trg_ownership_tenures_guard' AND tgenabled = 'O'",
+      "expect": 1
+    },
+    {
+      "name": "the pending Waterview transfer 0f146aca is no longer blocked (seller start before 2026-05-04, no open ownership after 2026-05-03)",
+      "sql": "SELECT count(*)::int FROM ownership_change_proposals pr JOIN ownership_tenures t ON t.property_id = pr.property_id AND t.kind = 'owner' AND t.end_date IS NULL WHERE pr.id = '0f146aca-ec7f-4dd7-ad09-81b7b8459e4e' AND pr.status = 'pending' AND t.start_date = DATE '2013-10-29' AND t.start_date_basis = 'county_deed' AND NOT EXISTS (SELECT 1 FROM property_ownerships o WHERE o.property_id = pr.property_id AND o.end_date IS NULL AND o.start_date > DATE '2026-05-03')",
+      "expect": 1
+    },
+    {
+      "name": "the seller account still holds its -$56.37 credit",
+      "sql": "SELECT coalesce(sum(balance_cents), 0)::int FROM v_homeowner_current_balance WHERE community_id = 'a0000000-0000-4000-8000-000000000001' AND vantaca_account_id = '10111325'",
+      "expect": -5637
+    },
+    {
+      "name": "property_ownerships.start_date now allows NULL",
+      "sql": "SELECT count(*)::int FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'property_ownerships' AND column_name = 'start_date' AND is_nullable = 'YES'",
+      "expect": 1
+    }
+  ]
+}

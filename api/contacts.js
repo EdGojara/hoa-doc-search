@@ -258,7 +258,7 @@ router.post('/contacts/vantaca/apply/:id', express.json({ limit: '50mb' }), asyn
             await supabase.from('property_ownerships').insert({
               property_id: newProp.id,
               contact_id: contact.id,
-              start_date: today,
+              start_date: null,   // when they took title is unknown here; never the import date (mig 553)
               vesting: item.proposed_owner.vesting,
               is_primary: true,
               source: 'vantaca_import',
@@ -370,7 +370,7 @@ router.post('/contacts/vantaca/apply/:id', express.json({ limit: '50mb' }), asyn
           await supabase.from('property_ownerships').insert({
             property_id: item.property_id,
             contact_id: contact.id,
-            start_date: today,
+            start_date: null,   // when they took title is unknown here; never the import date (mig 553)
             vesting: item.vesting,
             is_primary: true,
             source: 'vantaca_import',
