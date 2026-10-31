@@ -314,7 +314,9 @@ check('opening reclasses are owner-only in the service, and the stage route pass
   assert.match(svc, /if \(\(openingReclasses\.length \|\| openingCorrections\.length \|\| ledgerDispositions\.length \|\| formerOwnerRouting \|\| fundAllocations\.length\) && !\(actor && actor\.role === 'owner'\)\) throw new ServiceError\(403, 'OWNER_ONLY'/);
   // 535: request-supplied routing (owner only) still passes through; otherwise an APPROVED separate-accounts policy supplies it.
   assert.match(svc, /const routing = formerOwnerRouting \|\| \(legacy && legacy\.value\.presentation === 'separate_accounts'/);
-  assert.match(svc, /ledger_dispositions: ledgerDispositions, former_owner_routing: routing, fund_allocations: fundAllocations,/);
+  assert.match(svc, /ledger_dispositions: ledgerDispositions, former_owner_routing: routing, fund_allocations: allocations,/);
+  // 552: the owner's stage-setting allocations pass through first; approved fund_allocation policies join for other accounts.
+  assert.match(svc, /const allocations = \[\.\.\.fundAllocations, \.\.\.OBJ\.fundAllocations\(objects\)/);
   assert.match(fs.readFileSync(path.join(__dirname, '..', 'api', 'onboarding.js'), 'utf8'), /opening_reclasses: b\.opening_reclasses, opening_corrections: b\.opening_corrections, ledger_dispositions: b\.ledger_dispositions, former_owner_routing: b\.former_owner_routing, fund_allocations: b\.fund_allocations/);
   assert.match(svc, /artifact_shas: \[\.\.\.view\.artifacts\.map\(\(a\) => a\.sha256\), \.\.\.\(await listEvidence\(view\.batch\.id\)\)\.map\(\(e\) => e\.sha256\)\]/, 'evidence-only documents (495) are citable');
 });
