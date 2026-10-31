@@ -1,0 +1,58 @@
+{
+  "migration": "552_conversion_source_discrepancy.sql",
+  "summary": "Two conversion policy kinds: source_discrepancy (a legacy trial balance that is itself out of balance by an exact amount in one account; that account opens at the source balance-sheet figure so every conversion entry balances, with the source amounts kept on record) and fund_allocation (an account's opening split by the source's fund columns, proposed and approved like every other conversion object). Widens conversion_policies_policy_kind_check and replaces conversion_policies_guard with the same rules plus the two kinds (keyed by account, exact cents / parts, source evidence required). No existing row changes.",
+  "requires": [
+    "535_conversion_primitives.sql"
+  ],
+  "preflight": [
+    {
+      "name": "conversion_policies exists (535 applied)",
+      "sql": "SELECT count(*)::int FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'conversion_policies'",
+      "expect": 1
+    },
+    {
+      "name": "no policy uses the new kinds yet",
+      "sql": "SELECT count(*)::int FROM conversion_policies WHERE policy_kind IN ('source_discrepancy','fund_allocation')",
+      "expect": 0
+    }
+  ],
+  "expected_changes": [
+    "conversion_policies_policy_kind_check also allows source_discrepancy and fund_allocation.",
+    "conversion_policies_guard keys both new kinds by account and refuses a source discrepancy without exact non-zero cents, basis balance_sheet and evidence, or a fund allocation without parts, basis source_fund_columns and evidence. Every existing rule is unchanged.",
+    "No row changes in any table."
+  ],
+  "objects": {
+    "added": [],
+    "changed": [
+      "constraint:conversion_policies.conversion_policies_policy_kind_check",
+      "function:conversion_policies_guard"
+    ],
+    "removed": []
+  },
+  "row_changes": {
+    "conversion_policies": 0,
+    "conversion_adjustments": 0
+  },
+  "protected": [
+    {
+      "table": "conversion_policies",
+      "order_by": "id"
+    },
+    {
+      "table": "conversion_adjustments",
+      "order_by": "id"
+    }
+  ],
+  "verify": [
+    {
+      "name": "the policy kind check allows source_discrepancy and fund_allocation",
+      "sql": "SELECT count(*)::int FROM pg_constraint WHERE conname = 'conversion_policies_policy_kind_check' AND pg_get_constraintdef(oid) LIKE '%source_discrepancy%' AND pg_get_constraintdef(oid) LIKE '%fund_allocation%'",
+      "expect": 1
+    },
+    {
+      "name": "the policy guard knows both kinds",
+      "sql": "SELECT count(*)::int FROM pg_proc WHERE proname = 'conversion_policies_guard' AND prosrc LIKE '%source_discrepancy%' AND prosrc LIKE '%fund_allocation%'",
+      "expect": 1
+    }
+  ]
+}

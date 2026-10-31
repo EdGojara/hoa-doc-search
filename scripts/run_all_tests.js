@@ -390,6 +390,7 @@ const CHECKS = [
   'tests/test_acc_approval_queue.js',
   'tests/test_acc_attachment_guard.js',
   'tests/test_onboarding_engine.js',
+  'tests/test_onboarding_source_discrepancy.js',
   'tests/test_onboarding_conversion_primitives.js',
   'tests/onboarding_quail_ridge_local.js',
   'tests/test_vantaca_balance_sheet_funds.js',
