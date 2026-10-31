@@ -103,7 +103,7 @@ for (const F of ['500_transfer_assessment_proration.sql', '501_conversion_builde
   await db.exec(lf(`${REPO}/migrations/${F}`)); await db.query(`INSERT INTO schema_migrations (filename, sha256) VALUES ($1, 'recorded')`, [F]);
 }
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'm535-e2e-')); fs.mkdirSync(path.join(dir, 'checks'));
-const FILES = ['535_conversion_primitives.sql', '536_conversion_execute_establishment.sql', '554_owner_delegated_approvals.sql', '555_owner_authorization_reply_identity.sql'];
+const FILES = ['535_conversion_primitives.sql', '536_conversion_execute_establishment.sql', '554_owner_delegated_approvals.sql', '555_owner_authorization_reply_identity.sql', '556_owner_authorization_definer.sql'];
 for (const F of FILES) {
   fs.writeFileSync(path.join(dir, F), lf(`${REPO}/migrations/${F}`));
   const cf = `${REPO}/migrations/checks/${F.replace('.sql', '.json')}`;
@@ -473,7 +473,10 @@ if (res && res.status === 'executed') {
   const REQ_MID = '<req-1@example.test>', REQ_CONV = 'CONV-abcdef123456';
   // A request that was never sent cannot be authorized (555).
   const unsent = await rpc('owner_authorization_request', { p_subject: 'Owner authorization 0000UNSE: test', p_summary: 'an unsent request summary', p_items: [items[0]], p_owner_email: 'owner@example.test', p_requested_by: OA.AGENT_ID, p_hours: 72 });
-  const req = await OA.requestAuthorization({ rpc, send: async (m) => { sent.push(m); return { sent: true, internetMessageId: REQ_MID, conversationId: REQ_CONV }; }, items, ownerEmail: 'owner@example.test', fromMailbox: 'tessa@example.test', summary: 'Two reviewed conversion items' });
+  // The server's calls run AS service_role (production privileges), never as the superuser this test connects as.
+  await db.exec('ALTER ROLE service_role BYPASSRLS');   // as Supabase's service_role (row security bypassed; table GRANTs still apply)
+  const asServer = async (fn) => { await db.exec('SET ROLE service_role'); try { return await fn(); } finally { await db.exec('RESET ROLE'); } };
+  const req = await asServer(() => OA.requestAuthorization({ rpc, send: async (m) => { sent.push(m); return { sent: true, internetMessageId: REQ_MID, conversationId: REQ_CONV }; }, items, ownerEmail: 'owner@example.test', fromMailbox: 'tessa@example.test', summary: 'Two reviewed conversion items' }));
   const row = await one(`SELECT * FROM owner_authorizations WHERE id = $1`, [req.id]);
   check('554/555 REQUEST: recorded as a request (nothing authorized) with the sent email’s message id and conversation; the email lists every id and fingerprint',
     row.status === 'requested' && !row.authorized_at && row.request_message_id === REQ_MID && row.request_conversation_id === REQ_CONV && sent.length === 1
@@ -508,11 +511,12 @@ if (res && res.status === 'executed') {
     && no(msg, { ...ctx, headers: H.filter((x) => !/In-Reply-To|References/.test(x.name)) }) && no({ ...msg, conversationId: 'CONV-other-0000' })
     && no({ ...msg, subject: 'RE: something else' }) && no({ ...msg, replyText: 'Do not approve yet' }) && no({ ...msg, replyText: 'Looks fine' })
     && no({ ...msg, receivedDateTime: '2999-01-01T00:00:00Z' }));
-  await rpc('owner_authorization_record', { p_id: req.id, p_user_id: 'owner-user-id', p_email: 'owner@example.test', p_evidence: okv.evidence });
+  await asServer(() => rpc('owner_authorization_record', { p_id: req.id, p_user_id: 'owner-user-id', p_email: 'owner@example.test', p_evidence: okv.evidence }));
   check('554 an unlisted item, or a listed item with another fingerprint, is refused', /did not authorize this adjustment/.test((await code(() => exec({ p_object_id: D3.id, p_fingerprint: D3.fingerprint }))) || '')
     && /did not authorize/.test((await code(() => exec({ p_fingerprint: 'e'.repeat(64) }))) || ''));
   const auth = await one(`SELECT * FROM owner_authorizations WHERE id = $1`, [req.id]);
-  const out = await OA.executeAuthorization({ rpc, operate: async () => ({ stopped_at: 'preflight' }), authorization: auth });
+  const out = await asServer(() => OA.executeAuthorization({ rpc, operate: async () => ({ stopped_at: 'preflight' }), authorization: auth }));
+  check('556 the server role still has no direct UPDATE on owner_authorizations', /permission denied/.test((await asServer(() => code(() => db.query(`UPDATE owner_authorizations SET summary = summary WHERE id = $1`, [req.id])))) || ''));
   const a1 = await one(`SELECT status, approved_by_user_id, approved_by_label, approval_channel, decision_note FROM conversion_adjustments WHERE id = $1`, [D1.id]);
   const p2 = await one(`SELECT status, approved_by_user_id, approval_channel FROM conversion_policies WHERE id = $1`, [D2.id]);
   const evs = await q(`SELECT object_id, actor_kind, actor_id, channel, detail FROM conversion_object_events WHERE batch_id = $1 AND event = 'approved' ORDER BY seq`, [Bd]);

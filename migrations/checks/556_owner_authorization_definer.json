@@ -1,0 +1,67 @@
+{
+  "migration": "556_owner_authorization_definer.sql",
+  "summary": "Fix for 554/555: the owner-authorization state functions (owner_authorization_sent, owner_authorization_record, owner_authorization_mark_executed, conversion_decide_object_delegated) run as SECURITY DEFINER with a pinned search_path, because the server role has only SELECT/INSERT on owner_authorizations and the first request failed at owner_authorization_sent after its email was sent. The one request left without its email identity (it can never be authorized) is revoked with the reason kept. No other row changes.",
+  "requires": [
+    "555_owner_authorization_reply_identity.sql"
+  ],
+  "preflight": [
+    {
+      "name": "no owner authorization has been authorized or executed",
+      "sql": "SELECT count(*)::int FROM owner_authorizations WHERE status IN ('authorized', 'executed')",
+      "expect": 0
+    },
+    {
+      "name": "at most one request was sent without its email identity (the failed 7C1D2880 request)",
+      "sql": "SELECT (count(*) <= 1)::int FROM owner_authorizations WHERE status = 'requested' AND request_message_id IS NULL",
+      "expect": 1
+    }
+  ],
+  "expected_changes": [
+    "The four owner-authorization state functions become SECURITY DEFINER with search_path = public; service_role keeps only SELECT/INSERT on owner_authorizations.",
+    "The request sent without its email identity is revoked (reason kept in execution); nothing else changes."
+  ],
+  "objects": {
+    "added": [],
+    "changed": [
+      "function:conversion_decide_object_delegated",
+      "function:owner_authorization_mark_executed",
+      "function:owner_authorization_record",
+      "function:owner_authorization_sent"
+    ],
+    "removed": []
+  },
+  "row_changes": {
+    "owner_authorizations": 0
+  },
+  "protected": [
+    {
+      "table": "conversion_adjustments",
+      "order_by": "id"
+    },
+    {
+      "table": "conversion_policies",
+      "order_by": "id"
+    },
+    {
+      "table": "conversion_object_events",
+      "order_by": "id"
+    }
+  ],
+  "verify": [
+    {
+      "name": "the four state functions are SECURITY DEFINER with a pinned search_path",
+      "sql": "SELECT count(*)::int FROM pg_proc WHERE proname IN ('owner_authorization_sent', 'owner_authorization_record', 'owner_authorization_mark_executed', 'conversion_decide_object_delegated') AND prosecdef AND array_to_string(proconfig, ',') LIKE '%search_path=public%'",
+      "expect": 4
+    },
+    {
+      "name": "no open request lacks its email identity",
+      "sql": "SELECT count(*)::int FROM owner_authorizations WHERE status = 'requested' AND request_message_id IS NULL",
+      "expect": 0
+    },
+    {
+      "name": "the server role still cannot UPDATE the table directly",
+      "sql": "SELECT (has_table_privilege('service_role', 'owner_authorizations', 'UPDATE'))::int",
+      "expect": 0
+    }
+  ]
+}
