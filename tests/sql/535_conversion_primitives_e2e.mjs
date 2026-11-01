@@ -528,6 +528,16 @@ if (res && res.status === 'executed') {
   check('554 the unlisted item stays proposed; the authorization is closed and cannot be reused',
     (await one(`SELECT status FROM conversion_adjustments WHERE id = $1`, [D3.id])).status === 'proposed' && (await one(`SELECT status FROM owner_authorizations WHERE id = $1`, [req.id])).status === 'executed'
     && /no authorized owner authorization/.test((await code(() => exec({ p_object_id: D3.id, p_fingerprint: D3.fingerprint }))) || ''));
+  // A duplicate delivery of the same reply (push notification twice, push plus a manual Poll, a delta
+  // recovery) must not authorize or approve anything a second time.
+  const dupRecord = await asServer(() => code(() => rpc('owner_authorization_record', { p_id: req.id, p_user_id: 'owner-user-id', p_email: 'owner@example.test', p_evidence: okv.evidence })));
+  const dupDecide = await asServer(() => code(() => exec()));
+  const dupRun = await asServer(() => code(() => OA.executeAuthorization({ rpc, operate: async () => ({ stopped_at: 'preflight' }), authorization: auth })));
+  const evAfter = await q(`SELECT object_id FROM conversion_object_events WHERE batch_id = $1 AND event = 'approved'`, [Bd]);
+  check('DUPLICATE: the same reply delivered again is refused at record and at every item; no second approval event is written',
+    /already executed|already authorized/.test(dupRecord || '') && /no authorized owner authorization/.test(dupDecide || '')
+    && evAfter.length === 2 && (await one(`SELECT status FROM owner_authorizations WHERE id = $1`, [req.id])).status === 'executed',
+    JSON.stringify({ dupRecord, dupDecide, dupRun, events: evAfter.length }).slice(0, 600));
   check('554 an agent approval without an authorization is refused by the audit check itself', /decision_human|check/.test((await code(() => db.query(`INSERT INTO conversion_object_events (batch_id, community_id, object_type, object_id, event, fingerprint, actor_kind, actor_id, channel, detail) VALUES ($1, $2, 'adjustment', $3, 'approved', $4, 'agent', 'x', 'owner_delegation', '{}')`, [Bd, COMM, D3.id, D3.fingerprint]))) || '')
     && /only a human/.test((await code(() => rpc('conversion_decide_object', { p_object_type: 'adjustment', p_object_id: D3.id, p_decision: 'approved', p_fingerprint: D3.fingerprint, p_channel: 'in_app', p_actor_kind: 'agent', p_actor_id: 'x', p_actor_label: 'x', p_note: null }))) || ''));
 }
