@@ -390,7 +390,14 @@
   async function reversePosting(id) {
     var reason = prompt('Why is this posting being reversed? (kept on the audit trail)');
     if (!reason || reason.trim().length < 5) return;
-    var r = await TX.post('/api/legal-review/postings/' + encodeURIComponent(id) + '/reverse', { reason: reason.trim() });
+    // Dated the posting's own date by default (the entry and the owner credit both carry it), so the
+    // correction lands in the month the posting did; the server refuses a closed month.
+    var own = ((state.treatment && state.treatment.postings) || []).filter(function (x) { return x.id === id; })[0];
+    var date = prompt('Reversal date (YYYY-MM-DD). The posting’s own date keeps the correction in the same month.', String((own && own.posting_date) || '').slice(0, 10));
+    if (date === null) return;
+    date = date.trim();
+    if (date && !/^\d{4}-\d{2}-\d{2}$/.test(date)) { state.treatErr = 'Not reversed: the date must look like 2026-10-11.'; renderTreatment(); return; }
+    var r = await TX.post('/api/legal-review/postings/' + encodeURIComponent(id) + '/reverse', { reason: reason.trim(), reversal_date: date || undefined });
     state.treatErr = r.ok ? null : ((r.body && r.body.detail) || 'Not reversed (' + r.error + ').');
     if (r.ok) openInvoice(state.detail.invoice.id, true); else renderTreatment();
   }
