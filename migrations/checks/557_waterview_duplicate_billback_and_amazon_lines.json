@@ -1,0 +1,96 @@
+{
+  "migration": "557_waterview_duplicate_billback_and_amazon_lines.sql",
+  "summary": "Waterview post-cutover corrections. A: the duplicate $42.00 legal bill-back (JE-2026-00232, 8/31/2026; the same attorney invoice Vantaca charged the homeowner on 6/26, already in the 7/31 opening AR) is reversed on 8/31 (Dr 5870 / Cr 1300, linked by reverses_je_id; the original is voided and names its reversal), and a -$42.00 homeowner credit is posted against the duplicate trustEd charge in the same transaction. GL 1300 and the homeowner ledger both fall by $42.00; both originals stay. B: Amazon order 112-0467422-8439405 (unposted) gets its lines corrected to the receipt (napkins 3 x $4.99 = $14.97, the duplicate $2.59 tax line removed), so lines 31.45 + header tax 2.59 = total 34.04; no journal entry is written for it here.",
+  "requires": [
+    "529_posted_lines_immutable.sql"
+  ],
+  "preflight": [
+    {
+      "name": "JE-2026-00232 is the posted $42.00 entry of 8/31/2026 with no reversal",
+      "sql": "SELECT count(*)::int FROM journal_entries j WHERE j.id = '663d14c0-76d7-4cf8-bed6-4985aa2a6c96' AND j.status = 'posted' AND j.posting_date = DATE '2026-08-31' AND j.total_debits_cents = 4200 AND NOT EXISTS (SELECT 1 FROM journal_entries r WHERE r.reverses_je_id = j.id)",
+      "expect": 1
+    },
+    {
+      "name": "the duplicate $42.00 homeowner charge exists and has no offsetting credit",
+      "sql": "SELECT count(*)::int FROM homeowner_transactions h WHERE h.id = 'cd62c4c7-9db8-43f5-9664-05f981e9a40f' AND h.amount_cents = 4200 AND h.txn_type = 'charge' AND NOT EXISTS (SELECT 1 FROM homeowner_transactions x WHERE x.raw_row_jsonb->>'reverses_homeowner_transaction_id' = h.id::text)",
+      "expect": 1
+    },
+    {
+      "name": "account 10111113 stands at $1,044.35 (Vantaca 7/31 aging $1,044.35 is the target after both bill-back corrections)",
+      "sql": "SELECT coalesce(sum(balance_cents), 0)::int FROM v_homeowner_current_balance WHERE community_id = 'a0000000-0000-4000-8000-000000000001' AND vantaca_account_id = '10111113'",
+      "expect": 104435
+    },
+    {
+      "name": "August 2026 is open for Waterview",
+      "sql": "SELECT count(*)::int FROM accounting_periods WHERE community_id = 'a0000000-0000-4000-8000-000000000001' AND DATE '2026-08-31' BETWEEN period_start AND period_end AND status IN ('open', 'reopened')",
+      "expect": 1
+    },
+    {
+      "name": "the Amazon bill is the unposted $34.04 bill with four lines totalling $24.06",
+      "sql": "SELECT count(*)::int FROM ap_invoices i WHERE i.id = '33fbabb2-2c62-4df0-af72-a55054e058e9' AND i.status = 'awaiting_approval' AND i.posting_journal_entry_id IS NULL AND i.total_cents = 3404 AND i.tax_cents = 259 AND (SELECT count(*) FROM ap_invoice_lines l WHERE l.invoice_id = i.id) = 4 AND (SELECT sum(amount_cents) FROM ap_invoice_lines l WHERE l.invoice_id = i.id) = 2406",
+      "expect": 1
+    }
+  ],
+  "expected_changes": [
+    "One reversal entry dated 2026-08-31 (source 'reversal', reverses JE-2026-00232): Dr 5870 $42.00 / Cr 1300 $42.00, same fund and vendor as the original lines.",
+    "JE-2026-00232 becomes voided, naming that reversal; its lines are untouched.",
+    "One committed homeowner-ledger batch with one -$42.00 adjustment on account 10111113 dated 2026-08-31, linked to the duplicate charge cd62c4c7 and both entries; the charge itself is untouched.",
+    "Amazon bill 33fbabb2: napkins line $4.99 -> $14.97 (3 x $4.99); the $2.59 tax line is removed (tax stays in the header); a note on the bill records the correction. The bill stays unposted and awaiting approval.",
+    "Nothing else changes: no other entry, homeowner row, legal posting, payment or bill."
+  ],
+  "objects": {
+    "added": [],
+    "changed": [],
+    "removed": []
+  },
+  "row_changes": {
+    "journal_entries": 1,
+    "journal_entry_lines": 2,
+    "transaction_upload_batches": 1,
+    "homeowner_transactions": 1,
+    "ap_invoice_lines": -1,
+    "ap_invoices": 0
+  },
+  "protected": [
+    {
+      "table": "legal_invoice_postings",
+      "order_by": "id"
+    },
+    {
+      "table": "ap_payments",
+      "order_by": "id"
+    }
+  ],
+  "verify": [
+    {
+      "name": "JE-2026-00232 is voided and names a posted 8/31 reversal of itself",
+      "sql": "SELECT count(*)::int FROM journal_entries o JOIN journal_entries r ON r.id = o.void_reversal_je_id AND r.reverses_je_id = o.id WHERE o.id = '663d14c0-76d7-4cf8-bed6-4985aa2a6c96' AND o.status = 'voided' AND r.status = 'posted' AND r.posting_date = DATE '2026-08-31' AND r.source_module = 'reversal' AND r.total_debits_cents = 4200",
+      "expect": 1
+    },
+    {
+      "name": "the reversal mirrors the original line for line (account, fund, amount swapped)",
+      "sql": "SELECT count(*)::int FROM journal_entry_lines a JOIN journal_entries o ON o.id = a.journal_entry_id AND o.id = '663d14c0-76d7-4cf8-bed6-4985aa2a6c96' JOIN journal_entry_lines b ON b.journal_entry_id = o.void_reversal_je_id AND b.line_number = a.line_number AND b.account_id = a.account_id AND b.fund_id IS NOT DISTINCT FROM a.fund_id AND b.debit_cents = a.credit_cents AND b.credit_cents = a.debit_cents",
+      "expect": 2
+    },
+    {
+      "name": "one committed -$42.00 credit is linked to the duplicate charge and to both entries",
+      "sql": "SELECT count(*)::int FROM homeowner_transactions h JOIN transaction_upload_batches b ON b.id = h.source_batch_id AND b.status = 'committed' JOIN journal_entries o ON o.id = '663d14c0-76d7-4cf8-bed6-4985aa2a6c96' WHERE h.raw_row_jsonb->>'reverses_homeowner_transaction_id' = 'cd62c4c7-9db8-43f5-9664-05f981e9a40f' AND h.amount_cents = -4200 AND h.transaction_date = DATE '2026-08-31' AND h.vantaca_account_id = '10111113' AND h.raw_row_jsonb->>'reversal_journal_entry_id' = o.void_reversal_je_id::text",
+      "expect": 1
+    },
+    {
+      "name": "account 10111113 falls by exactly $42.00 to $1,002.35 (the $557.35 is corrected separately in Legal Review)",
+      "sql": "SELECT coalesce(sum(balance_cents), 0)::int FROM v_homeowner_current_balance WHERE community_id = 'a0000000-0000-4000-8000-000000000001' AND vantaca_account_id = '10111113'",
+      "expect": 100235
+    },
+    {
+      "name": "the duplicate charge itself is unchanged",
+      "sql": "SELECT count(*)::int FROM homeowner_transactions WHERE id = 'cd62c4c7-9db8-43f5-9664-05f981e9a40f' AND amount_cents = 4200 AND txn_type = 'charge'",
+      "expect": 1
+    },
+    {
+      "name": "the Amazon bill's three lines add to total minus tax ($31.45) and it is still unposted",
+      "sql": "SELECT count(*)::int FROM ap_invoices i WHERE i.id = '33fbabb2-2c62-4df0-af72-a55054e058e9' AND i.posting_journal_entry_id IS NULL AND i.status = 'awaiting_approval' AND (SELECT count(*) FROM ap_invoice_lines l WHERE l.invoice_id = i.id) = 3 AND (SELECT sum(amount_cents) FROM ap_invoice_lines l WHERE l.invoice_id = i.id) = i.total_cents - i.tax_cents",
+      "expect": 1
+    }
+  ]
+}
