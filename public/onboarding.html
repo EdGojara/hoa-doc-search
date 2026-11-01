@@ -490,7 +490,9 @@ function doWaive(id, x, reason) {
   act(() => api('/api/onboarding/batches/' + encodeURIComponent(id) + '/waivers', json({ completion_id: x.completion_id, code: x.code, reason })), 'Waiver recorded. The control is still shown as failed, with your waiver next to it.');
 }
 function doAdvance(id, adv) {
-  if (!confirm('Advance this batch to ' + label(adv.to) + '? This is recorded under your name.')) return;
+  // Post-proof is read-only (it re-proves the books the owner's execution already wrote), so it needs no second
+  // confirmation; a cancelled or browser-suppressed dialog must never end silently (2026-11-01: an advance that never sent).
+  if (adv.to !== 'post_proof' && !confirm('Advance this batch to ' + label(adv.to) + '? This is recorded under your name.')) return say('Not advanced: the confirmation was cancelled or blocked by the browser.', 'bad');
   act(() => api('/api/onboarding/batches/' + encodeURIComponent(id) + '/advance', json({ completion_id: adv.completion_id, to: adv.to })), 'Batch advanced.');
 }
 $('upload').onsubmit = async (ev) => {
