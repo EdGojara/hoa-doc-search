@@ -42,6 +42,25 @@ check('auto-ingest, when someone turns it on, still registers the email job (no 
   assert.ok(jobsWith({ ...BASE, EMAIL_INGEST_AUTO: 'true' }).includes('email_ingest_incremental'));
 });
 
+// ENFORCED: a recurring timer in application code is the exception, never the default. Only the
+// scheduler's own tick (lib/scheduler.js: time-based business jobs) and the Graph subscription
+// renewal (lib/email/graph_push.js: Microsoft requires renewal) may use setInterval. A new one
+// fails the build; use an existing event (a write path, a push notification, a completion) instead.
+check('ENFORCED: no new setInterval outside the scheduler tick and the Graph subscription renewal', () => {
+  const allowed = new Set(['lib/scheduler.js', 'lib/email/graph_push.js']);
+  const found = [];
+  const walk = (dir) => { for (const e of fs.readdirSync(path.join(ROOT, dir), { withFileTypes: true })) {
+    const rel = dir + '/' + e.name;
+    if (e.isDirectory()) { if (!['node_modules', '.git'].includes(e.name)) walk(rel); continue; }
+    if (!/\.js$/.test(e.name)) continue;
+    const src = fs.readFileSync(path.join(ROOT, rel), 'utf8').replace(/^\s*\/\/.*$/gm, '');
+    if (/\bsetInterval\s*\(/.test(src) && !allowed.has(rel)) found.push(rel);
+  } };
+  walk('lib'); walk('api');
+  if (/\bsetInterval\s*\(/.test(code('server.js'))) found.push('server.js');
+  assert.deepStrictEqual(found, [], 'recurring timers outside the allowed two: ' + found.join(', '));
+});
+
 check('Claire: no timer; idle expiry happens on access; speak and handoff refuse an inactive session', () => {
   assert.ok(!/setInterval\([^)]*expireIdleSessions/.test(code('server.js')), 'the 2-minute sweep is back');
   const c = read('api/claire.js');

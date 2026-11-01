@@ -1289,6 +1289,32 @@ memory + GLOBAL_RULES govern the artifact's content.
 
 ---
 
+## Execution and efficiency policy (Ed 2026-11-01, standing)
+
+1. **An assigned task carries the authority to finish it**: routine investigation, implementation,
+   testing and deployment. Don't ask again for permission already given.
+2. **Optimize accuracy, reliability, elapsed time and resource use together.** Not one at the
+   expense of the others.
+3. **Activity-driven, not polling.** trustEd does not spend processing looking for work that doesn't
+   exist. A completed action triggers the next one through an existing event: a write path, a Graph
+   push notification, an approval, a completion. Scheduled jobs exist only for a genuine time-based
+   need (daily reports, subscription renewal, recovery checks, bank cutoffs). No watch loops,
+   including temporary ones while waiting on Ed.
+   **ENFORCED:** `tests/test_no_polling.js` (in `npm test`) fails the build on a `setInterval`
+   outside the scheduler tick and the Graph subscription renewal, and on the retired polling jobs
+   coming back.
+4. **Reuse existing infrastructure before building anything new.** Search for the existing
+   mechanism first (see "Find existing before building").
+5. **Proportionate testing.** Test what a change can break, and protect financial integrity, without
+   re-running unrelated investigations or re-proving settled facts.
+6. **Preserve decisions and open work across session compaction.** Record decisions, authorizations
+   and outstanding steps in the database, the memory notes, or the approval documents, never only in
+   the conversation.
+7. **Stop only for** a genuine accounting judgment, a protected owner approval (owner-only controls
+   are never bypassed or impersonated), a material scope change, or a significant risk.
+8. **Done means verified in production**: deployed commit on `/version`, then the behavior itself
+   checked live. Not merged, not "tests pass".
+
 ## Communication style with Ed
 
 - Ed doesn't read code. Don't ask for a code review.
