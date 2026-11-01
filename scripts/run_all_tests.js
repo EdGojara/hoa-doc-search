@@ -161,6 +161,8 @@ const CHECKS = [
   'tests/test_recurrence_escalation.js',
   'tests/test_route_specialist.js',
   'tests/test_board_access.js',
+  'tests/test_portal_gate_coverage.js',    // every portal/board page API reachable with only a portal cookie (offline)
+  'tests/test_portal_launch_gates.js',     // pay gate, portal cookie secret, board projection, owner-only invites (offline)
   'tests/test_board_motions.js',
   'tests/test_board_vote_token.js',
   'tests/test_board_vote_reply.js',
