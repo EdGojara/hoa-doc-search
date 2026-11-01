@@ -153,6 +153,7 @@ const CHECKS = [
   'tests/test_reserve_plan.js',
   'tests/test_mission_control_graph.js',
   'tests/test_mission_control.js',
+  'tests/test_close_cadence.js',
   'tests/test_board_budget_funds.js',
   'tests/test_board_reporting.js',
   'tests/test_reply_recipient.js',
