@@ -1523,7 +1523,8 @@ app.get('/admin/board-learning', (req, res) => res.sendFile(require('path').join
 app.get('/admin/enforcement-health', (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'enforcement-health.html')));
 // Sweep visits whose tab was closed without ending them, so their metered
 // minutes still land in the cost ledger instead of sitting 'active' forever.
-setInterval(() => { expireIdleSessions().catch((e) => console.warn('[claire] sweep:', e.message)); }, 120000).unref();
+// No timer (Ed 2026-11-01: activity-driven, not polling). An idle visit is expired when it is next
+// touched (api/claire.js loadOwnedSession) and every abandoned one when a new visit starts.
 
 const { router: usersRouter } = require('./api/users');
 app.use('/api/users', usersRouter);
