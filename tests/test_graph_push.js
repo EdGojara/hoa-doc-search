@@ -432,6 +432,72 @@ check('WIRING: public path covers only the two callback shapes; router mounted; 
   }
 });
 
+// ---- Tessa: the owner-only mailbox (Ed 2026-10-31) ----
+const TESSA = 'tessa@bedrocktx.com';
+function ownerPush(over = {}) {
+  const g = fakeGraph(); g.deltaUrls = []; g.deltaPages = over.pages || [];
+  g.delta = async (url) => { g.deltaUrls.push(url); return g.deltaPages.shift() || { value: [], '@odata.deltaLink': 'https://graph/delta?token=next' }; };
+  const owner = { calls: [], stored: new Set(over.stored || []), storeOnIngest: over.storeOnIngest || [] };
+  const team = { calls: [], storedCalls: 0 };
+  const sb = fakeSb();
+  const p = createGraphPush({ mailboxes: [AMANDA], ownerMailboxes: [TESSA, ...(over.extraOwner || [])], secret: SECRET, baseUrl: 'https://app.bedrocktxai.com', log: quiet, supabase: sb, graph: g,
+    setTimeout: () => {}, now: () => Date.parse('2026-10-31T20:00:00Z'),
+    ingestMailbox: async (mbx, o) => { team.calls.push([mbx, o]); return { scanned: 0, kept: 0 }; },
+    ownerIngest: async (mbx, o) => { owner.calls.push([mbx, o]); for (const id of owner.storeOnIngest) owner.stored.add(id); return { scanned: 1, drafted: owner.storeOnIngest.length, kept: owner.storeOnIngest.length }; },
+    loadDeltaLink: async () => null,
+    storedIds: async (ids) => { team.storedCalls += 1; return new Set(); },
+    ownerStoredIds: async (ids) => new Set(ids.filter((i) => owner.stored.has(i))) });
+  return { p, g, owner, team, sb };
+}
+
+check("TESSA: her mailbox is subscribed with its own key and clientState; an event runs HER handler (ea_inbox), never ingestMailbox (email_messages)", async () => {
+  const a = ownerPush();
+  await a.p.recover('recovery');
+  const res = a.g.created.map((c) => c.resource);
+  assert.ok(res.includes("users/tessa@bedrocktx.com/mailFolders('inbox')/messages"), 'Tessa subscribed: ' + res.join(' | '));
+  assert.ok(res.includes(RES), 'the team mailbox is still subscribed');
+  const tKey = keyFor(TESSA, SECRET); const tCs = clientStateFor(SECRET, TESSA);
+  assert.notStrictEqual(tKey, KEY); assert.notStrictEqual(tCs, goodCs);
+  // Amanda's clientState cannot wake Tessa, and Tessa's cannot wake Amanda.
+  assert.deepStrictEqual(a.p.handleNotifications(tKey, note(goodCs)), { accepted: 0, rejected: 1 });
+  assert.deepStrictEqual(a.p.handleNotifications(KEY, note(tCs)), { accepted: 0, rejected: 1 });
+  a.p.handleNotifications(tKey, note(tCs)); for (let i = 0; i < 4; i++) await tick();
+  assert.strictEqual(a.owner.calls.length, 1, 'Tessa handler ran once');
+  assert.strictEqual(a.owner.calls[0][0], TESSA);
+  assert.strictEqual(a.team.calls.length, 0, 'her mail never reaches the staff ingest pipeline');
+});
+
+check('TESSA: delta reconciliation matches her mail by Graph id against ea_inbox, recovers through her handler, and never consults email_messages', async () => {
+  const a = ownerPush({ pages: [{ value: [msg('<r1@x>', '2026-10-31T19:30:00Z', 'egojara@bedrocktx.com'), msg('<r2@x>', '2026-10-31T19:40:00Z', 'egojara@bedrocktx.com')], '@odata.deltaLink': 'https://graph/delta?token=t1' }],
+    stored: ['g-<r1@x>'], storeOnIngest: ['g-<r2@x>'] });
+  const out = await a.p.reconcile(TESSA, 'boot');
+  assert.deepStrictEqual(out, { ok: true, changes: 2, missing: 1, recovered: 1 });
+  assert.strictEqual(a.owner.calls.length, 1, 'the one missing message is recovered by Tessa\'s handler');
+  assert.strictEqual(a.team.calls.length, 0); assert.strictEqual(a.team.storedCalls, 0, 'email_messages is never the record for her mail');
+  assert.ok(a.g.deltaUrls[0].includes('users/tessa%40bedrocktx.com/'), 'her own Inbox delta');
+});
+
+check('TESSA: a mailbox already on the team list is never registered a second time as owner-only; ownerMailboxes() refuses an ingest mailbox', async () => {
+  const a = ownerPush({ extraOwner: [AMANDA] });
+  assert.strictEqual(a.p.entries().length, 2);
+  assert.strictEqual(a.p.entries().find((e) => e.mailbox === AMANDA).owner, false);
+  assert.deepStrictEqual(GP.ownerMailboxes({ TESSA_MAILBOX: TESSA, TEAM_INGEST_MAILBOXES: [AMANDA] }), [TESSA]);
+  assert.deepStrictEqual(GP.ownerMailboxes({ TESSA_MAILBOX: TESSA, TEAM_INGEST_MAILBOXES: [AMANDA, 'Tessa@bedrocktx.com'] }), []);
+  assert.deepStrictEqual(GP.ownerMailboxes({ TESSA_MAILBOX: '', TEAM_INGEST_MAILBOXES: [] }), []);
+});
+
+check('TESSA privacy + filing (static): her mailbox is not an ingest mailbox, and every reply she acts on is filed before she moves on', async () => {
+  const gs = fs.readFileSync(path.join(__dirname, '..', 'lib/email/graph_send.js'), 'utf8').replace(/\/\/.*$/gm, '');
+  const block = gs.slice(gs.indexOf('const TEAM_INGEST_MAILBOXES'), gs.indexOf('];', gs.indexOf('const TEAM_INGEST_MAILBOXES')));
+  assert.ok(block.length > 30 && !/TESSA|tessa@/i.test(block), 'TESSA_MAILBOX must stay out of TEAM_INGEST_MAILBOXES');
+  const ti = fs.readFileSync(path.join(__dirname, '..', 'lib/ea/tessa_inbox.js'), 'utf8');
+  for (const marker of ['[tessa] owner authorization ${auth.id}', '[tessa] billing approved by']) {
+    const at = ti.indexOf(marker); assert.ok(at > 0, marker);
+    const tail = ti.slice(at, ti.indexOf('continue;', at));
+    assert.ok(/await fileHandled\(m,/.test(tail), 'filed before continue: ' + marker);
+  }
+});
+
 (async () => {
   let pass = 0, fail = 0;
   for (const [n, fn] of tests.filter(([n]) => !process.env.ONLY || n.includes(process.env.ONLY))) {
