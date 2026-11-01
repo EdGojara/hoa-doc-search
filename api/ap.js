@@ -1584,6 +1584,7 @@ router.post('/invoices/:id/post-coded', async (req, res) => {
     const biggest = lines.filter((l) => l.amount_cents > 0).sort((a, b) => b.amount_cents - a.amount_cents)[0];
     await supabase.from('ap_invoices').update({ coded_gl_account_id: biggest ? biggest.gl_account_id : null, posting_journal_entry_id: jeId || null, updated_at: new Date().toISOString() }).eq('id', id);
     res.json({ ok: true, posting_journal_entry_id: jeId, posted: !!jeId, accounts: new Set(lines.map((l) => l.gl_account_id)).size });
+    if (jeId) require('../lib/onboarding/resume').resumeAfter({ communityId: inv.community_id, reason: 'AP bill posted' });
   } catch (err) { console.error('[ap] post-coded failed:', err); res.status(500).json({ error: safeErrorMessage(err) }); }
 });
 

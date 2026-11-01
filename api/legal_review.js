@@ -316,6 +316,7 @@ router.post('/postings/:id/reverse', express.json({ limit: '4kb' }), async (req,
       reversalDate: req.body && req.body.reversal_date ? String(req.body.reversal_date) : undefined,
     });
     console.log('[legal-review] reverse posting', JSON.stringify({ posting: req.params.id, actor: admin.email, ok: out.ok, error: out.error || null }));
+    if (out.ok) require('../lib/onboarding/resume').resumeAfter({ reason: 'legal posting reversed' });
     res.status(out.ok ? 200 : 400).json(out);
   } catch (err) {
     console.error('[legal-review] reverse failed:', err.message);

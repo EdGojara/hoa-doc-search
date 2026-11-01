@@ -11600,7 +11600,8 @@ app.post('/api/admin/migrations/apply', express.json({ limit: '8kb' }), async (r
     };
     const run = applyMigration({ client, planToken: req.body && req.body.plan_token, user: { id: u.user.id, email: u.email }, deployedCommit: _RUNNING_COMMIT,
       apiCheck, onAttempt: (id) => respond(202, { ok: true, attempt_id: id, status: 'running' }) });
-    run.then((r) => { console.log('[migrations] apply', r.filename, r.status, 'by', u.email); respond(200, { ok: r.status === 'applied' || r.status === 'already_applied', result: r }); })
+    run.then((r) => { console.log('[migrations] apply', r.filename, r.status, 'by', u.email); respond(200, { ok: r.status === 'applied' || r.status === 'already_applied', result: r });
+      if (r.status === 'applied') require('./lib/onboarding/resume').resumeAfter({ reason: 'migration ' + r.filename + ' applied' }); })
       .catch((err) => { if (!responded) { responded = true; _migrationError(res, err, 'apply'); } else console.error('[migrations] apply failed after start:', err.message); })
       .finally(() => { _migrationApplyRunning = false; if (client) client.end().catch(() => {}); });
   } catch (err) {

@@ -83,6 +83,14 @@ function buildRouter({ service, auth, listCommunities }) {
     catch (e) { fail(res, e, 'preflight'); }
   });
 
+  async function postExecute(o, batchId, execution) {
+    try {
+      const v = await service.getBatch(batchId, o);
+      if (v && v.batch && v.batch.stage === 'execute' && execution.execute_completion_id) await service.advance(o, batchId, { completion_id: execution.execute_completion_id, to: 'post_proof' });
+    } catch (e) { console.warn('[onboarding] post-execute advance skipped (advance on the batch screen):', JSON.stringify({ batch: batchId, error: e.message })); }
+    await require('../lib/onboarding/resume').operateOnce(service, batchId, 'execute committed', console);
+  }
+
   router.post('/batches', express.json({ limit: '64kb' }), async (req, res) => {
     try {
       const a = await admin(req, res); if (!a) return;
@@ -187,7 +195,9 @@ function buildRouter({ service, auth, listCommunities }) {
   });
 
   router.post('/batches/:id/advance', express.json({ limit: '64kb' }), async (req, res) => {
-    try { const o = await owner(req, res); if (!o) return; const b = req.body || {}; res.json({ id: await service.advance(o, req.params.id, { completion_id: b.completion_id, to: b.to }) }); }
+    try { const o = await owner(req, res); if (!o) return; const b = req.body || {}; const id = await service.advance(o, req.params.id, { completion_id: b.completion_id, to: b.to }); res.json({ id });
+      // The owner's advance is the event: the operator runs whatever is now runnable (never execute / complete).
+      setImmediate(() => { require('../lib/onboarding/resume').operateOnce(service, req.params.id, 'owner advance', console); }); }
     catch (e) { fail(res, e, 'advance'); }
   });
 
@@ -204,7 +214,15 @@ function buildRouter({ service, auth, listCommunities }) {
   });
 
   router.post('/batches/:id/execute', express.json({ limit: '64kb' }), async (req, res) => {
-    try { const o = await owner(req, res); if (!o) return; const b = req.body || {}; res.json({ execution: await service.execute(o, req.params.id, { completion_id: b.completion_id, preflight_sha256: b.preflight_sha256 }) }); }
+    try { const o = await owner(req, res); if (!o) return; const b = req.body || {};
+      const execution = await service.execute(o, req.params.id, { completion_id: b.completion_id, preflight_sha256: b.preflight_sha256 });
+      res.json({ execution });
+      // After the transaction has COMMITTED (execute returned it): the owner's own execute moves the batch on to
+      // the read-only post-proof (the same advance the owner made by hand before), and the operator runs the proof
+      // and stops before 'complete'. Idempotent (a retry returns already_executed; an advance already made is a
+      // no-op). Never executes or posts anything; a failure is logged and the batch screen resumes it.
+      if (execution && ['executed', 'already_executed'].includes(execution.status)) setImmediate(() => postExecute(o, req.params.id, execution));
+    }
     catch (e) { fail(res, e, 'execute'); }
   });
 
