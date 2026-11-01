@@ -8,6 +8,7 @@
 // No budget data is committed here: the assertions are structural (every line,
 // every month identical), not copies of the numbers.
 // ============================================================================
+require('./_support/live_readonly'); // hybrid: fakes the code under test, reads live data read-only (Issue #27 follow-up)
 require('dotenv').config({ quiet: true });
 const assert = require('assert');
 const fs = require('fs');
