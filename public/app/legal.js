@@ -106,7 +106,7 @@
     state.items.forEach(function (it) { it._staffDate = it.service_date_source === 'staff'; it._wasException = TXLegalSuggest.triageItem(it).status === 'exception'; });
     state.open = {}; state.showAll = false;
     state.fromDraft = !!d.draft;
-    state.dirty = false; state.errors = []; state.notice = notice; state.postDate = null; state.treatErr = null;
+    state.dirty = false; state.errors = []; state.notice = notice; state.postDate = null; state.treatErr = null; state.ask = null; state.asking = false;
     renderDetail();
   }
   function approved() { var d = state.detail; return !!(d && d.review && d.review.status === 'approved'); }
@@ -361,10 +361,23 @@
       else if (live.some(function (x) { return x.status === 'pending'; })) btns = '<button type="button" class="tx-btn tx-btn--pri" id="lg-approve"' + (state.approving ? ' disabled' : '') + '>' + (state.approving ? 'Posting…' : 'Finish posting') + '</button>';
       else if (!live.length) btns = '<button type="button" class="tx-btn tx-btn--sec" id="lg-reopen">Reopen review (correction)</button>';
     }
-    box.innerHTML = head + sums + blocking + planned + posted + migration + (state.treatErr ? '<div class="tx-err">' + icon('alert', { size: 16 }) + '<span>' + esc(state.treatErr) + '</span></div>' : '') +
+    // Reverse / cancel / reopen ask for their reason (and a reversal its date) IN THE PAGE, never with a browser
+    // prompt: a blocked or dismissed prompt sent nothing and said nothing (2026-11-01).
+    var ask = state.ask, askHtml = '';
+    if (ask) {
+      var askLabel = ask.kind === 'reverse' ? 'Reverse posting' : ask.kind === 'cancel' ? 'Cancel pending posting' : 'Reopen review';
+      var askWhy = ask.kind === 'reverse' ? 'Why is this posting being reversed?' : ask.kind === 'cancel' ? 'Why is this pending posting being cancelled? Anything it already posted is reversed.' : 'Why is this review being reopened?';
+      askHtml = '<div class="lg-ask" style="margin-top:12px;padding:12px;border:1px solid var(--tx-border,#d7dce3);border-radius:8px">' +
+        '<label style="display:block;font-size:13px"><span class="tx-lbl">' + esc(askWhy) + ' (kept on the audit trail)</span><input type="text" class="lg-in" id="lg-ask-reason" style="width:100%" value="' + esc(ask.reason || '') + '"></label>' +
+        (ask.kind === 'reverse' ? '<label style="display:flex;gap:6px;align-items:center;font-size:13px;margin-top:8px"><span class="tx-lbl">Reversal date</span><input type="date" class="lg-in" id="lg-ask-date" value="' + esc(ask.date || '') + '"><span class="tx-muted">the posting’s own date keeps the correction in the same month</span></label>' : '') +
+        '<div style="display:flex;justify-content:flex-end;gap:10px;margin-top:10px"><button type="button" class="tx-btn tx-btn--sec" id="lg-ask-no">Keep it</button><button type="button" class="tx-btn tx-btn--pri" id="lg-ask-go"' + (state.asking ? ' disabled' : '') + '>' + (state.asking ? 'Working…' : esc(askLabel)) + '</button></div></div>';
+    }
+    box.innerHTML = head + sums + blocking + planned + posted + migration + askHtml + (state.treatErr ? '<div class="tx-err">' + icon('alert', { size: 16 }) + '<span>' + esc(state.treatErr) + '</span></div>' : '') +
       (btns ? '<div style="display:flex;justify-content:flex-end;align-items:center;gap:10px;margin-top:12px">' + btns + '</div>' : '');
     var ap = $('lg-approve'); if (ap) ap.addEventListener('click', approveTreatment);
     var ro = $('lg-reopen'); if (ro) ro.addEventListener('click', reopenReview);
+    var an = $('lg-ask-no'); if (an) an.addEventListener('click', function () { state.ask = null; state.treatErr = null; renderTreatment(); });
+    var ag = $('lg-ask-go'); if (ag) ag.addEventListener('click', submitAsk);
     box.querySelectorAll('.lg-rev').forEach(function (b) { b.addEventListener('click', function () { reversePosting(b.getAttribute('data-id')); }); });
     box.querySelectorAll('.lg-cancel').forEach(function (b) { b.addEventListener('click', function () { cancelPosting(b.getAttribute('data-id')); }); });
     var pd = $('lg-postdate');
@@ -387,33 +400,31 @@
     state.treatErr = b.blocking ? 'Not posted: ' + b.blocking.join(' ') : (b.detail && typeof b.detail === 'string' ? b.detail : 'Not posted (' + (b.error || r.error) + ').');
     renderTreatment();
   }
-  async function reversePosting(id) {
-    var reason = prompt('Why is this posting being reversed? (kept on the audit trail)');
-    if (!reason || reason.trim().length < 5) return;
-    // Dated the posting's own date by default (the entry and the owner credit both carry it), so the
+  function openAsk(kind, id) {
+    // A reversal is dated the posting's own date by default (the entry and the owner credit both carry it), so the
     // correction lands in the month the posting did; the server refuses a closed month.
     var own = ((state.treatment && state.treatment.postings) || []).filter(function (x) { return x.id === id; })[0];
-    var date = prompt('Reversal date (YYYY-MM-DD). The posting’s own date keeps the correction in the same month.', String((own && own.posting_date) || '').slice(0, 10));
-    if (date === null) return;
-    date = date.trim();
-    if (date && !/^\d{4}-\d{2}-\d{2}$/.test(date)) { state.treatErr = 'Not reversed: the date must look like 2026-10-11.'; renderTreatment(); return; }
-    var r = await TX.post('/api/legal-review/postings/' + encodeURIComponent(id) + '/reverse', { reason: reason.trim(), reversal_date: date || undefined });
-    state.treatErr = r.ok ? null : ((r.body && r.body.detail) || 'Not reversed (' + r.error + ').');
-    if (r.ok) openInvoice(state.detail.invoice.id, true); else renderTreatment();
+    state.ask = { kind: kind, id: id, reason: '', date: kind === 'reverse' ? String((own && own.posting_date) || '').slice(0, 10) : '' };
+    state.treatErr = null; renderTreatment();
+    var f = $('lg-ask-reason'); if (f) f.focus();
   }
-  async function cancelPosting(id) {
-    var reason = prompt('Why is this pending posting being cancelled? Anything it already posted is reversed. (kept on the audit trail)');
-    if (!reason || reason.trim().length < 5) return;
-    var r = await TX.post('/api/legal-review/postings/' + encodeURIComponent(id) + '/cancel', { reason: reason.trim() });
-    state.treatErr = r.ok ? null : ((r.body && r.body.detail) || 'Not cancelled (' + r.error + ').');
-    if (r.ok) openInvoice(state.detail.invoice.id, true); else renderTreatment();
-  }
-  async function reopenReview() {
-    var reason = prompt('Why is this review being reopened? (kept on the audit trail)');
-    if (!reason || reason.trim().length < 5) return;
-    var r = await TX.post('/api/legal-review/invoices/' + encodeURIComponent(state.detail.invoice.id) + '/reopen', { reason: reason.trim() });
-    state.treatErr = r.ok ? null : ((r.body && r.body.detail) || 'Not reopened (' + r.error + ').');
-    if (r.ok) openInvoice(state.detail.invoice.id, true); else renderTreatment();
+  function reversePosting(id) { openAsk('reverse', id); }
+  function cancelPosting(id) { openAsk('cancel', id); }
+  function reopenReview() { openAsk('reopen', null); }
+  async function submitAsk() {
+    var ask = state.ask; if (!ask) return;
+    ask.reason = (($('lg-ask-reason') || {}).value || '').trim();
+    if (ask.kind === 'reverse') ask.date = (($('lg-ask-date') || {}).value || '').trim();
+    if (ask.reason.length < 5) { state.treatErr = 'A reason of at least 5 characters is needed; it is kept on the audit trail.'; renderTreatment(); return; }
+    var url = ask.kind === 'reopen' ? '/api/legal-review/invoices/' + encodeURIComponent(state.detail.invoice.id) + '/reopen'
+      : '/api/legal-review/postings/' + encodeURIComponent(ask.id) + '/' + ask.kind;
+    var body = ask.kind === 'reverse' ? { reason: ask.reason, reversal_date: ask.date || undefined } : { reason: ask.reason };
+    state.asking = true; state.treatErr = null; renderTreatment();
+    var r = await TX.post(url, body);
+    state.asking = false;
+    var verb = ask.kind === 'reverse' ? 'Not reversed' : ask.kind === 'cancel' ? 'Not cancelled' : 'Not reopened';
+    state.treatErr = r.ok ? null : ((r.body && r.body.detail) || verb + ' (' + r.error + ').');
+    if (r.ok) { state.ask = null; openInvoice(state.detail.invoice.id, true); } else renderTreatment();
   }
 
   // ---- the attorney's PDF (step 2b) ------------------------------------------------
