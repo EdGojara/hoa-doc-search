@@ -78,6 +78,15 @@ async function loadOwnedSession(req, res) {
     (visitor.role === 'staff' && s.visitor_email && visitor.email
       && s.visitor_email.toLowerCase() === visitor.email.toLowerCase());
   if (!mine) { res.status(403).json({ error: 'not_your_session' }); return null; }
+  // Idle past the limit: expired now, on this request (no background sweep). Every route that
+  // spends voice or model time refuses a session that is not active.
+  if (s.status === 'active' && Date.parse(s.updated_at) < Date.now() - IDLE_EXPIRE_SECONDS * 1000) {
+    const { error: xErr } = await supabase.from('claire_sessions')
+      .update({ status: 'expired', ended_at: new Date().toISOString(), end_reason: 'idle_timeout' })
+      .eq('id', s.id).eq('status', 'active');
+    if (xErr) console.warn('[claire] idle expiry failed:', xErr.message);
+    s.status = 'expired';
+  }
   return { visitor, session: s };
 }
 
@@ -220,6 +229,9 @@ router.post('/session/start', async (req, res) => {
   try {
     const visitor = await resolveVisitor(req);
     if (!visitor) return res.status(401).json({ error: 'not_signed_in' });
+    // A new visit is the moment to close out abandoned ones (tab closed without /end), so their
+    // minutes land in the cost ledger: on activity, never on a timer.
+    expireIdleSessions().catch((e) => console.warn('[claire] idle close-out failed:', e.message));
 
     const communityId = resolveVisitCommunity(visitor, (req.body || {}).community_id);
     if (!communityId) {
@@ -463,6 +475,7 @@ router.post('/session/:id/speak', async (req, res) => {
   try {
     const ctx = await loadOwnedSession(req, res);
     if (!ctx) return;
+    if (ctx.session.status !== 'active') return res.status(409).json({ error: 'session_not_active' });
     const text = String((req.body || {}).text || '').trim();
     if (!text) return res.status(400).json({ error: 'text_required' });
     if (text.length > 800) return res.status(400).json({ error: 'text_too_long' });
@@ -530,6 +543,7 @@ router.post('/session/:id/handoff', async (req, res) => {
   try {
     const ctx = await loadOwnedSession(req, res);
     if (!ctx) return;
+    if (ctx.session.status !== 'active') return res.status(409).json({ error: 'session_not_active' });
     const reason = String((req.body || {}).reason || 'visitor_requested').slice(0, 200);
     await supabase.from('claire_sessions')
       .update({ handoff_requested: true, handoff_reason: reason, status: 'handoff' }).eq('id', ctx.session.id);
@@ -771,8 +785,9 @@ router.get('/explainers/:id', async (req, res) => {
   }
 });
 
-// Sweep abandoned visits. A tab closed without /end would otherwise sit 'active'
-// forever and its minutes would never land in the cost ledger.
+// Close out abandoned visits. A tab closed without /end would otherwise sit 'active'
+// forever and its minutes would never land in the cost ledger. Runs when a visit
+// starts (activity), never on a timer.
 async function expireIdleSessions() {
   const cutoff = new Date(Date.now() - IDLE_EXPIRE_SECONDS * 1000).toISOString();
   const { data, error } = await supabase.from('claire_sessions')

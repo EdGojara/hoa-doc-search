@@ -5198,6 +5198,8 @@ router.post('/inspections/:id/ping', express.json({ limit: '8kb' }), async (req,
 router.get('/inspections/active', async (req, res) => {
   try {
     const { community_id } = req.query;
+    // Close abandoned drives as this list is read (no timer); a drive still pinging is untouched.
+    await require('../lib/inspections/stale_close').closeStaleInspections(supabase);
     let q = supabase
       .from('inspections')
       .select(`
