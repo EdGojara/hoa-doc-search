@@ -3593,44 +3593,34 @@ app.post('/acc-review/decisions/:id/finalize', async (req, res) => {
       } catch (e) { console.warn('[acc-finalize] ack stamp skipped:', e.message); }
     }
 
-    // Homeowner-pays ACC fee (Ed 2026-07-25). Communities whose management
-    // agreement bills the ARC fee to the OWNER (Canyon Gate: $25) get a
-    // per-decision AR charge — Dr A/R / Cr Accrued Liability (owed to Bedrock,
-    // cleared at month-end). Only on a FINAL decision (approve or deny). The
-    // decision is already recorded above, so a fee failure never undoes it —
-    // FAIL LOUD: if the address can't resolve to a property we DON'T post and we
-    // flag it, never silently drop the fee.
+    // Homeowner-pays ACC fee (Ed 2026-07-25; posting path Ed 2026-10-21).
+    // Communities whose management agreement bills the ARC fee to the OWNER
+    // (Canyon Gate: $25) get the fee on a FINAL decision (approve or deny),
+    // posted to the homeowner LEDGER and the GL together (lib/acc/acc_fee_posting:
+    // Dr 1300 / Cr 2300 + one ledger line on the current owner's tenure), never
+    // as a native ar_charges row. Anything uncertain is HELD, not posted: the
+    // lot or owner can't be confirmed, the applicant isn't the owner of record,
+    // an ARC fee is already on the owner's ledger, or the decision predates the
+    // conversion. The decision is recorded above, so a fee hold or failure never
+    // undoes it; it is reported in fee_charge for staff to resolve.
     let feeCharge = { attempted: false };
     if (isFinal) {
       try {
-        const { data: comm } = await supabase.from('communities')
-          .select('acc_fee_payer, acc_fee_cents').eq('id', dec.community_id).maybeSingle();
-        const feeCents = comm ? Number(comm.acc_fee_cents) || 0 : 0;
-        if (comm && comm.acc_fee_payer === 'homeowner' && feeCents > 0) {
-          feeCharge.attempted = true;
-          const { resolveProperty } = require('./lib/entity_resolution');
-          const prop = await resolveProperty(supabase, dec.community_id, dec.homeowner_address);
-          if (!prop || !prop.id) {
-            feeCharge.posted = false; feeCharge.reason = 'property_unresolved';
-            console.error(`[acc-finalize] ACC fee NOT posted — could not resolve "${dec.homeowner_address}" to a property (decision ${id}). Flag for manual charge.`);
-          } else {
-            const { createCharge } = require('./lib/accounting/ar_engine');
-            const today = new Date().toISOString().slice(0, 10);
-            const r = await createCharge({
-              community_id: dec.community_id, property_id: prop.id,
-              charge_type_code: 'acc_fee', amount_cents: feeCents,
-              due_date: today, charge_date: today,
-              description: `ACC decision ${dec.reference_number || ''} — ${String(decisionType).replace(/_/g, ' ')}`.replace(/\s+/g, ' ').trim(),
-              source_module: 'acc_decision', source_reference: id,
-              posted_by_user_id: actor?.id || null,
-            });
-            feeCharge.posted = true; feeCharge.charge_id = r.charge.id;
-            feeCharge.amount_cents = feeCents; feeCharge.property_id = prop.id;
-          }
+        const { postAccFee } = require('./lib/acc/acc_fee_posting');
+        const { data: fresh } = await supabase.from('acc_decisions')
+          .select('id, community_id, homeowner_name, homeowner_address, reference_number, decided_at').eq('id', id).maybeSingle();
+        const r = await postAccFee(supabase, fresh || dec, { actorUserId: actor?.id || null });
+        if (r.plan && r.plan.holds && r.plan.holds.length === 1 && /does not bill the ACC fee/.test(r.plan.holds[0])) {
+          feeCharge = { attempted: false };
+        } else {
+          feeCharge = { attempted: true, posted: !!r.posted, already: !!r.already, held: !!r.held, holds: r.holds || [],
+            homeowner_transaction_id: r.homeowner_transaction_id || null, journal_entry_id: r.journal_entry_id || null,
+            amount_cents: r.plan ? r.plan.amount_cents : null, property_id: r.plan ? r.plan.property_id : null };
+          if (r.held) console.warn(`[acc-finalize] ACC fee HELD for decision ${id}: ${r.holds.join(' | ')}`);
         }
       } catch (e) {
-        feeCharge.posted = false; feeCharge.reason = e.message;
-        console.error('[acc-finalize] ACC fee charge failed (decision recorded; flag for manual):', e.message);
+        feeCharge = { attempted: true, posted: false, reason: e.message };
+        console.error('[acc-finalize] ACC fee posting failed (decision recorded; flag for manual):', e.message);
       }
     }
 
