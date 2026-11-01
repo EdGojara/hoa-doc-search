@@ -125,6 +125,7 @@ router.post('/:id/approve', express.json({ limit: '16kb' }), async (req, res) =>
     }
     const proration = await TP.afterTransfer(supabase, prorationGate, { proposalId: req.params.id, postedBy: String(reviewed_by).trim() });
     res.json({ ...data, proration });
+    require('../lib/onboarding/resume').resumeAfter({ reason: 'ownership change approved' });
   } catch (err) {
     console.error('[ownership-proposals] approve failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
