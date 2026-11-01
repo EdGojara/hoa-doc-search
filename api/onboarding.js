@@ -44,6 +44,21 @@ const { createOnboardingService, supabaseBackends } = require('../lib/onboarding
 
 function buildRouter({ service, auth, listCommunities }) {
   const router = express.Router();
+  // Every refused or failed onboarding action (POST answered 4xx/5xx) lands in system_errors with the
+  // reason sent back, so a click that did not take is diagnosable from production (2026-11-01: an owner
+  // advance that left no trace). Read-only GETs are not logged. Never delays or breaks the response.
+  router.use((req, res, next) => {
+    if (req.method !== 'POST') return next();
+    const send = res.json.bind(res);
+    res.json = (body) => {
+      if (res.statusCode >= 400) {
+        const why = body && (body.error || body.detail) ? [body.error, body.code, body.detail].filter(Boolean).join(' | ') : 'refused';
+        require('../lib/capture_error').captureServerError({ method: 'POST', path: '/api/onboarding' + req.path, statusCode: res.statusCode, message: why, userAgent: req.get('user-agent') });
+      }
+      return send(body);
+    };
+    next();
+  });
   const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024, files: 1 } });
 
   const actorFrom = (u, owner) => ({ kind: 'human', id: u.user && u.user.id, email: u.email, role: owner ? 'owner' : 'admin' });
