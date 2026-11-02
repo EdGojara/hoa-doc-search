@@ -1,0 +1,42 @@
+{
+  "migration": "558_kat_journal_entry_runs.sql",
+  "summary": "Kat's controlled runs gain 'journal_entry': Kat prepares a balanced entry with its evidence, the owner approves it by name in Kat's queue, and only then does it post through the existing posting code (idempotent). Constraint change only; no rows change.",
+  "requires": [
+    "527_reclassification_runs_and_vendor_line_rules.sql"
+  ],
+  "preflight": [
+    {
+      "name": "no run uses an unknown process",
+      "sql": "SELECT count(*)::int FROM accounting_runs WHERE process NOT IN ('recognition', 'interest', 'bank_reconciliation', 'cutoff_adjustment', 'reclassification')",
+      "expect": 0
+    }
+  ],
+  "expected_changes": [
+    "accounting_runs: process may be 'journal_entry'.",
+    "No row changes."
+  ],
+  "objects": {
+    "added": [],
+    "changed": [
+      "constraint:accounting_runs.accounting_runs_process_check"
+    ],
+    "removed": []
+  },
+  "row_changes": {
+    "accounting_runs": 0,
+    "journal_entries": 0
+  },
+  "protected": [
+    {
+      "table": "accounting_runs",
+      "order_by": "id"
+    }
+  ],
+  "verify": [
+    {
+      "name": "the process constraint allows journal_entry",
+      "sql": "SELECT count(*)::int FROM pg_constraint WHERE conname = 'accounting_runs_process_check' AND pg_get_constraintdef(oid) LIKE '%journal_entry%'",
+      "expect": 1
+    }
+  ]
+}

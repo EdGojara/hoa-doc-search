@@ -132,7 +132,7 @@ async function boot(){
   try{ const rid=new URLSearchParams(location.search).get('run'); if(rid && /^[0-9a-f-]{36}$/i.test(rid)) openRun(rid); }catch(_){}
 }
 // ---- Kat's monthly accounting runs (migration 510): Kat prepares, Ed approves or holds ----
-const PROC = { recognition: 'Monthly recognition', interest: 'Late interest', bank_reconciliation: 'Bank reconciliation', cutoff_adjustment: 'Cutoff corrections', reclassification: 'Reclassifications' };
+const PROC = { recognition: 'Monthly recognition', interest: 'Late interest', bank_reconciliation: 'Bank reconciliation', cutoff_adjustment: 'Cutoff corrections', reclassification: 'Reclassifications', journal_entry: 'Journal entries' };
 const REC_STATUS = { reconciled: 'balanced, nothing open', in_progress: 'balances, exceptions open', unbalanced: 'does not balance', blocked: 'blocked' };
 const monthLabel = (d) => new Date(String(d).slice(0,10)+'T00:00:00').toLocaleDateString('en-US',{month:'long',year:'numeric'});
 async function loadRuns(){
@@ -144,7 +144,8 @@ async function loadRuns(){
     $('runsMeta').textContent = runs.length+' run'+(runs.length===1?'':'s');
     $('runsBody').innerHTML = runs.map(x=>{
       const t=x.totals||{}; const amt = x.process==='interest' ? t.interest_cents : x.process==='bank_reconciliation' ? t.difference_cents : x.process==='cutoff_adjustment' ? ((t.expense_change_by_month||{})[String(x.period_month).slice(0,7)]||0) : t.amount_cents;
-      const reclassWhat = x.process==='reclassification' ? (t.proposals||0)+' reclassification(s) · net expense change '+money(t.net_expense_change_cents||0)+' · amount moved' : null;
+      const reclassWhat = x.process==='reclassification' ? (t.proposals||0)+' reclassification(s) · net expense change '+money(t.net_expense_change_cents||0)+' · amount moved'
+        : x.process==='journal_entry' ? (t.proposals||0)+' entr'+((t.proposals===1)?'y':'ies')+' · total debits' : null;
       const badge = x.status==='failed' ? '<span style="color:#9B2C2C;font-weight:700;">FAILED</span>' : x.status==='held' ? '<span style="color:#8a6d1a;font-weight:700;">Held</span>' : 'Ready for approval';
       const what = reclassWhat ? reclassWhat : x.process==='cutoff_adjustment' ? (t.accruals||0)+' accrual(s), '+(t.deferrals||0)+' deferral(s)'+(t.holds?', '+t.holds+' held':'')+' · expense change this month' : x.process==='interest' ? (t.owners||0)+' owners' : x.process==='bank_reconciliation' ? esc(t.account||'')+' · '+(REC_STATUS[t.status]||esc(t.status||''))+(t.proposals?' · '+t.proposals+' proposed entr'+(t.proposals===1?'y':'ies'):'')+' · difference' : (t.entries||0)+' entries';
       const exc = (x.exceptions||[]).length ? ' · '+x.exceptions.length+' exception(s)' : '';
@@ -180,6 +181,17 @@ async function openRun(id){
           + (it.schedule?'<div style="margin-top:4px;">Prepaid schedule (approved with this): '+esc(it.schedule.balance_account_number)+' to '+esc(it.schedule.recognition_account_number)+', '+it.schedule.months.map(m=>esc(monthLabel(m.month))+' '+money(m.cents)).join(', ')+'</div>':'')
           + '<div style="margin-top:4px;color:#166534;">'+esc((it.verification||{}).text||'')+'</div><div style="color:var(--muted);">Expense change: '+eff(it.effects)+'</div></label>'; }).join('')
         + (holds.length?'<div style="background:#FFF5DD;color:#7A5408;padding:8px 10px;border-radius:6px;font-size:12.5px;margin-top:10px;"><b>Held:</b><br>'+holds.map(h=>esc(h.text)).join('<br>')+'</div>':'');
+    } else if(run.process==='journal_entry'){
+      // Kat's prepared journal entries (lib/accounting/journal_entry_runs): each exactly as it will post,
+      // with its evidence; nothing posts until it is ticked and approved.
+      const pv=run.preview||{}, its=(pv.items||[]).filter(i=>!i.already), done=(pv.items||[]).filter(i=>i.already);
+      const fmtLines=(e)=>'<table style="width:100%;font-size:12px;border-collapse:collapse;margin:4px 0 2px;">'+e.lines.map(l=>'<tr><td style="padding:2px 0;white-space:nowrap;">'+(l.debit_cents?'Dr ':'&nbsp;&nbsp;&nbsp;Cr ')+esc(l.account_number)+'</td><td style="text-align:right;">'+money(l.debit_cents||l.credit_cents)+'</td><td style="padding-left:10px;color:var(--muted);">'+esc(l.memo||'')+'</td></tr>').join('')+'</table>';
+      head = '<p style="font-size:13px;">Kat prepared these journal entries. Each posts exactly as shown, as a new entry citing its evidence. Tick each to approve it by name; nothing posts until you approve.</p>'
+        + its.map(it=>{ const ev=it.evidence||{}; return '<label style="display:block;padding:8px 0;border-bottom:1px solid #f1f3f6;font-size:12.5px;"><input type="checkbox" class="incl" value="'+esc(it.id)+'"> <b>'+esc(it.label)+'</b> · '+money(it.amount_cents)
+          + '<br><span style="color:var(--muted);">Basis: '+esc(ev.basis||'')+(ev.source?' · Source: '+esc(ev.source):'')+'</span>'
+          + it.entries.map(e=>'<div style="margin-top:6px;"><b>'+esc(e.posting_date)+'</b> '+esc(e.description)+fmtLines(e)+'</div>').join('')
+          + '<div style="margin-top:4px;color:#166534;">'+esc((it.verification||{}).text||'')+'</div></label>'; }).join('')
+        + (done.length?'<div style="color:var(--muted);font-size:12.5px;margin-top:8px;">Already posted: '+done.map(d=>esc(d.label||d.id)).join(', ')+'</div>':'');
     } else if(run.process==='reclassification'){
       // Kat's controlled reclassifications (lib/accounting/reclassifications): each moves an amount
       // between two expense accounts of one fund, citing its source; total expense does not change.
@@ -247,6 +259,8 @@ function runSelection(run, proc, include){
     for(const it of (pv.items||[]).filter(it=>inc.has(it.id))) out.push({ label: (({accrual:'Accrue',deferral:'Defer',correction:'Correct'}[it.kind]||it.kind)+': ')+it.label, cents: it.amount_cents });
   } else if(proc==='reclassification'){
     for(const it of (pv.items||[]).filter(it=>inc.has(it.id))) out.push({ label: 'Reclassify '+it.label, cents: it.amount_cents });
+  } else if(proc==='journal_entry'){
+    for(const it of (pv.items||[]).filter(it=>inc.has(it.id))) out.push({ label: it.label, cents: it.amount_cents });
   } else if(proc==='interest'){
     const t = (run && run.totals) || {};
     out.push({ label: (t.clean_owners||0)+' owners (no exceptions)', cents: t.clean_interest_cents||0 });
@@ -267,6 +281,8 @@ async function approveRun(id, proc){
     ? (include.length ? 'Post the '+include.length+' ticked correction(s) below, each exactly as shown; prepaid schedules are approved in your name.' : 'Nothing is ticked, so nothing will post.')
     : proc==='reclassification'
     ? (include.length ? 'Post the '+include.length+' ticked reclassification(s) below, each exactly as shown. Total expense, net income and cash do not change.' : 'Nothing is ticked, so nothing will post.')
+    : proc==='journal_entry'
+    ? (include.length ? 'Post the '+include.length+' ticked journal entr'+(include.length===1?'y':'ies')+' below, each exactly as shown.' : 'Nothing is ticked, so nothing will post.')
     : 'Post this run now; this writes the journal entries.';
   const ok = await txConfirm({ title: label, message, items, total_cents: items.some(i=>i.cents!=null) ? total : null, confirmLabel: (include.length || proc==='interest') ? 'Confirm and post' : 'Confirm' });
   const st = $('runStatus'), btn = $('approveBtn');

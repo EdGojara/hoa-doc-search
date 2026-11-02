@@ -13,7 +13,8 @@
 //   POST /api/accounting-runs/run/:id/approve      { include: [tenure_id] }   OWNER ONLY
 //   POST /api/accounting-runs/run/:id/hold         { reason }                 OWNER ONLY
 //   POST /api/accounting-runs/run/:id/supersede    { reason }                 OWNER ONLY
-//   POST /api/accounting-runs/run/:id/refresh      { codings? }  staff: re-prepare an UNAPPROVED run on the current books
+//   POST /api/accounting-runs/run/:id/refresh      { codings?, items? }  staff: re-prepare an UNAPPROVED run on the current books
+//                                                   (items: a corrected journal entry, same ids)
 // Preparing never posts. Approval posts exactly the stored preview.
 // ============================================================================
 const express = require('express');
@@ -128,15 +129,16 @@ router.post('/community/:cid/prepare', express.json(), async (req, res) => {
   try {
     const u = await requireStaff(req, res); if (!u) return;
     const b = req.body || {};
-    if (!['recognition', 'interest', 'bank_reconciliation', 'cutoff_adjustment', 'reclassification'].includes(b.process)) return res.status(400).json({ error: 'process must be recognition, interest, bank_reconciliation, cutoff_adjustment or reclassification' });
+    if (!['recognition', 'interest', 'bank_reconciliation', 'cutoff_adjustment', 'reclassification', 'journal_entry'].includes(b.process)) return res.status(400).json({ error: 'process must be recognition, interest, bank_reconciliation, cutoff_adjustment, reclassification or journal_entry' });
     // A reclassification carries Kat's items (what moves, from and to which expense account, and the
     // evidence); lib/accounting/reclassifications validates each against the GL. Nothing posts here.
     if (b.process === 'reclassification' && (!Array.isArray(b.items) || !b.items.length || b.items.length > 200)) return res.status(400).json({ error: 'a reclassification needs 1 to 200 items' });
+    if (b.process === 'journal_entry' && (!Array.isArray(b.items) || !b.items.length || b.items.length > 50)) return res.status(400).json({ error: 'a journal entry run needs 1 to 50 entries' });
     if (b.process === 'bank_reconciliation' && !/^[0-9a-f-]{36}$/i.test(String(b.subject_id || ''))) return res.status(400).json({ error: 'subject_id (the bank account) is required' });
     if (!isDate(b.period_month)) return res.status(400).json({ error: 'period_month must be YYYY-MM-DD' });
     if (b.run_date && !isDate(b.run_date)) return res.status(400).json({ error: 'run_date must be YYYY-MM-DD' });
     const codings = parseCodings(b.codings); if (codings.error) return res.status(400).json({ error: codings.error });
-    const r = await R.prepare(supabase, { community_id: req.params.cid, process: b.process, period_month: b.period_month, run_date: b.run_date || null, subject_id: b.process === 'bank_reconciliation' ? b.subject_id : null, actor: `${R.KAT} (requested by ${u.email || 'staff'})`, codings: codings.list, follow_up: b.follow_up === true, items: b.process === 'reclassification' ? b.items : [] });
+    const r = await R.prepare(supabase, { community_id: req.params.cid, process: b.process, period_month: b.period_month, run_date: b.run_date || null, subject_id: b.process === 'bank_reconciliation' ? b.subject_id : null, actor: `${R.KAT} (requested by ${u.email || 'staff'})`, codings: codings.list, follow_up: b.follow_up === true, items: ['reclassification', 'journal_entry'].includes(b.process) ? b.items : [] });
     if (r.skipped) return res.status(409).json({ error: r.skipped, code: 'not_enabled' });
     if (r.failed) return res.status(500).json({ error: r.error, run_id: r.run_id });
     res.json(r);
@@ -175,7 +177,9 @@ router.post('/run/:id/refresh', express.json(), async (req, res) => {
     const u = await requireStaff(req, res); if (!u) return;
     const b = req.body || {};
     const codings = b.codings === undefined ? { list: null } : parseCodings(b.codings); if (codings.error) return res.status(400).json({ error: codings.error });
-    const r = await R.refresh(supabase, { run_id: req.params.id, requested_by: u.email || 'staff', codings: codings.list });
+    // A corrected journal entry is resubmitted with its corrected items (same ids, so it posts once).
+    if (b.items !== undefined && (!Array.isArray(b.items) || !b.items.length || b.items.length > 50)) return res.status(400).json({ error: 'items must be 1 to 50 entries' });
+    const r = await R.refresh(supabase, { run_id: req.params.id, requested_by: u.email || 'staff', codings: codings.list, items: b.items || null });
     if (r.failed) return res.status(500).json({ error: r.error, run_id: r.run_id });
     res.json(r);
   } catch (err) { fail(res, 'refresh', err); }
