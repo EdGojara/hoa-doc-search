@@ -1,0 +1,60 @@
+{
+  "migration": "559_kat_account_reconciliation.sql",
+  "summary": "Kat's runs gain the read-only process 'account_reconciliation' (monthly GL 2300 reconciliation and exceptions, reviewed on Today, nothing posts) and it is switched on for the five associations with a 2300 account.",
+  "requires": [
+    "558_kat_journal_entry_runs.sql"
+  ],
+  "preflight": [
+    {
+      "name": "no run uses an unknown process",
+      "sql": "SELECT count(*)::int FROM accounting_runs WHERE process NOT IN ('recognition', 'interest', 'bank_reconciliation', 'cutoff_adjustment', 'reclassification', 'journal_entry')",
+      "expect": 0
+    },
+    {
+      "name": "no account_reconciliation automation yet",
+      "sql": "SELECT count(*)::int FROM community_accounting_automation WHERE process = 'account_reconciliation'",
+      "expect": 0
+    },
+    {
+      "name": "the five associations each have a 2300 account",
+      "sql": "SELECT count(DISTINCT community_id)::int FROM chart_of_accounts WHERE account_number = '2300' AND community_id IN ('a0000000-0000-4000-8000-000000000001', 'a0000000-0000-4000-8000-000000000002', 'a0000000-0000-4000-8000-000000000003', 'a0000000-0000-4000-8000-000000000005', 'a0000000-0000-4000-8000-000000000006')",
+      "expect": 5
+    }
+  ],
+  "expected_changes": [
+    "accounting_runs and community_accounting_automation: process may be 'account_reconciliation'.",
+    "Five community_accounting_automation rows (Waterview, Lakes of Pine Forest, Canyon Gate, Quail Ridge, Still Creek): account_reconciliation enabled, auto_post false.",
+    "No journal entry, ledger row or balance changes."
+  ],
+  "objects": {
+    "added": [],
+    "changed": [
+      "constraint:accounting_runs.accounting_runs_process_check",
+      "constraint:community_accounting_automation.community_accounting_automation_process_check"
+    ],
+    "removed": []
+  },
+  "row_changes": {
+    "community_accounting_automation": 5,
+    "accounting_runs": 0,
+    "journal_entries": 0
+  },
+  "protected": [
+    {
+      "table": "accounting_runs",
+      "order_by": "id"
+    }
+  ],
+  "verify": [
+    {
+      "name": "the run process constraint allows account_reconciliation",
+      "sql": "SELECT count(*)::int FROM pg_constraint WHERE conname = 'accounting_runs_process_check' AND pg_get_constraintdef(oid) LIKE '%account_reconciliation%'",
+      "expect": 1
+    },
+    {
+      "name": "five enabled, never auto-posting",
+      "sql": "SELECT count(*)::int FROM community_accounting_automation WHERE process = 'account_reconciliation' AND enabled AND NOT auto_post",
+      "expect": 5
+    }
+  ]
+}

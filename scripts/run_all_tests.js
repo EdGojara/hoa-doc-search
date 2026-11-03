@@ -62,6 +62,7 @@ const CHECKS = [
   'tests/test_journal_entry_runs.js',
   'tests/test_error_correction_not_waiver.js',
   'tests/test_billing_excludes_held_letters.js',
+  'tests/test_account_2300_rec.js',
   'tests/test_retrieval_regression.js',
   'tests/test_fact_fastpath.js',
   'tests/test_completion_thanks.js',

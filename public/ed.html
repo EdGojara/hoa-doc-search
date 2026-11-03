@@ -132,7 +132,7 @@ async function boot(){
   try{ const rid=new URLSearchParams(location.search).get('run'); if(rid && /^[0-9a-f-]{36}$/i.test(rid)) openRun(rid); }catch(_){}
 }
 // ---- Kat's monthly accounting runs (migration 510): Kat prepares, Ed approves or holds ----
-const PROC = { recognition: 'Monthly recognition', interest: 'Late interest', bank_reconciliation: 'Bank reconciliation', cutoff_adjustment: 'Cutoff corrections', reclassification: 'Reclassifications', journal_entry: 'Journal entries' };
+const PROC = { recognition: 'Monthly recognition', interest: 'Late interest', bank_reconciliation: 'Bank reconciliation', cutoff_adjustment: 'Cutoff corrections', reclassification: 'Reclassifications', journal_entry: 'Journal entries', account_reconciliation: '2300 reconciliation' };
 const REC_STATUS = { reconciled: 'balanced, nothing open', in_progress: 'balances, exceptions open', unbalanced: 'does not balance', blocked: 'blocked' };
 const monthLabel = (d) => new Date(String(d).slice(0,10)+'T00:00:00').toLocaleDateString('en-US',{month:'long',year:'numeric'});
 async function loadRuns(){
@@ -145,7 +145,8 @@ async function loadRuns(){
     $('runsBody').innerHTML = runs.map(x=>{
       const t=x.totals||{}; const amt = x.process==='interest' ? t.interest_cents : x.process==='bank_reconciliation' ? t.difference_cents : x.process==='cutoff_adjustment' ? ((t.expense_change_by_month||{})[String(x.period_month).slice(0,7)]||0) : t.amount_cents;
       const reclassWhat = x.process==='reclassification' ? (t.proposals||0)+' reclassification(s) · net expense change '+money(t.net_expense_change_cents||0)+' · amount moved'
-        : x.process==='journal_entry' ? (t.proposals||0)+' entr'+((t.proposals===1)?'y':'ies')+' · total debits' : null;
+        : x.process==='journal_entry' ? (t.proposals||0)+' entr'+((t.proposals===1)?'y':'ies')+' · total debits'
+        : x.process==='account_reconciliation' ? (t.ties?'ties to the GL':'DOES NOT TIE')+' · '+(t.exceptions||0)+' exception(s) · ending balance' : null;
       const badge = x.status==='failed' ? '<span style="color:#9B2C2C;font-weight:700;">FAILED</span>' : x.status==='held' ? '<span style="color:#8a6d1a;font-weight:700;">Held</span>' : 'Ready for approval';
       const what = reclassWhat ? reclassWhat : x.process==='cutoff_adjustment' ? (t.accruals||0)+' accrual(s), '+(t.deferrals||0)+' deferral(s)'+(t.holds?', '+t.holds+' held':'')+' · expense change this month' : x.process==='interest' ? (t.owners||0)+' owners' : x.process==='bank_reconciliation' ? esc(t.account||'')+' · '+(REC_STATUS[t.status]||esc(t.status||''))+(t.proposals?' · '+t.proposals+' proposed entr'+(t.proposals===1?'y':'ies'):'')+' · difference' : (t.entries||0)+' entries';
       const exc = (x.exceptions||[]).length ? ' · '+x.exceptions.length+' exception(s)' : '';
@@ -181,6 +182,12 @@ async function openRun(id){
           + (it.schedule?'<div style="margin-top:4px;">Prepaid schedule (approved with this): '+esc(it.schedule.balance_account_number)+' to '+esc(it.schedule.recognition_account_number)+', '+it.schedule.months.map(m=>esc(monthLabel(m.month))+' '+money(m.cents)).join(', ')+'</div>':'')
           + '<div style="margin-top:4px;color:#166534;">'+esc((it.verification||{}).text||'')+'</div><div style="color:var(--muted);">Expense change: '+eff(it.effects)+'</div></label>'; }).join('')
         + (holds.length?'<div style="background:#FFF5DD;color:#7A5408;padding:8px 10px;border-radius:6px;font-size:12.5px;margin-top:10px;"><b>Held:</b><br>'+holds.map(h=>esc(h.text)).join('<br>')+'</div>':'');
+    } else if(run.process==='account_reconciliation'){
+      // Kat's read-only 2300 control (lib/accounting/account_2300_rec): review it; nothing posts.
+      const pv=run.preview||{};
+      head = '<p style="font-size:13px;">Kat\'s monthly reconciliation of GL '+esc((pv.account||{}).number||'2300')+'. Read-only: approving records your review and posts nothing. Exceptions stay open until resolved.</p>'
+        + '<pre style="white-space:pre-wrap;font:12.5px/1.5 inherit;background:#f7f9fb;padding:10px 12px;border-radius:6px;margin:10px 0;">'+esc(pv.report||'')+'</pre>'
+        + (exc.length ? '<h4 style="margin:14px 0 6px;">Exceptions</h4><div style="max-height:260px;overflow:auto;font-size:12.5px;">'+exc.map(e=>'<div style="padding:4px 0;border-bottom:1px solid #f1f3f6;"><b>'+esc(String(e.code||'').replace(/_/g,' '))+':</b> '+esc(e.text)+'</div>').join('')+'</div>' : '<p style="color:#166534;">No exceptions.</p>');
     } else if(run.process==='journal_entry'){
       // Kat's prepared journal entries (lib/accounting/journal_entry_runs): each exactly as it will post,
       // with its evidence; nothing posts until it is ticked and approved.
@@ -230,7 +237,7 @@ async function openRun(id){
       +(e.event==='note'&&e.detail&&e.detail.text?'<div style="margin:3px 0 6px;padding:6px 8px;background:#FFF5DD;color:#7A5408;border-radius:5px;">'+esc(e.detail.text)+'</div>':'')).join('<br>');
     const can = run.status==='prepared';
     const btns = can ? '<button onclick="holdRun(\''+run.id+'\')" style="padding:8px 14px;border:1px solid #e3c98a;background:#fff;border-radius:6px;cursor:pointer;">Hold</button>'
-      + '<button id="approveBtn" onclick="approveRun(\''+run.id+'\',\''+run.process+'\')" style="padding:8px 16px;border:none;background:#0B1D34;color:#fff;border-radius:6px;cursor:pointer;font-weight:700;">'+(run.process==='bank_reconciliation'?'Approve &amp; store':'Approve &amp; post')+'</button>' : '';
+      + '<button id="approveBtn" onclick="approveRun(\''+run.id+'\',\''+run.process+'\')" style="padding:8px 16px;border:none;background:#0B1D34;color:#fff;border-radius:6px;cursor:pointer;font-weight:700;">'+(run.process==='bank_reconciliation'?'Approve &amp; store':run.process==='account_reconciliation'?'Mark reviewed':'Approve &amp; post')+'</button>' : '';
     const res = run.result && run.result.report ? '<h4 style="margin:14px 0 6px;">Stored result</h4><pre style="white-space:pre-wrap;font:12.5px/1.5 inherit;background:#f7f9fb;padding:10px 12px;border-radius:6px;">'+esc(run.result.report)+'</pre>' : '';
     $('modal').innerHTML = '<div class="mb" style="padding:20px 22px;max-width:760px;">'
       + '<h3 style="margin:0 0 6px;">'+(PROC[run.process]||run.process)+' · '+monthLabel(run.period_month)+'</h3>'
@@ -263,6 +270,8 @@ function runSelection(run, proc, include){
     for(const it of (pv.items||[]).filter(it=>inc.has(it.id))) out.push({ label: 'Reclassify '+it.label, cents: it.amount_cents });
   } else if(proc==='journal_entry'){
     for(const it of (pv.items||[]).filter(it=>inc.has(it.id))) out.push({ label: it.label, cents: it.amount_cents });
+  } else if(proc==='account_reconciliation'){
+    out.push({ label: 'Review of the 2300 reconciliation (nothing posts)', cents: null });
   } else if(proc==='interest'){
     const t = (run && run.totals) || {};
     out.push({ label: (t.clean_owners||0)+' owners (no exceptions)', cents: t.clean_interest_cents||0 });
@@ -276,7 +285,7 @@ async function approveRun(id, proc){
   const run = window._openRun && window._openRun.id===id ? window._openRun : null;
   const items = runSelection(run, proc, include);
   const total = items.reduce((a,i)=>a+(Number(i.cents)||0),0);
-  const label = proc==='bank_reconciliation' ? 'Approve & store' : 'Approve & post';
+  const label = proc==='bank_reconciliation' ? 'Approve & store' : proc==='account_reconciliation' ? 'Mark reviewed' : 'Approve & post';
   const message = proc==='bank_reconciliation'
     ? (include.length ? 'Post the '+include.length+' ticked entr'+(include.length===1?'y':'ies')+' below and store the reconciliation. Unticked proposals stay unposted. It is marked complete only if it balances and nothing is open.' : 'Nothing is ticked, so nothing posts. The reconciliation is stored as it stands.')
     : proc==='cutoff_adjustment'
@@ -285,6 +294,8 @@ async function approveRun(id, proc){
     ? (include.length ? 'Post the '+include.length+' ticked reclassification(s) below, each exactly as shown. Total expense, net income and cash do not change.' : 'Nothing is ticked, so nothing will post.')
     : proc==='journal_entry'
     ? (include.length ? 'Post the '+include.length+' ticked journal entr'+(include.length===1?'y':'ies')+' below, each exactly as shown.' : 'Nothing is ticked, so nothing will post.')
+    : proc==='account_reconciliation'
+    ? 'Record that you reviewed this reconciliation. Nothing posts; open exceptions stay open.'
     : 'Post this run now; this writes the journal entries.';
   const ok = await txConfirm({ title: label, message, items, total_cents: items.some(i=>i.cents!=null) ? total : null, confirmLabel: (include.length || proc==='interest') ? 'Confirm and post' : 'Confirm' });
   const st = $('runStatus'), btn = $('approveBtn');
@@ -303,6 +314,7 @@ async function approveRun(id, proc){
     const res = d.result||{}; const refs = (res.posted_entries||res.entries||[]).map(p=>p.reference||p.journal_reference||p.already_posted).filter(Boolean);
     const msg = proc==='bank_reconciliation'
       ? 'Stored ('+(res.status||'done')+').'+(refs.length ? ' Posted: '+refs.join(', ')+'.' : ' No entries posted.')
+      : proc==='account_reconciliation' ? 'Review recorded. Nothing was posted.'
       : 'Posted.'+(refs.length ? ' '+refs.join(', ')+'.' : '');
     if(st){ st.style.color='#1F5F43'; st.textContent = msg; }
     if(btn){ btn.textContent = 'Done'; }
