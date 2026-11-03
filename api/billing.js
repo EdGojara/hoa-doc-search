@@ -29,6 +29,9 @@
 // ============================================================================
 
 const { route: aiRoute, executedModel: aiExecuted } = require('../lib/ai/router');
+// A printed letter withdrawn before mailing (Reduce marks it 'rejected' and its mail piece held, Ed 2026-10-23)
+// was never sent: it is not billed as a letter, its pages or its postage (Ed 2026-11-03, system errors are not billed).
+const HELD_LETTER_STATUS = 'rejected';
 const express = require('express');
 const { createClient } = require('@supabase/supabase-js');
 const Anthropic = require('../lib/ai/anthropic');
@@ -1833,7 +1836,7 @@ async function withRecoveredMailings(letters, { start, endEx, communityId, cols 
   const have = new Set(letters.map((l) => l.id));
   const ids = (rec || []).map((r) => r.interaction_id).filter((id) => !have.has(id));
   if (!ids.length) return letters;
-  const { data: rows, error: e2 } = await supabase.from('interactions').select(cols).in('id', ids);
+  const { data: rows, error: e2 } = await supabase.from('interactions').select(cols).in('id', ids).or(`status.is.null,status.neq.${HELD_LETTER_STATUS}`);
   if (e2) { console.warn('[billing] recovered mailings interactions failed:', e2.message); return letters; }
   const mailedOn = Object.fromEntries(rec.map((r) => [r.interaction_id, r.mailed_on]));
   return letters.concat((rows || []).map((r) => ({ ...r, postmark_date: mailedOn[r.id] })));
@@ -1852,7 +1855,7 @@ async function renderActivityDetailPdfBuffer(communityId, start, end) {
   async function fetchAll(build) { const out = []; for (let f = 0; ; f += 1000) { const { data, error } = await build().range(f, f + 999); if (error) break; out.push(...(data || [])); if (!data || data.length < 1000) break; } return out; }
   const { data: community } = await supabase.from('communities').select('id, name').eq('id', communityId).maybeSingle();
   const letters = await withRecoveredMailings(
-    await fetchAll(() => supabase.from('interactions').select('id, property_id, type, delivery_method, postmark_date, content, bundle_id').eq('community_id', communityId).in('type', LETTER_TYPES).not('printed_at', 'is', null).gte('postmark_date', start).lt('postmark_date', endEx)),
+    await fetchAll(() => supabase.from('interactions').select('id, property_id, type, delivery_method, postmark_date, content, bundle_id').eq('community_id', communityId).in('type', LETTER_TYPES).not('printed_at', 'is', null).or(`status.is.null,status.neq.${HELD_LETTER_STATUS}`).gte('postmark_date', start).lt('postmark_date', endEx)),
     { start, endEx, communityId, cols: 'id, property_id, type, delivery_method, postmark_date, content, bundle_id' });
   // Resident ACC decisions billed by DECISION date (decided_at, mig 330) — the
   // date staff issued the decision, not the date the application arrived. Only
@@ -2610,6 +2613,7 @@ router.get('/activity-report', async (req, res) => {
         .select(cols)
         .in('type', LETTER_TYPES)
         .not('printed_at', 'is', null)
+        .or(`status.is.null,status.neq.${HELD_LETTER_STATUS}`)
         .gte('postmark_date', start)
         .lt('postmark_date', endEx);
       if (communityId) q = q.eq('community_id', communityId);
@@ -2653,6 +2657,7 @@ router.get('/activity-report', async (req, res) => {
         .select('community_id, bundle_id, content, id, postmark_date')
         .in('type', LETTER_TYPES)
         .not('printed_at', 'is', null)
+        .or(`status.is.null,status.neq.${HELD_LETTER_STATUS}`)
         .gte('postmark_date', endEx)
         .lt('postmark_date', spillEndEx);
       if (communityId) q = q.eq('community_id', communityId);
@@ -2907,7 +2912,7 @@ router.get('/activity-detail', async (req, res) => {
       fetchAll(() => supabase.from('interactions')
         .select('id, property_id, type, delivery_method, postmark_date, content, bundle_id, page_count, violation_id')
         .eq('community_id', communityId).in('type', LETTER_TYPES)
-        .not('printed_at', 'is', null).gte('postmark_date', start).lt('postmark_date', endEx))
+        .not('printed_at', 'is', null).or(`status.is.null,status.neq.${HELD_LETTER_STATUS}`).gte('postmark_date', start).lt('postmark_date', endEx))
         .then((rows) => withRecoveredMailings(rows, { start, endEx, communityId, cols: 'id, property_id, type, delivery_method, postmark_date, content, bundle_id, page_count, violation_id' })),
       fetchAll(() => supabase.from('builder_applications')
         .select('id, reference_number, street_address, submitter_name, status, decided_at')
