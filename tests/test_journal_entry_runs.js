@@ -50,6 +50,16 @@ check('idempotent: an entry already posted under its id is marked already and no
   assert.strictEqual(r.totals.proposals, 0);
 });
 
+check('a homeowner entry: its one 1300 line is the owner charge on that lot; a lot outside the community or two AR lines are refused', () => {
+  const f = facts({ accounts: { ...facts().accounts, 1300: { id: 'a1300', account_type: 'asset', is_active: true }, 4030: { id: 'a4030', account_type: 'revenue', is_active: true } }, properties: { p1: { id: 'p1', street_address: '1 Main St' } } });
+  const it = item({ id: 'int-08', lines: [{ account_number: '1300', debit_cents: 1200 }, { account_number: '4030', credit_cents: 1200 }], homeowner: { property_id: 'p1', charge_category: 'interest' } });
+  const ok = J.buildProposals(f, [it]);
+  assert.deepStrictEqual(ok.exceptions, []);
+  assert.deepStrictEqual(ok.items[0].homeowner, { property_id: 'p1', address: '1 Main St', charge_category: 'interest', kind: 'charge', amount_cents: 1200 });
+  assert.strictEqual(J.buildProposals(f, [{ ...it, homeowner: { property_id: 'elsewhere', charge_category: 'interest' } }]).exceptions.length, 1);
+  assert.strictEqual(J.buildProposals(f, [{ ...it, lines: [{ account_number: '1300', debit_cents: 600 }, { account_number: '1300', debit_cents: 600 }, { account_number: '4030', credit_cents: 1200 }] }]).exceptions.length, 1);
+});
+
 check('wiring: runs prepare, approve and refresh journal entries; owner in-app approval still required; Today renders them', () => {
   const read = (f) => fs.readFileSync(path.join(__dirname, '..', f), 'utf8');
   const m = read('lib/accounting/monthly_runs.js');
@@ -57,6 +67,8 @@ check('wiring: runs prepare, approve and refresh journal entries; owner in-app a
   assert.ok(/run\.process === 'journal_entry'\) result = await require\('\.\/journal_entry_runs'\)\.postApproved/.test(m));
   assert.ok(/const approver = assertInAppApproval\(approval\);/.test(m), 'approval stays the authenticated in-app owner approval');
   assert.ok(/openJournalEntryRun/.test(m) && /items = null/.test(m));
+  const jr = read('lib/accounting/journal_entry_runs.js');
+  assert.ok(jr.includes("require('./homeowner_charge')") && jr.includes("contains('raw_row_jsonb', { source_reference: e.source_reference })"), 'owner line posts through the sanctioned helper, once per source reference');
   const api = read('api/accounting_runs.js');
   assert.ok(/'journal_entry'\]\.includes\(b\.process\)/.test(api) && /items: b\.items \|\| null/.test(api));
   assert.ok(/router\.post\('\/run\/:id\/approve'[\s\S]{0,200}requireOwner/.test(api), 'approve is owner-only');
