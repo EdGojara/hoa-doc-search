@@ -60,17 +60,33 @@ check('a homeowner entry: its one 1300 line is the owner charge on that lot; a l
   assert.strictEqual(J.buildProposals(f, [{ ...it, lines: [{ account_number: '1300', debit_cents: 600 }, { account_number: '1300', debit_cents: 600 }, { account_number: '4030', credit_cents: 1200 }] }]).exceptions.length, 1);
 });
 
-check('reversing an erroneous charge: only the exact reversal of an open, unpaid charge is accepted', () => {
-  const base = facts({ accounts: { ...facts().accounts, 1300: { id: 'a1300', account_type: 'asset', is_active: true }, 2300: { id: 'a2300', account_type: 'liability', is_active: true } },
-    charges: { ch1: { id: 'ch1', status: 'open', original_amount_cents: 3500, balance_remaining_cents: 3500, description: 'Certified letter', charge_date: '2026-10-13' } } });
-  const rev = item({ id: 'rev-ch1', lines: [{ account_number: '2300', debit_cents: 3500 }, { account_number: '1300', credit_cents: 3500 }], voids_ar_charge_id: 'ch1' });
-  const ok = J.buildProposals(base, [rev]);
+check('void of a system error: only a trustEd-generated posting in an open period with unpaid charges; a legitimate entry is refused', () => {
+  const je = { id: 'je1', reference: 'JE-2026-00533', posting_date: '2026-10-13', status: 'posted', source_module: 'certified_letter_fee', description: 'Certified letter fee' };
+  const target = { je, lines: [{ account_number: '1300', debit_cents: 3500, credit_cents: 0 }, { account_number: '2300', debit_cents: 0, credit_cents: 3500 }],
+    charges: [{ id: 'ch1', status: 'open', original_amount_cents: 3500, balance_remaining_cents: 3500 }], period_open: true };
+  const ev = { basis: 'Letter printed and never mailed (system error).' };
+  const f = (t) => facts({ voidTargets: { je1: t } });
+  const it = { id: 'void-533', void_journal_entry_id: 'je1', evidence: ev };
+  const ok = J.buildProposals(f(target), [it]);
   assert.deepStrictEqual(ok.exceptions, []);
-  assert.strictEqual(ok.items[0].voids_ar_charge.ar_charge_id, 'ch1');
-  assert.strictEqual(J.buildProposals(base, [{ ...rev, lines: [{ account_number: '2300', debit_cents: 2000 }, { account_number: '1300', credit_cents: 2000 }] }]).exceptions.length, 1, 'partial amount refused');
-  const paid = { ...base, charges: { ch1: { ...base.charges.ch1, balance_remaining_cents: 0, status: 'paid' } } };
-  assert.strictEqual(J.buildProposals(paid, [rev]).exceptions.length, 1, 'a paid charge is not reversed here');
-  assert.strictEqual(J.buildProposals(base, [{ ...rev, voids_ar_charge_id: 'other' }]).exceptions.length, 1, 'a charge outside the community refused');
+  const p = ok.items[0];
+  assert.strictEqual(p.void_journal.reference, 'JE-2026-00533'); assert.strictEqual(p.amount_cents, 3500);
+  assert.deepStrictEqual(p.entries[0].lines.map((l) => [l.account_number, l.debit_cents, l.credit_cents]), [['1300', 0, 3500], ['2300', 3500, 0]], 'shows the exact reversal');
+  assert.strictEqual(J.buildProposals(f({ ...target, je: { ...je, source_module: 'manual' } }), [it]).exceptions.length, 1, 'a person-keyed entry is not voided as a system error');
+  assert.strictEqual(J.buildProposals(f({ ...target, period_open: false }), [it]).exceptions.length, 1, 'closed period refused');
+  assert.strictEqual(J.buildProposals(f({ ...target, charges: [{ ...target.charges[0], status: 'paid', balance_remaining_cents: 0 }] }), [it]).exceptions.length, 1, 'a paid charge is credited, not voided');
+  assert.strictEqual(J.buildProposals(f(target), [{ ...it, evidence: {} }]).exceptions.length, 1, 'evidence required');
+  assert.strictEqual(J.buildProposals(f({ ...target, je: { ...je, status: 'voided' } }), [it]).items[0].already, true, 'already voided is idempotent');
+});
+
+check('reports hide a same-month void pair and keep a later-month void visible; the owner ledger leaves out voided charges', () => {
+  const { dropSameMonthVoidPairs } = require('../lib/accounting/je_status');
+  const L = (id, st, d, rv) => ({ journal_entries: { id, status: st, posting_date: d, void_reversal_je_id: rv } });
+  const rows = [L('o', 'voided', '2026-10-13', 'r'), L('r', 'posted', '2026-10-13', null), L('x', 'posted', '2026-10-20', null), L('o2', 'voided', '2026-09-30', 'r2'), L('r2', 'posted', '2026-10-02', null)];
+  assert.deepStrictEqual(dropSameMonthVoidPairs(rows).map((r) => r.journal_entries.id), ['x', 'o2', 'r2']);
+  const ar = fs.readFileSync(path.join(__dirname, '..', 'lib/accounting/ar_engine.js'), 'utf8');
+  assert.ok(ar.includes("if (!include_voided) chargesQ = chargesQ.neq('status', 'voided');") && ar.includes("if (e.status !== 'voided') running += e.amount_cents;"));
+  assert.ok(/dropSameMonthVoidPairs/.test(fs.readFileSync(path.join(__dirname, '..', 'lib/statements/drill.js'), 'utf8')) && /dropSameMonthVoidPairs/.test(fs.readFileSync(path.join(__dirname, '..', 'lib/statements/model.js'), 'utf8')));
 });
 
 check('wiring: runs prepare, approve and refresh journal entries; owner in-app approval still required; Today renders them', () => {
