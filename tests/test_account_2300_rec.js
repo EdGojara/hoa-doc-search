@@ -48,6 +48,9 @@ check('wiring: read-only run, monthly prepare of the month just closed, Today re
   const ed = read('public/ed.html');
   assert.ok(ed.includes("account_reconciliation: '2300 reconciliation'") && ed.includes("run.process==='account_reconciliation'") && ed.includes('Mark reviewed'));
   assert.ok(read('migrations/559_kat_account_reconciliation.sql').includes("'account_reconciliation'"));
+  const api = read('api/accounting_runs.js');
+  assert.ok(api.includes("r.process !== 'account_reconciliation' || r.status !== 'prepared' || Number((r.totals || {}).material_exceptions || 0) > 0"), 'a routine reconciliation never waits on the owner');
+  assert.ok(lib.includes("const MATERIAL = new Set(['does_not_tie', 'debit_balance'"), 'material exceptions are named');
 });
 
 (async () => {

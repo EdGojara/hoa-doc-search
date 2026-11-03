@@ -43,7 +43,10 @@ router.get('/pending', async (req, res) => {
     const ids = [...new Set(data.map((r) => r.community_id))];
     const { data: comms } = ids.length ? await supabase.from('communities').select('id, name').in('id', ids) : { data: [] };
     const N = Object.fromEntries((comms || []).map((c) => [c.id, c.name]));
-    res.json({ runs: data.map((r) => ({ ...r, community_name: N[r.community_id] || null })) });
+    // A routine 2300 reconciliation (ties, no material exception) is kept on record but never waits on
+    // the owner (Ed 2026-11-03); one with a material exception does, for review.
+    const waiting = data.filter((r) => r.process !== 'account_reconciliation' || r.status !== 'prepared' || Number((r.totals || {}).material_exceptions || 0) > 0);
+    res.json({ runs: waiting.map((r) => ({ ...r, community_name: N[r.community_id] || null })) });
   } catch (err) { fail(res, 'pending', err); }
 });
 
