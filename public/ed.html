@@ -189,6 +189,7 @@ async function openRun(id){
       head = '<p style="font-size:13px;">Kat prepared these journal entries. Each posts exactly as shown, as a new entry citing its evidence. Tick each to approve it by name; nothing posts until you approve.</p>'
         + its.map(it=>{ const ev=it.evidence||{}; return '<label style="display:block;padding:8px 0;border-bottom:1px solid #f1f3f6;font-size:12.5px;"><input type="checkbox" class="incl" value="'+esc(it.id)+'"> <b>'+esc(it.label)+'</b> · '+money(it.amount_cents)
           + '<br><span style="color:var(--muted);">Basis: '+esc(ev.basis||'')+(ev.source?' · Source: '+esc(ev.source):'')+'</span>'
+          + (it.voids_ar_charge?'<div style="margin-top:4px;"><b>Reverses charge:</b> '+esc(it.voids_ar_charge.description||'')+' ('+esc(it.voids_ar_charge.charge_date||'')+', '+money(it.voids_ar_charge.amount_cents)+'), marked voided</div>':'')
           + (it.homeowner?'<div style="margin-top:4px;"><b>Owner ledger:</b> '+esc(it.homeowner.kind)+' '+money(it.homeowner.amount_cents)+' on '+esc(it.homeowner.address||'')+' ('+esc(it.homeowner.charge_category)+')</div>':'')
           + it.entries.map(e=>'<div style="margin-top:6px;"><b>'+esc(e.posting_date)+'</b> '+esc(e.description)+fmtLines(e)+'</div>').join('')
           + '<div style="margin-top:4px;color:#166534;">'+esc((it.verification||{}).text||'')+'</div></label>'; }).join('')
