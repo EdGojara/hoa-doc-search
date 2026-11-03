@@ -51,6 +51,14 @@ check('a 1/1 assessment (due on the billing date) is not eligible within 30 days
 check('it bears interest once unpaid more than 30 days after the due date (2/1, and still on 3/1)', it(feb1, 't1').eligible_principal_cents === 92500 + 142500 && it(mar1, 't1').eligible_principal_cents === 92500 + 142500);
 const due15 = computeInterest({ rows: bill, tenures: ten, properties: props, runDate: '2027-02-14', cutoverDate: '2026-08-01', settings: { ...S, due_offset_days: 14 } });
 check('a January 15 due date (offset 14): not yet eligible on 2/14', it(due15, 't1').eligible_principal_cents === 92500);
+// Ed 2026-11-03: the run knows how current the payment history is, and a stale history blocks it.
+check('the newest receipt on or before the run date is reported (the incomplete-history guard reads it)', sep.latest_receipt_date && sep.latest_receipt_date <= '2026-09-01' && aug.latest_receipt_date === null || aug.latest_receipt_date <= '2026-08-01');
+{
+  const src = require('fs').readFileSync(require('path').join(__dirname, '..', 'lib/accounting/monthly_runs.js'), 'utf8');
+  check('an interest run on a stale payment history is blocked from approval (severity blocking, default gap 5 days)',
+    src.includes("code: 'payment_history_incomplete', severity: 'blocking'") && src.includes('max_receipt_gap_days ?? 5')
+    && src.includes("code: 'bank_not_reconciled', severity: 'blocking'") && src.includes("code: 'payment_history_unverified', severity: 'blocking'"));
+}
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
