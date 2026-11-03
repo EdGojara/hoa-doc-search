@@ -60,6 +60,19 @@ check('a homeowner entry: its one 1300 line is the owner charge on that lot; a l
   assert.strictEqual(J.buildProposals(f, [{ ...it, lines: [{ account_number: '1300', debit_cents: 600 }, { account_number: '1300', debit_cents: 600 }, { account_number: '4030', credit_cents: 1200 }] }]).exceptions.length, 1);
 });
 
+check('reversing an erroneous charge: only the exact reversal of an open, unpaid charge is accepted', () => {
+  const base = facts({ accounts: { ...facts().accounts, 1300: { id: 'a1300', account_type: 'asset', is_active: true }, 2300: { id: 'a2300', account_type: 'liability', is_active: true } },
+    charges: { ch1: { id: 'ch1', status: 'open', original_amount_cents: 3500, balance_remaining_cents: 3500, description: 'Certified letter', charge_date: '2026-10-13' } } });
+  const rev = item({ id: 'rev-ch1', lines: [{ account_number: '2300', debit_cents: 3500 }, { account_number: '1300', credit_cents: 3500 }], voids_ar_charge_id: 'ch1' });
+  const ok = J.buildProposals(base, [rev]);
+  assert.deepStrictEqual(ok.exceptions, []);
+  assert.strictEqual(ok.items[0].voids_ar_charge.ar_charge_id, 'ch1');
+  assert.strictEqual(J.buildProposals(base, [{ ...rev, lines: [{ account_number: '2300', debit_cents: 2000 }, { account_number: '1300', credit_cents: 2000 }] }]).exceptions.length, 1, 'partial amount refused');
+  const paid = { ...base, charges: { ch1: { ...base.charges.ch1, balance_remaining_cents: 0, status: 'paid' } } };
+  assert.strictEqual(J.buildProposals(paid, [rev]).exceptions.length, 1, 'a paid charge is not reversed here');
+  assert.strictEqual(J.buildProposals(base, [{ ...rev, voids_ar_charge_id: 'other' }]).exceptions.length, 1, 'a charge outside the community refused');
+});
+
 check('wiring: runs prepare, approve and refresh journal entries; owner in-app approval still required; Today renders them', () => {
   const read = (f) => fs.readFileSync(path.join(__dirname, '..', f), 'utf8');
   const m = read('lib/accounting/monthly_runs.js');
