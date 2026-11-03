@@ -129,7 +129,7 @@ router.post('/community/:cid/prepare', express.json(), async (req, res) => {
   try {
     const u = await requireStaff(req, res); if (!u) return;
     const b = req.body || {};
-    if (!['recognition', 'interest', 'bank_reconciliation', 'cutoff_adjustment', 'reclassification', 'journal_entry'].includes(b.process)) return res.status(400).json({ error: 'process must be recognition, interest, bank_reconciliation, cutoff_adjustment, reclassification or journal_entry' });
+    if (!['recognition', 'interest', 'bank_reconciliation', 'cutoff_adjustment', 'reclassification', 'journal_entry', 'account_reconciliation'].includes(b.process)) return res.status(400).json({ error: 'process must be recognition, interest, bank_reconciliation, cutoff_adjustment, reclassification, journal_entry or account_reconciliation' });
     // A reclassification carries Kat's items (what moves, from and to which expense account, and the
     // evidence); lib/accounting/reclassifications validates each against the GL. Nothing posts here.
     if (b.process === 'reclassification' && (!Array.isArray(b.items) || !b.items.length || b.items.length > 200)) return res.status(400).json({ error: 'a reclassification needs 1 to 200 items' });
