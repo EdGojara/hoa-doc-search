@@ -209,6 +209,33 @@ console.log('mailing_evidence:');
     assert.ok(/BEFORE UPDATE OR DELETE ON enforcement_review_holds/.test(m) && /cure_period_ends_at_flagged/.test(m), 'the deadline as flagged is kept; only the resolution can be recorded');
   });
 
+  await at('a click-time stamp from the old Mail Queue button after 544 still needs its real date; earlier stamps and evidence-backed ones do not', async () => {
+    const stamp = '2026-10-26T18:57:27.123+00:00';
+    const clicked = letter({ printed_at: '2026-09-28T21:24:37Z', mailed_at: stamp, sent_at: stamp });
+    const e = ME.effectiveMailing(clicked, ctx());
+    assert.strictEqual(e.state, 'printed_unconfirmed');
+    assert.strictEqual(ME.mailingCategory(e.state), 'needs_date_confirmation');
+    const before = letter({ printed_at: '2026-09-22T20:00:00Z', mailed_at: '2026-09-22T22:09:52Z', sent_at: '2026-09-22T22:09:52Z' });
+    assert.strictEqual(ME.effectiveMailing(before, ctx()).state, 'mailed', 'pre-544 confirmations are not reopened');
+    const recorded = letter({ printed_at: '2026-10-26T12:00:00+00:00', mailed_at: '2026-10-26T12:00:00+00:00', sent_at: '2026-10-26T12:00:00+00:00' });
+    assert.strictEqual(ME.effectiveMailing(recorded, ctx()).state, 'mailed', 'an admin record-mailing (printed = mailed) is not a click stamp');
+    const confirmed = ME.effectiveMailing(clicked, ctx({ evidence: new Map([['L1', ev('L1', 'mailed', '2026-09-29')]]) }));
+    assert.deepStrictEqual([confirmed.state, confirmed.mailed_on], ['mailed', '2026-09-29']);
+  });
+  await at('one recording path: the Mail Queue button needs the login and the real date and records through record_mailing; the click time is never the mailing date', async () => {
+    const enf = read('api/enforcement.js');
+    const cm = enf.slice(enf.indexOf("router.post('/mail-queue/confirm-mailed'"), enf.indexOf("router.post('/mail-queue/cancel'"));
+    assert.ok(cm.includes('requireStaff(req, res)') && cm.includes('mailed_on_required') && cm.includes('mailed_before_print') && cm.includes('recordRunConfirmation('));
+    assert.ok(!/mailed_at: now/.test(cm), 'never stamps the click time as mailed_at');
+    assert.ok(src.includes('recordRunConfirmation('), 'the screen uses the same recorder');
+    const lib = read('lib/enforcement/record_mailing.js');
+    assert.ok(!/from\('violations'\)[^;]*\.update\(/.test(lib), 'recording never updates a case');
+    for (const forbidden of ['letter_mail_pieces', 'ar_charges', 'sweepCertifiedViolationFees', 'createCharge', 'current_stage', 'cure_period_ends_at:']) assert.ok(!lib.includes(forbidden), `record_mailing must not touch ${forbidden}`);
+    assert.ok(lib.includes(".is('mailed_at', null)"), 'mailed_at is only filled where empty');
+    const page = read('public/index.html');
+    assert.ok(page.includes('function inspMailQueueAskMailedOn(') && (page.match(/mailed_on: mailedOn/g) || []).length >= 2, 'both Mail Queue buttons send the real date');
+  });
+
   // ---- static guarantees on the confirmation route and the migration
   const confirmBody = src.slice(src.indexOf("router.post('/batches/confirm'"), src.indexOf("router.post('/holds/"));
   await at('confirming a run never touches deadlines, stages, letters, mail pieces or charges', async () => {
@@ -217,7 +244,7 @@ console.log('mailing_evidence:');
     for (const forbidden of ['current_stage', 'postmark_date:', 'letter_mail_pieces', 'ar_charges', 'sweepCertifiedViolationFees', 'createCharge', '_assembleBundlePdf', '_sealSentLetter']) {
       assert.ok(!confirmBody.includes(forbidden), `confirm route must not use ${forbidden}`);
     }
-    assert.ok(/\.is\('mailed_at', null\)/.test(confirmBody), 'mailed_at is only filled where empty');
+    assert.ok(confirmBody.includes('recordRunConfirmation(') && read('lib/enforcement/record_mailing.js').includes(".is('mailed_at', null)"), 'mailed_at is only filled where empty (shared recorder)');
   });
   await at('every route uses the employee login; no name is taken from the request', async () => {
     const routes = src.split(/router\.(?:get|post)\(/).slice(1);
