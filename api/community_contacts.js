@@ -250,4 +250,4 @@ router.patch('/community/:community_id/trash-schedule', express.json({ limit: '8
   }
 });
 
-module.exports = { router };
+module.exports = { router, groupByCategory };

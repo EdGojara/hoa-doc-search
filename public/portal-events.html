@@ -148,7 +148,7 @@ function render(data) {
   try {
     const qs = propId ? '?property_id=' + encodeURIComponent(propId) : '';
     const r = await fetch('/api/portal/community-calendar' + qs, { credentials: 'same-origin' });
-    if (r.status === 401) { location.href = '/portal/login'; return; }
+    if (r.status === 401) { location.href = '/portal-login.html'; return; }
     const j = await r.json();
     if (!r.ok) throw new Error(j.error || 'Could not load the calendar');
     if (j.community && j.community.name) {
