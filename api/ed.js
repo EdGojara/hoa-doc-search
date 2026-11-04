@@ -57,6 +57,12 @@ router.get('/pending', async (req, res) => {
     if (n > 0) sources.push({ key: 'accounting_runs', icon: '🧮', label: `Kat's accounting runs awaiting you${bad ? ` (${bad} held or failed)` : ''}`, count: n, action: '/ed.html#runsTile' });
   } catch (e) { console.warn('[ed] accounting runs source failed:', e.message); }
 
+  // Sources 5-6 — the close and the board package (Ed 2026-10-15, lib/close/cadence): months
+  // whose close is ready for Ed (Kat's review clear, earliest open month), and draft packets
+  // for an upcoming meeting that pass the finalization gate and await Ed's approval.
+  try { sources.push(...(await require('../lib/close/cadence').pendingSources(supabase))); }
+  catch (e) { console.warn('[ed] close/packet source failed:', e.message); }
+
   sources.sort((a, b) => (b.stakes_cents || 0) - (a.stakes_cents || 0) || b.count - a.count);
   res.json({ sources });
 });
