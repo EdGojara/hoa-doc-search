@@ -337,8 +337,14 @@ router.get('/', async (req, res) => {
 });
 
 // GET /api/vendors/:id  — vendor detail with recent invoices + documents
-router.get('/:vendorId', async (req, res) => {
+// A vendor id is a uuid. These param routes are registered BEFORE GET /rfps, /benchmarks and
+// /spend, so without this guard "rfps" was looked up as a vendor id and the RFP panel showed
+// "Couldn't load RFPs: Vendor not found" (since 2026-06-03). A non-uuid segment falls through
+// to the route it names. (Ed 2026-10-20; same guard as #217.)
+const VENDOR_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+router.get('/:vendorId', async (req, res, next) => {
   const { vendorId } = req.params;
+  if (!VENDOR_ID_RE.test(vendorId)) return next();
   try {
     const { data: vendor, error: vErr } = await supabase
       .from('vendors')
@@ -446,7 +452,8 @@ router.get('/:vendorId', async (req, res) => {
 });
 
 // PATCH /api/vendors/:id  — update vendor fields
-router.patch('/:vendorId', async (req, res) => {
+router.patch('/:vendorId', async (req, res, next) => {
+  if (!VENDOR_ID_RE.test(req.params.vendorId)) return next();
   const { vendorId } = req.params;
   const allowed = ['name','dba','ein','address','phone','email','website','category','status','w9_on_file','notes',
                    'is_1099_vendor','tax_classification','tax_id','w9_received_date',
