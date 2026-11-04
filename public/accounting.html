@@ -2378,7 +2378,7 @@
       ${bk}
       <div style="display:flex; gap:24px; flex-wrap:wrap; margin-top:14px;">
         <div style="flex:1; min-width:240px;"><h4 class="sec" style="font-size:13px; margin:0 0 6px;">Balance by category</h4>
-          <table><tbody>${cats||'<tr><td class=muted>Paid in full ✓</td></tr>'}</tbody></table></div>
+          <table><tbody>${cats||(j.credit_cents>0?`<tr><td>Credit on account</td><td class="num" style="color:#047857;">${fmt(j.credit_cents)}</td></tr>`:'<tr><td class=muted>Paid in full ✓</td></tr>')}</tbody></table></div>
         <div style="flex:2; min-width:300px;"><h4 class="sec" style="font-size:13px; margin:0 0 6px;">Open charges</h4>
           <table><thead><tr><th>Date</th><th>Category</th><th class="num">Original</th><th class="num">Balance</th><th class="num">Age</th></tr></thead>
           <tbody>${charges||'<tr><td colspan=5 class=muted>No open charges.</td></tr>'}</tbody></table></div>
