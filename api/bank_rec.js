@@ -219,6 +219,19 @@ router.patch('/reconciliations/:id', express.json(), async (req, res) => {
 // ---------------------------------------------------------------------------
 // Attach bank statement (upload + extract)
 // ---------------------------------------------------------------------------
+// Kat wakes on the upload itself (Ed 2026-11-04: event-driven, not a daily check for statements):
+// she prepares that account's reconciliation for the statement month, and the Positive Pay watch
+// looks for checks the statement shows cleared. Best-effort: the import is already saved, so a
+// failure here is reported in the response and logged, never turned into a failed upload.
+async function afterStatementImported({ bank_account_id, statement_period_end }) {
+  const out = {};
+  try { out.reconciliation = await require('../lib/accounting/monthly_runs').onStatementImported(supabase, { bank_account_id, statement_period_end }); }
+  catch (e) { console.error('[bank-rec] Kat reconciliation after statement import failed:', e.message); out.reconciliation = { status: 'failed', error: safeErrorMessage(e) }; }
+  try { out.positive_pay = await require('../lib/banking/positive_pay_watch').tick({ supabase }); }
+  catch (e) { console.error('[bank-rec] Positive Pay check after statement import failed:', e.message); out.positive_pay = { status: 'failed' }; }
+  return out;
+}
+
 router.post('/reconciliations/:id/bank-statement', upload.single('file'), async (req, res) => {
   try {
     const { id } = req.params;
@@ -293,7 +306,8 @@ router.post('/reconciliations/:id/bank-statement', upload.single('file'), async 
       bank_ending_balance_cents: extracted.ending_balance_cents ?? null,
     }).eq('id', id);
 
-    res.json({ bank_statement_import: bsi, transaction_count: txRows.length, warnings });
+    const kat = await afterStatementImported({ bank_account_id: rec.bank_account_id || null, statement_period_end: extracted.period_end || null });
+    res.json({ bank_statement_import: bsi, transaction_count: txRows.length, warnings, kat });
   } catch (err) {
     console.error('[bank-rec] attach bank statement failed:', err);
     res.status(500).json({ error: safeErrorMessage(err) });
@@ -394,12 +408,14 @@ router.post('/accounts/:accountId/bank-statement', upload.single('file'), async 
       if (txErr) console.warn('[bank-rec] community tx insert failed:', txErr.message);
     }
 
+    const kat = await afterStatementImported({ bank_account_id: ba.id, statement_period_end: extracted.period_end || null });
     res.json({
       bank_statement_import: bsi,
       transaction_count: txRows.length,
       period_end: extracted.period_end || null,
       ending_balance_cents: extracted.ending_balance_cents ?? null,
       warnings,
+      kat,
     });
   } catch (err) {
     console.error('[bank-rec] community bank statement upload failed:', err);
