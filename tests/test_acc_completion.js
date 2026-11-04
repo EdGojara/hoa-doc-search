@@ -78,8 +78,11 @@ check('a decided case\'s filed record is never rebuilt or overwritten by the Pac
 check('billing (homeowner pays): AR charge only for a FINAL decision, only after the claim, only when the community bills the homeowner', () => {
   const fee = FIN.slice(FIN.indexOf('let feeCharge = { attempted: false };'), FIN.indexOf('res.json({', FIN.indexOf('let feeCharge')));
   assert.ok(FIN.indexOf('if (!fin.ok) {') < FIN.indexOf('let feeCharge'), 'charge is unreachable unless this request won the claim');
-  assert.ok(/if \(isFinal\) \{/.test(fee) && /comm\.acc_fee_payer === 'homeowner' && feeCents > 0/.test(fee));
-  assert.ok(/source_module: 'acc_decision', source_reference: id/.test(fee), 'charge carries the decision as its source');
+  // Ed 2026-10-21: the fee posts to the homeowner ledger + GL (lib/acc/acc_fee_posting.js), never natively.
+  assert.ok(/if \(isFinal\) \{/.test(fee) && /postAccFee\(supabase/.test(fee) && !/createCharge/.test(fee));
+  const lib = src('lib/acc/acc_fee_posting.js');
+  assert.ok(/acc_fee_payer !== 'homeowner' \|\| feeCents <= 0/.test(lib), 'only when the community bills the homeowner');
+  assert.ok(/source_module: 'acc_fee', source_reference: decision\.id/.test(lib) && /acc_decision_id: decision\.id/.test(lib), 'the JE and the ledger line carry the decision as their source');
 });
 check('billing (community pays, e.g. Waterview): NO homeowner charge at send; the association is billed by the monthly activity invoice, counted once', () => {
   const b = src('api/billing.js');
