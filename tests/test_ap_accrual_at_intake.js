@@ -14,7 +14,7 @@ const check = (name, ok) => { if (ok) { pass++; console.log('  ✓ ' + name); } 
 const intake = src('lib/ap/intake.js');
 const call = intake.slice(intake.indexOf('accrualJeId = await postAccrualForInvoice({'), intake.indexOf('accrualJeId = await postAccrualForInvoice({') + 700);
 check('intake passes the header tax to the accrual', call.includes('taxCents: extracted.tax_cents || 0'));
-check('the guard still refuses lines that do not reconcile to total less tax', intake.includes('const expectedNet = creditTotal - taxCents;') && intake.includes('refusing to post a split accrual'));
+check('the guard refuses lines that match neither the total less tax nor the total', intake.includes('const expectedNet = creditTotal - taxCents;') && intake.includes('Math.abs(net - expectedNet) > 1 && Math.abs(net - creditTotal) > 1') && intake.includes('refusing to post a split accrual'));
 
 const posting = src('lib/accounting/posting.js');
 const block = posting.slice(posting.indexOf('let ref = reference ||'), posting.indexOf('if (jeErr) {', posting.indexOf('let ref = reference ||')));
