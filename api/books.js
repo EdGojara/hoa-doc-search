@@ -180,11 +180,17 @@ router.post('/transfer', express.json({ limit: '32kb' }), async (req, res) => {
     if (!from || !to) return res.status(400).json({ error: 'account_not_found' });
     if (from.community_id !== community_id || to.community_id !== community_id) return res.status(400).json({ error: 'account_in_different_community' });
     if (!from.is_active || !to.is_active) return res.status(400).json({ error: 'account_inactive' });
-    const isCash = (a) => String(a.account_type || '') === 'asset' || /^1/.test(String(a.account_number || ''));
+    const { resolveInterfund, buildTransferLines, isInterfundAccount } = require('../lib/accounting/interfund');
+    const resolved = await resolveInterfund(supabase, community_id);
+    // Cash = an asset account that is not one half of an interfund receivable /
+    // payable. "Due from Operating to Savings" (1810) is an asset but moving
+    // money "from 1810 to 2810" records a payable and moves nothing
+    // (kat_standards interfund_vs_cash), so it is refused by name and by role.
+    const interfundSide = [from, to].find((a) => isInterfundAccount(a, resolved));
+    if (interfundSide) return res.status(400).json({ error: 'interfund_account_is_not_cash', detail: `${interfundSide.account_number} ${interfundSide.account_name} is an interfund receivable/payable, not a cash account. Transfer between the funds' cash accounts; the interfund balance settles automatically.` });
+    const isCash = (a) => String(a.account_type || '') === 'asset';
     if (!isCash(from) || !isCash(to)) return res.status(400).json({ error: 'transfer_between_cash_accounts_only', detail: 'Both accounts must be cash/asset accounts.' });
 
-    const { resolveInterfund, buildTransferLines } = require('../lib/accounting/interfund');
-    const resolved = await resolveInterfund(supabase, community_id);
     let lines;
     try { lines = buildTransferLines({ from, to, amountCents: amount_cents, resolved }); }
     catch (e) { return res.status(400).json({ error: e.message, code: e.code || 'invalid_input' }); }
