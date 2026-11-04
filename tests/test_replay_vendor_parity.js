@@ -7,7 +7,7 @@
 // no-write mode and reports "CREATES NEW VENDOR" plus in-run reuse. Kept
 // separate from W-9 tax policy. In-memory fakes only.
 // ============================================================================
-require('dotenv').config({ quiet: true });
+require('./_support/no_prod_network'); // unit test: loopback only, no production keys (Issue #27 follow-up)
 const assert = require('assert');
 const fs = require('fs');
 const path = require('path');

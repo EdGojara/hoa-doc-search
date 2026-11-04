@@ -8,6 +8,7 @@
 //   - a valid community_id → 200 with inbox, calls and imports all scoped.
 // Offline and deterministic.
 // ============================================================================
+require('./_support/no_prod_network'); // unit test: loopback only, no production keys (Issue #27 follow-up)
 const Module = require('module');
 const calls = [];
 const chain = () => { const q = { select: () => q, in: () => q, gte: () => q, order: () => q, limit: () => q, not: () => q, eq: (c, v) => { calls.push([c, v]); return q; }, then: (r) => Promise.resolve({ data: [], error: null }).then(r) }; return q; };
