@@ -168,6 +168,22 @@ async function upsertAgentTask(opts) {
   } catch (e) { console.warn('[mission_control] agent task not recorded', JSON.stringify({ source_ref: opts && opts.source_ref, error: e.message })); return null; }
 }
 
+// For agents: the open task for source_ref is done because its evidence cleared (a control
+// passed, a period closed). Never throws; returns { id, resolved } or null (logged).
+async function resolveAgentTask(source_ref, { actor = 'agent', note = null } = {}) {
+  try {
+    if (!source_ref) throw new Error('source_ref required');
+    const { data: open, error } = await supabase.from('work_items').select('id').eq('source_ref', String(source_ref)).eq('source_type', 'agent').in('status', OPEN).limit(5);
+    if (error) throw error;
+    for (const w of open || []) {
+      const { error: ue } = await supabase.from('work_items').update({ status: 'done', completed_at: new Date().toISOString() }).eq('id', w.id);
+      if (ue) throw ue;
+      await logEvent(w.id, 'closed_by_evidence', actor, { to: 'done', reason: note });
+    }
+    return { resolved: (open || []).length, ids: (open || []).map((w) => w.id) };
+  } catch (e) { console.warn('[mission_control] agent task not resolved', JSON.stringify({ source_ref, error: e.message })); return null; }
+}
+
 router.post('/items', express.json({ limit: '32kb' }), async (req, res) => {
   try {
     const body = req.body || {};
@@ -243,4 +259,4 @@ router.post('/decide', express.json({ limit: '16kb' }), async (req, res) => {
   }
 });
 
-module.exports = { router, upsertAgentTask, upsertTask, ownerNames, withGithub, _cache: cache };
+module.exports = { router, upsertAgentTask, resolveAgentTask, upsertTask, ownerNames, withGithub, _cache: cache };
