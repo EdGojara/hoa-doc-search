@@ -2171,6 +2171,13 @@ router.post('/:id/to-gl', express.json(), async (req, res) => {
       postingDate: String(m.received_at || new Date().toISOString()).slice(0, 10), sourceRef: `email:${m.graph_id || m.id}`,
       notes: `Recorded from Emma's inbox (${m.sender_name || 'vendor'}). Flagged for month-end review.`,
     });
+    if (out.error === 'open_payable') {
+      const b = (out.invoices || [])[0] || {};
+      return res.status(409).json({
+        error: 'open_payable', invoices: out.invoices,
+        detail: `This payment matches an open bill in Payables (${(b.vendors && b.vendors.name) || 'vendor'}${b.vendor_invoice_number ? ' #' + b.vendor_invoice_number : ''}, $${(cents / 100).toFixed(2)}). Record it on that bill with Mark paid (ACH) so the bill clears. Posting it here would count the expense twice.`,
+      });
+    }
     if (out.error === 'suspected_duplicate') {
       const when = out.existing && out.existing.posting_date ? out.existing.posting_date : 'recently';
       return res.status(409).json({
