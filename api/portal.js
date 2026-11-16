@@ -1511,7 +1511,7 @@ router.get('/me', async (req, res) => {
       try {
         const { data: cRows, error: cErr } = await supabase
           .from('communities')
-          .select('id, name, slug, hoa_legal_name, portal_active, portal_module_config, portal_welcome_message, stripe_connected_account_id')
+          .select('id, name, slug, hoa_legal_name, portal_active, portal_module_config, portal_welcome_message, stripe_connected_account_id, stripe_onboarding_status')
           .in('id', uniqueCommunityIds);
         if (cErr) console.warn('[portal /me] communities batch fetch failed:', cErr.message);
         (cRows || []).forEach(c => { communitiesById[c.id] = c; });
@@ -1581,6 +1581,10 @@ router.get('/me', async (req, res) => {
         };
       }
     } catch (_) { /* gracefully degrade */ }
+    // Fail-closed per association (lib/portal/financial_access, Ed 2026-11-16): no balance
+    // leaves the server unless the association's balances are switched on AND verified.
+    const financialAccess = require('../lib/portal/financial_access').decideFinancialAccess({ ...community, is_demo: isDemoCommunity });
+    if (!financialAccess.balance) balance = { status: 'hidden', amount_cents: null, as_of: null };
 
     // Compliance — count of open notices we ACTUALLY MAILED the homeowner.
     // Same accuracy gate as GET /compliance: the raw violations table is heavily
@@ -1781,7 +1785,7 @@ router.get('/me', async (req, res) => {
         hoa_legal_name: community.hoa_legal_name || community.name,
         welcome_message: community.portal_welcome_message || '',
         portal_active: community.portal_active === true,
-        portal_module_config: community.portal_module_config || {},
+        portal_module_config: require('../lib/portal/financial_access').presentedModuleConfig(community.portal_module_config, financialAccess),
         // Demo community flag — drives watermark ribbon. Migration 184
         // adds Drama Creek Estates as the canonical demo community.
         is_demo: community.is_demo === true,
@@ -1792,7 +1796,8 @@ router.get('/me', async (req, res) => {
         // community_stripe_not_onboarded) — the homeowner commits to paying and
         // hits a wall. Same shape as amenities.js `stripe_ready`. Boolean only;
         // the account id never goes to the browser.
-        payments_enabled: !!community.stripe_connected_account_id,
+        // A connected account alone never enables Pay (lib/portal/financial_access).
+        payments_enabled: financialAccess.payments,
       },
       balance,
       compliance,
@@ -2565,6 +2570,11 @@ router.get('/balance', async (req, res) => {
     }
     const prop = scoped.property;
     if (!prop) return res.json({ property: null });
+    {
+      const FA = require('../lib/portal/financial_access');
+      const access = await FA.financialAccessFor(supabase, prop.community_id);
+      if (!access.balance) return res.status(403).json({ error: 'balance_not_available', reason: access.reason, detail: FA.HIDDEN_REASON });
+    }
 
     const community = prop.communities || {};
 
@@ -2686,6 +2696,11 @@ router.get('/transactions', async (req, res) => {
     }
     const prop = scoped.property;
     if (!prop) return res.json({ property: null, transactions: [], balance: null, freshness: null });
+    {
+      const FA = require('../lib/portal/financial_access');
+      const access = await FA.financialAccessFor(supabase, prop.community_id);
+      if (!access.balance) return res.status(403).json({ error: 'balance_not_available', reason: access.reason, detail: FA.HIDDEN_REASON });
+    }
 
     const community = prop.communities || {};
     const vantacaAccountId = prop.vantaca_account_id;   // displayed only; not the key

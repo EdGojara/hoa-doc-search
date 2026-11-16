@@ -1586,7 +1586,7 @@ app.get('/pay/:token', async (req, res) => {
     });
     if (r.ok && r.checkout_url) return res.redirect(302, r.checkout_url);
     if (r.error === 'nothing_due') return res.send(_payPage('Nothing due', `<h1>Your balance is $0</h1><p>There's nothing due right now. Thank you.</p>`));
-    if (r.error === 'payment_not_configured' || r.error === 'community_stripe_not_onboarded' || r.error === 'test_mode_sandbox_only') {
+    if (r.error === 'payment_not_configured' || r.error === 'community_stripe_not_onboarded' || r.error === 'test_mode_sandbox_only' || r.error === 'online_payments_not_enabled') {
       return res.send(_payPage('Online payment coming soon', `<h1>Online payment isn't available yet</h1><p>This community hasn't finished setting up online payments. Please contact management to pay by check or ACH in the meantime.</p>`));
     }
     return res.status(r.status || 500).send(_payPage('Payment link', `<h1>We couldn't start your payment</h1><p>Please try again shortly, or contact management.</p>`));
