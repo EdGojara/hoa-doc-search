@@ -22,7 +22,7 @@
 
 const express = require('express');
 const crypto = require('crypto');
-const multer = require('multer');
+const { publicUpload } = require('../lib/uploads/public_upload');
 const { createClient } = require('@supabase/supabase-js');
 const { safeErrorMessage } = require('./_safe_error');
 const { sendEmail } = require('../lib/notifications/email');
@@ -3456,9 +3456,13 @@ router.post('/messages/:threadId/reply', express.json({ limit: '256kb' }), async
 //                                   + JSON application_data field)
 //   GET   /api/portal/arc         — list MY applications (open + past)
 // ============================================================================
-const portalArcUpload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: 12 * 1024 * 1024, files: 20 },
+// Reachable without the staff login (portal cookie checked in the handler), so
+// it must be a publicUpload(): every field limit + a total-body cap (PR #250).
+const portalArcUpload = publicUpload({
+  route: 'portal.arc_submit',
+  fileSize: 12 * 1024 * 1024,
+  files: 20,
+  maxTotalBytes: 80 * 1024 * 1024,
 });
 
 router.post('/arc/submit', portalArcUpload.any(), async (req, res) => {
@@ -4736,9 +4740,12 @@ router.get('/builder/master-plan-approvals', async (req, res) => {
 // ============================================================================
 // Residents may attach a few photos so staff can USE the image if they pick
 // the submission. Images only, capped — same memoryStorage pattern as ARC.
-const newsletterPhotoUpload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: 10 * 1024 * 1024, files: 6 },
+// Reachable without the staff login: publicUpload() (PR #250).
+const newsletterPhotoUpload = publicUpload({
+  route: 'portal.newsletter_submission',
+  fileSize: 10 * 1024 * 1024,
+  files: 6,
+  maxTotalBytes: 40 * 1024 * 1024,
 });
 router.post('/newsletter-submissions', newsletterPhotoUpload.array('photos', 6), async (req, res) => {
   try {
