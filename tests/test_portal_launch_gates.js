@@ -72,8 +72,8 @@ acheck('pay: ready + a processing payment → enabled, pending passed through', 
 });
 
 check('pay: the button and the checkout read the same readiness decision', () => {
-  assert.ok(/payments_enabled: payState\.payments_enabled === true/.test(portalSrc), '/me payments_enabled must come from payment_readiness');
-  assert.ok(/payment_pending: payState\.pending \|\| null/.test(portalSrc));
+  assert.ok(/payments_enabled: financialAccess\.payments === true && payState\.payments_enabled === true/.test(portalSrc), '/me payments_enabled = the fail-closed homeowner gate AND payment_readiness');
+  assert.ok(/payment_pending: financialAccess\.balance === true \? \(payState\.pending \|\| null\) : null/.test(portalSrc), 'pending only where balances are allowed');
   assert.ok(!/payments_enabled: !!community\.stripe_connected_account_id/.test(portalSrc), 'an account id alone must not enable Pay');
   const checkout = portalSrc.slice(portalSrc.indexOf("router.post('/pay/checkout'"), portalSrc.indexOf("router.post('/autopay/begin'"));
   assert.ok(/portalCheckoutGate\(supabase, prop\.community_id\)/.test(checkout));
@@ -85,7 +85,7 @@ check('pay: the portal hides Pay and says "processing" while a payment settles',
   assert.ok(/id="payPendingNote"/.test(portalHtml));
   assert.ok(/&& !\(pending && pending\.amount_cents > 0\)/.test(portalHtml));
 });
-check('pay: one per-community switch (online_payments_enabled), no second flag', () => {
+check('pay: one per-community switch (lib/portal/financial_access), no second flag', () => {
   assert.ok(!fs.existsSync(path.join(ROOT, 'migrations', '540_portal_pay_enabled.sql')));
   assert.ok(!/portal_pay_enabled/.test(portalSrc + read('lib/portal/pay_gate.js')));
 });

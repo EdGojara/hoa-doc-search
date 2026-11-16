@@ -46,7 +46,7 @@ console.log('lookup');
   console.log('wiring');
   const portal = src('api/portal.js');
   check('portal home: no balance sent unless allowed', portal.includes("if (!financialAccess.balance) balance = { status: 'hidden', amount_cents: null, as_of: null };"));
-  check('portal home: Pay follows the gate, not the connected account', portal.includes('payments_enabled: financialAccess.payments,') && !portal.includes('payments_enabled: !!community.stripe_connected_account_id'));
+  check('portal home: Pay follows the gate, not the connected account', /payments_enabled: financialAccess.payments(,| === true &&)/.test(portal) && !portal.includes('payments_enabled: !!community.stripe_connected_account_id'));
   check('portal home: the tile config sent to the browser is the gated one', portal.includes("portal_module_config: require('../lib/portal/financial_access').presentedModuleConfig(community.portal_module_config, financialAccess),"));
   const guards = portal.match(/if \(!access\.balance\) return res\.status\(403\)\.json\(\{ error: 'balance_not_available'/g) || [];
   check('GET /balance and GET /transactions refuse (403) when balances are off', guards.length === 2
