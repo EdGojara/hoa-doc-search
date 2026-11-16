@@ -16,7 +16,7 @@ const legalByJe = new Map([['a85f5cb4-33d8-498a-a3b4-a5358c0fbad2', { id: 'e8a7c
 const proposals = [{ id: '0f146aca-ec7f-4dd7-ad09-81b7b8459e4e', community_id: 'wv', current_owner_name: 'Seller', effective_start_date: '2026-05-04' }];
 const n = OPS.conversionNodes({ batches, items, legalByJe, proposals }, C);
 const by = (re) => n.find((x) => re.test(x.title));
-check('four owner items, all under "Requires my approval"', n.length === 4 && n.every((x) => x.approval === true && x.owner === 'Ed'));
+check('four owner items, all tasks under "Requires my approval" (a task kind is what the list renders)', n.length === 4 && n.every((x) => x.kind === 'task' && x.approval === true && x.owner === 'Ed'));
 check('the bill opens in Payables by its id', by(/Post the \$34\.04 bill/).action.url === '/#tab=ap&invoice=33fbabb2-2c62-4df0-af72-a55054e058e9');
 check('the bill-back opens its invoice in Legal Review', by(/Reverse the \$557\.35/).action.url === '/app/financial/legal?id=58889418-9334-47ed-93aa-c79d6796732f');
 check('the conversion question opens the conversion', by(/Answer the/).action.url === '/admin/onboarding?batch=b1');
