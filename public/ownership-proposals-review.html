@@ -623,7 +623,12 @@ $('filterStatus').addEventListener('change', (e) => { filters.status = e.target.
 $('filterSearch').addEventListener('input', debounce((e) => { filters.q = e.target.value; loadQueue(); }, 250));
 $('refreshBtn').addEventListener('click', (e) => { e.preventDefault(); loadQueue(); });
 
-(async () => { await loadCommunities(); await loadQueue(); })();
+(async () => {
+  await loadCommunities(); await loadQueue();
+  // Deep link (Mission Control's Review): ?id=<proposal id> opens that proposal.
+  const deepId = new URLSearchParams(location.search).get('id');
+  if (deepId && /^[0-9a-f-]{36}$/i.test(deepId)) await loadDetail(deepId);
+})();
 </script>
 </body>
 </html>
