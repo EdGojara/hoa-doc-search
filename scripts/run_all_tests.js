@@ -281,6 +281,7 @@ const CHECKS = [
   'tests/test_character_registry.js',
   'tests/test_character_approval.js',
   'tests/test_payment_foundation.js',
+  'tests/test_portal_financials_fail_closed.js',
   'tests/sql/469_payment_rehearsal.mjs',
   'tests/sql/469_apply_one_e2e.mjs',
   'tests/sql/473_apply_one_e2e.mjs',

@@ -65,10 +65,13 @@ function fakeSupabase(tables) {
 
 const P1 = 'prop-1', P2 = 'prop-2', C = 'comm-1', SELLER = 'ten-seller', BUYER = 'ten-buyer';
 // sandbox: true -> the lot is THE payment-sandbox lot in a demo community.
-function world({ tenureId = SELLER, balance = 25000, trusted = '1004384184', sandbox = false, demo = sandbox } = {}) {
+// enabled: the association's homeowner payments are switched on (lib/portal/financial_access);
+// a real 'properly enabled' community carries the explicit switch, never just a connected account.
+function world({ tenureId = SELLER, balance = 25000, trusted = '1004384184', sandbox = false, demo = sandbox, enabled = true } = {}) {
   return fakeSupabase({
     properties: [{ id: P1, community_id: C, street_address: sandbox ? 'DC-45-060' : '4707 Lakes of Pine Forest Ct', trusted_account_number: trusted, vantaca_account_id: '2013059', payment_sandbox: sandbox }],
-    communities: [{ id: C, name: demo ? 'Drama Creek Estates' : 'Lakes of Pine Forest', slug: demo ? 'drama-creek' : 'lopf', stripe_connected_account_id: 'acct_test_1', gl_cutover_date: '2026-08-01', is_demo: demo }],
+    communities: [{ id: C, name: demo ? 'Drama Creek Estates' : 'Lakes of Pine Forest', slug: demo ? 'drama-creek' : 'lopf', stripe_connected_account_id: 'acct_test_1', gl_cutover_date: '2026-08-01', is_demo: demo,
+      stripe_onboarding_status: 'enabled', portal_module_config: enabled ? { balance: { status: 'live' }, homeowner_financials: { verified_at: '2026-12-01', verified_by: 'Ed Gojara', payments: true } } : {} }],
     ownership_tenures: [{ id: tenureId, community_id: C, property_id: P1, kind: 'owner', end_date: null, start_date: '2026-08-27' }],
     property_ownerships: [{ tenure_id: tenureId, contact_id: 'contact-owner', is_primary: true, start_date: '2026-08-27' }],
     v_current_owner_balance: [{ tenure_id: tenureId, balance_cents: balance }],
@@ -176,6 +179,12 @@ t('LIVE key + properly enabled real community: allowed by the mode gate (mock St
   const r = await createAssessmentCheckout({ supabase: sb, stripeLib: st, key: LIVE_KEY }, { propertyId: P1, paymentMethod: 'ach', initiatedBy: 'homeowner_portal', ...urls });
   assert.ok(r.ok, JSON.stringify(r)); assert.strictEqual(st.sessions.length, 1);
   assert.ok(sb._db.payments.every((p) => p.livemode === true), 'rows record livemode');
+});
+t('LIVE key + a real community with a connected account but payments NOT switched on: refused, nothing written', async () => {
+  const sb = world({ enabled: false }); const st = fakeStripe();
+  const r = await createAssessmentCheckout({ supabase: sb, stripeLib: st, key: LIVE_KEY }, { propertyId: P1, paymentMethod: 'ach', initiatedBy: 'homeowner_portal', ...urls });
+  assert.strictEqual(r.error, 'online_payments_not_enabled'); assert.strictEqual(r.status, 403);
+  assert.strictEqual(sb._db.payments.length + st.sessions.length, 0);
 });
 t('LIVE key + the sandbox lot / a demo community: refused, nothing written', async () => {
   const sb = world({ sandbox: true }); const st = fakeStripe();

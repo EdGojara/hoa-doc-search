@@ -1586,7 +1586,11 @@ function renderPortal(ctx) {
   // Stats
   const bal = ctx.balance || {};
   const balVal = $('balanceValue');
-  if (bal.status === 'current' || (bal.amount_cents === 0)) {
+  // Balances are off for this association (server-decided, fail-closed): no balance stat.
+  if (balVal && balVal.closest('.stat')) balVal.closest('.stat').style.display = bal.status === 'hidden' ? 'none' : '';
+  if (bal.status === 'hidden') {
+    balVal.textContent = '';
+  } else if (bal.status === 'current' || (bal.amount_cents === 0)) {
     balVal.textContent = 'Current';
     balVal.classList.add('good');
     $('balanceAsOf').textContent = fmtAsOf(bal);
