@@ -18,5 +18,17 @@ check('the preflight blocks if any batch it retires is not committed', /prefligh
 check('plan version bumped', /const PLAN_VERSION = '2026-11-17\.1';/.test(plan));
 const page = read('public/onboarding.html');
 check('a rebuilt preflight can be approved even when an earlier fingerprint was approved (the old approval never authorizes it)', /const canApprove = owner && current && !p\.stale && approved !== r\.sha256/.test(page));
+{
+  // 561: the database lets the owner approve a REBUILT preflight; an approval stays fixed from execute on.
+  const fnOf = (sql) => { const s = sql.indexOf('CREATE OR REPLACE FUNCTION conversion_batches_onboarding_guard()'); return sql.slice(s, sql.indexOf('\n$fn$;\n', s)); };
+  const strip = (f) => f.split('\n').filter((l) => !/^\s*--/.test(l));
+  const a = strip(fnOf(read('migrations/485_onboarding_operator.sql'))); const b = strip(fnOf(read('migrations/561_onboarding_reapprove_superseded_preflight.sql')));
+  const removed = a.filter((l) => !b.includes(l)); const added = b.filter((l) => !a.includes(l));
+  check('561 changes only the write-once rule of the batch guard (485 body otherwise unchanged)', a.length > 20 && removed.length === 2 && added.length === 6);
+  const g = b.join('\n');
+  check('561: a replacement needs preflight before and after, an unposted batch, a non-null hash, and a SUPERSEDED earlier approval',
+    /OLD\.onboarding_stage IS DISTINCT FROM 'preflight' OR NEW\.onboarding_stage IS DISTINCT FROM 'preflight'/.test(g) && /NEW\.status = 'posted' OR NEW\.approved_preflight_sha256 IS NULL/.test(g) && /onboarding_completion_gate\(e\.completion_event_id\) IS NULL\)\) THEN/.test(g));
+  check('561 keeps the human-approval-of-the-current-result check for every recorded hash', /preflight hash can only be recorded from a human approval of the current preflight result/.test(g));
+}
 console.log(`\nconversion revert committed: ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
