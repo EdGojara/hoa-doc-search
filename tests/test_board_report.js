@@ -24,7 +24,8 @@ const base = { community: { name: 'Test HOA', legal_name: 'Test HOA, Inc.' }, ta
   budget: { approved: false }, status_label: 'PROPOSED – NOT APPROVED', funds: [fund('OPR', 'Operating')], material: [{ account_number: '5200', account_name: 'Landscape', appr: 9200000, prop: 10611600, chg: 1411600, pct: 0.153, explanation: 'Earthcare $8,842.67 a month.', contracts: ['EarthCare Management, Inc. (signed, not yet verified)'] }],
   assumptions: ['2026 projected = actual plus remaining budget.'], decisions: [{ topic: 'Planned reserve funding', text: '4010 Reserve Contribution: provisional.' }], exceptions: [{ text: '5115 Electricity: no agreement on file yet.' }],
   pending: [{ label: 'Onsite staffing', amount_cents: 2700000, effects: { 5810: -2700000, 5855: 2700000 }, posting_date: '2026-10-01' }] };
-const html = B.renderBoardReportHtml(base);
+const html = B.renderBoardReportHtml(base, { notes: true });   // the in-app view (notes, assumptions, explanations)
+const printed = B.renderBoardReportHtml(base);                   // the printed default (Ed 2026-11-17): financial only
 check('marked PROPOSED – NOT APPROVED while the budget is a draft', /PROPOSED – NOT APPROVED/.test(html));
 check('adopted budgets are labeled adopted, not proposed', /ADOPTED 2027 BUDGET/.test(B.renderBoardReportHtml({ ...base, budget: { approved: true }, status_label: 'ADOPTED 2027 BUDGET' })) && !/NOT APPROVED/.test(B.renderBoardReportHtml({ ...base, budget: { approved: true }, status_label: 'ADOPTED 2027 BUDGET' })));
 check('the seven columns: GL, description, approved, projected actual, proposed, $ change, % change', ['GL', 'Description', 'Approved budget', 'Projected actual', 'Proposed budget', '$ change', '% change'].every((h) => html.includes(`>${h}</th>`)));
@@ -32,6 +33,7 @@ check('column headings repeat on every page (thead as a header group)', /thead\{
 check('5855 Clubhouse Office Staffing prints on its own row, apart from 5810', /5855<\/td><td class="l">Clubhouse Office Staffing/.test(html) && /5810<\/td><td class="l">Management Fees/.test(html));
 check('rows a pending reclassification would change carry the † mark', (html.match(/class="dag">†/g) || []).length === 2);
 check('material changes show their explanation and contract support', /Earthcare \$8,842\.67 a month\./.test(html) && /Contract: EarthCare Management/.test(html));
+check('printed default is financial only: no narrative, decisions, material-change explanations, assumptions or † marks', !printed.includes('<b>Assumptions</b>') && !/Board decisions/.test(printed) && !/For board decision/.test(printed) && !/Material changes/.test(printed) && !/class="dag">†/.test(printed) && !/<p class="lead">/.test(printed) && /<td class="l gl">/.test(printed) && /NOT APPROVED/.test(printed));
 check('assumptions, board decisions and open items each have a section', /<b>Assumptions<\/b>/.test(html) && /<b>Board decisions<\/b>/.test(html) && /Open items and unresolved contract questions/.test(html));
 check('no percent on net and fund-balance rows', !/Excess \(deficit\) of revenue over expenses<\/td>(<td>[^<]*<\/td>){4}<td>[^<]+%/.test(html));
 check('negative amounts in parentheses, whole dollars', /\(500\)/.test(html) && !/\.\d{2}<\/td>/.test(html.split('Material changes')[0]));

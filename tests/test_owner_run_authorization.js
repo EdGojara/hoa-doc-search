@@ -97,6 +97,8 @@ check('execution grant (mig 567): owner-only issue/revoke; instruction recorded;
   for (const r of ["router.post('/grants'", "router.post('/grants/:id/revoke'", "router.get('/grants'"]) { const i = api.indexOf(r); assert.ok(i > 0, r); assert.ok(api.slice(i, i + 200).includes('requireOwner'), r + ' is owner-only'); }
   const mig = read('migrations/567_owner_execution_grants.sql');
   assert.ok(mig.includes("processes <@ ARRAY['journal_entry', 'cutoff_adjustment', 'reclassification', 'bank_reconciliation', 'account_reconciliation']"), 'only accounting runs; never payments or vendor bank details');
+  assert.ok(api.includes("if (active && active.length) return res.json({ grant: active[0], existing: true });"), 'one active grant per community');
+  assert.ok(read('public/ed.html').includes('if(_issuingGrant) return;'), 'the Issue button ignores repeat clicks while issuing');
   assert.ok(mig.includes("expires_at <= issued_at + interval '24 hours'") && mig.includes("'instruction', p_instruction") && mig.includes('per-run ceiling'));
 });
 
