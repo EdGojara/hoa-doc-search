@@ -59,6 +59,7 @@ check('wiring: ingest and the manual filer stamp every outcome; staff endpoint p
   assert.ok(ep.length > 100 && /fetchAllQuery\(\(\) => supabase\.from\('email_messages'\)/.test(ep) && /fetchAllQuery\(\(\) => supabase\.from\('acc_decisions'\)/.test(ep), 'paginated reads');
   const ui = read('public/index.html');
   assert.ok(ui.includes("fetch('/acc-review/intake-exceptions')") && ui.includes("key: 'not_filed'") && ui.includes("/to-acc'"), 'queue shows Received, not filed with File to ACC queue');
+  assert.ok(ui.includes("await window._authFetch('/api/email-triage/' + encodeURIComponent(emailId) + '/to-acc'") && ui.includes("await window._authFetch('/api/email-triage/' + encodeURIComponent(emailId) + '/dismiss'"), 'the buttons send the sign-in token (the email-triage routes are admin-gated)');
 });
 
 (async () => {
