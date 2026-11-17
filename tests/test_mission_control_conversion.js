@@ -30,7 +30,7 @@ const carried = OPS.conversionNodes({ batches, legalByJe, proposals: [], items: 
 const dup = carried.find((x) => /Reverse the duplicate \$557\.35/.test(x.title));
 check('a carried duplicate bill-back still surfaces, says the conversion does not wait on it, and cites the source charge', !!dup && /does not wait/.test(dup.title) && /2026-07-30/.test(dup.why) && dup.action.url === '/app/financial/legal?id=58889418-9334-47ed-93aa-c79d6796732f');
 check('a carried unposted bill says the conversion does not wait on it', carried.some((x) => /Post the \$34\.04 bill/.test(x.title) && /does not wait/.test(x.title)));
-check('the ownership change is described as administrative (no effect on the books)', /Administrative/.test(by(/ownership change/).why));
+check('the ownership change says it decides which owner a converted balance belongs to', /which owner a converted balance belongs to/.test(by(/ownership change/).why));
 check('a posted conversion or another association adds nothing', OPS.conversionNodes({ batches: [], items, legalByJe, proposals: [] }, C).length === 0);
 const page = fs.readFileSync(path.join(__dirname, '..', 'public', 'ownership-proposals-review.html'), 'utf8');
 check('Ownership Review opens ?id= directly', page.includes("new URLSearchParams(location.search).get('id')") && page.includes('await loadDetail(deepId)'));
