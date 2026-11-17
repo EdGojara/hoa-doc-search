@@ -230,6 +230,7 @@ const CHECKS = [
   'scripts/check_requires_tracked.js',
   'scripts/check_micr_pitch.js',
   'tests/test_check_renderer.js',
+  'tests/test_check_reprint.js',
   'tests/test_check_remittance_layout.js',
   'tests/test_contact_mining.js',
   'tests/test_persona_routing.js',
