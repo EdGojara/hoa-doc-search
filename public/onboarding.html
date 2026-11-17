@@ -334,7 +334,8 @@ function renderOperator(v) {
   const unknown = asks.filter((a) => a.type === 'unrecognized_format');
   const decisions = asks.filter((a) => a.type === 'decision');
   const toApprove = asks.filter((a) => a.type === 'approve_adjustment' || a.type === 'approve_policy');
-  const others = asks.filter((a) => a.type !== 'missing_source' && a.type !== 'unrecognized_format' && a.type !== 'decision' && a.type !== 'approve_adjustment' && a.type !== 'approve_policy');
+  const authorize = asks.filter((a) => a.type === 'authorize');
+  const others = asks.filter((a) => a.type !== 'missing_source' && a.type !== 'unrecognized_format' && a.type !== 'decision' && a.type !== 'approve_adjustment' && a.type !== 'approve_policy' && a.type !== 'authorize');
   const runnable = v.derived && v.derived.runner_available;
   let html = '<div class="card" style="border-left:4px solid var(--gold)"><div style="font-weight:800;color:var(--navy)">Onboarding operator</div>';
   if (!asks.length && runnable) html += '<div class="muted">Nothing needed from you right now.</div>';
@@ -351,6 +352,7 @@ function renderOperator(v) {
         + q.choices.map((c) => '<label style="display:block;font-weight:400;margin:4px 0"><input type="radio" name="q' + i + '" value="' + esc(c.key) + '"' + (owner ? '' : ' disabled') + '> ' + esc(c.label) + (q.recommended === c.key ? ' <span class="pill PASS">Recommended</span>' : '') + '</label>').join('') + '</div>').join('')
       + (owner ? '<button id="opAnswer">Record my decisions</button> <span class="muted" style="font-size:12px">Saved as your decisions, with your name and the time; nothing is posted.</span>' : '<div class="muted">The owner answers these.</div>') + '</div>';
   }
+  if (authorize.length) html += '<div class="banner warn" style="margin-top:8px" id="op_authorize"><b>Waiting for your authorization:</b> ' + authorize.map((a) => esc(a.text)).join(' ') + '</div>';
   if (toApprove.length) html += '<div style="margin-top:8px"><b>' + toApprove.length + ' conversion ' + (toApprove.length === 1 ? 'item waits' : 'items wait') + ' for your approval</b> <span class="muted">(adjustments and policies, below: each shows its lines, evidence and fingerprint)</span></div>';
   if (others.length) html += '<div style="margin-top:8px"><b>Needs your decision:</b><ul>' + others.map((a) => '<li>' + esc(a.text || a.control) + (a.difference_cents ? ' (' + money(a.difference_cents) + ')' : '') + '</li>').join('') + '</ul><span class="muted">Details, evidence and the waive / advance controls are below.</span></div>';
   const made = op.decisions || [];
