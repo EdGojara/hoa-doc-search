@@ -1,0 +1,60 @@
+{
+  "migration": "560_conversion_prior_owner_ended_tenure.sql",
+  "summary": "onboarding_execute's prior-owner isolation check also accepts the prior owner's own ENDED owner tenure (same source account, ended on/before the cutoff, on a lot whose current source account differs); the capability probe gains 'prior_owner_ended_tenure'. The rest of the 536 body is unchanged. No existing row changes.",
+  "requires": [
+    "536_conversion_execute_establishment.sql",
+    "456_ownership_tenures.sql",
+    "457_current_tenure_reader_views.sql"
+  ],
+  "preflight": [
+    {
+      "name": "no onboarding batch is mid-execute (onboarding_execute is replaced)",
+      "sql": "SELECT count(*)::int FROM conversion_batches WHERE onboarding_stage = 'execute' AND status <> 'posted'",
+      "expect": 0
+    },
+    {
+      "name": "the capability probe does not yet offer prior_owner_ended_tenure",
+      "sql": "SELECT CASE WHEN onboarding_execute_capabilities() ? 'prior_owner_ended_tenure' THEN 1 ELSE 0 END",
+      "expect": 0
+    }
+  ],
+  "expected_changes": [
+    "onboarding_execute and onboarding_execute_capabilities are replaced.",
+    "No row in any table changes."
+  ],
+  "objects": {
+    "added": [],
+    "changed": [
+      "function:onboarding_execute",
+      "function:onboarding_execute_capabilities"
+    ],
+    "removed": []
+  },
+  "row_changes": {
+    "homeowner_transactions": 0,
+    "ownership_tenures": 0,
+    "journal_entries": 0
+  },
+  "protected": [
+    {
+      "table": "ownership_tenures",
+      "order_by": "id"
+    },
+    {
+      "table": "homeowner_transactions",
+      "order_by": "id"
+    }
+  ],
+  "verify": [
+    {
+      "name": "the capability probe offers prior_owner_ended_tenure",
+      "sql": "SELECT CASE WHEN onboarding_execute_capabilities() ? 'prior_owner_ended_tenure' THEN 1 ELSE 0 END",
+      "expect": 1
+    },
+    {
+      "name": "onboarding_execute carries the 560 ended-tenure rule",
+      "sql": "SELECT CASE WHEN pg_get_functiondef('onboarding_execute(uuid,uuid,text,text,text)'::regprocedure) LIKE '%t.end_date <= cutoff AND t.vantaca_account_id = h.vantaca_account_id%' THEN 1 ELSE 0 END",
+      "expect": 1
+    }
+  ]
+}
