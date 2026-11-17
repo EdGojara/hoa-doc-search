@@ -126,6 +126,7 @@ const CHECKS = [
   'tests/test_statement_package.js',
   'tests/test_bva_print.js',
   'tests/test_statement_presentation.js',
+  'tests/test_bs_one_row_one_page.js',
   'tests/test_monthly_interest.js',
   'tests/test_interest_cutoff_period_guard.js',
   'tests/test_autopay_open_payable.js',
