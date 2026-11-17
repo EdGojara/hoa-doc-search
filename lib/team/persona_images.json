@@ -428,8 +428,8 @@
         ]
       },
       "microsoft_365": {
-        "photo": "unchanged",
-        "note": "PENDING Ed's go-ahead after merge"
+        "photo": "canonical_square",
+        "status": "set 2026-11-17 from the canonical file (Ed-authorized); see _canonical_index"
       },
       "portal_video_visit": {
         "photo": "unchanged",
@@ -498,8 +498,8 @@
         "photo": "claire_legacy_2026-10-22"
       },
       "microsoft_365": {
-        "photo": "unchanged",
-        "note": "pending Ed's separate approval"
+        "photo": "canonical_square",
+        "status": "set 2026-11-17 from the canonical file (Ed-authorized); see _canonical_index"
       },
       "heygen_avatar": {
         "photo": "unchanged",
@@ -571,8 +571,8 @@
         "photo": "annie_legacy_2026-10-22"
       },
       "microsoft_365": {
-        "photo": "unchanged",
-        "note": "pending Ed's separate approval"
+        "photo": "canonical_square",
+        "status": "set 2026-11-17 from the canonical file (Ed-authorized); see _canonical_index"
       },
       "heygen_avatar": {
         "photo": "unchanged",
@@ -644,8 +644,8 @@
         "photo": "miranda_legacy_2026-10-22"
       },
       "microsoft_365": {
-        "photo": "unchanged",
-        "note": "pending Ed's separate approval"
+        "photo": "canonical_square",
+        "status": "set 2026-11-17 from the canonical file (Ed-authorized); see _canonical_index"
       },
       "heygen_avatar": {
         "photo": "unchanged",
@@ -774,6 +774,158 @@
         "small round gold pendant"
       ],
       "rule": "A photo is used only if it is visibly the same woman."
+    }
+  },
+  "_canonical_index": {
+    "_about": "ONE official portrait per AI teammate (Ed 2026-11-17). trustEd screens and email signatures read the canonical file directly (lib/email/persona_signature.js: team/<persona>.jpg, or team-internal/<persona>.jpg for Bedrock-internal personas). Microsoft 365 holds a copy set from the same file via Graph PUT /users/{mailbox}/photo/$value; Exchange re-encodes it, so verify by ETag and visual comparison, not by hash. Desktop Outlook caches photos; Outlook on the web reflects a change first.",
+    "claire": {
+      "canonical": "public/assets/presentations/team/claire.jpg",
+      "microsoft_365": {
+        "mailbox": "claire@bedrocktx.com",
+        "status": "set_to_canonical",
+        "set_on": "2026-11-17",
+        "authorized_by": "Ed Gojara (\"standardize profile photos across the entire TrustEd AI team\")",
+        "verified": "2026-11-17"
+      }
+    },
+    "isabella": {
+      "canonical": "public/assets/presentations/team/isabella.jpg",
+      "microsoft_365": {
+        "mailbox": "isabella@bedrocktx.com",
+        "status": "set_to_canonical",
+        "set_on": "2026-11-17",
+        "authorized_by": "Ed Gojara (\"standardize profile photos across the entire TrustEd AI team\")",
+        "verified": "2026-11-17"
+      }
+    },
+    "mei": {
+      "canonical": "public/assets/presentations/team/mei.jpg",
+      "microsoft_365": {
+        "mailbox": "mei@bedrocktx.com",
+        "status": "set_to_canonical",
+        "set_on": "2026-11-17",
+        "authorized_by": "Ed Gojara (\"standardize profile photos across the entire TrustEd AI team\")",
+        "verified": "2026-11-17",
+        "note": "canonical file is 320x320; a larger original of the same portrait would improve it"
+      }
+    },
+    "priya": {
+      "canonical": "public/assets/presentations/team/priya.jpg",
+      "microsoft_365": {
+        "mailbox": "priya@bedrocktx.com",
+        "status": "set_to_canonical",
+        "set_on": "2026-11-17",
+        "authorized_by": "Ed Gojara (\"standardize profile photos across the entire TrustEd AI team\")",
+        "verified": "2026-11-17",
+        "note": "canonical file is 320x320; a larger original of the same portrait would improve it"
+      }
+    },
+    "emma": {
+      "canonical": "public/assets/presentations/team/emma.jpg",
+      "microsoft_365": {
+        "mailbox": "emma@bedrocktx.com",
+        "status": "matches_canonical",
+        "verified": "2026-11-17"
+      }
+    },
+    "kat": {
+      "canonical": "public/assets/presentations/team/kat.jpg",
+      "microsoft_365": {
+        "mailbox": "kat@bedrocktx.com",
+        "status": "matches_canonical",
+        "verified": "2026-11-17"
+      }
+    },
+    "annie": {
+      "canonical": "public/assets/presentations/team/annie.jpg",
+      "microsoft_365": {
+        "mailbox": "annie@bedrocktx.com",
+        "status": "set_to_canonical",
+        "set_on": "2026-11-17",
+        "authorized_by": "Ed Gojara (\"standardize profile photos across the entire TrustEd AI team\")",
+        "verified": "2026-11-17"
+      }
+    },
+    "miranda": {
+      "canonical": "public/assets/presentations/team/miranda.jpg",
+      "microsoft_365": {
+        "mailbox": "miranda@bedrocktx.com",
+        "status": "set_to_canonical",
+        "set_on": "2026-11-17",
+        "authorized_by": "Ed Gojara (\"standardize profile photos across the entire TrustEd AI team\")",
+        "verified": "2026-11-17"
+      }
+    },
+    "amanda": {
+      "canonical": "public/assets/presentations/team/amanda.jpg",
+      "microsoft_365": {
+        "mailbox": "amandaalbright@bedrocktx.com",
+        "status": "NEEDS_ED_REVIEW",
+        "verified": "2026-11-17",
+        "note": "Mailbox shows the face-v2 portrait (648px), a different photo from team/amanda.jpg; ask-amanda.html and board-portal.html show a third photo (assets/personas/amanda/amanda-direct-camera-square.jpg). Not changed."
+      }
+    },
+    "reese": {
+      "canonical": "public/assets/presentations/team/reese.jpg",
+      "microsoft_365": {
+        "mailbox": "reese@bedrocktx.com",
+        "status": "matches_canonical",
+        "verified": "2026-11-17"
+      }
+    },
+    "darby": {
+      "canonical": "public/assets/presentations/team/darby.jpg",
+      "microsoft_365": {
+        "mailbox": "darby@bedrocktx.com",
+        "status": "matches_canonical",
+        "verified": "2026-11-17"
+      }
+    },
+    "paige": {
+      "canonical": "public/assets/presentations/team/paige.jpg",
+      "microsoft_365": {
+        "mailbox": "paige@bedrocktx.com",
+        "status": "NEEDS_ED_REVIEW",
+        "verified": "2026-11-17",
+        "note": "team/paige.jpg is marked 'PENDING Ed's approval'; the mailbox shows a different photo. Not changed."
+      }
+    },
+    "phoebe": {
+      "canonical": "public/assets/presentations/team/phoebe.jpg",
+      "microsoft_365": {
+        "mailbox": "phoebe@bedrocktx.com",
+        "status": "matches_canonical",
+        "verified": "2026-11-17"
+      }
+    },
+    "maggie": {
+      "canonical": "public/assets/presentations/team-internal/maggie.jpg",
+      "also": "public/assets/presentations/team/maggie.jpg (identical file)",
+      "microsoft_365": {
+        "mailbox": "maggie@bedrocktx.com",
+        "status": "set_to_canonical",
+        "set_on": "2026-11-17",
+        "authorized_by": "Ed Gojara (\"standardize profile photos across the entire TrustEd AI team\")",
+        "verified": "2026-11-17"
+      }
+    },
+    "tessa": {
+      "canonical": "public/assets/presentations/team/tessa.jpg",
+      "microsoft_365": {
+        "mailbox": "tessa@bedrocktx.com",
+        "status": "matches_canonical",
+        "verified": "2026-11-17"
+      }
+    },
+    "vivian": {
+      "canonical": "public/assets/presentations/team-internal/vivian.jpg",
+      "microsoft_365": {
+        "mailbox": "vivian@bedrocktx.com",
+        "status": "set_to_canonical",
+        "set_on": "2026-11-17",
+        "authorized_by": "Ed Gojara (\"standardize profile photos across the entire TrustEd AI team\")",
+        "verified": "2026-11-17"
+      }
     }
   }
 }
