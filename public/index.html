@@ -15362,6 +15362,10 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
       const j = await r.json();
       if (j.error) throw new Error(j.error);
       accCurrentList = j.decisions || [];
+      // ACC emails that arrived but are not in the queue, with the reason (Ed 2026-11-17).
+      accIntakeExceptions = [];
+      try { const xr = await fetch('/acc-review/intake-exceptions'); const xj = await xr.json(); if (!xj.error) accIntakeExceptions = xj.exceptions || []; }
+      catch (e) { console.warn('accIntakeExceptions', e); }
       // Saved drafts are a separate store (/api/drafts): work started on the
       // Review screen and never submitted. Shown here so the four kinds of
       // work sit on one screen (Ed 2026-10-29).
@@ -15384,6 +15388,26 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
     }
   }
   let accSavedDrafts = [];
+  let accIntakeExceptions = [];
+  // File a not-filed ACC email into the queue (same intake as Annie's), or mark it not an application.
+  async function accFileException(emailId, btn) {
+    if (btn) { btn.disabled = true; btn.textContent = 'Filing…'; }
+    try {
+      const r = await fetch('/api/email-triage/' + encodeURIComponent(emailId) + '/to-acc', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) { alert(j.detail || j.error || 'Could not file it.'); if (btn) { btn.disabled = false; btn.textContent = '🏗️ File to ACC queue'; } return; }
+      accLoadList();
+    } catch (e) { alert('Could not file it: ' + e.message); if (btn) { btn.disabled = false; btn.textContent = '🏗️ File to ACC queue'; } }
+  }
+  async function accDismissException(emailId, btn) {
+    if (!confirm('Mark this email as not an ACC application? It leaves this list.')) return;
+    if (btn) btn.disabled = true;
+    try {
+      const r = await fetch('/api/email-triage/' + encodeURIComponent(emailId) + '/dismiss', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ as: 'handled' }) });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      accLoadList();
+    } catch (e) { alert('Could not update it: ' + e.message); if (btn) btn.disabled = false; }
+  }
   // Section a case belongs in. The server computes it from the authority state
   // (lib/acc/decision_authority queueStage); the fallback covers an older server.
   function accStageOf(a) {
@@ -15411,6 +15435,7 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
       return `<span class="acc-stats-pill" style="background:${m.bg}; color:${m.fg};">${m.icon} ${bySource[k]}</span>`;
     }).join('');
     wrap.innerHTML = `
+      ${accIntakeExceptions.length > 0 ? `<span class="acc-stats-pill red">${accIntakeExceptions.length} received, not filed</span>` : ''}
       ${pendingEd > 0 ? `<span class="acc-stats-pill red">${pendingEd} pending Ed's approval</span>` : ''}
       <span class="acc-stats-pill amber">${queued.length} open</span>
       ${overdue > 0 ? `<span class="acc-stats-pill red">${overdue} over 24h</span>` : ''}
@@ -15422,7 +15447,7 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
   function accRenderList() {
     const wrap = document.getElementById('acc-list');
     const empty = document.getElementById('acc-empty');
-    if (accCurrentList.length === 0 && accSavedDrafts.length === 0) {
+    if (accCurrentList.length === 0 && accSavedDrafts.length === 0 && accIntakeExceptions.length === 0) {
       wrap.innerHTML = ''; empty.style.display = ''; return;
     }
     empty.style.display = 'none';
@@ -15490,7 +15515,24 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
           <div><button type="button" class="secondary-btn" style="font-size:12px; padding:6px 12px;" onclick="event.stopPropagation(); Drafts.load('acc_review', '${accEsc(d.id)}', this).catch(e => alert(e.message))">📂 Open</button></div>
         </div>`;
     }
+    function exceptionRowHtml(x) {
+      const when = x.received_at ? new Date(x.received_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '';
+      return `<div class="acc-row" style="border:1px solid #fecaca; background:#fff7f7; border-radius:8px; padding:10px 12px; margin-bottom:8px; cursor:default;">
+        <div style="display:flex; justify-content:space-between; gap:10px; flex-wrap:wrap;">
+          <div style="min-width:0;">
+            <div style="font-weight:600; font-size:13.5px;">${accEsc(x.subject || '(no subject)')}${x.messages > 1 ? ` <span style="color:#5a7390; font-weight:400;">(${x.messages} emails)</span>` : ''}</div>
+            <div style="font-size:12px; color:#5a7390;">${accEsc(when)} · ${accEsc(x.from || '')} → ${accEsc((x.mailbox || '').split('@')[0])}@ · ${accEsc(x.community_name || 'community unknown')}${x.property_address ? ' · ' + accEsc(x.property_address) : ' · property not identified'}${x.has_attachments ? ' · 📎' : ''}</div>
+            <div style="font-size:12px; color:#991b1b; margin-top:3px;">${accEsc(x.reason || '')}${(x.prior_records || []).length ? ' Earlier at this property: ' + accEsc(x.prior_records.join(', ')) + '.' : ''}</div>
+          </div>
+          <div style="display:flex; gap:6px; align-items:flex-start;">
+            <button type="button" class="secondary-btn" style="font-size:12px; padding:6px 10px;" onclick="event.stopPropagation(); accFileException('${accEsc(x.email_id)}', this)">🏗️ File to ACC queue</button>
+            <button type="button" class="secondary-btn" style="font-size:12px; padding:6px 10px;" onclick="event.stopPropagation(); accDismissException('${accEsc(x.email_id)}', this)">Not an application</button>
+          </div>
+        </div></div>`;
+    }
     const sections = [
+      { key: 'not_filed', title: '⚠ Received, not filed', color: '#991b1b', rows: accIntakeExceptions, render: exceptionRowHtml,
+        note: 'ACC emails that reached trustEd but are not in the queue, with the reason. File each one (it runs the same intake as Annie and joins an open application for the same homeowner instead of duplicating), or mark it not an application. Nothing is decided or sent to the homeowner.' },
       { key: 'pending_ed', title: "✋ Pending Ed's approval", color: '#991b1b', rows: pendingEd, render: rowHtml,
         note: 'Annie has recommended an approval or denial, or the case needs your judgment. Nothing is issued until an authorized decision is recorded.' },
       { key: 'submitted', title: '📥 Submitted applications', color: '#92400e', rows: submitted, render: rowHtml,

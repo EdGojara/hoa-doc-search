@@ -2957,6 +2957,40 @@ app.get('/acc-review/decisions', async (req, res) => {
 // on, so staff can read the homeowner's own words and answer WITHOUT leaving the
 // queue. (Ed 2026-07-15: "I want to be able to link to email from this page and
 // respond via Annie from their email from here — again ease of use.")
+// GET /acc-review/intake-exceptions — ACC applications that arrived by email (last 60 days)
+// but are not in the queue, with the reason (lib/acc/intake_exceptions). Shown at the top of
+// the ACC queue as "Received, not filed" so nothing disappears silently (Ed 2026-11-17).
+app.get('/acc-review/intake-exceptions', async (req, res) => {
+  try {
+    const { fetchAllQuery } = require('./lib/db/fetch_all');
+    const { findIntakeExceptions } = require('./lib/acc/intake_exceptions');
+    const since = new Date(Date.now() - 60 * 86400000).toISOString();
+    const annie = String(require('./lib/email/graph_send').ANNIE_MAILBOX || '').toLowerCase();
+    const emails = await fetchAllQuery(() => supabase.from('email_messages')
+      .select('id, graph_id, conversation_id, mailbox, direction, subject, sender_email, received_at, has_attachments, classification, triage_status, extracted, community_id, resolved_property_id')
+      .eq('direction', 'inbound').gte('received_at', since)
+      .or(`classification.eq.acc_request,mailbox.ilike.${annie}`));
+    const decisions = await fetchAllQuery(() => supabase.from('acc_decisions')
+      .select('id, reference_number, status, homeowner_address, intake_source_ref, source_email_refs, conversation_id, created_at')
+      .eq('management_company_id', BEDROCK_MGMT_CO_ID));
+    const pids = [...new Set(emails.map((m) => m.resolved_property_id).filter(Boolean))];
+    const addr = {};
+    for (let i = 0; i < pids.length; i += 100) {
+      const { data, error } = await supabase.from('properties').select('id, street_address').in('id', pids.slice(i, i + 100));
+      if (error) throw error;
+      for (const p of data || []) addr[p.id] = p.street_address;
+    }
+    const comms = {};
+    { const { data, error } = await supabase.from('communities').select('id, name'); if (error) throw error; for (const c of data || []) comms[c.id] = c.name; }
+    const rows = findIntakeExceptions({ emails: emails.map((m) => ({ ...m, property_address: addr[m.resolved_property_id] || null })), decisions, accMailboxes: [annie] })
+      .map((r) => ({ ...r, community_name: comms[r.community_id] || null }));
+    res.json({ exceptions: rows, scanned: emails.length });
+  } catch (err) {
+    console.error('[acc-review/intake-exceptions] failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get('/acc-review/decisions/:id/email', async (req, res) => {
   try {
     const { data: d } = await supabase.from('acc_decisions')

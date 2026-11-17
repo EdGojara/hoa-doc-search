@@ -346,8 +346,8 @@ router.get('/acc-leaks', async (req, res) => {
       .eq('direction', 'inbound').in('persona', ['claire', 'annie'])
       .order('received_at', { ascending: false }).limit(1000);
     if (error) throw error;
-    const { data: dec, error: e2 } = await supabase.from('acc_decisions').select('intake_source_ref, source_email_refs, homeowner_address, status');
-    if (e2) throw e2;
+    const { fetchAllQuery } = require('../lib/db/fetch_all');
+    const dec = await fetchAllQuery(() => supabase.from('acc_decisions').select('id, intake_source_ref, source_email_refs, homeowner_address, status'));
     const linkKeys = new Set(); const decByProp = {};
     for (const d of (dec || [])) {
       if (d.intake_source_ref) linkKeys.add(d.intake_source_ref);
@@ -367,8 +367,7 @@ router.get('/acc-leaks', async (req, res) => {
     const propAddr = {};
     if (propIds.length) {
       try {
-        const { fetchAll } = require('../lib/db/fetch_all');
-        const props = await fetchAll(() => supabase.from('properties').select('id, street_address').in('id', propIds));
+        const props = await fetchAllQuery(() => supabase.from('properties').select('id, street_address').in('id', propIds));
         for (const p of (props || [])) propAddr[p.id] = p.street_address;
       } catch (_) { /* address is best-effort — subject usually carries it */ }
     }
@@ -2037,6 +2036,7 @@ router.post('/:id/to-acc', express.json(), async (req, res) => {
     // no attachment — the engine reads the message body. (Ed 2026-07-27.)
     const { intakeApplicationFromEmail } = require('../lib/applications/email_intake');
     const out = await intakeApplicationFromEmail({ email: m, extracted: m.extracted || {}, communityId: m.community_id || null, allowBodyOnly: true });
+    await require('../lib/acc/intake_exceptions').recordIntakeOutcome(supabase, m.id, out);
     const st = out && out.status;
     if (st === 'created' || st === 'attached' || out.queued) {
       await supabase.from('email_messages').update({ triage_status: 'handled', reviewed_by: (req.body || {}).reviewed_by || 'staff', reviewed_at: new Date().toISOString() }).eq('id', m.id);
