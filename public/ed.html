@@ -248,6 +248,12 @@ async function openRun(id){
       + '<div id="runStatus" role="status" aria-live="polite" style="margin-top:12px;font-size:13px;"></div>'
       + '<div style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px;"><button onclick="closeModal()" style="padding:8px 14px;border:1px solid #dde3ea;background:#fff;border-radius:6px;cursor:pointer;">Close</button>'+btns+'</div></div>';
     document.querySelectorAll('[data-pdf]').forEach(a=>a.addEventListener('click',(ev)=>{ ev.preventDefault(); ev.stopPropagation(); viewInvoicePdf(a.dataset.pdf); }));
+    // Tick all (Ed 2026-11-17): a run of hundreds of entries could only be approved box by box. Nothing is
+    // ticked by default; this ticks or clears every entry at once, and the confirm still lists what posts.
+    const boxes=[...document.querySelectorAll('#modal .incl')];
+    if(boxes.length>1 && run.status==='prepared'){ const first=boxes[0].closest('label'); const all=document.createElement('label'); all.style.cssText='display:block;padding:8px 0;border-bottom:2px solid #dde3ea;font-size:13px;font-weight:700;';
+      all.innerHTML='<input type="checkbox" id="inclAll"> Tick all '+boxes.length+' entries'; if(first&&first.parentNode) first.parentNode.insertBefore(all,first);
+      const cb=all.querySelector('#inclAll'); cb.addEventListener('change',()=>{ boxes.forEach(b=>{ b.checked=cb.checked; }); }); }
   }catch(e){ $('modal').innerHTML='<div class="mb"><div class="empty" style="color:#9B2C2C;">'+esc(e.message)+'</div></div>'; }
 }
 async function dlCsv(id){ const r=await af('/api/accounting-runs/run/'+id+'/csv'); const b=await r.blob(); const a=document.createElement('a'); a.href=URL.createObjectURL(b); a.download='kat-run-'+id.slice(0,8)+'.csv'; a.click(); }
