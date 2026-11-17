@@ -16,7 +16,7 @@ const graphSend = require('../lib/email/graph_send');
   const send = args.includes('--send');
   const si = args.indexOf('--summary'); const summary = si >= 0 ? args[si + 1] : null;
   const list = args.filter((a, i) => !a.startsWith('--') && args[i - 1] !== '--summary').map((a) => {
-    const [run_id, ids] = a.split(':'); return { run_id, include: ids ? ids.split(',').filter(Boolean) : null };
+    const k = a.indexOf(':'); const run_id = k < 0 ? a : a.slice(0, k); const ids = k < 0 ? '' : a.slice(k + 1); return { run_id, include: ids ? ids.split(',').filter(Boolean) : null };
   });
   if (!list.length) throw new Error('list at least one run id');
   const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);

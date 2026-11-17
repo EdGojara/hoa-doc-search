@@ -175,12 +175,18 @@ async function loadGrants(){
     $('grantList').innerHTML = g.length ? g.map(x=>'<div>Active: '+esc(($('grantComm').querySelector('option[value="'+x.community_id+'"]')||{}).textContent||'community')+' until '+esc(new Date(x.expires_at).toLocaleString('en-US',{timeZone:'America/Chicago'}))+', up to '+money(x.max_run_cents)+' per run · <a href="#" onclick="revokeGrant(\''+esc(x.id)+'\');return false;">revoke</a></div>').join('') : '<div>No active grant.</div>';
   }catch(e){ $('grantList').textContent='Grants unavailable: '+e.message; }
 }
+let _issuingGrant=false;
 async function issueGrant(){
+  if(_issuingGrant) return;
   const c=$('grantComm').value, h=$('grantHours').value, m=Math.round(Number($('grantMax').value)*100);
   if(!c||!(m>0)) return;
-  const r=await af('/api/accounting-runs/grants',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({community_id:c,hours:Number(h),max_run_cents:m})});
-  const j=await r.json().catch(()=>({})); if(!r.ok){ alert(j.error||'Could not issue the grant'); return; }
-  loadGrants();
+  const btn=document.querySelector('#grantBox button'); _issuingGrant=true; if(btn){ btn.disabled=true; btn.textContent='Issuing…'; }
+  try{
+    const r=await af('/api/accounting-runs/grants',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({community_id:c,hours:Number(h),max_run_cents:m})});
+    const j=await r.json().catch(()=>({})); if(!r.ok){ alert(j.error||'Could not issue the grant'); return; }
+    if(j.existing) alert('A grant for this community is already active until '+new Date(j.grant.expires_at).toLocaleString('en-US',{timeZone:'America/Chicago'})+'. Revoke it to issue a different one.');
+    await loadGrants();
+  } finally { _issuingGrant=false; if(btn){ btn.disabled=false; btn.textContent='Issue grant'; } }
 }
 async function revokeGrant(id){
   const r=await af('/api/accounting-runs/grants/'+encodeURIComponent(id)+'/revoke',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});

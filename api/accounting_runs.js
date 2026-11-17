@@ -218,6 +218,12 @@ router.post('/grants', express.json(), async (req, res) => {
     const processes = (Array.isArray(b.processes) && b.processes.length ? b.processes : GRANT_PROCESSES).map(String).filter((p) => GRANT_PROCESSES.includes(p));
     const max = Math.round(Number(b.max_run_cents));
     if (!b.community_id || !processes.length || !(max > 0)) return res.status(400).json({ error: 'community, run kinds and a per-run ceiling are required' });
+    // One active grant per community (Ed 2026-11-17: repeated clicks issued 20). A repeat returns the
+    // active grant; to change its scope or ceiling, revoke it first.
+    const { data: active, error: aErr } = await supabase.from('owner_execution_grants').select('*').eq('community_id', b.community_id)
+      .is('revoked_at', null).gt('expires_at', new Date().toISOString()).order('issued_at', { ascending: true }).limit(1);
+    if (aErr) throw aErr;
+    if (active && active.length) return res.json({ grant: active[0], existing: true });
     const { data, error } = await supabase.from('owner_execution_grants').insert({ owner_user_id: u.user && u.user.id, owner_email: u.email, community_id: b.community_id, processes,
       max_run_cents: max, note: b.note ? String(b.note).slice(0, 500) : null, expires_at: new Date(Date.now() + hours * 3600e3).toISOString() }).select('*').single();
     if (error) throw error;

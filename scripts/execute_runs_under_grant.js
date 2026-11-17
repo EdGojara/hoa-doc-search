@@ -12,7 +12,7 @@ const MR = require('../lib/accounting/monthly_runs');
   const args = process.argv.slice(2);
   const val = (k) => { const i = args.indexOf(k); return i >= 0 ? args[i + 1] : null; };
   const grant = val('--grant'); const instruction = val('--instruction');
-  const runs = args.filter((a, i) => !a.startsWith('--') && !['--grant', '--instruction'].includes(args[i - 1])).map((a) => { const [run_id, ids] = a.split(':'); return { run_id, include: ids ? ids.split(',') : [] }; });
+  const runs = args.filter((a, i) => !a.startsWith('--') && !['--grant', '--instruction'].includes(args[i - 1])).map((a) => { const k = a.indexOf(':'); const run_id = k < 0 ? a : a.slice(0, k); const ids = k < 0 ? '' : a.slice(k + 1); return { run_id, include: ids ? ids.split(',') : [] }; });
   if (!grant || !instruction || !runs.length) throw new Error('usage: --grant <id> --instruction "<exact words>" <run_id>[:ids] ...');
   const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
   for (const r of runs) {
