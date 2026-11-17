@@ -16,5 +16,7 @@ check('the service hands the statuses to the plan', /homeowner_batch_status: loa
 check('the plan skips a batch that is no longer committed and records why', /if \(bst && bst !== 'committed'\) \{ alreadyRetired\.set/.test(plan) && /was already reverted before the conversion/.test(plan));
 check('the preflight blocks if any batch it retires is not committed', /preflight\.legacy_batches_committed/.test(plan) && /filter\(\(id\) => ctx\.homeowner_batch_status\[id\] !== 'committed'\)/.test(plan));
 check('plan version bumped', /const PLAN_VERSION = '2026-11-17\.1';/.test(plan));
+const page = read('public/onboarding.html');
+check('a rebuilt preflight can be approved even when an earlier fingerprint was approved (the old approval never authorizes it)', /const canApprove = owner && current && !p\.stale && approved !== r\.sha256/.test(page));
 console.log(`\nconversion revert committed: ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
