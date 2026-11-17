@@ -40,7 +40,7 @@ check('one row per GL account across funds, values summed per column, drill cove
 
 check('the PDF export returns a Buffer (a Uint8Array would be sent as JSON by Express)', () => {
   const ex = fs.readFileSync(path.join(__dirname, '..', 'lib/statements/export.js'), 'utf8');
-  assert.ok(/return Buffer.from(await page.pdf({/.test(ex));
+  assert.ok(ex.includes('return Buffer.from(await page.pdf({'));
 });
 
 check('monthly statements print without a notes page by default; the statement PDF button opens the PDF', () => {
