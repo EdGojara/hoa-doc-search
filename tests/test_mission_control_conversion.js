@@ -31,6 +31,13 @@ const dup = carried.find((x) => /Reverse the duplicate \$557\.35/.test(x.title))
 check('a carried duplicate bill-back still surfaces, says the conversion does not wait on it, and cites the source charge', !!dup && /does not wait/.test(dup.title) && /2026-07-30/.test(dup.why) && dup.action.url === '/app/financial/legal?id=58889418-9334-47ed-93aa-c79d6796732f');
 check('a carried unposted bill says the conversion does not wait on it', carried.some((x) => /Post the \$34\.04 bill/.test(x.title) && /does not wait/.test(x.title)));
 check('the ownership change says it decides which owner a converted balance belongs to', /which owner a converted balance belongs to/.test(by(/ownership change/).why));
+// Ed 2026-11-16: once the preflight passes, the conversion itself is one approval item linking to its page.
+const ready = OPS.conversionNodes({ batches: [{ ...batches[0], onboarding_stage: 'preflight', preflight: { status: 'PASS', counts: { PASS: 25, FAIL: 0, BLOCKED: 0 } } }], items: [], legalByJe, proposals: [] }, C);
+const auth = ready.find((x) => /Approve and execute the Waterview Estates conversion \(CONV-WE-20260731\): preflight 25\/25 PASS/.test(x.title));
+check('a passing preflight becomes "Approve and execute" under Requires my approval, linking to the conversion page', !!auth && auth.kind === 'task' && auth.approval === true && auth.action.url === '/admin/onboarding?batch=b1' && auth.search_terms.includes('CONV-WE-20260731'));
+const approvedN = OPS.conversionNodes({ batches: [{ ...batches[0], onboarding_stage: 'preflight', approved_preflight_sha256: 'abc', preflight: { status: 'PASS', counts: { PASS: 25 } } }], items: [], legalByJe, proposals: [] }, C);
+check('an approved preflight becomes "Execute the approved conversion"', approvedN.some((x) => /^Execute the approved Waterview/.test(x.title) && x.action.url === '/admin/onboarding?batch=b1'));
+check('a failing preflight adds no approve item', OPS.conversionNodes({ batches: [{ ...batches[0], onboarding_stage: 'preflight', preflight: { status: 'FAIL', counts: { PASS: 23, FAIL: 1, BLOCKED: 1 } } }], items: [], legalByJe, proposals: [] }, C).length === 0);
 check('a posted conversion or another association adds nothing', OPS.conversionNodes({ batches: [], items, legalByJe, proposals: [] }, C).length === 0);
 const page = fs.readFileSync(path.join(__dirname, '..', 'public', 'ownership-proposals-review.html'), 'utf8');
 check('Ownership Review opens ?id= directly', page.includes("new URLSearchParams(location.search).get('id')") && page.includes('await loadDetail(deepId)'));
