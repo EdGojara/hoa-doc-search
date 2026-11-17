@@ -18,7 +18,7 @@
     }
   ],
   "expected_changes": [
-    "bank_accounts.opening_position set for two Waterview accounts.",
+    "bank_accounts.opening_position set on two EXISTING rows (UPDATE; the net row count is unchanged).",
     "No journal entry, ledger row or balance changes."
   ],
   "objects": {
@@ -27,7 +27,7 @@
     "removed": []
   },
   "row_changes": {
-    "bank_accounts": 2,
+    "bank_accounts": 0,
     "journal_entries": 0,
     "homeowner_transactions": 0
   },
@@ -38,6 +38,11 @@
     }
   ],
   "verify": [
+    {
+      "name": "both Waterview accounts now carry an opening position (the two UPDATEs matched)",
+      "sql": "SELECT count(*)::int FROM bank_accounts WHERE id IN ('829b287e-3d9f-4a4e-9eab-4ba437a329be', '238efceb-02de-4f8c-b5f5-dd078258c0f1') AND opening_position IS NOT NULL AND opening_position->>'as_of_date' = '2026-07-31'",
+      "expect": 2
+    },
     {
       "name": "Operating opening position ties: bank + in transit - outstanding = book",
       "sql": "SELECT CASE WHEN (opening_position->>'bank_balance_cents')::bigint + (SELECT coalesce(sum((d->>'amount_cents')::bigint),0) FROM jsonb_array_elements(opening_position->'deposits_in_transit') d) - (SELECT coalesce(sum((c->>'amount_cents')::bigint),0) FROM jsonb_array_elements(opening_position->'outstanding_checks') c) = (opening_position->>'book_balance_cents')::bigint THEN 1 ELSE 0 END FROM bank_accounts WHERE id = '829b287e-3d9f-4a4e-9eab-4ba437a329be'",
