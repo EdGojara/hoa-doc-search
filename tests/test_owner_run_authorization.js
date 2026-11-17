@@ -32,6 +32,11 @@ check('refused: unbalanced, already in the GL, look-alike posted entry, blocking
   assert.match(O.verifyRun(jeRun(), ['zz'], none).problems.join(), /not in this run/);
 });
 
+check('duplicate signature includes direction: a reversal is not a copy', () => {
+  const a = [line('5110', 500), line('2000', 0, 500)]; const rev = [line('5110', 0, 500), line('2000', 500)];
+  assert.notStrictEqual(O.netSig(a), O.netSig(rev)); assert.strictEqual(O.netSig(a), O.netSig([line('2000', 0, 500), line('5110', 300), line('5110', 200)]));
+});
+
 check('bank reconciliation proposals, cutoff additions and account reviews are selected correctly', () => {
   const bank = { id: 'b', community_id: 'c1', process: 'bank_reconciliation', status: 'prepared', exceptions: [{ severity: 'open', text: 'old check' }],
     preview: { proposals: [{ id: 'p1', description: 'Interest', amount_cents: 56062, posting_date: '2026-09-30', source_reference: 'BR:p1', lines: [line('1110', 56062), line('4120', 0, 56062)] }] } };
