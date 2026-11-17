@@ -94,7 +94,7 @@ check('wiring: runs prepare, approve and refresh journal entries; owner in-app a
   const m = read('lib/accounting/monthly_runs.js');
   assert.ok(/process === 'journal_entry'\) \{\s*preview = await require\('\.\/journal_entry_runs'\)\.preview/.test(m));
   assert.ok(/run\.process === 'journal_entry'\) result = await require\('\.\/journal_entry_runs'\)\.postApproved/.test(m));
-  assert.ok(/const approver = assertInAppApproval\(approval\);/.test(m), 'approval stays the authenticated in-app owner approval');
+  assert.ok(m.includes('let approver = delegated ? null : assertInAppApproval(approval);'), 'approval stays the authenticated in-app owner approval, or a database-verified owner authorization (mig 566)');
   assert.ok(/openJournalEntryRun/.test(m) && /items = null/.test(m));
   const jr = read('lib/accounting/journal_entry_runs.js');
   assert.ok(jr.includes("require('./homeowner_charge')") && jr.includes("contains('raw_row_jsonb', { source_reference: e.source_reference })"), 'owner line posts through the sanctioned helper, once per source reference');
