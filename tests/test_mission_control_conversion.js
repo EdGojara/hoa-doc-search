@@ -18,10 +18,19 @@ const n = OPS.conversionNodes({ batches, items, legalByJe, proposals }, C);
 const by = (re) => n.find((x) => re.test(x.title));
 check('four owner items, all tasks under "Requires my approval" (a task kind is what the list renders)', n.length === 4 && n.every((x) => x.kind === 'task' && x.approval === true && x.owner === 'Ed'));
 check('the bill opens in Payables by its id', by(/Post the \$34\.04 bill/).action.url === '/#tab=ap&invoice=33fbabb2-2c62-4df0-af72-a55054e058e9');
-check('the bill-back opens its invoice in Legal Review', by(/Reverse the \$557\.35/).action.url === '/app/financial/legal?id=58889418-9334-47ed-93aa-c79d6796732f');
+check('the bill-back opens its invoice in Legal Review', by(/Reverse the duplicate \$557\.35/).action.url === '/app/financial/legal?id=58889418-9334-47ed-93aa-c79d6796732f');
 check('the conversion question opens the conversion', by(/Answer the/).action.url === '/admin/onboarding?batch=b1');
 check('the ownership change opens that proposal', by(/ownership change/).action.url === '/ownership-proposals-review.html?id=0f146aca-ec7f-4dd7-ad09-81b7b8459e4e');
 check('searchable by invoice number, posting and batch code', by(/Post the/).search_terms.includes('112-0467422-8439405') && by(/Reverse/).search_terms.includes('e8a7c83c') && by(/Answer/).search_terms.includes('CONV-WE-20260731'));
+// Ed 2026-11-16: post-cutover exceptions are carried, not conversion blockers; the duplicate bill-back
+// (linked homeowner charge, so no structural issue) still surfaces with the evidence of the source charge.
+const carried = OPS.conversionNodes({ batches, legalByJe, proposals: [], items: [
+  { ...items[0], evidence: { ...items[0].evidence, post_cutover_exception: { kind: 'structural', issues: items[0].structural_issues } } },
+  { ...items[1], structural_issues: [], evidence: { resolution: 'already_in_source', post_cutover_exception: { kind: 'duplicate_of_source', note: 'the source already charged this on 2026-07-30' } } }] }, C);
+const dup = carried.find((x) => /Reverse the duplicate \$557\.35/.test(x.title));
+check('a carried duplicate bill-back still surfaces, says the conversion does not wait on it, and cites the source charge', !!dup && /does not wait/.test(dup.title) && /2026-07-30/.test(dup.why) && dup.action.url === '/app/financial/legal?id=58889418-9334-47ed-93aa-c79d6796732f');
+check('a carried unposted bill says the conversion does not wait on it', carried.some((x) => /Post the \$34\.04 bill/.test(x.title) && /does not wait/.test(x.title)));
+check('the ownership change is described as administrative (no effect on the books)', /Administrative/.test(by(/ownership change/).why));
 check('a posted conversion or another association adds nothing', OPS.conversionNodes({ batches: [], items, legalByJe, proposals: [] }, C).length === 0);
 const page = fs.readFileSync(path.join(__dirname, '..', 'public', 'ownership-proposals-review.html'), 'utf8');
 check('Ownership Review opens ?id= directly', page.includes("new URLSearchParams(location.search).get('id')") && page.includes('await loadDetail(deepId)'));
