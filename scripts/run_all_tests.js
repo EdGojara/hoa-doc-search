@@ -60,6 +60,7 @@ const CHECKS = [
   'tests/test_no_polling.js',
   'tests/test_onboarding_resume.js',
   'tests/test_journal_entry_runs.js',
+  'tests/test_owner_run_authorization.js',
   'tests/test_error_correction_not_waiver.js',
   'tests/test_billing_excludes_held_letters.js',
   'tests/test_account_2300_rec.js',
