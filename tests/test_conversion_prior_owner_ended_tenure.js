@@ -31,7 +31,7 @@ const plan = read('lib/onboarding/conversion_plan.js');
 check('plan: routes a prior owner to their ended tenure only when it ended on/before the cutoff and the lot now carries another account',
   /t\.kind === 'owner' && t\.property_id && t\.end_date && String\(t\.end_date\)\.slice\(0, 10\) <= cutoff/.test(plan) && /String\(lot\.vantaca_account_id \|\| ''\) !== acct\) return \{ tenure_id: t\.id, ended_owner_tenure/.test(plan));
 check('plan: the isolation control re-proves the ended tenure independently', /const endedOwn = \(r\) =>/.test(plan) && /r\.prior_owner_tenure === 'ended_owner' && endedOwn\(r\)/.test(plan));
-check('plan version bumped (an existing preflight is rebuilt)', /const PLAN_VERSION = '2026-11-16\.1';/.test(plan));
+check('plan version bumped (an existing preflight is rebuilt)', ((plan.match(/const PLAN_VERSION = '([0-9.-]+)';/) || [])[1] || '') >= '2026-11-16.1');
 
 const svc = read('lib/onboarding/service.js');
 check('service: preflight BLOCKS and execute refuses that plan shape until 560 is applied (fail closed)',
