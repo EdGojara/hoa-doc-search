@@ -109,6 +109,10 @@ check('wiring: runs prepare, approve and refresh journal entries; owner in-app a
   assert.ok(/if \(opts\.chargeCategory === 'payment'\) return postLine\(supabase, Object\.assign\(\{\}, opts, \{ txnType: 'payment', chargeCategory: 'payment', amountCents: -opts\.amountCents \}\)\);/.test(hc), 'a payment credit is a payment');
   assert.ok(/txnType: 'adjustment', chargeCategory: 'adjustment', amountCents: -opts\.amountCents/.test(hc), 'other credits stay adjustments');
   assert.ok(/total_payments_cents: txnType === 'payment' \? -amountCents : 0/.test(hc), 'the batch total counts the payment');
+  // A line may name its fund (interfund transfer through one configured account): validated, carried, posted.
+  assert.ok(/if \(l\.fund_code && !\(facts\.funds \|\| \{\}\)\[l\.fund_code\]\) \{ lineErr = `line \$\{i \+ 1\}: fund \$\{l\.fund_code\} does not exist for this community`/.test(jr), 'an unknown fund is refused');
+  assert.ok(/\.\.\.\(l\.fund_code \? \{ fund_code: String\(l\.fund_code\) \} : \{\}\)/.test(jr), 'the prepared line keeps its fund');
+  assert.ok(/\.\.\.\(l\.fund_code \? \{ fund_id: FUND\[l\.fund_code\] \} : \{\}\)/.test(jr), 'the posted line carries the fund id');
 });
 
 (async () => {
