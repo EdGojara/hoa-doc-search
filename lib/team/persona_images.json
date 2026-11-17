@@ -83,12 +83,13 @@
         "embedded_px": 120
       },
       "chat_avatar": {
-        "photo": "amanda-direct-camera-square",
+        "photo": "canonical_square",
         "display_px": 50,
         "surfaces": [
           "public/ask-amanda.html",
           "public/board-portal.html"
-        ]
+        ],
+        "note": "Was amanda-direct-camera-square until 2026-11-17; Ed 2026-11-17: \"Use trustEd portraits\" (team-wide portrait standardization)"
       },
       "dashboard_icons_and_notifications": {
         "photo": "canonical_square",
@@ -119,8 +120,8 @@
         "status": "pending: needs a high-resolution relaxed office portrait of the approved face"
       },
       "microsoft_365": {
-        "photo": "unchanged",
-        "status": "mailbox shows face v2 at 648x648 (verified 2026-10-21); v2 is the same identity line as the approved set. Change only on Ed's explicit authorization, from a 648px+ original."
+        "photo": "canonical_square",
+        "status": "set 2026-11-17 from team/amanda.jpg (378x378 source); previous mailbox photo was face v2 648px. Ed 2026-11-17: \"Use trustEd portraits\" (team-wide portrait standardization)"
       }
     },
     "high_resolution_review": {
@@ -149,7 +150,7 @@
   },
   "paige": {
     "name": "Paige Chandler",
-    "approved": "PENDING Ed's approval (prepared 2026-10-21)",
+    "approved": "2026-11-17",
     "identity_reference": {
       "authority": "Paige's original production portrait (Ed 2026-10-21): character-canon sha256 bbc6c05239b6d3ac..., 1254x1254, the file uploaded to HeyGen 2026-08-18; public/assets/presentations/team/paige_legacy_v1.jpg is its 640px derivative and stays the HeyGen and video-poster face.",
       "must_match": [
@@ -276,8 +277,8 @@
         "status": "original production portrait remains the avatar reference until Ed approves a change"
       },
       "microsoft_365": {
-        "photo": "unchanged",
-        "status": "not modified; needs separate authorization"
+        "photo": "canonical_square",
+        "status": "set 2026-11-17 from team/paige.jpg. Ed 2026-11-17: \"Use trustEd portraits\" (team-wide portrait standardization)"
       }
     },
     "excluded": [
@@ -286,7 +287,9 @@
     ],
     "backups": [
       "public/assets/presentations/team/paige_legacy_v1.jpg (byte-identical production paige.jpg before this change)"
-    ]
+    ],
+    "approved_by": "Ed Gojara",
+    "approval_note": "team/paige.jpg confirmed as the official portrait. Ed 2026-11-17: \"Use trustEd portraits\" (team-wide portrait standardization). Her existing videos and HeyGen avatar still show the production face (paige_legacy_v1.jpg); not changed."
   },
   "phoebe": {
     "name": "Phoebe Hart",
@@ -860,9 +863,11 @@
       "canonical": "public/assets/presentations/team/amanda.jpg",
       "microsoft_365": {
         "mailbox": "amandaalbright@bedrocktx.com",
-        "status": "NEEDS_ED_REVIEW",
+        "status": "set_to_canonical",
+        "set_on": "2026-11-17",
+        "authorized_by": "Ed 2026-11-17: \"Use trustEd portraits\" (team-wide portrait standardization)",
         "verified": "2026-11-17",
-        "note": "Mailbox shows the face-v2 portrait (648px), a different photo from team/amanda.jpg; ask-amanda.html and board-portal.html show a third photo (assets/personas/amanda/amanda-direct-camera-square.jpg). Not changed."
+        "note": "canonical file is 378x378; ask-amanda.html and board-portal.html now show the same portrait"
       }
     },
     "reese": {
@@ -885,9 +890,11 @@
       "canonical": "public/assets/presentations/team/paige.jpg",
       "microsoft_365": {
         "mailbox": "paige@bedrocktx.com",
-        "status": "NEEDS_ED_REVIEW",
+        "status": "set_to_canonical",
+        "set_on": "2026-11-17",
+        "authorized_by": "Ed 2026-11-17: \"Use trustEd portraits\" (team-wide portrait standardization)",
         "verified": "2026-11-17",
-        "note": "team/paige.jpg is marked 'PENDING Ed's approval'; the mailbox shows a different photo. Not changed."
+        "note": "videos and HeyGen avatar still show the production face (paige_legacy_v1.jpg)"
       }
     },
     "phoebe": {

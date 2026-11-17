@@ -55,13 +55,13 @@ check('the approved office portrait is stored at native 1360x1157 and designated
   assert.strictEqual(map.placements.profile.photo, 'amanda-office-portrait-square');
   assert.strictEqual(map.placements.website_introduction.photo, 'amanda-office-portrait');
   assert.strictEqual(map.placements.email_signature.photo, 'canonical_square');
-  assert.strictEqual(map.placements.chat_avatar.photo, 'amanda-direct-camera-square');
+  assert.strictEqual(map.placements.chat_avatar.photo, 'canonical_square');   // Ed 2026-11-17: one portrait everywhere
 });
-check('identity: face v2 is the reference, the excluded high-resolution set is not used, and M365 is untouched', () => {
+check('identity: face v2 is the reference, the excluded high-resolution set is not used, and M365 is the canonical portrait (Ed 2026-11-17)', () => {
   const map = JSON.parse(fs.readFileSync(path.join(ROOT, 'lib', 'team', 'persona_images.json'), 'utf8')).amanda;
   assert.match(map.identity_reference.authority, /amanda_legacy_v2\.jpg/);
   assert.match(map.high_resolution_review.result, /^EXCLUDED/);
-  assert.strictEqual(map.placements.microsoft_365.photo, 'unchanged');
+  assert.strictEqual(map.placements.microsoft_365.photo, 'canonical_square');
   for (const k of ['about_us_team', 'informational']) assert.strictEqual(map.placements[k].photo, null, k);
 });
 check('the persona image map owns amanda.jpg; every mapped photo exists; no other teammate is mapped', () => {
@@ -120,11 +120,11 @@ check('Paige video posters show her production face (the face the videos show)',
   assert.ok(!/team\/paige\.jpg/.test(story), 'no Paige video poster on paige.jpg');
   assert.strictEqual((story.match(/team\/paige_legacy_v1\.jpg/g) || []).length, 3);
 });
-check('Paige: nothing upscaled; identity reference is the production original; HeyGen and M365 unchanged', () => {
+check('Paige: nothing upscaled; identity reference is the production original; HeyGen unchanged; M365 is the canonical portrait (Ed 2026-11-17)', () => {
   const map = JSON.parse(fs.readFileSync(path.join(ROOT, 'lib', 'team', 'persona_images.json'), 'utf8')).paige;
   assert.match(map.identity_reference.authority, /bbc6c052/);
   assert.strictEqual(map.placements.heygen_avatar.photo, 'unchanged');
-  assert.strictEqual(map.placements.microsoft_365.photo, 'unchanged');
+  assert.strictEqual(map.placements.microsoft_365.photo, 'canonical_square');
   const dir = path.join(ROOT, map.dir);
   const names = Object.keys(map.photos).sort((x, y) => y.length - x.length);
   for (const f of fs.readdirSync(dir).filter((x) => x.endsWith('.jpg'))) {
@@ -227,12 +227,13 @@ check("Claire's team videos keep a poster that matches the face they show", () =
   assert.ok(fs.existsSync(path.join(TEAM, 'claire_legacy_2026-10-22.jpg')));
 });
 
-check('one canonical portrait per AI teammate: every index entry is an existing file; two awaiting Ed are flagged, not changed', () => {
+check('one canonical portrait per AI teammate: every index entry is an existing file; none awaiting review; Amanda pages use her canonical portrait', () => {
   const idx = JSON.parse(fs.readFileSync(path.join(ROOT, 'lib', 'team', 'persona_images.json'), 'utf8'))._canonical_index;
   const people = Object.keys(idx).filter((k) => !k.startsWith('_'));
   assert.strictEqual(people.length, 16);
   for (const k of people) assert.ok(fs.existsSync(path.join(ROOT, idx[k].canonical)), k + ' canonical file exists');
-  assert.deepStrictEqual(people.filter((k) => idx[k].microsoft_365.status === 'NEEDS_ED_REVIEW').sort(), ['amanda', 'paige']);
+  assert.deepStrictEqual(people.filter((k) => idx[k].microsoft_365.status === 'NEEDS_ED_REVIEW'), []);
+  for (const f of ['public/ask-amanda.html', 'public/board-portal.html']) { const h = fs.readFileSync(path.join(ROOT, f), 'utf8'); assert.ok(h.includes('/assets/presentations/team/amanda.jpg') && !h.includes('amanda-direct-camera-square'), f); }
 });
 
 (async () => {
