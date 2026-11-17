@@ -71,7 +71,7 @@ check('execution: each run through the owner_authorization channel; closed only 
 check('wiring: delegated approval only via the database check; in-app path unchanged; HTTP cannot pass the delegated channel; Tessa executes', () => {
   const read = (f) => fs.readFileSync(path.join(__dirname, '..', f), 'utf8');
   const mr = read('lib/accounting/monthly_runs.js');
-  assert.ok(mr.includes("let approver = delegated ? null : assertInAppApproval(approval);"));
+  assert.ok(mr.includes("let approver = (delegated || granted) ? null : assertInAppApproval(approval);"));
   assert.ok(mr.includes("supabase.rpc('accounting_run_approve_delegated'"), 'the database decides');
   assert.ok(/channel: 'in_app', user_id: approval\.user_id/.test(mr), 'in-app approval event unchanged');
   const api = read('api/accounting_runs.js');
@@ -80,6 +80,19 @@ check('wiring: delegated approval only via the database check; in-app path uncha
   assert.ok(t.includes("if (auth.scope === 'accounting_runs')") && t.includes('ORA.executePackage'), 'Tessa executes an authorized run package');
   const mig = read('migrations/566_owner_authorized_accounting_runs.sql');
   for (const s of ["scope IN ('conversion_objects', 'accounting_runs')", 'changed after the owner authorized it', "a.status <> 'authorized'", 'now() > a.expires_at', "'executed_by', p_agent_id"]) assert.ok(mig.includes(s), s);
+});
+
+check('execution grant (mig 567): owner-only issue/revoke; instruction recorded; verified first; never payments', () => {
+  const read = (f) => fs.readFileSync(path.join(__dirname, '..', f), 'utf8');
+  const mr = read('lib/accounting/monthly_runs.js');
+  assert.ok(mr.includes("const granted = !!(approval && approval.channel === 'owner_grant');"));
+  assert.ok(mr.indexOf('OR.verifyPackage(supabase, [{ run_id, include: inc }])') < mr.indexOf("supabase.rpc('accounting_run_execute_under_grant'"), 'verified before the database approves');
+  assert.ok(mr.includes("an execution grant and the owner's exact instruction are required"));
+  const api = read('api/accounting_runs.js');
+  for (const r of ["router.post('/grants'", "router.post('/grants/:id/revoke'", "router.get('/grants'"]) { const i = api.indexOf(r); assert.ok(i > 0, r); assert.ok(api.slice(i, i + 200).includes('requireOwner'), r + ' is owner-only'); }
+  const mig = read('migrations/567_owner_execution_grants.sql');
+  assert.ok(mig.includes("processes <@ ARRAY['journal_entry', 'cutoff_adjustment', 'reclassification', 'bank_reconciliation', 'account_reconciliation']"), 'only accounting runs; never payments or vendor bank details');
+  assert.ok(mig.includes("expires_at <= issued_at + interval '24 hours'") && mig.includes("'instruction', p_instruction") && mig.includes('per-run ceiling'));
 });
 
 (async () => {

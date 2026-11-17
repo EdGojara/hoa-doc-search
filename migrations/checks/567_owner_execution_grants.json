@@ -1,0 +1,75 @@
+{
+  "migration": "567_owner_execution_grants.sql",
+  "summary": "Owner execution grants (Ed 2026-11-17: one authorization, one execution). owner_execution_grants (issued only from the signed-in owner session: one community, granted Kat run kinds, per-run ceiling, at most 24 hours, revocable, immutable) and accounting_run_execute_under_grant (approves one prepared run on the owner's recorded instruction). Never covers payments or vendor bank details. No rows change.",
+  "requires": [
+    "566_owner_authorized_accounting_runs.sql"
+  ],
+  "preflight": [
+    {
+      "name": "the run fingerprint function exists (566)",
+      "sql": "SELECT count(*)::int FROM pg_proc WHERE proname = 'accounting_run_fingerprint'",
+      "expect": 1
+    },
+    {
+      "name": "owner_execution_grants does not exist yet",
+      "sql": "SELECT count(*)::int FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'owner_execution_grants'",
+      "expect": 0
+    }
+  ],
+  "expected_changes": [
+    "New table owner_execution_grants (empty) with its guard trigger, index and service_role grants.",
+    "New function accounting_run_execute_under_grant (service_role only).",
+    "No row changes."
+  ],
+  "objects": {
+    "added": [
+      "column:owner_execution_grants.community_id",
+      "column:owner_execution_grants.expires_at",
+      "column:owner_execution_grants.id",
+      "column:owner_execution_grants.issued_at",
+      "column:owner_execution_grants.max_run_cents",
+      "column:owner_execution_grants.note",
+      "column:owner_execution_grants.owner_email",
+      "column:owner_execution_grants.owner_user_id",
+      "column:owner_execution_grants.processes",
+      "column:owner_execution_grants.revoked_at",
+      "column:owner_execution_grants.revoked_by",
+      "constraint:owner_execution_grants.owner_execution_grants_community_id_fkey",
+      "constraint:owner_execution_grants.owner_execution_grants_max_run_cents_check",
+      "constraint:owner_execution_grants.owner_execution_grants_owner_email_check",
+      "constraint:owner_execution_grants.owner_execution_grants_owner_user_id_check",
+      "constraint:owner_execution_grants.owner_execution_grants_pkey",
+      "constraint:owner_execution_grants.owner_execution_grants_processes_check",
+      "constraint:owner_execution_grants.owner_execution_grants_window",
+      "function:accounting_run_execute_under_grant",
+      "function:owner_execution_grants_guard",
+      "index:idx_owner_execution_grants_active",
+      "index:owner_execution_grants_pkey",
+      "table:owner_execution_grants",
+      "trigger:owner_execution_grants.trg_owner_execution_grants_guard"
+    ],
+    "changed": [],
+    "removed": []
+  },
+  "row_changes": {
+    "owner_execution_grants": 0,
+    "accounting_runs": 0,
+    "journal_entries": 0
+  },
+  "protected": [
+    { "table": "accounting_runs", "order_by": "id" },
+    { "table": "journal_entries", "order_by": "id" }
+  ],
+  "verify": [
+    {
+      "name": "no grant exists yet",
+      "sql": "SELECT count(*)::int FROM owner_execution_grants",
+      "expect": 0
+    },
+    {
+      "name": "the grant execution function exists",
+      "sql": "SELECT count(*)::int FROM pg_proc WHERE proname = 'accounting_run_execute_under_grant'",
+      "expect": 1
+    }
+  ]
+}
