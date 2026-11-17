@@ -104,6 +104,11 @@ check('wiring: runs prepare, approve and refresh journal entries; owner in-app a
   const ed = read('public/ed.html');
   assert.ok(/journal_entry: 'Journal entries'/.test(ed) && /run\.process==='journal_entry'/.test(ed) && /proc==='journal_entry'/.test(ed));
   assert.ok(/'journal_entry'/.test(read('migrations/558_kat_journal_entry_runs.sql')));
+  // An owner's payment posts as a payment (txn_type + category), other credits stay adjustments.
+  const hc = read('lib/accounting/homeowner_charge.js');
+  assert.ok(/if \(opts\.chargeCategory === 'payment'\) return postLine\(supabase, Object\.assign\(\{\}, opts, \{ txnType: 'payment', chargeCategory: 'payment', amountCents: -opts\.amountCents \}\)\);/.test(hc), 'a payment credit is a payment');
+  assert.ok(/txnType: 'adjustment', chargeCategory: 'adjustment', amountCents: -opts\.amountCents/.test(hc), 'other credits stay adjustments');
+  assert.ok(/total_payments_cents: txnType === 'payment' \? -amountCents : 0/.test(hc), 'the batch total counts the payment');
 });
 
 (async () => {
