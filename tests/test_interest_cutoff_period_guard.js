@@ -42,5 +42,12 @@ check('bankruptcy is an exception for review (collections status or a ledger ent
 });
 check('the rule records the calculation cutoff separately from the run date', () => { const out = run(base, { asOfDate: '2026-08-31' }); assert.strictEqual(out.run_date, '2026-09-01'); assert.strictEqual(out.as_of_date, '2026-08-31'); assert.strictEqual(out.rule.calculation_cutoff, '2026-08-31'); });
 
+check('interest gate: a prior-month rec counts only if reconciled, or in_progress with a $0.00 difference (never relabeled)', () => {
+  const src = require('fs').readFileSync(require('path').join(__dirname, '..', 'lib', 'accounting', 'monthly_runs.js'), 'utf8');
+  assert.ok(/x\.status === 'in_progress' && Number\(x\.difference_cents\) === 0/.test(src));
+  assert.ok(/code: 'bank_rec_open_items_carried', severity: 'info'/.test(src));
+  assert.ok(/code: 'bank_not_reconciled', severity: 'blocking'/.test(src), 'an unbalanced or missing reconciliation still blocks');
+  assert.ok(!/update\(\{ status: 'reconciled'/.test(src), 'the run never marks a reconciliation reconciled');
+});
 console.log(`\ninterest cutoff + period guard: ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
