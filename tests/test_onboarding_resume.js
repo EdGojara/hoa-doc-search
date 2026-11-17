@@ -75,6 +75,13 @@ check('no polling: the resume module has no timer', () => {
   assert.ok(!/setInterval|setTimeout|cron|schedule/.test(src));
 });
 
+check('an event that resolves a preflight control reaches it: the operator rebuilds a NON-passing, unwaived preflight (never a passing or waived one)', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'lib/onboarding/service.js'), 'utf8');
+  const op = src.slice(src.indexOf('async function operate('), src.indexOf('function questionFor('));
+  assert.ok(/latest\.status && latest\.status !== 'PASS' && !waivedHere\.length/.test(op), 'non-passing + unwaived rule present in operate');
+  assert.ok(/\(await preflightStaleReason\(view, latest\)\) \|\| notPassing/.test(op), 'combined with the input-staleness reasons');
+});
+
 (async () => {
   let pass = 0, fail = 0;
   for (const [n, fn] of tests) { try { await fn(); pass++; console.log('  ✓ ' + n); } catch (e) { fail++; console.log('  ✗ ' + n + '\n    ' + e.message); } }
