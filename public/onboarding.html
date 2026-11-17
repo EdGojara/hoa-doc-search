@@ -382,7 +382,9 @@ async function loadPreflight(v) {
   const approved = v.batch.approved_preflight_sha256;
   const owner = v.viewer_is_owner === true;
   const current = v.current && v.current.completion_id === p.completion_id && v.batch.stage === 'preflight';
-  const canApprove = owner && current && !p.stale && !approved && s.eligibility !== 'not_eligible';
+  // A recorded approval of a DIFFERENT (earlier, since rebuilt) preflight never authorizes this one, and must
+  // not hide the approve control: the owner approves the current fingerprint (the server binds it by hash).
+  const canApprove = owner && current && !p.stale && approved !== r.sha256 && s.eligibility !== 'not_eligible';
   const usd = (c) => money(c);
   let html = '<h2>Preflight: the exact package EXECUTE would carry out</h2><div class="card" style="border-left:4px solid var(--navy)">'
     + '<div>Result <span class="pill ' + esc(s.overall) + '">' + esc(s.overall) + '</span> · ' + s.counts.PASS + ' pass, ' + s.counts.FAIL + ' fail, ' + s.counts.BLOCKED + ' blocked; ' + s.waived + ' waived'
