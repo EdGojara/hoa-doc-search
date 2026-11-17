@@ -1,0 +1,75 @@
+{
+  "migration": "565_check_print_status.sql",
+  "summary": "Check print status and print audit log (Ed 2026-11-17). Adds check_register.print_status ('pdf_generated' default, 'printed', 'print_failed'), print_confirmed_at, print_confirmed_by_user_id and last_pdf_generated_at, and an append-only check_print_events log. Schema only: no check, payment, invoice or journal entry row changes.",
+  "requires": [
+    "564_waterview_operating_opening_difference.sql"
+  ],
+  "preflight": [
+    {
+      "name": "check_register has no print_status column yet",
+      "sql": "SELECT count(*)::int FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'check_register' AND column_name = 'print_status'",
+      "expect": 0
+    },
+    {
+      "name": "check_print_events does not exist yet",
+      "sql": "SELECT count(*)::int FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'check_print_events'",
+      "expect": 0
+    }
+  ],
+  "expected_changes": [
+    "check_register: four columns added (print_status default 'pdf_generated', print_confirmed_at, print_confirmed_by_user_id, last_pdf_generated_at) and a CHECK on print_status. Existing rows keep every value; they read as 'pdf_generated' (not yet confirmed).",
+    "New table check_print_events (empty) with an index and service_role insert/select grants.",
+    "No check, payment, invoice or journal entry row changes."
+  ],
+  "objects": {
+    "added": [
+      "column:check_print_events.actor_name",
+      "column:check_print_events.actor_user_id",
+      "column:check_print_events.check_register_id",
+      "column:check_print_events.community_id",
+      "column:check_print_events.created_at",
+      "column:check_print_events.event",
+      "column:check_print_events.id",
+      "column:check_print_events.print_status_after",
+      "column:check_print_events.print_status_before",
+      "column:check_print_events.reason",
+      "column:check_register.last_pdf_generated_at",
+      "column:check_register.print_confirmed_at",
+      "column:check_register.print_confirmed_by_user_id",
+      "column:check_register.print_status",
+      "constraint:check_print_events.check_print_events_check_register_id_fkey",
+      "constraint:check_print_events.check_print_events_community_id_fkey",
+      "constraint:check_print_events.check_print_events_event_check",
+      "constraint:check_print_events.check_print_events_pkey",
+      "constraint:check_register.check_register_print_status_check",
+      "index:check_print_events_pkey",
+      "index:idx_check_print_events_check",
+      "table:check_print_events"
+    ],
+    "changed": [],
+    "removed": []
+  },
+  "row_changes": {
+    "check_register": 0,
+    "check_print_events": 0,
+    "ap_payments": 0,
+    "journal_entries": 0
+  },
+  "protected": [
+    { "table": "check_register", "order_by": "id" },
+    { "table": "ap_payments", "order_by": "id" },
+    { "table": "journal_entries", "order_by": "id" }
+  ],
+  "verify": [
+    {
+      "name": "every existing check reads as pdf_generated (not yet confirmed)",
+      "sql": "SELECT count(*)::int FROM check_register WHERE print_status <> 'pdf_generated'",
+      "expect": 0
+    },
+    {
+      "name": "the print log starts empty",
+      "sql": "SELECT count(*)::int FROM check_print_events",
+      "expect": 0
+    }
+  ]
+}
