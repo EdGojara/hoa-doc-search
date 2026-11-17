@@ -30,5 +30,12 @@ check('a rebuilt preflight can be approved even when an earlier fingerprint was 
     /OLD\.onboarding_stage IS DISTINCT FROM 'preflight' OR NEW\.onboarding_stage IS DISTINCT FROM 'preflight'/.test(g) && /NEW\.status = 'posted' OR NEW\.approved_preflight_sha256 IS NULL/.test(g) && /onboarding_completion_gate\(e\.completion_event_id\) IS NULL\)\) THEN/.test(g));
   check('561 keeps the human-approval-of-the-current-result check for every recorded hash', /preflight hash can only be recorded from a human approval of the current preflight result/.test(g));
 }
+{
+  // The operator names the owner's authorization instead of "Nothing needed from you right now".
+  const s = read('lib/onboarding/service.js'); const page2 = read('public/onboarding.html');
+  check('operator asks: approve / execute a passing preflight, complete a passing post-proof', /asks\.push\(\{ type: 'authorize', step: approvedThis \? 'execute' : 'approve'/.test(s) && /type: 'authorize', step: 'complete'/.test(s));
+  check('the stale "EXECUTE is not available in this milestone" text is gone', !/EXECUTE is not available in this milestone/.test(s));
+  check('the page shows "Waiting for your authorization" for those asks', /Waiting for your authorization:/.test(page2) && /a\.type !== 'authorize'\);/.test(page2));
+}
 console.log(`\nconversion revert committed: ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
