@@ -162,7 +162,7 @@ router.get('/:cid/render', async (req, res) => {
     if (format === 'pdf') {
       const buf = await X.pdfBuffer(models);
       res.set('Content-Type', 'application/pdf');
-      res.set('Content-Disposition', `inline; filename="${slug}-statements-${stamp}.pdf"`);
+      res.set('Content-Disposition', `${req.query.download ? 'attachment' : 'inline'}; filename="${slug}-statements-${stamp}.pdf"`);
       return res.send(buf);
     }
     res.status(400).json({ error: 'format_must_be_html_print_pdf_or_xlsx' });

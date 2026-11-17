@@ -194,7 +194,7 @@
     $('body').innerHTML = `<div class="card">
       <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:14px;">
         <h2 class="sec">Balance Sheet</h2>
-        <div style="display:flex; gap:8px; align-items:center;"><span class="muted" style="font-size:12px;">As of</span>${dateInput('bs-asof',dToday())}${goBtn('bs-go')}${printStmtBtn('bs')}</div>
+        <div style="display:flex; gap:8px; align-items:center;"><span class="muted" style="font-size:12px;">As of</span>${dateInput('bs-asof',dToday())}${goBtn('bs-go')}${printStmtBtn('bs')}${acctBarBtn('acctDownloadStatementPdf(\'bs\')','⬇ Download PDF','Download the balance sheet as a PDF')}</div>
       </div><div id="bs-out" class="muted">Loading…</div></div>`;
     const run = async () => {
       const asOf = $('bs-asof').value; if (!asOf) { $('bs-out').innerHTML='Pick a date.'; return; }
@@ -378,8 +378,16 @@
     // active fund (Operating first) then the whole association, with Adopt-a-School only in its
     // fund, zero-only accounts suppressed and interfund transfers below net income before
     // transfers. The old browser-built table (_budgetISBody) is no longer used for print.
-    // Opens the generated PDF (Ed 2026-11-17: the statement must come out as a PDF, not a web page).
-    window.open(`/api/financial-statements/${CID}/render?format=pdf&statements=income_budget&funds=active,all&period_end=${encodeURIComponent(end)}`, '_blank');
+    window.open(`/api/financial-statements/${CID}/render?format=print&statements=income_budget&funds=active,all&period_end=${encodeURIComponent(end)}`, '_blank');
+  }
+  // Download PDF (Ed 2026-11-17): the generated statements PDF (server renderer, the same one the
+  // board package uses), saved as a file. kind 'bs' = balance sheet as of the chosen date; 'bva' =
+  // income statement vs budget, each active fund then all funds, for the period ending the chosen date.
+  function acctDownloadStatementPdf(kind){
+    const d = kind === 'bs' ? ($('bs-asof') && $('bs-asof').value) : ($('is-end') && $('is-end').value);
+    if (!d) { alert('Pick the date first, then download.'); return; }
+    const q = kind === 'bs' ? `statements=balance_sheet&as_of=${encodeURIComponent(d)}&period_end=${encodeURIComponent(d)}` : `statements=income_budget&funds=active,all&period_end=${encodeURIComponent(d)}`;
+    window.location.href = `/api/financial-statements/${CID}/render?format=pdf&download=1&${q}`;
   }
 
   // Toolbar button (non-print actions) — same look as the print buttons.
@@ -434,7 +442,7 @@
     $('body').innerHTML = `<div class="card">
       <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:14px;">
         <h2 class="sec">Income Statement</h2>
-        <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;"><span class="muted" style="font-size:12px;">From</span>${dateInput('is-start',dMonthStart())}<span class="muted" style="font-size:12px;">to</span>${dateInput('is-end',dToday())}${goBtn('is-go')}${acctBarBtn('acctSetPriorMonth()','◀ Prior Month','Set the range to the previous full calendar month')}${acctBarBtn('acctOpenRolling12()','📅 Rolling 12-Month','Open the 12-month monthly-columns income statement')}${printBtnHTML('acctPrintStatement(\'is\')','Income Statement')}${printBtnHTML('acctPrintBudgetIS()','Income Statement vs Budget')}</div>
+        <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;"><span class="muted" style="font-size:12px;">From</span>${dateInput('is-start',dMonthStart())}<span class="muted" style="font-size:12px;">to</span>${dateInput('is-end',dToday())}${goBtn('is-go')}${acctBarBtn('acctSetPriorMonth()','◀ Prior Month','Set the range to the previous full calendar month')}${acctBarBtn('acctOpenRolling12()','📅 Rolling 12-Month','Open the 12-month monthly-columns income statement')}${printBtnHTML('acctPrintStatement(\'is\')','Income Statement')}${printBtnHTML('acctPrintBudgetIS()','Income Statement vs Budget')}${acctBarBtn('acctDownloadStatementPdf(\'bva\')','⬇ Download PDF','Download the income statement vs budget as a PDF')}</div>
       </div><div id="is-out" class="muted">Loading…</div></div>`;
     const run = async () => {
       const s=$('is-start').value, e=$('is-end').value; if (!s||!e) { $('is-out').innerHTML='Pick a period.'; return; }
