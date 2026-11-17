@@ -47,8 +47,18 @@ check('monthly statements print without a notes page by default; the statement P
   const r = fs.readFileSync(path.join(__dirname, '..', 'lib/statements/render.js'), 'utf8');
   assert.ok(r.includes('const notesHtml = withNotes && notes.length'));
   const ui = fs.readFileSync(path.join(__dirname, '..', 'public/accounting.html'), 'utf8');
-  assert.ok(ui.includes('/render?format=pdf&statements=income_budget&funds=active,all'));
-  assert.ok(!ui.includes('/render?format=print&statements=income_budget'));
+  assert.ok(ui.includes('/render?format=print&statements=income_budget&funds=active,all'), 'HTML view stays available');
+  assert.ok(ui.includes('render?format=pdf&download=1&') && ui.includes('statements=balance_sheet&as_of=') && ui.includes('statements=income_budget&funds=active,all&period_end='), 'Download PDF for the balance sheet and the income statement vs budget');
+  assert.ok((ui.match(/acctDownloadStatementPdf\(/g) || []).length >= 3, 'both buttons wired');
+  const api = fs.readFileSync(path.join(__dirname, '..', 'api/financial_statements.js'), 'utf8');
+  assert.ok(api.includes("req.query.download ? 'attachment' : 'inline'"), 'download=1 saves the file');
+});
+
+check('printed statements say they are unaudited management statements, with no audit-style assurances', () => {
+  const ex = fs.readFileSync(path.join(__dirname, '..', 'lib/statements/export.js'), 'utf8');
+  const r = fs.readFileSync(path.join(__dirname, '..', 'lib/statements/render.js'), 'utf8');
+  assert.ok(ex.includes('Unaudited management financial statements') && r.includes('Unaudited management financial statements'));
+  assert.ok(!/audited by|independent auditor|reasonable assurance/i.test(r + ex));
 });
 
 (async () => {
