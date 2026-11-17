@@ -41,5 +41,16 @@ check('service: preflight BLOCKS and execute refuses that plan shape until 560 i
 const v457 = read('migrations/457_current_tenure_reader_views.sql');
 check('v_current_owner_ledger reads only open owner tenures', /t\.kind = 'owner' AND t\.end_date IS NULL/.test(v457));
 
+// Post-proof accepts the same shape (it re-proves what EXECUTE accepted), with a behavioral check.
+{
+  const PP = read('lib/onboarding/post_proof.js');
+  check('post-proof: a prior-owner row on its own ended tenure is isolated; any other tenure still fails',
+    /const onOwnEndedTenure = \(r\) =>/.test(PP) && /\(r\.tenure_id && !legacyTenures\.has\(r\.tenure_id\) && !onOwnEndedTenure\(r\)\)/.test(PP) && /t\.end_date <= cutoff && t\.vantaca_account_id === String\(r\.vantaca_account_id\)/.test(PP));
+  const TA = read('lib/onboarding/trusted_activity.js');
+  check('post-proof loader returns the ended owner tenures the rows sit on', /ended_owner_tenures\.push\(\{ id: t\.id, property_id: t\.property_id, end_date/.test(TA) && /legacy_tenure_ids, ended_owner_tenures,/.test(TA));
+  const SV = read('lib/onboarding/service.js');
+  check('operator re-runs a non-passing, unwaived post-proof (read-only) on its next event', /stage === 'post_proof' && latest\.status && latest\.status !== 'PASS'/.test(SV));
+}
+
 console.log(`\nprior owner ended tenure: ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
