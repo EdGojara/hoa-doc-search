@@ -378,7 +378,8 @@
     // active fund (Operating first) then the whole association, with Adopt-a-School only in its
     // fund, zero-only accounts suppressed and interfund transfers below net income before
     // transfers. The old browser-built table (_budgetISBody) is no longer used for print.
-    window.open(`/api/financial-statements/${CID}/render?format=print&statements=income_budget&funds=active,all&period_end=${encodeURIComponent(end)}`, '_blank');
+    // Opens the generated PDF (Ed 2026-11-17: the statement must come out as a PDF, not a web page).
+    window.open(`/api/financial-statements/${CID}/render?format=pdf&statements=income_budget&funds=active,all&period_end=${encodeURIComponent(end)}`, '_blank');
   }
 
   // Toolbar button (non-print actions) — same look as the print buttons.

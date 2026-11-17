@@ -38,6 +38,19 @@ check('one row per GL account across funds, values summed per column, drill cove
   assert.ok(m.includes("drill: { level: 'account', account_id: a.account_id, fund_id: multi ? null : (a.fund_id || null) }"), 'a merged row drills into every fund');
 });
 
+check('the PDF export returns a Buffer (a Uint8Array would be sent as JSON by Express)', () => {
+  const ex = fs.readFileSync(path.join(__dirname, '..', 'lib/statements/export.js'), 'utf8');
+  assert.ok(/return Buffer.from(await page.pdf({/.test(ex));
+});
+
+check('monthly statements print without a notes page by default; the statement PDF button opens the PDF', () => {
+  const r = fs.readFileSync(path.join(__dirname, '..', 'lib/statements/render.js'), 'utf8');
+  assert.ok(r.includes('const notesHtml = withNotes && notes.length'));
+  const ui = fs.readFileSync(path.join(__dirname, '..', 'public/accounting.html'), 'utf8');
+  assert.ok(ui.includes('/render?format=pdf&statements=income_budget&funds=active,all'));
+  assert.ok(!ui.includes('/render?format=print&statements=income_budget'));
+});
+
 (async () => {
   let pass = 0, fail = 0;
   for (const [n, fn] of tests) { try { await fn(); pass++; console.log('  ✓ ' + n); } catch (e) { fail++; console.log('  ✗ ' + n + '\n    ' + e.message); } }
