@@ -331,7 +331,8 @@ router.get('/broadcasts/:id/attendance', async (req, res) => {
       const mins = Math.max(1, Math.round((new Date(v.last_seen_at) - new Date(v.joined_at)) / 60000) + 1);
       return { property: v.display_name || '—', joined_at: v.joined_at, last_seen_at: v.last_seen_at, minutes: mins };
     });
-    const { count: roster } = await supabase.from('properties').select('id', { count: 'exact', head: true }).eq('community_id', b.community_id);
+    const { included, onlyIncluded } = require('../lib/properties/included');
+    const { count: roster } = await included((on) => onlyIncluded(supabase.from('properties').select('id', { count: 'exact', head: true }).eq('community_id', b.community_id), on));
     const totalMin = rows.reduce((s, r) => s + r.minutes, 0);
     res.json({
       broadcast: { id: b.id, title: b.title, started_at: b.started_at, ended_at: b.ended_at },

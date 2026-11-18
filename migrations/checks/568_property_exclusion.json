@@ -1,0 +1,37 @@
+{
+  "migration": "568_property_exclusion.sql",
+  "summary": "Property exclusion (Ed 2026-11-18). Adds properties.excluded_at + excluded_reason (both or neither); v_current_property_owners leaves excluded rows out (mailings, statements, owner lists). Marks one row: the Lakes of Pine Forest phantom 17914 Windy Orchard Lane (Vantaca 2012694, no county parcel), so LOPF counts and bills 542 homes. Nothing deleted; ownership, tenures and transactions unchanged.",
+  "requires": ["549_mailing_address_management.sql"],
+  "preflight": [
+    { "name": "the phantom property is present and not yet excluded", "sql": "SELECT count(*)::int FROM properties WHERE id = 'abc07cff-0578-4fd2-a2fb-3781bbc1b9a5' AND street_address = '17914 Windy Orchard Lane' AND vantaca_account_id = '2012694'", "expect": 1 },
+    { "name": "LOPF has 543 property rows before", "sql": "SELECT count(*)::int FROM properties WHERE community_id = 'a0000000-0000-4000-8000-000000000002'", "expect": 543 },
+    { "name": "17914 Old Forest Lane (2012698) present", "sql": "SELECT count(*)::int FROM properties WHERE street_address = '17914 Old Forest Lane' AND vantaca_account_id = '2012698'", "expect": 1 }
+  ],
+  "expected_changes": [
+    "properties gains excluded_at and excluded_reason (nullable, paired by a check), plus a partial index on included rows.",
+    "v_current_property_owners: same columns, now WHERE excluded_at IS NULL.",
+    "One property row marked excluded (17914 Windy Orchard Lane). No rows added or deleted."
+  ],
+  "objects": {
+    "added": [
+      "column:properties.excluded_at",
+      "column:properties.excluded_reason",
+      "constraint:properties.properties_exclusion_pair",
+      "index:idx_properties_community_included"
+    ],
+    "changed": ["view:v_current_property_owners"],
+    "removed": []
+  },
+  "row_changes": { "properties": 0, "property_ownerships": 0, "ownership_tenures": 0, "homeowner_transactions": 0 },
+  "protected": [
+    { "table": "property_ownerships", "order_by": "id" },
+    { "table": "ownership_tenures", "order_by": "id" },
+    { "table": "homeowner_transactions", "order_by": "id" }
+  ],
+  "verify": [
+    { "name": "exactly one property excluded", "sql": "SELECT count(*)::int FROM properties WHERE excluded_at IS NOT NULL", "expect": 1 },
+    { "name": "LOPF counts 542 included homes", "sql": "SELECT count(*)::int FROM properties WHERE community_id = 'a0000000-0000-4000-8000-000000000002' AND excluded_at IS NULL", "expect": 542 },
+    { "name": "LOPF owner view has 542 homes", "sql": "SELECT count(*)::int FROM v_current_property_owners WHERE community_id = 'a0000000-0000-4000-8000-000000000002'", "expect": 542 },
+    { "name": "17914 Old Forest Lane still included", "sql": "SELECT count(*)::int FROM v_current_property_owners WHERE street_address = '17914 Old Forest Lane' AND vantaca_account_id = '2012698'", "expect": 1 }
+  ]
+}

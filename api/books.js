@@ -1870,7 +1870,8 @@ router.get('/budgets/living-lines', async (req, res) => {
       for (const r of rows) { const cfg = transferConfig(byId.get(r.account_id), fl || []); if (cfg.transfer) r.transfer = { from_fund_code: cfg.transfer.from_fund_code, from_fund_type: cfg.transfer.from_fund_type, to_fund_code: cfg.transfer.to_fund_code, to_fund_type: cfg.transfer.to_fund_type }; }
     } catch (e) { console.warn('[books] living-lines transfer config unavailable:', e.message); }
 
-    const { count: homeCount } = await supabase.from('properties').select('id', { count: 'exact', head: true }).eq('community_id', community_id);
+    const { included, onlyIncluded } = require('../lib/properties/included');
+    const { count: homeCount } = await included((on) => onlyIncluded(supabase.from('properties').select('id', { count: 'exact', head: true }).eq('community_id', community_id), on));
     // Proposed = the saved amounts, exactly, when a budget is saved for the year (server-side,
     // so the screen, the PDF and the tests read one rule). The suggestion rides along.
     const { applySavedDraft } = require('../lib/accounting/budget_merge');
