@@ -3331,6 +3331,13 @@ async function _accFinalizeHandler(req, res) {
       return res.status(409).json({ error: `This application is no longer open (${dec.status}${dec.decided_at ? ', decided ' + String(dec.decided_at).slice(0, 10) : ''}). Nothing was sent again.`, already_decided: true });
     }
 
+    // BACKLOG HOLD (Ed 2026-11-18, lib/acc/backlog_hold): a case that existed
+    // before Annie started issuing gets no decision letter unless Ed sends it
+    // from his own account. New cases are not affected.
+    if (isFinal && require('./lib/acc/backlog_hold').isBacklogHeld(dec) && !require('./lib/acc/decision_authority').isOwnerActor(actor)) {
+      return res.status(409).json({ code: 'backlog_hold', error: 'This application is on the backlog hold: Ed is reviewing its history (an earlier decision may already have been made or sent). No decision letter goes out on it without his authorization. Nothing was sent.' });
+    }
+
     // A STALE letter (drafted before the current review, or before evidence
     // received since) cannot go out as a final decision unless it is redrafted
     // or a person explicitly confirms they reviewed it (Issue #14). A staff-
