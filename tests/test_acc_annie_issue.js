@@ -85,6 +85,24 @@ A.registerIssuer(async (id, body) => { calls.push({ id, body }); return { status
   const edRec = DA.ownerDecisionRecord(ED, { outcome: 'approved_with_conditions', authority_kind: 'written_delegation', authority_reference: 'Guidelines §1.4.4.1 delegation', authority_library_document_id: DELEGATION.library_document_id, clearly_compliant: true });
   check('Annie may not issue someone else\'s decision', DA.checkFinalDecision({ ...row, decision_record: edRec }, { decisionType: 'approved_with_conditions', actor: ANNIE, requireIssuer: true }).code === 'not_authenticated');
 
+  console.log('\nThe letter names who decided (never "the Committee reviewed" when Annie or Ed did)');
+  const DLG = { reference: 'Architectural Guidelines (2016) §1.4.4.1-1.4.4.2: the Committee delegates to the Managing Agent' };
+  const at = (t) => DA.attributeToManagingAgent(t, { communityName: 'Waterview Estates', delegation: DLG });
+  for (const t of ['The Architectural Review Committee of Waterview Estates has reviewed your application dated July 7, 2026 for a roof replacement.',
+    'Your application for solar panels at 6019 Water Violet Ln has been reviewed by the Architectural Control Committee of Waterview Estates. We are pleased to inform you that it is approved.',
+    'We are pleased to let you know your application is approved. The Waterview Estates Architectural Control Committee reviewed your project as described in the drawing.']) {
+    check(`the guard catches the committee claim: "${t.slice(0, 60)}..."`, DA.claimsBodyDecision(t) === 'committee');
+    const f = at(t);
+    check('...the rewrite names Bedrock as Managing Agent under the delegation, and the claim is gone', /Bedrock Association Management, as Managing Agent/.test(f) && /written delegation \(Architectural Guidelines \(2016\) §1\.4\.4\.1-1\.4\.4\.2\)/.test(f) && DA.claimsBodyDecision(f) === null, f);
+  }
+  check('"on behalf of the Committee" is not a claim', DA.claimsBodyDecision('On behalf of the Waterview Estates Architectural Review Committee,\nBedrock Association Management') === null);
+  check('a future approval condition is not a claim', DA.claimsBodyDecision('Screening shall be approved by the Architectural Control Committee before installation.') === null);
+  check('without a delegation nothing is rewritten', DA.attributeToManagingAgent('The Architectural Review Committee of X has reviewed your application.', { delegation: null }) === 'The Architectural Review Committee of X has reviewed your application.');
+  const annieRow = { ...base(), acc_delegation: DELEGATION };
+  const aRec = DA.annieDecisionFor(annieRow, DELEGATION).rec;
+  check('Annie\'s letter that still says the Committee reviewed it is blocked', DA.checkFinalDecision({ ...annieRow, decision_record: aRec }, { decisionType: 'approved_with_conditions', texts: ['The Architectural Review Committee of Waterview Estates has reviewed your application. It is approved.'], actor: { agent: 'annie', email: 'annie@bedrocktx.com', is_active: true }, requireIssuer: true }).code === 'letter_misattributes_decision');
+  check('finalize rewrites the attribution for a Bedrock decision under a delegation, before the gate', (() => { const sv = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8'); const f = sv.slice(sv.indexOf('async function _accFinalizeHandler'), sv.indexOf("app.post('/acc-review/decisions/:id/finalize', _accFinalizeHandler)")); return /DA\.attributeToManagingAgent\(bodyText/.test(f) && f.indexOf('attributeToManagingAgent') < f.indexOf('const authz = DA.checkFinalDecision'); })());
+
   console.log('\nDenial letters carry the appeal notice');
   const server = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
   const fnSrc = server.slice(server.indexOf('function _accWithAppealNotice'), server.indexOf('// ANNIE ISSUES HER OWN ROUTINE DECISIONS'));
