@@ -49,7 +49,7 @@ A.registerIssuer(async (id, body) => { calls.push({ id, body }); return { status
   console.log('\nEverything else stays in the queue');
   const n = calls.length;
   r = await A.issueIfReady(fakeDb({ c1: base({ community_id: LOPF, community_name: 'Lakes of Pine Forest' }) }), 'c1');
-  check('no delegation on file (committee or Board decides): not issued', !r.issued && /no written ACC delegation/.test(r.skipped || ''), JSON.stringify(r));
+  check('no delegation on file (committee or Board decides): not issued', !r.issued && /no ACC authority is recorded/.test(r.skipped || ''), JSON.stringify(r));
   r = await A.issueIfReady(fakeDb({ c1: base({ project_summary: 'Pour a new 12x16 concrete patio' }) }), 'c1');
   check('a concrete addition (Ed\'s approval): not issued', !r.issued && /owner review required/.test(r.skipped || ''), JSON.stringify(r));
   r = await A.issueIfReady(fakeDb({ c1: base({ project_summary: 'Replace existing driveway and extend width on one side by 2 ft' }) }), 'c1');
@@ -85,6 +85,22 @@ A.registerIssuer(async (id, body) => { calls.push({ id, body }); return { status
   const edRec = DA.ownerDecisionRecord(ED, { outcome: 'approved_with_conditions', authority_kind: 'written_delegation', authority_reference: 'Guidelines §1.4.4.1 delegation', authority_library_document_id: DELEGATION.library_document_id, clearly_compliant: true });
   check('Annie may not issue someone else\'s decision', DA.checkFinalDecision({ ...row, decision_record: edRec }, { decisionType: 'approved_with_conditions', actor: ANNIE, requireIssuer: true }).code === 'not_authenticated');
 
+  console.log('\nBedrock acts as the ACC: the letter says the Committee decided (Ed 2026-11-18)');
+  const ACTS = { ...DELEGATION, acts_as: 'committee', basis: 'governing_document' };
+  const actsRow = { ...base(), acc_delegation: ACTS };
+  const actsRec = DA.annieDecisionFor(actsRow, ACTS).rec;
+  const committeeLetter = 'The Architectural Control Committee of Waterview Estates has reviewed your application and is pleased to approve it, subject to the conditions below.';
+  check('Annie\'s record says Bedrock acts as the Committee', actsRec && actsRec.authority_basis.acts_as === 'committee' && actsRec.decided_by === 'annie' && actsRec.evaluated_by === 'annie');
+  check('a letter saying the Committee approved is sent where Bedrock acts as the ACC', DA.checkFinalDecision({ ...actsRow, decision_record: actsRec }, { decisionType: 'approved_with_conditions', texts: [committeeLetter], actor: ANNIE, requireIssuer: true }).ok);
+  check('...Annie stays in the internal record (decided_by annie), never in the letter', actsRec.decided_by === 'annie' && !/Annie/.test(committeeLetter));
+  const noActs = { ...base(), acc_delegation: DELEGATION };
+  const noActsRec = DA.annieDecisionFor(noActs, DELEGATION).rec;
+  check('where Bedrock is not recorded as acting as the ACC, a Committee claim is still refused', DA.checkFinalDecision({ ...noActs, decision_record: noActsRec }, { decisionType: 'approved_with_conditions', texts: [committeeLetter], actor: ANNIE, requireIssuer: true }).code === 'letter_misattributes_decision');
+  check('a letter claiming the BOARD decided is still refused (Bedrock acts as the Committee, not the Board)', DA.checkFinalDecision({ ...actsRow, decision_record: actsRec }, { decisionType: 'approved_with_conditions', texts: ['The Board of Directors has reviewed your application and is pleased to approve it.'], actor: ANNIE, requireIssuer: true }).code === 'letter_misattributes_decision');
+  const flagged = DA.annieDecisionFor(base(), { status: 'needs_clarification', reason: 'declarant still controls the ARC' });
+  check('an association flagged for clarification says why, and only that association waits', /needs clarification \(declarant still controls the ARC\)/.test(flagged.error || ''));
+  check('...while another association\'s routine case is still Annie\'s', !!DA.annieDecisionFor(actsRow, ACTS).rec);
+
   console.log('\nDenial letters carry the appeal notice');
   const server = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
   const fnSrc = server.slice(server.indexOf('function _accWithAppealNotice'), server.indexOf('// ANNIE ISSUES HER OWN ROUTINE DECISIONS'));
@@ -93,15 +109,16 @@ A.registerIssuer(async (id, body) => { calls.push({ id, body }); return { status
   const { injectGlobalRule } = require('../lib/global_rules');
   const statutory = injectGlobalRule('tx_209_00505_arc_denial_hearing');
   const letter = 'Dear Owner,\n\nYour application is denied because Section 3.2 limits fences to 6 ft. A 6 ft fence would be approved.\n\nSincerely,\nAnnie Reeves';
-  const out = withNotice(letter, DELEGATION);
+  const out = withNotice(letter);
   check('the §209.00505 hearing notice is added', out.includes(statutory));
-  check('the association\'s own appeal route is added when on file', /How to appeal: A Managing Agent denial may be appealed to the Architectural Control Committee within 30 days/.test(out));
+  check('...and nothing else: the letter is the original plus that notice (Ed: keep letters simple)', out.replace(statutory, '').replace(/\s+/g, ' ').trim() === letter.replace(/\s+/g, ' ').trim());
+  check('...no authority, delegation, Managing Agent or Annie wording is added', !/Managing Agent|delegat|Bedrock|Annie Reeves[\s\S]*Annie/.test(out.replace(letter, '')));
   check('...placed before the closing', out.indexOf(statutory) < out.indexOf('Sincerely'));
-  check('without a delegation, the statutory notice alone', withNotice(letter, null).includes(statutory) && !/How to appeal/.test(withNotice(letter, null)));
-  check('idempotent: never added twice', withNotice(out, DELEGATION) === out);
+  check('idempotent: never added twice', withNotice(out) === out);
   check('the finished letter passes Annie\'s denial check', /request a hearing/.test(out));
   const fin = server.slice(server.indexOf('async function _accFinalizeHandler'), server.indexOf("app.post('/acc-review/decisions/:id/finalize', _accFinalizeHandler)"));
-  check('finalize injects the notice into every denial before the authority gate', /_accWithAppealNotice\(bodyText, await _accDelegation\(dec\.community_id\)\)/.test(fin) && fin.indexOf('_accWithAppealNotice') < fin.indexOf('checkFinalDecision'));
+  check('finalize injects the notice into every denial before the authority gate', /_accWithAppealNotice\(bodyText\)/.test(fin) && fin.indexOf('_accWithAppealNotice') < fin.indexOf('checkFinalDecision'));
+  check('finalize adds nothing else to approval letters (no attribution rewrite)', !/attributeToManagingAgent/.test(fin));
   check('the agent issuer is set only in-process (never from the request body)', /req\._accAgentIssuer \|\| await getActingUser\(req\)/.test(fin) && !/req\.body\._accAgentIssuer|body\.agent/.test(fin));
   check('the backlog endpoint is owner-only and dry-runs by default', /app\.post\('\/acc-review\/annie\/issue-ready'[\s\S]{0,200}requireOwner/.test(server) && /dryRun = !\(req\.body && req\.body\.dry_run === false\)/.test(server));
   const docs = fs.readFileSync(path.join(__dirname, '..', 'lib', 'acc', 'documents.js'), 'utf8');
