@@ -2728,7 +2728,7 @@ app.post('/acc-review/letter', upload.any(), async (req, res) => {
       }
       gateRow = gr;
     }
-    const gc = DA.checkFinalDecision(gateRow || { project_summary: body.project_summary, status: 'pending_review' },
+    const gc = DA.checkFinalDecision(gateRow ? { ...gateRow, acc_delegation: await _accDelegation(gateRow.community_id) } : { project_summary: body.project_summary, status: 'pending_review' },
       { decisionType: body.decision_type, texts: [body.body_text, body.project_summary], actor, requireIssuer: true });
     if (!gc.ok) return res.status(gc.status).json({ code: gc.code, error: gc.error, authority: gc.auth });
 
@@ -3186,7 +3186,7 @@ app.get('/acc-review/decisions/:id/letter', async (req, res) => {
     {
       const DA = require('./lib/acc/decision_authority');
       if (DA.OPEN.includes(dec.status)) {
-        const chk = DA.checkFinalDecision(dec, { decisionType: dec.decision_type, texts: [dec.letter_body || dec.ai_letter_body], actor: await getActingUser(req), requireIssuer: true });
+        const chk = DA.checkFinalDecision({ ...dec, acc_delegation: await _accDelegation(dec.community_id) }, { decisionType: dec.decision_type, texts: [dec.letter_body || dec.ai_letter_body], actor: await getActingUser(req), requireIssuer: true });
         if (!chk.ok) return res.status(chk.status).json({ code: chk.code, error: chk.error });
       }
     }
@@ -3262,7 +3262,7 @@ app.get('/acc-review/decisions/:id/packet', async (req, res) => {
       let packetDec = dec;
       if (dec.status !== 'decided') {
         const DA = require('./lib/acc/decision_authority');
-        const chk = DA.checkFinalDecision(dec, { decisionType: dec.decision_type, texts: [dec.letter_body || dec.ai_letter_body], actor: await getActingUser(req), requireIssuer: true });
+        const chk = DA.checkFinalDecision({ ...dec, acc_delegation: await _accDelegation(dec.community_id) }, { decisionType: dec.decision_type, texts: [dec.letter_body || dec.ai_letter_body], actor: await getActingUser(req), requireIssuer: true });
         if (!chk.ok) { packetDec = { ...dec, letter_pdf_storage_path: null }; res.setHeader('X-Packet-Letter-Withheld', chk.code); }
       }
       const pk = await require('./lib/acc/packet').buildAccPacket({ dec: packetDec, download });
@@ -4007,7 +4007,7 @@ app.post('/acc-review/render-letter', express.json({ limit: '256kb' }), async (r
       }
       // Every status: rendering NEW decision text for a decided case is not its
       // record (GET .../letter serves the stored one), so it is held to the same check.
-      const chk = DA.checkFinalDecision(row, { decisionType: b.decision_type, texts: [screen.text, b.project_summary], actor: await getActingUser(req), requireIssuer: true });
+      const chk = DA.checkFinalDecision(row.id ? { ...row, acc_delegation: await _accDelegation(row.community_id) } : row, { decisionType: b.decision_type, texts: [screen.text, b.project_summary], actor: await getActingUser(req), requireIssuer: true });
       if (!chk.ok) return res.status(chk.status).json({ code: chk.code, draft_saved: !!b.id && DA.OPEN.includes(row.status), error: (b.id && DA.OPEN.includes(row.status) ? 'Your draft was saved. ' : '') + chk.error });
     }
     const pdfBuffer = await renderLetterPdfBuffer({
