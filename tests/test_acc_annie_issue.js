@@ -101,6 +101,22 @@ A.registerIssuer(async (id, body) => { calls.push({ id, body }); return { status
   check('an association flagged for clarification says why, and only that association waits', /needs clarification \(declarant still controls the ARC\)/.test(flagged.error || ''));
   check('...while another association\'s routine case is still Annie\'s', !!DA.annieDecisionFor(actsRow, ACTS).rec);
 
+  console.log('\nDeveloper communities (Still Creek Ranch, August Meadows; Ed 2026-11-18)');
+  const DEV = { library_document_id: '887a9352-bff5-4148-80be-28b1d36ce112', reference: 'Declaration Art. X.A: the Declarant has engaged Bedrock to handle ACC applications', acts_as: 'committee', basis: 'developer_authorization', reserved_to: 'developer', follow_up: 'obtain written confirmation' };
+  const dev = (o) => base({ community_id: 'scr', community_name: 'Still Creek Ranch', ...o });
+  const devStage = (o) => DA.queueStage({ ...dev(o), acc_delegation: DEV });
+  check('a routine Still Creek application is Annie\'s, ready to send (no Ed, no extra step)', devStage({ project_summary: 'Installation of ground-mounted whole-home battery backup system' }).stage === 'ready_to_send');
+  r = await A.issueIfReady(fakeDb({ c1: dev({ project_summary: 'Roof replacement, same color' }) }, { scr: DEV }), 'c1');
+  check('...and Annie issues it herself', r.issued === true, JSON.stringify(r));
+  check('a like-for-like driveway replacement there is Annie\'s too', devStage({ project_summary: 'Driveway replacement, like-for-like within the existing footprint' }).stage === 'ready_to_send');
+  check('a concrete addition there goes to Ed (only his two exceptions)', devStage({ project_summary: 'Pour a new concrete patio' }).stage === 'pending_ed');
+  check('a driveway modification there goes to Ed', devStage({ project_summary: 'Extend the driveway 3 ft on the left side' }).stage === 'pending_ed');
+  const v = devStage({ project_summary: 'Requesting a variance to build an 8 ft fence' });
+  check('a decision reserved to the Declarant (variance) goes to the developer, not Ed', v.stage === 'submitted' && /developer's decision/.test(v.detail), JSON.stringify(v));
+  r = await A.issueIfReady(fakeDb({ c1: dev({ project_summary: 'Requesting a variance to build an 8 ft fence' }) }, { scr: DEV }), 'c1');
+  check('...and Annie never issues it as an approval', !r.issued);
+  check('the letter keeps the existing Committee wording (no developer or delegation language)', DA.checkFinalDecision({ ...dev(), acc_delegation: DEV, decision_record: DA.annieDecisionFor({ ...dev(), acc_delegation: DEV }, DEV).rec }, { decisionType: 'approved_with_conditions', texts: ['The Architectural Review Committee of Still Creek Ranch has reviewed your application and is pleased to approve it.'], actor: ANNIE, requireIssuer: true }).ok);
+
   console.log('\nDenial letters carry the appeal notice');
   const server = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
   const fnSrc = server.slice(server.indexOf('function _accWithAppealNotice'), server.indexOf('// ANNIE ISSUES HER OWN ROUTINE DECISIONS'));
