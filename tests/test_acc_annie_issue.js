@@ -18,7 +18,7 @@ const check = (name, cond, detail) => { if (cond) console.log(`  \x1b[32m✓\x1b
 
 const WV = 'wv'; const LOPF = 'lopf';
 const DELEGATION = { library_document_id: '6eeb8060-9b0a-4e88-b714-45f775a0442a', reference: 'Architectural Guidelines (2016) §1.4.4.1-1.4.4.2: the Committee delegates to the Managing Agent', appeal: 'a Managing Agent denial may be appealed to the Architectural Control Committee within 30 days (§1.4.5.1)' };
-const base = (o) => ({ id: 'c1', status: 'pending_review', community_id: WV, community_name: 'Waterview Estates', reference_number: 'WAT-ARC-TEST', submitter_email: 'owner@example.test',
+const base = (o) => ({ id: 'c1', status: 'pending_review', created_at: '2026-11-20T12:00:00Z', community_id: WV, community_name: 'Waterview Estates', reference_number: 'WAT-ARC-TEST', submitter_email: 'owner@example.test',
   project_summary: 'Roof replacement with architectural shingles, Weathered Wood', current_ai_recommendation: 'approved_with_conditions', current_review_at: '2026-11-18T15:00:00Z',
   current_letter_body: 'Your application is approved subject to the conditions below.', ...o });
 function fakeDb(rows, delegations = { [WV]: DELEGATION }) {
@@ -116,6 +116,26 @@ A.registerIssuer(async (id, body) => { calls.push({ id, body }); return { status
   r = await A.issueIfReady(fakeDb({ c1: dev({ project_summary: 'Requesting a variance to build an 8 ft fence' }) }, { scr: DEV }), 'c1');
   check('...and Annie never issues it as an approval', !r.issued);
   check('the letter keeps the existing Committee wording (no developer or delegation language)', DA.checkFinalDecision({ ...dev(), acc_delegation: DEV, decision_record: DA.annieDecisionFor({ ...dev(), acc_delegation: DEV }, DEV).rec }, { decisionType: 'approved_with_conditions', texts: ['The Architectural Review Committee of Still Creek Ranch has reviewed your application and is pleased to approve it.'], actor: ANNIE, requireIssuer: true }).ok);
+
+  console.log('\nBacklog hold (Ed 2026-11-18): existing cases wait for Ed; new ones do not');
+  const H = require('../lib/acc/backlog_hold');
+  const old = base({ created_at: '2026-07-13T12:00:00Z' });
+  const before = calls.length;
+  r = await A.issueIfReady(fakeDb({ c1: old }), 'c1');
+  check('a backlog case Annie would decide is NOT issued', !r.issued && /backlog hold/.test(r.skipped || '') && calls.length === before, JSON.stringify(r));
+  r = await A.issueIfReady(fakeDb({ c1: old }), 'c1', { dryRun: true });
+  check('...not even listed to issue in the owner dry run', !r.would_issue);
+  check('...the queue shows it on hold, not ready to send', /On hold: Ed is reviewing/.test(DA.queueStage({ ...old, acc_delegation: DELEGATION }).detail) && DA.queueStage({ ...old, acc_delegation: DELEGATION }).stage === 'submitted');
+  r = await A.issueIfReady(fakeDb({ c1: base() }), 'c1');
+  check('a new case is issued as usual (no delay, no new approval)', r.issued === true, JSON.stringify(r));
+  check('a case with no creation date is treated as backlog (fail closed)', H.isBacklogHeld({ id: 'x' }));
+  check('the cutoff is fixed in code (deploys, migrations and restarts never release it)', H.BACKLOG_CUTOFF === '2026-11-19T03:04:33Z' && !/process\.env/.test(fs.readFileSync(path.join(__dirname, '..', 'lib', 'acc', 'backlog_hold.js'), 'utf8')));
+  check('nothing is released yet', H.RELEASED.size === 0);
+  {
+    const sv = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
+    const f = sv.slice(sv.indexOf('async function _accFinalizeHandler'), sv.indexOf("app.post('/acc-review/decisions/:id/finalize', _accFinalizeHandler)"));
+    check('the send path refuses a backlog decision letter unless Ed sends it himself', /isFinal && require\('\.\/lib\/acc\/backlog_hold'\)\.isBacklogHeld\(dec\) && !require\('\.\/lib\/acc\/decision_authority'\)\.isOwnerActor\(actor\)/.test(f) && f.indexOf('backlog_hold') < f.indexOf('finalizeAccDecision('));
+  }
 
   console.log('\nDenial letters carry the appeal notice');
   const server = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');

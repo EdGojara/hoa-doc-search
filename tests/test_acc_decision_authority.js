@@ -226,7 +226,7 @@ console.log('\n4. Every improvement type: staff never decide');
 console.log('\n4b. Routing (Ed 2026-11-18): Annie decides routine work; Ed approves only two kinds');
 {
   const route = (summary, extra = {}) => DA.routeEvaluation({ id: 'r', status: 'pending_review', project_summary: summary, current_ai_recommendation: 'approved_with_conditions', current_review_at: '2026-11-18T15:00:00Z', ...extra });
-  const stage = (summary, extra = {}) => DA.queueStage({ id: 'r', status: 'pending_review', project_summary: summary, current_ai_recommendation: 'approved_with_conditions', current_review_at: '2026-11-18T15:00:00Z', acc_delegation: { library_document_id: '00000000-0000-0000-0000-0000000000d1', reference: 'Guidelines §1.4.4.1-1.4.4.2 delegation' }, ...extra });
+  const stage = (summary, extra = {}) => DA.queueStage({ id: 'r', status: 'pending_review', created_at: '2026-11-20T12:00:00Z', project_summary: summary, current_ai_recommendation: 'approved_with_conditions', current_review_at: '2026-11-18T15:00:00Z', acc_delegation: { library_document_id: '00000000-0000-0000-0000-0000000000d1', reference: 'Guidelines §1.4.4.1-1.4.4.2 delegation' }, ...extra });
   // Routine applications
   for (const t of ['Roof replacement with Atlas ProLam shingles in Weathered Wood color', 'Paint front door black', 'Replace rear wood fence, 6 ft cedar, same location',
     'Installation of roof-mounted solar panels', 'Remove front-yard oak tree; surface roots threatening foundation', 'Foundation repair with 14 exterior pilings and 5 concrete breakouts',
