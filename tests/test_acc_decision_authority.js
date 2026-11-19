@@ -350,7 +350,7 @@ console.log('\n6. Transport guard (lib/email/graph_send)');
     const routes = [
       ['POST /acc-review/letter (Generate letter)', /app\.post\('\/acc-review\/letter'/],
       ['POST /acc-review/render-letter (Download letter PDF)', /app\.post\('\/acc-review\/render-letter'/],
-      ['POST /acc-review/decisions/:id/finalize (Send / Mark done)', /app\.post\('\/acc-review\/decisions\/:id\/finalize'/],
+      ['POST /acc-review/decisions/:id/finalize (Send / Mark done)', /async function _accFinalizeHandler\(req, res\)/],
       ['POST /acc-review/decisions/:id/reply (Annie reply box)', /app\.post\('\/acc-review\/decisions\/:id\/reply'/],
       ['GET /acc-review/decisions/:id/letter', /app\.get\('\/acc-review\/decisions\/:id\/letter'/],
       ['GET /acc-review/decisions/:id/packet', /app\.get\('\/acc-review\/decisions\/:id\/packet'/],
@@ -364,12 +364,12 @@ console.log('\n6. Transport guard (lib/email/graph_send)');
     check('Generate letter no longer stamps a "decided by"', !/decided_by_user_id:\s*actor/.test(gen));
     check('Generate letter never rewrites a decided case', /case_closed/.test(gen) && /\.in\('status', \['pending_review', 'awaiting_info'\]\)/.test(gen));
     check('Generate letter no longer seals a draft letter as a sent record', !/record_type: 'acc_letter'/.test(gen));
-    check('finalize passes the case to the transport guard', /accDecisionId: id/.test(handler(/app\.post\('\/acc-review\/decisions\/:id\/finalize'/)));
+    check('finalize passes the case to the transport guard', /accDecisionId: id/.test(handler(/async function _accFinalizeHandler\(req, res\)/)));
     const aw = server.slice(server.indexOf('async function _accAuthorityWrite'), server.indexOf('async function _accAuthorityWrite') + 900);
     check('owner-review is Ed-only (isOwnerActor) and never sends', /app\.post\('\/acc-review\/decisions\/:id\/owner-review'/.test(server) && /ownerOnly = true/.test(aw) && /isOwnerActor\(actor\)/.test(aw));
     const drH = handler(/app\.post\('\/acc-review\/decisions\/:id\/decision-record'/);
     check('decision-record needs a signed-in user and builds the record with recordDecision (the server, not the browser, names the recorder)', /isHumanActor\(actor\)/.test(aw) && /DA\.recordDecision\(actor, b, dec\)/.test(drH) && /ownerOnly: false/.test(drH));
-    const finH = handler(/app\.post\('\/acc-review\/decisions\/:id\/finalize'/);
+    const finH = handler(/async function _accFinalizeHandler\(req, res\)/);
     check('finalize records a decision through recordDecision and stamps issued_by from the signed-in sender', /DA\.recordDecision\(actor/.test(finH) && /issued_by: DA\.actorStamp\(actor\)/.test(finH));
     const dq = fs.readFileSync(path.join(__dirname, '..', 'api', 'email_drafts.js'), 'utf8');
     check('Draft Queue send records the signed-in approver, never req.body.approved_by', /getActingUser\(req\)/.test(dq) && !/req\.body\.approved_by/.test(dq));
@@ -389,6 +389,7 @@ console.log('\n6. Transport guard (lib/email/graph_send)');
     const agentWriters = prod.filter((f) => /decided_by:\s*['"](?:annie|amanda)['"]/.test(fs.readFileSync(f, 'utf8')));
     const evalWriters = prod.filter((f) => /[{,]\s*compliance_evaluation\s*:/.test(fs.readFileSync(f, 'utf8')));
     check('only lib/acc/decision_authority (annieDecisionFor) builds an Annie decision', agentWriters.length === 1 && /lib[\\/]acc[\\/]decision_authority\.js$/.test(agentWriters[0]), agentWriters.join(', '));
+    check('the finalize route is the named handler (Annie issues through the same path)', /app\.post\('\/acc-review\/decisions\/:id\/finalize', _accFinalizeHandler\)/.test(server));
     check('finalize builds Annie\'s decision server-side from the community delegation', /DA\.annieDecisionFor\(dec, await _accDelegation\(dec\.community_id\)\)/.test(finH));
     check('no production code writes a compliance evaluation yet (engine not landed)', evalWriters.length === 0, evalWriters.join(', '));
     check('Annie decides by default (Ed 2026-11-18); ACC_AI_DECISIONS_ENABLED=false is the kill switch', DA.aiDecisionsEnabled() && (() => { process.env.ACC_AI_DECISIONS_ENABLED = 'false'; const off = !DA.aiDecisionsEnabled(); delete process.env.ACC_AI_DECISIONS_ENABLED; return off; })());

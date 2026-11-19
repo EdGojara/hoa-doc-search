@@ -3299,9 +3299,11 @@ app.get('/acc-review/decisions/:id/packet', async (req, res) => {
 // specialist mailbox — threads with the acknowledgment she already sent), and
 // flips the row to status='decided'. Idempotent-safe: a decided row can be
 // re-finalized (e.g. corrected letter) without creating a duplicate.
-app.post('/acc-review/decisions/:id/finalize', async (req, res) => {
+async function _accFinalizeHandler(req, res) {
   try {
-    const actor = await getActingUser(req);
+    // Annie issuing her own routine decision (lib/acc/annie_issue) arrives with
+    // the agent as the issuer; it is set only in-process, never from HTTP.
+    const actor = req._accAgentIssuer || await getActingUser(req);
     const body = req.body || {};
     const { id } = req.params;
 
@@ -3360,6 +3362,14 @@ app.post('/acc-review/decisions/:id/finalize', async (req, res) => {
       });
     }
     bodyText = bodyScreen.text;
+
+    // DENIAL APPEAL NOTICE (Ed 2026-11-18): every ACC denial letter tells the
+    // owner how to appeal: the association's own appeal route when its written
+    // delegation names one, and the §209.00505 hearing notice (GLOBAL_RULES).
+    // Injected at render time, never left to the drafter.
+    if (decisionType === 'denied' || /den(?:y|ied|ial)|disapprov/i.test(decisionType)) {
+      bodyText = _accWithAppealNotice(bodyText, await _accDelegation(dec.community_id));
+    }
 
     // DECISION AUTHORITY (Ed 2026-10-20, lib/acc/decision_authority). An
     // approval or denial (by decision type OR by what the letter says) is issued
@@ -3695,6 +3705,52 @@ app.post('/acc-review/decisions/:id/finalize', async (req, res) => {
   } catch (err) {
     console.error('[acc-review/decisions/:id/finalize] failed:', err.message);
     res.status(err && err.status ? err.status : 500).json({ error: err.message });
+  }
+}
+app.post('/acc-review/decisions/:id/finalize', _accFinalizeHandler);
+
+// The appeal paragraph for an ACC denial letter: the association's appeal route
+// (communities.acc_delegation.appeal) and the §209.00505 hearing notice, placed
+// before the closing. Idempotent: text already carrying it is unchanged.
+function _accWithAppealNotice(text, delegation) {
+  const { injectGlobalRule } = require('./lib/global_rules');
+  const statutory = injectGlobalRule('tx_209_00505_arc_denial_hearing');
+  const body = String(text || '');
+  if (body.includes(statutory)) return body;
+  const route = delegation && String(delegation.appeal || '').trim();
+  const para = [route ? `How to appeal: ${route.charAt(0).toUpperCase() + route.slice(1).replace(/\.$/, '')}.` : null, statutory].filter(Boolean).join('\n\n');
+  const m = body.match(/\n\s*(?:Sincerely|Respectfully|Regards|Best regards|Kind regards|Thank you)[,.]?\s*(?:\n|$)/i);
+  return m ? `${body.slice(0, m.index).replace(/\s+$/, '')}\n\n${para}\n${body.slice(m.index)}` : `${body.replace(/\s+$/, '')}\n\n${para}`;
+}
+
+// ANNIE ISSUES HER OWN ROUTINE DECISIONS (Ed 2026-11-18, lib/acc/annie_issue):
+// the same finalize path, with Annie as the issuer. Registered once at boot.
+const _ACC_ANNIE_ISSUER = { id: null, agent: 'annie', email: require('./lib/email/graph_send').ANNIE_MAILBOX, full_name: 'Annie (Bedrock ACC)', is_active: true };
+require('./lib/acc/annie_issue').registerIssuer(async (id, body) => {
+  const out = { status: 200, json: null };
+  const res = { status(c) { out.status = c; return this; }, json(j) { out.json = j; return this; } };
+  await _accFinalizeHandler({ params: { id }, body, headers: {}, _accAgentIssuer: _ACC_ANNIE_ISSUER }, res);
+  return out;
+});
+
+// POST /acc-review/annie/issue-ready (owner only): cases already waiting when
+// Annie started issuing (their reviews predate it). { dry_run: true } lists
+// what she would send; otherwise she issues each one through the same path.
+app.post('/acc-review/annie/issue-ready', express.json({ limit: '8kb' }), async (req, res) => {
+  const { requireOwner } = require('./api/_require_admin');
+  const owner = await requireOwner(req, res); if (!owner) return;
+  try {
+    const dryRun = !(req.body && req.body.dry_run === false);
+    const { data, error } = await supabase.from('acc_decisions').select('id').eq('management_company_id', BEDROCK_MGMT_CO_ID)
+      .in('status', ['pending_review', 'awaiting_info']).order('created_at', { ascending: true }).limit(500);
+    if (error) throw error;
+    const A = require('./lib/acc/annie_issue');
+    const results = [];
+    for (const r of data || []) results.push(await A.issueIfReady(supabase, r.id, { dryRun, source: 'owner_backlog' }));
+    res.json({ dry_run: dryRun, open: (data || []).length, issued: results.filter((x) => x.issued).length, would_issue: results.filter((x) => x.would_issue), results });
+  } catch (err) {
+    console.error('[acc-review/annie/issue-ready] failed:', err.message);
+    res.status(500).json({ error: err.message });
   }
 });
 
