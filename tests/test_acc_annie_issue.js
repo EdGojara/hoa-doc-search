@@ -137,6 +137,34 @@ A.registerIssuer(async (id, body) => { calls.push({ id, body }); return { status
     check('the send path refuses a backlog decision letter unless Ed sends it himself', /isFinal && require\('\.\/lib\/acc\/backlog_hold'\)\.isBacklogHeld\(dec\) && !require\('\.\/lib\/acc\/decision_authority'\)\.isOwnerActor\(actor\)/.test(f) && f.indexOf('backlog_hold') < f.indexOf('finalizeAccDecision('));
   }
 
+  console.log('\nAnnie\'s determination is the decision on every path (Ed 2026-11-19, WAT-ARC-2026-0043)');
+  {
+    const STAFF = { id: 'u1', email: 'staff@bedrocktx.com', is_active: true, role: 'staff' };
+    const OWNER = { id: 'u0', email: DA.OWNER_EMAIL, is_active: true, role: 'admin' };
+    const denial = 'The Committee has reviewed your application and has denied it because the garage door color is not cohesive with the home. You may request a hearing before the Board within 30 days.';
+    const den = (o) => ({ ...base({ project_summary: 'Garage door repaint, custom color', current_ai_recommendation: 'denied', current_letter_body: denial, ...o }), acc_delegation: { ...DELEGATION, acts_as: 'committee' } });
+    let g = DA.checkFinalDecision(den(), { decisionType: 'denied', texts: [denial], actor: STAFF, requireIssuer: true });
+    check('a new case: Annie\'s denial is the authorized decision for the draft/letter (no second approval)', g.ok && g.final && g.annie_record && g.annie_record.decided_by === 'annie', JSON.stringify(g.error || g.code));
+    g = DA.checkFinalDecision(den(), { decisionType: 'approved', texts: ['Your application is approved.'], actor: STAFF, requireIssuer: true });
+    check('staff cannot issue the opposite of Annie\'s decision', !g.ok && g.code === 'decision_outcome_mismatch');
+    g = DA.checkFinalDecision(den({ created_at: '2026-11-16T23:33:23Z' }), { decisionType: 'denied', texts: [denial], actor: STAFF, requireIssuer: true });
+    check('an existing (backlog) case stays on hold for staff', !g.ok && g.code === 'backlog_hold', JSON.stringify(g.code));
+    g = DA.checkFinalDecision(den({ created_at: '2026-11-16T23:33:23Z' }), { decisionType: 'denied', texts: [denial], actor: OWNER, requireIssuer: true });
+    check('...and only Ed can produce it from his own account', g.ok && g.final, JSON.stringify(g.error || g.code));
+    g = DA.checkFinalDecision(den({ project_summary: 'Pour a new 12x16 concrete patio', current_ai_recommendation: 'approved', current_letter_body: 'Approved.' }), { decisionType: 'approved', texts: ['Your application is approved.'], actor: STAFF, requireIssuer: true });
+    check('a concrete addition still needs Ed (not treated as Annie\'s decision)', !g.ok && g.code === 'owner_review_required', JSON.stringify(g.code));
+    g = DA.checkFinalDecision(den({ project_summary: 'Requesting a variance to build an 8 ft fence', current_ai_recommendation: 'approved', current_letter_body: 'Approved.' }), { decisionType: 'approved', texts: ['Your application is approved.'], actor: STAFF, requireIssuer: true });
+    check('a variance still goes to the Committee/Board', !g.ok && !g.annie_record, JSON.stringify(g.code));
+    g = DA.checkFinalDecision({ ...den(), acc_delegation: null }, { decisionType: 'denied', texts: [denial], actor: STAFF, requireIssuer: true });
+    check('no delegation on file: still no decision', !g.ok && g.code === 'decision_record_required');
+    g = DA.checkFinalDecision(den({ current_ai_recommendation: 'request_more_info' }), { decisionType: 'request_more_info', texts: ['Please send a photo of the home.'], actor: STAFF, requireIssuer: true });
+    check('a request for more information is unaffected', g.ok && !g.final);
+    const sv = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
+    check('draft save, letter, letter PDF and packet paths pass the community delegation to the gate',
+      (sv.match(/checkFinalDecision\(\{ \.\.\.dec, acc_delegation: await _accDelegation\(dec\.community_id\) \}/g) || []).length === 2
+      && /checkFinalDecision\(row\.id \? \{ \.\.\.row, acc_delegation/.test(sv) && /checkFinalDecision\(gateRow \? \{ \.\.\.gateRow, acc_delegation/.test(sv));
+  }
+
   console.log('\nDenial letters carry the appeal notice');
   const server = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
   const fnSrc = server.slice(server.indexOf('function _accWithAppealNotice'), server.indexOf('// ANNIE ISSUES HER OWN ROUTINE DECISIONS'));
