@@ -56,36 +56,43 @@ const snapshot = JSON.stringify([ROOF, REPAINT_INFO, DRIVEWAY, UNREVIEWED, AWAIT
 const edRecord = (extra = {}) => DA.ownerDecisionRecord(ED, { outcome: 'approved_with_conditions', authority_kind: 'written_delegation', authority_reference: 'Guidelines 1.4.4.1, p. 2: Committee delegation to the Managing Agent', authority_library_document_id: '00000000-0000-0000-0000-0000000000d1', clearly_compliant: true, ...extra });
 
 console.log('\nACC queue sections');
-check('Annie recommends approval, nothing recorded -> Pending Ed', stage(ROOF) === 'pending_ed');
-check('Annie recommends denial -> Pending Ed (every denial is Ed\'s)', stage(DENY_REC) === 'pending_ed');
-check('driveway expansion needs Ed\'s judgment even when Annie asks for info -> Pending Ed', stage(DRIVEWAY) === 'pending_ed', JSON.stringify(DA.queueStage(DRIVEWAY)));
+// Ed 2026-11-18: Annie decides routine work; Pending Ed is ONLY concrete
+// additions and driveway modifications.
+const DELEGATION = { library_document_id: '00000000-0000-0000-0000-0000000000d1', reference: 'Guidelines 1.4.4.1-1.4.4.2: Committee delegation to the Managing Agent' };
+const PATIO = Object.freeze({ id: 'patio', status: 'pending_review', community_name: 'Waterview Estates', project_summary: 'Pour a new concrete patio behind the house', ai_recommendation: 'approved_with_conditions', ai_review_text: 'Complies with setbacks.', decision_record: null });
+check('Annie\'s routine approval with a delegation on file -> ready to send, not Pending Ed', stage({ ...ROOF, ai_review_text: 'Complies.', created_at: '2026-11-10T12:00:00Z', acc_delegation: DELEGATION }) === 'ready_to_send', JSON.stringify(DA.queueStage({ ...ROOF, ai_review_text: 'Complies.', created_at: '2026-11-10T12:00:00Z', acc_delegation: DELEGATION })));
+check('Annie\'s routine approval with no delegation on file -> Submitted (committee or Board decides), not Pending Ed', stage({ ...ROOF, acc_delegation: null }) === 'submitted');
+check('Annie\'s denial of a routine case -> not Pending Ed', stage({ ...DENY_REC, ai_review_text: 'Exceeds height.', created_at: '2026-11-10T12:00:00Z', acc_delegation: DELEGATION }) === 'ready_to_send' && stage(DENY_REC) === 'submitted');
+check('a driveway extension Annie is still asking about -> Submitted (she asks first)', stage(DRIVEWAY) === 'submitted', JSON.stringify(DA.queueStage(DRIVEWAY)));
+check('a complete concrete addition -> Pending Ed', stage(PATIO) === 'pending_ed' && stage({ ...PATIO, acc_delegation: DELEGATION }) === 'pending_ed');
+check('a complete driveway modification -> Pending Ed', stage({ ...DRIVEWAY, ai_recommendation: 'approved_with_conditions' }) === 'pending_ed');
 check('Annie recommends asking for more info -> Submitted (staff may send that)', stage(REPAINT_INFO) === 'submitted');
 check('not reviewed yet -> Submitted', stage(UNREVIEWED) === 'submitted');
 check('waiting on the homeowner -> Submitted', stage(AWAITING) === 'submitted');
 check('decided -> Completed', stage(DECIDED) === 'completed');
 check('archived / withdrawn never show as open work', stage({ ...ROOF, status: 'archived' }) === 'completed' && stage({ ...ROOF, status: 'withdrawn' }) === 'completed');
 check('sending -> Decided, letter not sent', stage({ ...ROOF, status: 'finalizing', decision_record: edRecord() }) === 'ready_to_send');
-check('Pending Ed explains why', /Annie recommends: approved with conditions/.test(DA.queueStage(ROOF).detail) && /judgment/i.test(DA.queueStage(DRIVEWAY).detail));
+check('Pending Ed explains why', /Needs Ed's approval: concrete addition/.test(DA.queueStage(PATIO).detail));
 
-console.log('\nOnly an authorized decision moves a case out of Pending Ed');
+console.log('\nOnly an authorized decision makes a case ready to send');
 const roofEd = { ...ROOF, decision_record: edRecord() };
 check('Ed\'s own recorded decision -> Decided, letter not sent', stage(roofEd) === 'ready_to_send', JSON.stringify(DA.queueStage(roofEd)));
 const forged = { ...edRecord(), decided_by_email: 'staffer@bedrocktx.com', recorded_by: { id: STAFF.id, email: STAFF.email, name: STAFF.full_name } };
-check('Ed citing a governing document alone (no delegation, no committee) stays Pending Ed',
-  stage({ ...ROOF, decision_record: DA.ownerDecisionRecord(ED, { outcome: 'approved_with_conditions', authority_kind: 'governing_document', authority_reference: 'Declaration Article II, p. 12' }) }) === 'pending_ed');
-check('a record claiming Ed but entered by staff does not count', stage({ ...ROOF, decision_record: forged }) === 'pending_ed');
+check('Ed citing a governing document alone (no delegation, no committee) is not ready to send',
+  stage({ ...ROOF, decision_record: DA.ownerDecisionRecord(ED, { outcome: 'approved_with_conditions', authority_kind: 'governing_document', authority_reference: 'Declaration Article II, p. 12' }) }) !== 'ready_to_send');
+check('a record claiming Ed but entered by staff does not count', stage({ ...ROOF, decision_record: forged }) !== 'ready_to_send');
 check('staff cannot record a decision as Ed', !!DA.recordDecision(STAFF, { decided_by: 'ed', outcome: 'approved' }, ROOF).error);
 check('an admin who is not Ed cannot record a decision as Ed', !!DA.recordDecision(ADMIN_NOT_ED, { decided_by: 'ed', outcome: 'approved' }, ROOF).error);
 check('staff cannot record themselves as the decider', !!DA.recordDecision(STAFF, { decided_by: 'staff', outcome: 'approved' }, ROOF).error);
 const annieRec = { ...edRecord({ outcome: 'approved', authority_kind: 'written_delegation', authority_reference: 'hypothetical delegation', authority_library_document_id: '00000000-0000-0000-0000-0000000000d1', clearly_compliant: true }), decided_by: 'annie', decided_by_email: null };
-check('an Annie decision record does not count while AI decisions are off', stage({ ...ROOF, decision_record: annieRec }) === 'pending_ed');
-check('AI decisions are off by default', DA.aiDecisionsEnabled() === false);
-check('a case Ed reviewed (review only) but did not decide stays Pending Ed until a decision is recorded',
-  stage({ ...ROOF, owner_review: { reviewed_at: '2026-10-29T12:00:00Z', reviewed_by: ED.email } }) === 'pending_ed');
+check('an Annie record not built from the community delegation does not count', stage({ ...ROOF, decision_record: annieRec }) !== 'ready_to_send');
+check('Annie decides by default (kill switch ACC_AI_DECISIONS_ENABLED=false)', DA.aiDecisionsEnabled() === true);
+check('Ed\'s exception he reviewed (review only) waits for the decision to be recorded',
+  stage({ ...PATIO, owner_review: { reviewed_at: '2026-10-29T12:00:00Z', reviewed_by: ED.email } }) === 'submitted');
 const driveReviewed = { ...DRIVEWAY, owner_review: { reviewed_at: '2026-10-29T12:00:00Z', reviewed_by: ED.email } };
 check('a driveway case Ed has reviewed leaves Pending Ed for the info request staff can send', stage(driveReviewed) === 'submitted', JSON.stringify(DA.queueStage(driveReviewed)));
 
-console.log('\nAnnie cannot skip Ed');
+console.log('\nAnnie cannot skip Ed on his exceptions, or decide outside the delegation');
 check('Annie cannot be entered as decider from any screen', /agent workflow/.test(DA.recordDecision(ED, { decided_by: 'annie', outcome: 'approved' }, ROOF).error || ''));
 const annieIssue = DA.checkFinalDecision({ ...ROOF, decision_record: annieRec }, { decisionType: 'approved_with_conditions', actor: ED, requireIssuer: true });
 check('an approval letter on an Annie record is refused', !annieIssue.ok, JSON.stringify(annieIssue));
@@ -131,7 +138,8 @@ check('an "info request" whose text approves is treated as an approval and refus
   const list = server.slice(server.indexOf("app.get('/acc-review/decisions',"), server.indexOf("app.get('/acc-review/decisions/:id/email'"));
   check('the Requests list reads the decision record (so sections follow the gate)', /WITH_AUTHORITY = `\$\{WITH_CURRENT\}, decision_record, owner_review/.test(list));
   check('the Requests list returns queue_stage from queueStage', /queue_stage: DA\.queueStage\(/.test(list));
-  check('the decision record itself is not sent to the browser list', /\(\{ decision_record, owner_review, approval_gate, approval_gate_reason, \.\.\.r \}\)/.test(list));
+  check('the decision record itself is not sent to the browser list', /\(\{ decision_record, owner_review, approval_gate, approval_gate_reason, current_letter_body, \.\.\.r \}\)/.test(list) && /const out = \{ \.\.\.r, queue_stage/.test(list));
+  check('the Requests list attaches each community\'s delegation', /_accDelegations\(/.test(list) && /acc_delegation: delegations\.get\(r\.community_id\)/.test(list));
   const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
   for (const key of ['pending_ed', 'submitted', 'drafts', 'ready_to_send', 'completed']) {
     check(`Requests screen has the "${key}" section`, html.includes(`key: '${key}'`));

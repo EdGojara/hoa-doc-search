@@ -333,6 +333,7 @@ const CHECKS = [
   'tests/sql/540_apply_one_e2e.mjs',
   'tests/sql/542_apply_one_e2e.mjs',
   'tests/sql/540_541_decision_authority_e2e.mjs',
+  'tests/sql/569_acc_routine_annie_e2e.mjs',
   'tests/sql/547_time_attendance_e2e.mjs',
   'tests/test_time_attendance_hours.js',
   'tests/test_time_attendance_api.js',
