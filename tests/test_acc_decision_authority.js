@@ -166,7 +166,7 @@ console.log('\n3b. Written delegation is decision authority (routine vs not)');
   check('...the record names the instrument and the routine delegation', an.rec && an.rec.authority_basis.kind === 'written_delegation' && an.rec.authority_basis.library_document_id === LIB && an.rec.authority_basis.routine_delegated === true);
   check('...and it is a valid decision record', an.rec && DA.validateDecisionRecord(an.rec, reviewed).length === 0);
   check('...that staff may send', an.rec && DA.checkFinalDecision({ ...reviewed, decision_record: an.rec }, { decisionType: 'approved', actor: STAFF, requireIssuer: true }).ok);
-  check('Annie cannot decide without a delegation on file (the committee or Board decides)', /no written ACC delegation/.test(DA.annieDecisionFor(reviewed, null).error || ''));
+  check('Annie cannot decide without a delegation on file (the committee or Board decides)', /no ACC authority is recorded/.test(DA.annieDecisionFor(reviewed, null).error || ''));
   check('Annie cannot decide what she has not reviewed', /not reviewed/.test(DA.annieDecisionFor(fence, DEL).error || ''));
   check('Annie does not issue a request for more information as a decision', /requests more information/.test(DA.annieDecisionFor({ ...reviewed, current_ai_recommendation: 'request_more_info' }, DEL).error || ''));
   process.env.ACC_AI_DECISIONS_ENABLED = 'false';
@@ -235,7 +235,7 @@ console.log('\n4b. Routing (Ed 2026-11-18): Annie decides routine work; Ed appro
     check(`routine -> Annie decides: "${t}"`, route(t).route === 'annie_decides', JSON.stringify(route(t)));
   }
   check('...and with a delegation on file it is ready to send without Ed', stage('Roof replacement with Atlas ProLam shingles').stage === 'ready_to_send');
-  check('...without a delegation on file it waits for the committee or Board, not Ed', (() => { const q = stage('Roof replacement', { acc_delegation: null }); return q.stage === 'submitted' && /no written ACC delegation/.test(q.detail); })());
+  check('...without a delegation on file it waits for the committee or Board, not Ed', (() => { const q = stage('Roof replacement', { acc_delegation: null }); return q.stage === 'submitted' && /no ACC authority is recorded/.test(q.detail); })());
   // Like-for-like driveway replacement is NOT a modification
   for (const t of ['Driveway replacement, like-for-like within the existing footprint', 'Replace the existing driveway in the same footprint; no change to size.', 'Driveway & walkway concrete replacement, like-for-like within existing footprint (17\' x 29.32\' driveway + 4\' walk)']) {
     check(`like-for-like driveway replacement -> Annie: "${t}"`, route(t).route === 'annie_decides', JSON.stringify(route(t)));

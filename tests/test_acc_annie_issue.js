@@ -49,7 +49,7 @@ A.registerIssuer(async (id, body) => { calls.push({ id, body }); return { status
   console.log('\nEverything else stays in the queue');
   const n = calls.length;
   r = await A.issueIfReady(fakeDb({ c1: base({ community_id: LOPF, community_name: 'Lakes of Pine Forest' }) }), 'c1');
-  check('no delegation on file (committee or Board decides): not issued', !r.issued && /no written ACC delegation/.test(r.skipped || ''), JSON.stringify(r));
+  check('no delegation on file (committee or Board decides): not issued', !r.issued && /no ACC authority is recorded/.test(r.skipped || ''), JSON.stringify(r));
   r = await A.issueIfReady(fakeDb({ c1: base({ project_summary: 'Pour a new 12x16 concrete patio' }) }), 'c1');
   check('a concrete addition (Ed\'s approval): not issued', !r.issued && /owner review required/.test(r.skipped || ''), JSON.stringify(r));
   r = await A.issueIfReady(fakeDb({ c1: base({ project_summary: 'Replace existing driveway and extend width on one side by 2 ft' }) }), 'c1');
@@ -84,6 +84,22 @@ A.registerIssuer(async (id, body) => { calls.push({ id, body }); return { status
   const ED = { id: 'ed', email: 'egojara@bedrocktx.com', role: 'admin', is_active: true, full_name: 'Ed Gojara' };
   const edRec = DA.ownerDecisionRecord(ED, { outcome: 'approved_with_conditions', authority_kind: 'written_delegation', authority_reference: 'Guidelines §1.4.4.1 delegation', authority_library_document_id: DELEGATION.library_document_id, clearly_compliant: true });
   check('Annie may not issue someone else\'s decision', DA.checkFinalDecision({ ...row, decision_record: edRec }, { decisionType: 'approved_with_conditions', actor: ANNIE, requireIssuer: true }).code === 'not_authenticated');
+
+  console.log('\nBedrock acts as the ACC: the letter says the Committee decided (Ed 2026-11-18)');
+  const ACTS = { ...DELEGATION, acts_as: 'committee', basis: 'governing_document' };
+  const actsRow = { ...base(), acc_delegation: ACTS };
+  const actsRec = DA.annieDecisionFor(actsRow, ACTS).rec;
+  const committeeLetter = 'The Architectural Control Committee of Waterview Estates has reviewed your application and is pleased to approve it, subject to the conditions below.';
+  check('Annie\'s record says Bedrock acts as the Committee', actsRec && actsRec.authority_basis.acts_as === 'committee' && actsRec.decided_by === 'annie' && actsRec.evaluated_by === 'annie');
+  check('a letter saying the Committee approved is sent where Bedrock acts as the ACC', DA.checkFinalDecision({ ...actsRow, decision_record: actsRec }, { decisionType: 'approved_with_conditions', texts: [committeeLetter], actor: ANNIE, requireIssuer: true }).ok);
+  check('...Annie stays in the internal record (decided_by annie), never in the letter', actsRec.decided_by === 'annie' && !/Annie/.test(committeeLetter));
+  const noActs = { ...base(), acc_delegation: DELEGATION };
+  const noActsRec = DA.annieDecisionFor(noActs, DELEGATION).rec;
+  check('where Bedrock is not recorded as acting as the ACC, a Committee claim is still refused', DA.checkFinalDecision({ ...noActs, decision_record: noActsRec }, { decisionType: 'approved_with_conditions', texts: [committeeLetter], actor: ANNIE, requireIssuer: true }).code === 'letter_misattributes_decision');
+  check('a letter claiming the BOARD decided is still refused (Bedrock acts as the Committee, not the Board)', DA.checkFinalDecision({ ...actsRow, decision_record: actsRec }, { decisionType: 'approved_with_conditions', texts: ['The Board of Directors has reviewed your application and is pleased to approve it.'], actor: ANNIE, requireIssuer: true }).code === 'letter_misattributes_decision');
+  const flagged = DA.annieDecisionFor(base(), { status: 'needs_clarification', reason: 'declarant still controls the ARC' });
+  check('an association flagged for clarification says why, and only that association waits', /needs clarification \(declarant still controls the ARC\)/.test(flagged.error || ''));
+  check('...while another association\'s routine case is still Annie\'s', !!DA.annieDecisionFor(actsRow, ACTS).rec);
 
   console.log('\nDenial letters carry the appeal notice');
   const server = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');

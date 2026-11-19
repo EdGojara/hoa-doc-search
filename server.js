@@ -3400,7 +3400,7 @@ async function _accFinalizeHandler(req, res) {
         if (annie.rec && annie.rec.outcome === decisionType) decRow = { ...dec, decision_record: annie.rec };
         else if (annie.rec) return res.status(409).json({ code: 'decision_outcome_mismatch', error: `Annie's decision on this application is "${annie.rec.outcome.replace(/_/g, ' ')}", not "${decisionType.replace(/_/g, ' ')}". Staff never decide: send Annie's decision, or ask Annie to re-review. Nothing was sent.` });
       }
-      const authz = DA.checkFinalDecision(decRow, { decisionType, texts: [bodyText], actor, requireIssuer: true });
+      const authz = DA.checkFinalDecision({ ...decRow, acc_delegation: await _accDelegation(dec.community_id) }, { decisionType, texts: [bodyText], actor, requireIssuer: true });
       if (!authz.ok) return res.status(authz.status).json({ code: authz.code, error: authz.error, authority: authz.auth });
       if (authz.final) {
         // Who issued it: the signed-in sender, on the record itself.

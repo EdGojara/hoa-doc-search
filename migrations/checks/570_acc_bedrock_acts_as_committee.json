@@ -1,0 +1,23 @@
+{
+  "migration": "570_acc_bedrock_acts_as_committee.sql",
+  "summary": "Where Bedrock acts as the ACC/ARC (Ed 2026-11-18). Data only: communities.acc_delegation records that Bedrock acts as the Committee for Waterview Estates, Lakes of Pine Forest, Canyon Gate and Quail Ridge (instrument + practice), so Annie decides their routine applications and letters say the Committee decided. Still Creek Ranch and August Meadows are flagged (Declarant controls the ARC during development) and keep their committee/Board process. No schema change; no acc_decisions changes.",
+  "requires": ["569_acc_routine_annie.sql"],
+  "preflight": [
+    { "name": "569 applied: Waterview delegation present", "sql": "SELECT count(*)::int FROM communities WHERE id = 'a0000000-0000-4000-8000-000000000001' AND acc_delegation IS NOT NULL", "expect": 1 },
+    { "name": "the three instruments are on file for their communities", "sql": "SELECT count(*)::int FROM library_documents WHERE (id = '13848636-9a4f-4bbe-9d63-6ba76abedcf6' AND community_id = 'a0000000-0000-4000-8000-000000000002') OR (id = '0edb274a-f334-435e-a379-58dc933f11a4' AND community_id = 'a0000000-0000-4000-8000-000000000003') OR (id = '3ba3d5f0-5884-4743-88bd-e8276e669e38' AND community_id = 'a0000000-0000-4000-8000-000000000005')", "expect": 3 }
+  ],
+  "expected_changes": [
+    "communities.acc_delegation: Waterview gains acts_as committee; Lakes of Pine Forest, Canyon Gate and Quail Ridge get Bedrock-acts-as-Committee records; Still Creek Ranch and August Meadows get needs_clarification flags.",
+    "No rows added or deleted; no schema change; no acc_decisions change."
+  ],
+  "objects": { "added": [], "changed": [], "removed": [] },
+  "row_changes": { "communities": 0, "acc_decisions": 0 },
+  "protected": [
+    { "table": "acc_decisions", "order_by": "id" },
+    { "table": "acc_finalizations", "order_by": "id" }
+  ],
+  "verify": [
+    { "name": "four associations where Bedrock acts as the Committee", "sql": "SELECT count(*)::int FROM communities WHERE acc_delegation->>'acts_as' = 'committee' AND acc_delegation->>'library_document_id' IS NOT NULL", "expect": 4 },
+    { "name": "two associations flagged for clarification", "sql": "SELECT count(*)::int FROM communities WHERE acc_delegation->>'status' = 'needs_clarification'", "expect": 2 }
+  ]
+}

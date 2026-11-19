@@ -21,7 +21,7 @@ try { ({ PGlite } = await import(process.env.PGLITE_MODULE || '@electric-sql/pgl
 catch (_) { console.log('SKIP  569 end-to-end apply rehearsal (@electric-sql/pglite not installed)'); process.exit(0); }
 const require = createRequire(import.meta.url);
 const A = require(`${REPO}/lib/migrations/apply_one.js`);
-const FILES = ['540_acc_decision_authority_columns.sql', '541_acc_decision_authority_guard.sql', '569_acc_routine_annie.sql'];
+const FILES = ['540_acc_decision_authority_columns.sql', '541_acc_decision_authority_guard.sql', '569_acc_routine_annie.sql', '570_acc_bedrock_acts_as_committee.sql'];
 
 let pass = 0, fail = 0;
 const check = (name, cond, extra = '') => { if (cond) { pass++; console.log('PASS ', name); } else { fail++; console.log('FAIL ', name, extra); } };
@@ -51,8 +51,8 @@ await db.exec(`
     decision_type text, project_summary text, letter_body text, decided_by_user_id uuid, notes text);
   CREATE TABLE schema_migrations (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), filename text NOT NULL UNIQUE, sha256 text NOT NULL,
     applied_at timestamptz NOT NULL DEFAULT now(), applied_by text, duration_ms integer, error text);
-  INSERT INTO communities VALUES ('${WV}', 'Waterview Estates'), ('${LOPF}', 'Lakes of Pine Forest');
-  INSERT INTO library_documents VALUES ('${LIB}', '${WV}', 'Waterview Estates Architectural Guidelines (2016)');
+  INSERT INTO communities VALUES ('${WV}', 'Waterview Estates'), ('${LOPF}', 'Lakes of Pine Forest'), ('a0000000-0000-4000-8000-000000000003', 'Canyon Gate at Cinco Ranch'), ('a0000000-0000-4000-8000-000000000005', 'Quail Ridge'), ('a0000000-0000-4000-8000-000000000006', 'Still Creek Ranch'), ('a0000000-0000-4000-8000-000000000007', 'August Meadows');
+  INSERT INTO library_documents VALUES ('${LIB}', '${WV}', 'Waterview Estates Architectural Guidelines (2016)'), ('13848636-9a4f-4bbe-9d63-6ba76abedcf6', '${LOPF}', 'Master Declaration'), ('0edb274a-f334-435e-a379-58dc933f11a4', 'a0000000-0000-4000-8000-000000000003', 'CG Declaration'), ('3ba3d5f0-5884-4743-88bd-e8276e669e38', 'a0000000-0000-4000-8000-000000000005', 'QR Bylaws');
   INSERT INTO acc_decisions (id, status, project_summary) VALUES
     ('${ROOF}', 'pending_review', 'Roof replacement with Atlas ProLam shingles in Weathered Wood color'),
     ('${DRIVE}', 'pending_review', 'Replace existing driveway and extend width on one side by 2''6" x 20.5'''),
@@ -85,7 +85,8 @@ const ED_REC = { user_id: 'ed-uuid', email: 'egojara@bedrocktx.com', name: 'Ed G
 const STAFF_REC = { user_id: 'staff-uuid', email: 'staffer@bedrocktx.com', name: 'A Staffer', at };
 const ARC = { body: 'committee', decision: 'denied', decided_on: '2026-11-18', approvers: 'Member A, Member B, Member C', evidence_type: 'minutes', evidence_reference: 'ARC minutes 2026-11-18, item 2' };
 
-check('only Waterview has a delegation', (await q1(`SELECT count(*)::int n FROM communities WHERE acc_delegation IS NOT NULL`)).n === 1);
+check('570: four associations where Bedrock acts as the Committee, two flagged', (await q1(`SELECT count(*)::int n FROM communities WHERE acc_delegation->>'acts_as' = 'committee'`)).n === 4 && (await q1(`SELECT count(*)::int n FROM communities WHERE acc_delegation->>'status' = 'needs_clarification'`)).n === 2);
+check('570: Waterview keeps its 569 delegation and gains acts_as', (await q1(`SELECT (acc_delegation->>'acts_as') a, (acc_delegation->>'appeal') ap FROM communities WHERE id = '${WV}'`)).a === 'committee');
 check('Waterview delegation names the Guidelines on file', (await q1(`SELECT acc_delegation->>'library_document_id' d FROM communities WHERE id = '${WV}'`)).d === LIB);
 
 // Annie: routine
