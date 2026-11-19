@@ -3368,7 +3368,7 @@ async function _accFinalizeHandler(req, res) {
     // delegation names one, and the §209.00505 hearing notice (GLOBAL_RULES).
     // Injected at render time, never left to the drafter.
     if (decisionType === 'denied' || /den(?:y|ied|ial)|disapprov/i.test(decisionType)) {
-      bodyText = _accWithAppealNotice(bodyText, await _accDelegation(dec.community_id));
+      bodyText = _accWithAppealNotice(bodyText);
     }
 
     // DECISION AUTHORITY (Ed 2026-10-20, lib/acc/decision_authority). An
@@ -3709,16 +3709,16 @@ async function _accFinalizeHandler(req, res) {
 }
 app.post('/acc-review/decisions/:id/finalize', _accFinalizeHandler);
 
-// The appeal paragraph for an ACC denial letter: the association's appeal route
-// (communities.acc_delegation.appeal) and the §209.00505 hearing notice, placed
-// before the closing. Idempotent: text already carrying it is unchanged.
-function _accWithAppealNotice(text, delegation) {
+// The required appeal notice for an ACC denial letter: the §209.00505 hearing
+// notice (GLOBAL_RULES) only, placed before the closing. Letters stay in the
+// existing concise format: nothing about Bedrock's authority, delegation or
+// Annie (Ed 2026-11-18); that lives in the internal record. Idempotent.
+function _accWithAppealNotice(text) {
   const { injectGlobalRule } = require('./lib/global_rules');
   const statutory = injectGlobalRule('tx_209_00505_arc_denial_hearing');
   const body = String(text || '');
   if (body.includes(statutory)) return body;
-  const route = delegation && String(delegation.appeal || '').trim();
-  const para = [route ? `How to appeal: ${route.charAt(0).toUpperCase() + route.slice(1).replace(/\.$/, '')}.` : null, statutory].filter(Boolean).join('\n\n');
+  const para = statutory;
   const m = body.match(/\n\s*(?:Sincerely|Respectfully|Regards|Best regards|Kind regards|Thank you)[,.]?\s*(?:\n|$)/i);
   return m ? `${body.slice(0, m.index).replace(/\s+$/, '')}\n\n${para}\n${body.slice(m.index)}` : `${body.replace(/\s+$/, '')}\n\n${para}`;
 }
