@@ -1,0 +1,65 @@
+{
+  "migration": "569_acc_routine_annie.sql",
+  "summary": "Routine ACC without the owner bottleneck (Ed 2026-11-18). Adds communities.acc_delegation (the written instrument under which Bedrock decides ACC applications) and sets it for Waterview Estates only (Guidelines 2016 §1.4.4.1-1.4.4.2). Replaces the ACC decision-authority trigger function: denials no longer need Ed's review; only Ed's two exceptions (approval_gate 'required': concrete additions, driveway modifications) do; Annie may approve or deny a routine case under the written delegation on a recorded review. All committee/Board and authority checks unchanged. No acc_decisions rows change.",
+  "requires": [
+    "541_acc_decision_authority_guard.sql",
+    "568_property_exclusion.sql"
+  ],
+  "preflight": [
+    {
+      "name": "Waterview Estates present, no delegation yet",
+      "sql": "SELECT count(*)::int FROM communities WHERE id = 'a0000000-0000-4000-8000-000000000001' AND name = 'Waterview Estates'",
+      "expect": 1
+    },
+    {
+      "name": "Waterview Guidelines (2016) on file for Waterview",
+      "sql": "SELECT count(*)::int FROM library_documents WHERE id = '6eeb8060-9b0a-4e88-b714-45f775a0442a' AND community_id = 'a0000000-0000-4000-8000-000000000001'",
+      "expect": 1
+    }
+  ],
+  "expected_changes": [
+    "communities gains acc_delegation (jsonb, nullable); Waterview Estates gets its delegation; every other community stays NULL.",
+    "acc_decisions_decision_authority_guard() replaced (same trigger): denials without Ed allowed; Ed exceptions (approval_gate required) need Ed; Annie routine approvals and denials under the written delegation allowed.",
+    "No rows added or deleted; no acc_decisions row changes."
+  ],
+  "objects": {
+    "added": [
+      "column:communities.acc_delegation"
+    ],
+    "changed": [
+      "function:acc_decisions_decision_authority_guard"
+    ],
+    "removed": []
+  },
+  "row_changes": {
+    "communities": 0,
+    "acc_decisions": 0
+  },
+  "protected": [
+    {
+      "table": "acc_decisions",
+      "order_by": "id"
+    },
+    {
+      "table": "acc_finalizations",
+      "order_by": "id"
+    }
+  ],
+  "verify": [
+    {
+      "name": "only Waterview has a delegation",
+      "sql": "SELECT count(*)::int FROM communities WHERE acc_delegation IS NOT NULL",
+      "expect": 1
+    },
+    {
+      "name": "Waterview delegation cites the Guidelines on file",
+      "sql": "SELECT count(*)::int FROM communities WHERE id = 'a0000000-0000-4000-8000-000000000001' AND acc_delegation->>'library_document_id' = '6eeb8060-9b0a-4e88-b714-45f775a0442a'",
+      "expect": 1
+    },
+    {
+      "name": "trigger function allows routine agent decisions",
+      "sql": "SELECT count(*)::int FROM pg_proc WHERE proname = 'acc_decisions_decision_authority_guard' AND prosrc LIKE '%routine_delegated%' AND prosrc NOT LIKE '%a denial needs Ed%'",
+      "expect": 1
+    }
+  ]
+}

@@ -2906,7 +2906,7 @@ app.get('/acc-review/decisions', async (req, res) => {
   // tag clears once Ed reviews and each case lands in the right section
   // (Pending Ed's approval / Submitted / Completed). Without them the tag was
   // computed from the request text alone and never cleared.
-  const WITH_AUTHORITY = `${WITH_CURRENT}, decision_record, owner_review, approval_gate, approval_gate_reason`;
+  const WITH_AUTHORITY = `${WITH_CURRENT}, decision_record, owner_review, approval_gate, approval_gate_reason, community_id, current_letter_body`;
   const run = async (cols) => {
     const { address, community, q, status, source } = req.query;
     let query = supabase
@@ -2941,9 +2941,13 @@ app.get('/acc-review/decisions', async (req, res) => {
     const DA = require('./lib/acc/decision_authority');
     // The authority internals (record, owner review) stay server-side; the list
     // gets the label and the computed section only.
-    const decisions = (data || []).map(({ decision_record, owner_review, approval_gate, approval_gate_reason, ...r }) => {
-      const a = DA.authorityFor({ ...r, decision_record, owner_review, approval_gate, approval_gate_reason });
-      const out = { ...r, queue_stage: DA.queueStage({ ...r, decision_record }, a) };
+    // Each community's written ACC delegation (migration 569): where one is on
+    // file, Annie's routine decision is ready to send without Ed (Ed 2026-11-18).
+    const delegations = await _accDelegations([...new Set((data || []).map((r) => r.community_id).filter(Boolean))]);
+    const decisions = (data || []).map(({ decision_record, owner_review, approval_gate, approval_gate_reason, current_letter_body, ...r }) => {
+      const row = { ...r, decision_record, owner_review, approval_gate, approval_gate_reason, current_letter_body, acc_delegation: delegations.get(r.community_id) || null };
+      const a = DA.authorityFor(row);
+      const out = { ...r, queue_stage: DA.queueStage(row, a) };
       return a.escalated && a.open ? { ...out, authority: { label: a.label, triggers: a.triggers } } : out;
     });
     res.json({ decisions });
@@ -3098,7 +3102,7 @@ app.get('/acc-review/decisions/:id/full', async (req, res) => {
     let finalization = null;
     try { finalization = await require('./lib/acc/finalized').finalizationFor(supabase, data); } catch (_) {}
     // Who may decide this case and what is still missing (Ed 2026-10-20).
-    const authority = require('./lib/acc/decision_authority').authorityFor(data);
+    const authority = require('./lib/acc/decision_authority').authorityFor({ ...data, acc_delegation: await _accDelegation(data.community_id) });
     // The community's instruments a decision may cite, and the authority basis
     // its last recorded decision used, so a standing delegation is entered once.
     authority.documents = await _accAuthorityDocuments(data.community_id);
@@ -3376,6 +3380,15 @@ app.post('/acc-review/decisions/:id/finalize', async (req, res) => {
         const docErr = await _accResolveAuthorityDocument(dec, rec);
         if (docErr) return res.status(409).json({ code: 'decision_record_invalid', error: `Decision record incomplete: ${docErr}. Nothing was sent or marked done.` });
         decRow = { ...dec, decision_record: rec };
+      } else if (isFinal && !DA.authorityFor(dec).record_valid) {
+        // ROUTINE ACC (Ed 2026-11-18): Annie's own determination on her current
+        // review, under the community's written delegation, is the decision.
+        // Built server-side only; the sender issues it and is stamped below.
+        // Ed's two exceptions, committee/Board matters and incomplete cases are
+        // refused inside annieDecisionFor and fall through to the gate below.
+        const annie = DA.annieDecisionFor(dec, await _accDelegation(dec.community_id));
+        if (annie.rec && annie.rec.outcome === decisionType) decRow = { ...dec, decision_record: annie.rec };
+        else if (annie.rec) return res.status(409).json({ code: 'decision_outcome_mismatch', error: `Annie's decision on this application is "${annie.rec.outcome.replace(/_/g, ' ')}", not "${decisionType.replace(/_/g, ' ')}". Staff never decide: send Annie's decision, or ask Annie to re-review. Nothing was sent.` });
       }
       const authz = DA.checkFinalDecision(decRow, { decisionType, texts: [bodyText], actor, requireIssuer: true });
       if (!authz.ok) return res.status(authz.status).json({ code: authz.code, error: authz.error, authority: authz.auth });
@@ -3808,6 +3821,18 @@ app.post('/acc-review/decisions/:id/redraft', express.json({ limit: '64kb' }), a
 // The governing instruments on file for a community: what a decision may cite
 // as its authority (a delegation, a declaration, guidelines, a resolution).
 const _ACC_AUTHORITY_CATEGORIES = ['declaration_ccrs', 'design_document', 'rules_and_regulations', 'resolutions_and_policies', 'bylaws', 'management_agreement'];
+// The community's written ACC delegation (communities.acc_delegation, migration
+// 569): the instrument under which Bedrock (Annie included) decides ACC
+// applications. null when none is on file, or before 569.
+async function _accDelegations(communityIds) {
+  const out = new Map();
+  if (!communityIds || !communityIds.length) return out;
+  const { data, error } = await supabase.from('communities').select('id, acc_delegation').in('id', communityIds);
+  if (error) { if (!/acc_delegation|does not exist/i.test(error.message || '')) console.warn('[acc-authority] delegation lookup failed:', error.message); return out; }
+  for (const c of data || []) if (c.acc_delegation && typeof c.acc_delegation === 'object') out.set(c.id, c.acc_delegation);
+  return out;
+}
+async function _accDelegation(communityId) { return (await _accDelegations(communityId ? [communityId] : [])).get(communityId) || null; }
 async function _accAuthorityDocuments(communityId) {
   if (!communityId) return [];
   const { data, error } = await supabase.from('library_documents').select('id, title, category, effective_date')
