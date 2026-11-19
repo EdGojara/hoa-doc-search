@@ -410,6 +410,7 @@ const CHECKS = [
   'tests/test_acc_letter_conditions.js',
   'tests/test_acc_decision_authority.js',
   'tests/test_acc_annie_issue.js',
+  'tests/test_acc_property_history.js',
   'tests/test_acc_intake_exceptions.js',
   'tests/test_acc_saved_drafts.js',
   'tests/test_acc_approval_queue.js',
