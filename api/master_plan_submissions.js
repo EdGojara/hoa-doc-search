@@ -375,6 +375,12 @@ async function loadSet(refs) {
 function setIssues(subs) {
   const out = [];
   for (const s of subs) {
+    // Already decided: a completed record, not an error. Pre-decision findings no longer apply.
+    // Duplicate-approval protection is enforced in POST /set/approve, not by this label.
+    if (!SET_STATUSES_OPEN.includes(s.status)) {
+      out.push({ ref: s.reference_number, severity: 'done', text: `${s.status.replace(/_/g, ' ').replace(/^./, (c) => c.toUpperCase())}${s.decided_at ? ' on ' + new Date(s.decided_at).toLocaleDateString('en-US', { timeZone: 'America/Chicago' }) : ''}${s.decided_by ? ' by ' + s.decided_by : ''}.` });
+      continue;
+    }
     const rv = (s.ai_extraction && s.ai_extraction.annie_review) || null;
     if (!Array.isArray(s.extracted_plans) || !s.extracted_plans.length) out.push({ ref: s.reference_number, severity: 'blocking', text: 'No plan/elevation list has been read from the drawings yet.' });
     if (!rv) out.push({ ref: s.reference_number, severity: 'blocking', text: 'Annie has not reviewed this plan yet.' });
@@ -382,7 +388,6 @@ function setIssues(subs) {
     // put in front of Ed as his decision, never a lock on his approval.
     if (rv && rv.recommendation && !/^approve/.test(rv.recommendation)) out.push({ ref: s.reference_number, severity: 'decision', text: `Annie recommends: ${rv.recommendation.replace(/_/g, ' ')}.` });
     for (const i of (rv && rv.issues) || []) if (i.severity === 'blocking') out.push({ ref: s.reference_number, severity: 'decision', text: i.text });
-    if (!SET_STATUSES_OPEN.includes(s.status)) out.push({ ref: s.reference_number, severity: 'blocking', text: `Already ${s.status}${s.decided_at ? ' on ' + String(s.decided_at).slice(0, 10) : ''}.` });
     // The drawings vs the portal entry and vs Annie's read: a mismatch is shown, not hidden.
     const proposed = (Array.isArray(s.plan_numbers_proposed) ? s.plan_numbers_proposed : []).map((x) => String(x).toUpperCase());
     const read = [...new Set((s.extracted_plans || []).map((p) => String(p.plan_number || '').toUpperCase()))];
@@ -417,7 +422,7 @@ router.get('/set', async (req, res) => {
       }
       items.push({
         id: s.id, reference_number: s.reference_number, title: s.submission_title, status: s.status, submitted_at: s.submitted_at,
-        decided_at: s.decided_at, decided_by: s.decided_by, plans: s.extracted_plans || [],
+        decided_at: s.decided_at, decided_by: s.decided_by, decision_notes: s.decision_notes || null, plans: s.extracted_plans || [],
         review: (s.ai_extraction && s.ai_extraction.annie_review) || null, files,
       });
     }
@@ -432,7 +437,8 @@ router.get('/set', async (req, res) => {
       recommendation: recs.every((r) => r === 'approve') ? 'approve' : recs.every((r) => /^approve/.test(r)) ? 'approve_with_conditions' : 'needs_attention',
       proposed_conditions: first.community && /still creek/i.test(first.community.name) ? SCR_STANDARD_CONDITIONS : [],
       proposed_to: [...new Set(subs.map((s) => s.submitter_email).filter(Boolean))],
-      ready: !issues.some((i) => i.severity === 'blocking'),
+      completed: subs.length > 0 && subs.every((x) => !SET_STATUSES_OPEN.includes(x.status)),
+      ready: !issues.some((i) => i.severity === 'blocking') && subs.every((x) => SET_STATUSES_OPEN.includes(x.status)),
     });
   } catch (err) {
     console.error('[master_plan_submissions] set load failed:', err.message);
@@ -452,6 +458,8 @@ router.post('/set/approve', express.json({ limit: '64kb' }), async (req, res) =>
     // Everything is checked before anything is approved.
     const subs = await loadSet(refs);
     if (subs.length !== refs.length) return res.status(409).json({ error: 'some submissions were not found', missing: refs.filter((r) => !subs.some((s) => s.reference_number === r)) });
+    const decided = subs.filter((x) => !SET_STATUSES_OPEN.includes(x.status));
+    if (decided.length) return res.status(409).json({ error: 'already decided', issues: decided.map((x) => ({ ref: x.reference_number, severity: 'blocking', text: 'Already ' + x.status + '.' })) });
     const blocking = setIssues(subs).filter((i) => i.severity === 'blocking');
     if (blocking.length) return res.status(409).json({ error: 'the set is not ready to approve', issues: blocking });
     const first = subs[0];
