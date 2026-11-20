@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Master plan set review</title>
+<link rel="stylesheet" href="/brand.css">
+<style>
+  body { margin: 0; font-family: Arial, Helvetica, sans-serif; background: #f4f6f9; color: #1a2230; }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 18px 16px 60px; }
+  h1 { font-size: 20px; margin: 0 0 4px; } .sub { color: #5b6573; margin-bottom: 14px; }
+  .card { background: #fff; border: 1px solid #dde2ea; border-radius: 10px; padding: 14px 16px; margin-bottom: 14px; }
+  .rec { font-size: 15px; font-weight: 700; } .rec.ok { color: #116a2e; } .rec.warn { color: #9a5b00; } .rec.bad { color: #a11; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid #eef1f5; vertical-align: top; }
+  th { color: #5b6573; font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: .03em; }
+  .pill { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 12px; background: #eef1f5; }
+  .pill.approve { background: #e3f4e8; color: #116a2e; } .pill.cond { background: #fff3dc; color: #8a5300; } .pill.no { background: #fde4e4; color: #a11; }
+  .issues li { margin: 4px 0; } .sev { font-weight: 700; } .sev.blocking { color: #a11; } .sev.check { color: #8a5300; }
+  details { margin-top: 6px; } summary { cursor: pointer; color: #0B1D34; font-weight: 600; }
+  textarea, input[type=text] { width: 100%; box-sizing: border-box; font: inherit; font-size: 13px; padding: 7px; border: 1px solid #c9d1dc; border-radius: 6px; }
+  textarea { min-height: 150px; } label { font-weight: 600; font-size: 13px; display: block; margin: 10px 0 4px; }
+  .actions { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-top: 14px; }
+  button.approve { background: #0B1D34; color: #fff; border: 0; border-radius: 8px; padding: 12px 22px; font-size: 15px; font-weight: 700; cursor: pointer; }
+  button.approve:disabled { background: #9aa5b1; cursor: not-allowed; }
+  .msg { font-size: 14px; } .msg.ok { color: #116a2e; } .msg.err { color: #a11; }
+  a { color: #0B4FA8; }
+</style>
+</head><body><div class="wrap">
+  <h1 id="title">Master plan set review</h1>
+  <div class="sub" id="sub">Loading&hellip;</div>
+
+  <div class="card"><div id="rec" class="rec"></div><div id="recNote" style="margin-top:4px;color:#5b6573;font-size:13px;"></div></div>
+
+  <div class="card"><h3 style="margin:0 0 8px;font-size:15px;">Plans in this set</h3>
+    <table><thead><tr><th>Ref</th><th>Plan</th><th>Elevations</th><th>Sq ft</th><th>Stories</th><th>Annie</th><th>Drawings</th></tr></thead><tbody id="rows"></tbody></table>
+    <div id="reviews"></div>
+  </div>
+
+  <div class="card"><h3 style="margin:0 0 8px;font-size:15px;">Needs your attention</h3><ul class="issues" id="issues"></ul></div>
+
+  <div class="card"><h3 style="margin:0 0 4px;font-size:15px;">Approve the set</h3>
+    <div style="color:#5b6573;font-size:13px;">Approving adds every plan and elevation above to the community&#39;s approved catalog, issues one approval letter for the set, and Annie emails it with links to the approved drawings. Nothing happens until you press Approve.</div>
+    <label for="cond">Conditions of approval (one per line; leave empty for an unconditional approval)</label>
+    <textarea id="cond"></textarea>
+    <label for="to">To (builder)</label><input type="text" id="to">
+    <label for="cc">Cc (builder and developer contacts)</label><input type="text" id="cc">
+    <div class="actions"><button class="approve" id="approveBtn" disabled>Approve all plans and send</button><span class="msg" id="msg"></span></div>
+  </div>
+</div>
+<script>
+(function () {
+  var qs = new URLSearchParams(location.search);
+  var refs = (qs.get('refs') || '').trim();
+  var esc = function (s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); };
+  var pill = function (r) { if (!r) return '<span class="pill no">not reviewed</span>'; var c = r === 'approve' ? 'approve' : /^approve/.test(r) ? 'cond' : 'no'; return '<span class="pill ' + c + '">' + esc(r.replace(/_/g, ' ')) + '</span>'; };
+  var data = null;
+  function load() {
+    if (!refs) { document.getElementById('sub').textContent = 'No submissions selected (add ?refs=REF,REF to the address).'; return; }
+    fetch('/api/master-plan-submissions/set?refs=' + encodeURIComponent(refs), { credentials: 'same-origin' })
+      .then(function (r) { return r.json().then(function (j) { if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status)); return j; }); })
+      .then(render)
+      .catch(function (e) { document.getElementById('sub').textContent = 'Could not load: ' + e.message; });
+  }
+  function render(j) {
+    data = j;
+    var names = [];
+    j.items.forEach(function (i) { (i.plans || []).forEach(function (p) { if (p.plan_name && names.indexOf(p.plan_name) < 0) names.push(p.plan_name); }); });
+    document.getElementById('title').textContent = (j.builder ? j.builder.company_name : 'Builder') + ' master plans — ' + (j.community ? j.community.name : '');
+    document.getElementById('sub').textContent = j.items.length + ' submissions, ' + names.length + ' plans, submitted ' + (j.items[0] && j.items[0].submitted_at ? new Date(j.items[0].submitted_at).toLocaleDateString('en-US') : '');
+    var rec = document.getElementById('rec');
+    rec.className = 'rec ' + (j.ready ? (j.recommendation === 'approve' ? 'ok' : 'warn') : 'bad');
+    rec.textContent = 'Annie recommends: ' + (j.recommendation === 'approve' ? 'approve' : j.recommendation === 'approve_with_conditions' ? 'approve with conditions' : 'needs attention before approval');
+    document.getElementById('recNote').textContent = j.ready ? 'No blocking issues. Review the drawings and the items below, then approve.' : 'There are blocking items below; the set cannot be approved until they are resolved.';
+    var rows = '', reviews = '';
+    j.items.forEach(function (i) {
+      var els = [], sq = [], st = [];
+      (i.plans || []).forEach(function (p) { if (els.indexOf(p.elevation) < 0) els.push(p.elevation); if (p.square_footage && sq.indexOf(p.square_footage) < 0) sq.push(p.square_footage); if (p.stories && st.indexOf(p.stories) < 0) st.push(p.stories); });
+      var nm = (i.plans && i.plans[0] && i.plans[0].plan_name) || i.title;
+      var num = (i.plans && i.plans[0] && i.plans[0].plan_number) || '';
+      rows += '<tr><td>' + esc(i.reference_number) + '<br><span class="pill">' + esc(i.status) + '</span></td><td><b>' + esc(nm) + '</b><br>' + esc(num) + '</td><td>' + esc(els.join(', ')) + '</td><td>' + esc(sq.join(' / ')) + '</td><td>' + esc(st.join(', ')) + '</td><td>' + pill(i.review && i.review.recommendation) + '</td><td>' + (i.files || []).map(function (f) { return '<a href="' + esc(f.url) + '" target="_blank" rel="noopener">' + esc(f.name) + '</a>'; }).join('<br>') + '</td></tr>';
+      if (i.review) {
+        reviews += '<details><summary>' + esc(nm) + ': Annie&#39;s review</summary><p>' + esc(i.review.summary || '') + '</p><ul>' +
+          (i.review.checks || []).map(function (c) { return '<li>' + esc(c.rule) + ': <b>' + esc(c.result) + '</b>' + (c.evidence ? ' — ' + esc(c.evidence) : '') + '</li>'; }).join('') + '</ul>' +
+          ((i.review.issues || []).length ? '<div><b>Items noted</b><ul>' + i.review.issues.map(function (x) { return '<li><span class="sev ' + esc(x.severity) + '">' + esc(x.severity) + '</span>: ' + esc(x.text) + '</li>'; }).join('') + '</ul></div>' : '') + '</details>';
+      }
+    });
+    document.getElementById('rows').innerHTML = rows;
+    document.getElementById('reviews').innerHTML = reviews;
+    var iss = j.issues || [];
+    document.getElementById('issues').innerHTML = iss.length ? iss.map(function (x) { return '<li><span class="sev ' + esc(x.severity) + '">' + (x.severity === 'blocking' ? 'Blocking' : 'Check') + '</span> ' + esc(x.ref) + ': ' + esc(x.text) + '</li>'; }).join('') : '<li>Nothing blocking. Annie&#39;s per-plan notes are folded into the conditions below.</li>';
+    document.getElementById('cond').value = (j.proposed_conditions || []).join('\n');
+    document.getElementById('to').value = (j.proposed_to || []).join(', ');
+    document.getElementById('cc').value = qs.get('cc') || '';
+    var btn = document.getElementById('approveBtn');
+    btn.disabled = !j.ready || j.items.every(function (i) { return i.status !== 'received' && i.status !== 'under_review' && i.status !== 'info_requested'; });
+  }
+  document.getElementById('approveBtn').addEventListener('click', function () {
+    if (!data) return;
+    var split = function (v) { return String(v || '').split(/[\s,;]+/).map(function (x) { return x.trim(); }).filter(Boolean); };
+    var conds = document.getElementById('cond').value.split(/\n+/).map(function (x) { return x.trim(); }).filter(Boolean);
+    var to = split(document.getElementById('to').value), cc = split(document.getElementById('cc').value);
+    if (!to.length) { msg('Add at least one recipient.', true); return; }
+    var n = data.items.length;
+    if (!window.confirm('Approve all ' + n + ' submissions' + (conds.length ? ' with ' + conds.length + ' conditions' : '') + ' and have Annie send the approval letter to ' + to.concat(cc).join(', ') + '?')) return;
+    var btn = document.getElementById('approveBtn'); btn.disabled = true; msg('Approving and sending…');
+    fetch('/api/master-plan-submissions/set/approve', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ refs: data.items.map(function (i) { return i.reference_number; }), conditions: conds, to: to, cc: cc }) })
+      .then(function (r) { return r.json().then(function (j) { if (!r.ok) throw new Error(j.error + (j.issues ? ': ' + j.issues.map(function (x) { return x.ref + ' ' + x.text; }).join('; ') : '')); return j; }); })
+      .then(function (j) { msg('Approved ' + j.results.length + ' submissions. Annie sent the approval letter to ' + j.emailed_to.concat(j.cc || []).join(', ') + '.', false, true); load(); })
+      .catch(function (e) { msg('Not completed: ' + e.message, true); btn.disabled = false; });
+  });
+  function msg(t, err, ok) { var m = document.getElementById('msg'); m.textContent = t; m.className = 'msg' + (err ? ' err' : ok ? ' ok' : ''); }
+  load();
+})();
+</script>
+</body></html>

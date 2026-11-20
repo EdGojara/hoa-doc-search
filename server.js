@@ -1148,6 +1148,10 @@ app.use('/api/newsletters', newslettersRouter);
 
 const masterPlanSubmissionsRouter = require('./api/master_plan_submissions');
 app.use('/api/master-plan-submissions', masterPlanSubmissionsRouter);
+// One-screen review + one-action approval of a builder's master plan set (Ed 2026-11-20).
+app.get('/admin/master-plan-submissions/set', (req, res) => {
+  res.sendFile(require('path').join(__dirname, 'public', 'master-plan-set.html'));
+});
 app.get('/admin/master-plan-submissions', (req, res) => {
   res.sendFile(require('path').join(__dirname, 'public', 'master-plan-submissions-admin.html'));
 });
