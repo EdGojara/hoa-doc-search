@@ -99,7 +99,7 @@
     fetch('/api/master-plan-submissions/set/approve', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ refs: data.items.map(function (i) { return i.reference_number; }), conditions: conds }) })
       .then(function (r) { return r.json().then(function (j) { if (!r.ok) throw new Error(j.error + (j.issues ? ': ' + j.issues.map(function (x) { return x.ref + ' ' + x.text; }).join('; ') : '')); return j; }); })
-      .then(function (j) { msg('Approved ' + j.results.length + ' submissions. Letters generated and the applicant notified through the normal workflow.', false, true); load(); })
+      .then(function (j) { var bad = j.results.filter(function (x) { return !x.notified; }); msg('Approved ' + j.results.length + ' submissions; letters generated. ' + (bad.length ? 'Notification NOT confirmed for: ' + bad.map(function (x) { return x.ref; }).join(', ') : 'Applicant notified for all ' + j.results.length + '.'), !!bad.length, !bad.length); load(); })
       .catch(function (e) { msg('Not completed: ' + e.message, true); btn.disabled = false; });
   });
   function msg(t, err, ok) { var m = document.getElementById('msg'); m.textContent = t; m.className = 'msg' + (err ? ' err' : ok ? ' ok' : ''); }
