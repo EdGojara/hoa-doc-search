@@ -2641,6 +2641,15 @@ router.get('/balance', async (req, res) => {
         name: community.name,
         slug: community.slug,
         hoa_legal_name: community.hoa_legal_name,
+        // Where to mail a check: the association's lockbox / PO Box if it has
+        // one, else c/o Bedrock's office (same source as the printed statement).
+        remit: await (async () => {
+          const { data: pc, error: pe } = await supabase.from('communities').select('name, legal_name, hoa_legal_name, letter_pay_to_name, letter_pay_to_address').eq('id', prop.community_id).maybeSingle();
+          if (pe) console.warn('[portal balance] pay-to lookup failed:', pe.message);
+          const src = pc || community;
+          const r = require('../lib/payments/remit_address').remitTo(src, src.hoa_legal_name || src.legal_name || src.name);
+          return { name: r.name, block: r.block };
+        })(),
       },
       status: statusKey,
       current: current ? {
