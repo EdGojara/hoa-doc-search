@@ -442,10 +442,7 @@ router.post('/set/approve', express.json({ limit: '64kb' }), async (req, res) =>
     const b = req.body || {};
     const refs = setRefs(Array.isArray(b.refs) ? b.refs.join(',') : b.refs);
     const conditions = (Array.isArray(b.conditions) ? b.conditions : []).map((c) => String(c).trim()).filter(Boolean);
-    const to = [...new Set((b.to || []).map((x) => String(x).trim().toLowerCase()).filter(Boolean))];
-    const cc = [...new Set((b.cc || []).map((x) => String(x).trim().toLowerCase()).filter(Boolean))].filter((x) => !to.includes(x));
     if (!refs.length) return res.status(400).json({ error: 'refs_required' });
-    if (!to.length || [...to, ...cc].some((x) => !EMAIL_RX.test(x))) return res.status(400).json({ error: 'valid recipient emails are required' });
 
     // Everything is checked before anything is approved.
     const subs = await loadSet(refs);
@@ -459,71 +456,20 @@ router.post('/set/approve', express.json({ limit: '64kb' }), async (req, res) =>
     const action = conditions.length ? 'approve_with_conditions' : 'approve';
     const results = [];
     for (const s of subs) {
-      const r = await finalizeSubmission(s.id, { action, approved_plans: s.extracted_plans, conditions: conditions.length ? conditions : null, decided_by: decidedBy, notify: false });
+      const r = await finalizeSubmission(s.id, { action, approved_plans: s.extracted_plans, conditions: conditions.length ? conditions : null, decided_by: decidedBy, notify: true });
       results.push({ ref: s.reference_number, status: r.status, plans: (r.created_master_plan_ids || []).length });
     }
 
-    // One combined letter for the set.
-    const allPlans = subs.flatMap((s) => s.extracted_plans);
-    const names = [...new Set(allPlans.map((p) => p.plan_name).filter(Boolean))];
-    const setRef = `${subs[0].reference_number} to ${subs[subs.length - 1].reference_number}`;
-    const title = String(b.title || '').trim() || `${names.length} master plans (${names.join(', ')})`;
-    const pdf = await renderMasterPlanLetterPdfBuffer({
-      community: first.community.name, builder_company_name: first.builder_company.company_name,
-      builder_contact_name: subs[0].submitter_name || first.builder_company.primary_contact_name || '',
-      builder_mailing_address: first.builder_company.mailing_address || '',
-      submission_title: title, reference_number: setRef, approved_plans: allPlans,
-      decision_type: conditions.length ? 'approved_with_conditions' : 'approved', conditions: conditions.length ? conditions : null, signer_name: decidedBy,
-    });
-    const year = new Date().getFullYear();
-    const letterName = `${subs[0].reference_number}_to_${subs[subs.length - 1].reference_number.split('-').pop()}_approval.pdf`;
-    const letterPath = `builders/${first.community.slug}/master-plan-submissions/${year}/${letterName}`;
-    const up = await supabase.storage.from(STORAGE_BUCKET_LETTER).upload(letterPath, pdf, { contentType: 'application/pdf', upsert: true });
-    if (up.error) throw new Error('combined letter upload: ' + up.error.message);
-
-    // Approved drawings: linked (the full set is far over email size limits).
-    const links = [];
-    for (const s of subs) {
-      const { data: atts } = await supabase.from('master_plan_submission_attachments').select('storage_bucket, storage_path, original_filename').eq('submission_id', s.id).order('uploaded_at');
-      for (const a of atts || []) {
-        const { data: sg } = await supabase.storage.from(a.storage_bucket || STORAGE_BUCKET).createSignedUrl(a.storage_path, 60 * 60 * 24 * 30);
-        if (sg && sg.signedUrl) links.push({ name: a.original_filename, url: sg.signedUrl });
-      }
-    }
-    const g = require('../lib/email/graph_send');
-    const { buildPersonaEmail } = require('../lib/email/persona_signature');
-    const subject = `${first.community.name} – ${first.builder_company.company_name} master plans approved (${setRef})`;
-    const body = [
-      'Hello,',
-      `The ${first.community.name} Architectural Review Committee has approved the following ${first.builder_company.company_name} master plans${conditions.length ? ', subject to the conditions in the attached letter' : ''}:`,
-      names.map((n) => `• ${n}: elevations ${[...new Set(allPlans.filter((p) => p.plan_name === n).map((p) => p.elevation))].join(', ')}`).join('\n'),
-      'The approval letter is attached. The approved drawings are available at the links below for the next 30 days.',
-      links.map((l) => `${l.name}: ${l.url}`).join('\n'),
-      'Lot submissions that use these plans can now be made through the builder portal.',
-      'Thank you,',
-    ].join('\n\n');
-    const built = buildPersonaEmail('annie', body, first.community.name);
-    const sent = await g.sendAs({
-      from: g.ANNIE_MAILBOX, to: to.join(','), cc: cc.length ? cc.join(',') : undefined, subject, html: built.html,
-      attachments: [...(built.attachments || []), { '@odata.type': '#microsoft.graph.fileAttachment', name: letterName, contentType: 'application/pdf', contentBytes: pdf.toString('base64') }],
-      communityId: first.community_id,
-    });
-    if (!sent || !sent.sent) return res.status(502).json({ error: 'plans approved but the email was not accepted', results, letter_path: letterPath, send: sent });
-
+    // Each applicant is notified through the normal decision notification (finalizeSubmission,
+    // notify: true): the standard letter on the submission, its portal record and the builder
+    // email. The set screen adds no letter and no email of its own (Ed 2026-11-20).
     const now = new Date().toISOString();
-    const log = await supabase.from('email_messages').insert({
-      mailbox: g.ANNIE_MAILBOX, direction: 'outbound', sender_email: g.ANNIE_MAILBOX, sender_name: 'Annie Reeves (Bedrock AI)',
-      recipients: [...to, ...cc], subject, body_preview: body.slice(0, 400), body_full: body, classification: 'outbound_reply', classification_confidence: 'high',
-      persona: 'annie', community_id: first.community_id, triage_status: 'handled', record_ownership: 'association_record', reviewed_at: now, received_at: now,
-      ai_summary: `Master plan set ${setRef} approved by ${decidedBy}; approval letter sent to ${[...to, ...cc].join(', ')}`,
-    });
-    if (log.error) console.warn('[master_plan_submissions] set email log failed:', log.error.message);
     for (const s of subs) {
-      const ax = { ...(s.ai_extraction || {}), set_decision: { set: setRef, approved_by: decidedBy, approved_at: now, letter_path: letterPath, emailed_to: to, cc, internet_message_id: sent.internetMessageId || null } };
+      const ax = { ...(s.ai_extraction || {}), set_decision: { set_refs: refs, approved_by: decidedBy, approved_by_email: owner.email || null, approved_at: now, via: 'master plan set review (one action, standard finalize per submission)', conditions } };
       const u = await supabase.from('master_plan_submissions').update({ ai_extraction: ax }).eq('id', s.id);
       if (u.error) console.warn('[master_plan_submissions] set record failed:', s.reference_number, u.error.message);
     }
-    res.json({ ok: true, results, letter_path: letterPath, emailed_to: to, cc, internet_message_id: sent.internetMessageId || null });
+    res.json({ ok: true, results });
   } catch (err) {
     if (err.statusCode) return res.status(err.statusCode).json({ error: err.message });
     console.error('[master_plan_submissions] set approve failed:', err.message);

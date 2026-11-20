@@ -38,12 +38,10 @@
   <div class="card"><h3 style="margin:0 0 8px;font-size:15px;">Needs your attention</h3><ul class="issues" id="issues"></ul></div>
 
   <div class="card"><h3 style="margin:0 0 4px;font-size:15px;">Approve the set</h3>
-    <div style="color:#5b6573;font-size:13px;">Approving adds every plan and elevation above to the community&#39;s approved catalog, issues one approval letter for the set, and Annie emails it with links to the approved drawings. Nothing happens until you press Approve.</div>
+    <div style="color:#5b6573;font-size:13px;">Approving runs the normal decision for each submission: the application is marked approved with the conditions below, the standard approval letter is generated, the applicant is notified through the usual builder notification and portal, and the plans are recorded as approved for this community. Nothing happens until you press Approve.</div>
     <label for="cond">Conditions of approval (one per line; leave empty for an unconditional approval)</label>
     <textarea id="cond"></textarea>
-    <label for="to">To (builder)</label><input type="text" id="to">
-    <label for="cc">Cc (builder and developer contacts)</label><input type="text" id="cc">
-    <div class="actions"><button class="approve" id="approveBtn" disabled>Approve all plans and send</button><span class="msg" id="msg"></span></div>
+    <div class="actions"><button class="approve" id="approveBtn" disabled>Approve all plans</button><span class="msg" id="msg"></span></div>
   </div>
 </div>
 <script>
@@ -88,8 +86,6 @@
     var iss = j.issues || [];
     document.getElementById('issues').innerHTML = iss.length ? iss.map(function (x) { return '<li><span class="sev ' + esc(x.severity) + '">' + (x.severity === 'blocking' ? 'Blocking' : 'Check') + '</span> ' + esc(x.ref) + ': ' + esc(x.text) + '</li>'; }).join('') : '<li>Nothing blocking. Annie&#39;s per-plan notes are folded into the conditions below.</li>';
     document.getElementById('cond').value = (j.proposed_conditions || []).join('\n');
-    document.getElementById('to').value = (j.proposed_to || []).join(', ');
-    document.getElementById('cc').value = qs.get('cc') || '';
     var btn = document.getElementById('approveBtn');
     btn.disabled = !j.ready || j.items.every(function (i) { return i.status !== 'received' && i.status !== 'under_review' && i.status !== 'info_requested'; });
   }
@@ -97,15 +93,13 @@
     if (!data) return;
     var split = function (v) { return String(v || '').split(/[\s,;]+/).map(function (x) { return x.trim(); }).filter(Boolean); };
     var conds = document.getElementById('cond').value.split(/\n+/).map(function (x) { return x.trim(); }).filter(Boolean);
-    var to = split(document.getElementById('to').value), cc = split(document.getElementById('cc').value);
-    if (!to.length) { msg('Add at least one recipient.', true); return; }
     var n = data.items.length;
-    if (!window.confirm('Approve all ' + n + ' submissions' + (conds.length ? ' with ' + conds.length + ' conditions' : '') + ' and have Annie send the approval letter to ' + to.concat(cc).join(', ') + '?')) return;
+    if (!window.confirm('Approve all ' + n + ' submissions' + (conds.length ? ' with ' + conds.length + ' conditions' : '') + '? Each applicant will be notified through the normal workflow.')) return;
     var btn = document.getElementById('approveBtn'); btn.disabled = true; msg('Approving and sending…');
     fetch('/api/master-plan-submissions/set/approve', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ refs: data.items.map(function (i) { return i.reference_number; }), conditions: conds, to: to, cc: cc }) })
+      body: JSON.stringify({ refs: data.items.map(function (i) { return i.reference_number; }), conditions: conds }) })
       .then(function (r) { return r.json().then(function (j) { if (!r.ok) throw new Error(j.error + (j.issues ? ': ' + j.issues.map(function (x) { return x.ref + ' ' + x.text; }).join('; ') : '')); return j; }); })
-      .then(function (j) { msg('Approved ' + j.results.length + ' submissions. Annie sent the approval letter to ' + j.emailed_to.concat(j.cc || []).join(', ') + '.', false, true); load(); })
+      .then(function (j) { msg('Approved ' + j.results.length + ' submissions. Letters generated and the applicant notified through the normal workflow.', false, true); load(); })
       .catch(function (e) { msg('Not completed: ' + e.message, true); btn.disabled = false; });
   });
   function msg(t, err, ok) { var m = document.getElementById('msg'); m.textContent = t; m.className = 'msg' + (err ? ' err' : ok ? ' ok' : ''); }
