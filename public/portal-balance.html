@@ -663,6 +663,18 @@ function renderHero(ctx) {
     </div>`;
 }
 
+// Where to mail a check (Ed 2026-11-20): the server sends the association
+// lockbox / PO Box when it has one, else c/o Bedrock at the office address
+// (lib/payments/remit_address, the same source as the printed statement).
+// The fallback below is only for demo mode, which has no server data.
+function remitLine(ctx) {
+  const block = ctx.community && ctx.community.remit && ctx.community.remit.block;
+  const lines = block
+    ? String(block).split(/\n+/).map((l) => l.trim()).filter(Boolean)
+    : [(ctx.community && ctx.community.hoa_legal_name) || 'Your association', 'c/o Bedrock Association Management', '1601 Industrial Blvd, Suite 2880', 'Sugar Land, TX 77478'];
+  return lines.map((l, i) => i === 0 ? `<strong style="color: var(--ink);">${escapeHtml(l)}</strong>` : escapeHtml(l)).join(', ');
+}
+
 function renderPayCard(ctx) {
   // Real online payment via the association's Stripe Connect account. The button
   // starts a secure checkout; if online payment isn't live yet for this community
@@ -677,7 +689,7 @@ function renderPayCard(ctx) {
       <button class="pay-btn" onclick="payOnline(this)" data-community="${escapeHtml(cid)}" data-property="${escapeHtml(pid)}" ${(!cid || !pid) ? 'style="display:none;"' : ''}>💳 Pay online →</button>
       <div id="payMsg" style="display:none; margin-top:10px; font-size:13px; color: var(--ink);"></div>
       <p style="margin-top:14px; font-size:12.5px; color: var(--ink-faint);">
-        Or mail a check to: <strong style="color: var(--ink);">${escapeHtml(ctx.community?.hoa_legal_name || 'Your association')}</strong>, c/o Bedrock Association Management, 12808 W Airport Blvd Ste 253, Sugar Land, TX 77478.
+        Or mail a check to: ${remitLine(ctx)}.
       </p>
     </div>`;
 }
