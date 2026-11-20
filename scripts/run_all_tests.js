@@ -418,6 +418,7 @@ const CHECKS = [
   'tests/test_acc_saved_drafts.js',
   'tests/test_acc_approval_queue.js',
   'tests/test_acc_attachment_guard.js',
+  'tests/test_master_plan_notice_guard.js',
   'tests/test_onboarding_engine.js',
   'tests/test_onboarding_source_discrepancy.js',
   'tests/test_onboarding_conversion_primitives.js',
