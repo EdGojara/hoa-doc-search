@@ -346,9 +346,12 @@ const EMAIL_RX = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 const SCR_STANDARD_CONDITIONS = [
   'Front-loaded garages shall not protrude more than 15 feet from the front plane of the main house (Design Guidelines, Garages); each lot submission shall show this dimension.',
   'Main roof pitch shall be between 5:12 and 12:12, patio and shed roofs at least 3:12, with earth-tone shingles and fascia at least 6 inches nominal (Design Guidelines, Roof Form).',
-  'First-floor front and side walls shall be brick, stone or stucco; on two-story homes the front elevation shall be predominantly masonry with a corner wrap of at least 2 feet (Design Guidelines, Exterior Materials).',
+  'First-floor front and side walls shall be brick, stone or stucco (box-out windows excepted); siding is not permitted on those walls. No more than three primary exterior materials (Design Guidelines, Exterior Materials).',
+  'On two-story homes the front elevation shall be predominantly brick, stone or stucco, and second-story front masonry shall wrap each corner at least 2 feet onto the side wall (Design Guidelines, Exterior Materials).',
+  'Newfield (N038R) and Tobin (N040R), all elevations: the submitted drawings do not dimension the masonry corner wrap. The homes as built shall include the 2-foot minimum corner wrap, and any second-floor side-wall siding shown on the Newfield C4 and D4 elevations shall begin no closer than 2 feet from the front corner. Each lot submission for these plans shall show the corner-wrap dimension.',
   'Roof penetrations shall not be visible from the front street, and reflective glass is prohibited (Design Guidelines).',
   'Each lot submission shall identify the approved plan, elevation, and exterior materials and colors.',
+  'This approval does not waive any requirement of the Declaration or the Design Guidelines. Final construction on each lot shall comply with them, including the masonry, siding and corner-wrap requirements above, whether or not a detail is shown on the master plan drawings.',
 ];
 
 function setRefs(raw) {
