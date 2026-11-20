@@ -457,7 +457,7 @@ router.post('/set/approve', express.json({ limit: '64kb' }), async (req, res) =>
     const results = [];
     for (const s of subs) {
       const r = await finalizeSubmission(s.id, { action, approved_plans: s.extracted_plans, conditions: conditions.length ? conditions : null, decided_by: decidedBy, notify: true });
-      results.push({ ref: s.reference_number, status: r.status, plans: (r.created_master_plan_ids || []).length });
+      results.push({ ref: s.reference_number, status: r.status, plans: (r.created_master_plan_ids || []).length, notified: !!(r.notification && r.notification.ok), notification_error: (r.notification && r.notification.error) || null });
     }
 
     // Each applicant is notified through the normal decision notification (finalizeSubmission,
@@ -465,7 +465,8 @@ router.post('/set/approve', express.json({ limit: '64kb' }), async (req, res) =>
     // email. The set screen adds no letter and no email of its own (Ed 2026-11-20).
     const now = new Date().toISOString();
     for (const s of subs) {
-      const ax = { ...(s.ai_extraction || {}), set_decision: { set_refs: refs, approved_by: decidedBy, approved_by_email: owner.email || null, approved_at: now, via: 'master plan set review (one action, standard finalize per submission)', conditions } };
+      const { data: cur } = await supabase.from('master_plan_submissions').select('ai_extraction').eq('id', s.id).maybeSingle();
+      const ax = { ...((cur && cur.ai_extraction) || {}), set_decision: { set_refs: refs, approved_by: decidedBy, approved_by_email: owner.email || null, approved_at: now, via: 'master plan set review (one action, standard finalize per submission)', conditions } };
       const u = await supabase.from('master_plan_submissions').update({ ai_extraction: ax }).eq('id', s.id);
       if (u.error) console.warn('[master_plan_submissions] set record failed:', s.reference_number, u.error.message);
     }
@@ -773,16 +774,19 @@ async function finalizeSubmission(id, opts = {}) {
     .eq('id', submission.id);
   if (upErr) throw new Error('decision record not saved: ' + upErr.message);
 
+  let notification = null;
   if (notify) {
-    // Fire-and-forget email notification to the builder with the letter link.
-    (async () => {
+    // The applicant's decision email, with the letter link. Awaited and its
+    // result recorded on the submission (Ed 2026-11-20: verify each approval
+    // was actually delivered); a failure never undoes the decision.
+    await (async () => {
       try {
         const { sendEmail, isConfigured } = require('../lib/notifications/email');
-        if (!isConfigured()) return;
+        if (!isConfigured()) { notification = { ok: false, error: 'email not configured' }; return; }
         const subjBase = responseType === 'denied' ? 'Update on master plan submission'
                        : responseType === 'approved_with_conditions' ? 'Master plan approval (with conditions)'
                        : 'Master plan approved';
-        await sendEmail({
+        const sent = await sendEmail({
           to: submission.submitter_email,
           subject: `${subjBase} — ${submission.reference_number}`,
           html: `<p>The ${submission.community.name} Architectural Control Committee has issued a decision on your master plan submission (${submission.reference_number}).</p>
@@ -792,13 +796,18 @@ async function finalizeSubmission(id, opts = {}) {
                 : ''}</p>`,
           text: `Decision issued for master plan submission ${submission.reference_number}. ${signedUrl ? 'Letter: ' + signedUrl : ''}`,
         });
+        notification = { ok: !!(sent && sent.ok), to: submission.submitter_email, vendor: sent && sent.vendor, vendor_message_id: (sent && sent.vendor_message_id) || null, error: (sent && sent.error) || null, at: new Date().toISOString() };
       } catch (e) {
-        console.warn('[master_plan_submissions] decision email failed:', e.message);
+        notification = { ok: false, to: submission.submitter_email, error: e.message, at: new Date().toISOString() };
       }
+      if (!notification.ok) console.warn('[master_plan_submissions] decision email failed:', submission.reference_number, notification.error);
+      const { data: cur } = await supabase.from('master_plan_submissions').select('ai_extraction').eq('id', submission.id).maybeSingle();
+      const rec = await supabase.from('master_plan_submissions').update({ ai_extraction: { ...((cur && cur.ai_extraction) || {}), decision_notification: notification } }).eq('id', submission.id);
+      if (rec.error) console.warn('[master_plan_submissions] notification record failed:', rec.error.message);
     })();
   }
 
-  return { submission, status: finalStatus, letter_pdf_path: letterPath, letter_signed_url: signedUrl, created_master_plan_ids: createdMasterPlanIds };
+  return { submission, status: finalStatus, letter_pdf_path: letterPath, letter_signed_url: signedUrl, created_master_plan_ids: createdMasterPlanIds, notification };
 }
 
 router.post('/:id/finalize', express.json({ limit: '256kb' }), async (req, res) => {
