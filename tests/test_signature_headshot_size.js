@@ -72,7 +72,7 @@ for (const persona of personas) {
     const a = attachments.filter((x) => x.contentId === 'headshot');
     assert.strictEqual(a.length, 1);
     assert.strictEqual(a[0].isInline, true);
-    assert.strictEqual(a[0].contentType, 'image/jpeg');
+    assert.strictEqual(a[0].contentType, 'image/png');
     assert.strictEqual(a[0]['@odata.type'], '#microsoft.graph.fileAttachment');
   });
 
@@ -81,7 +81,17 @@ for (const persona of personas) {
     const d = dims(buf);
     assert.strictEqual(d.w, d.h, 'aspect ratio');
     assert.ok(d.w >= 100 && d.w <= HEADSHOT_ASSET_PX, persona + ' embeds ' + d.w + 'px');
-    assert.ok(buf.length < 20 * 1024, persona + ' embeds ' + buf.length + ' bytes');
+    assert.ok(buf.length < 48 * 1024, persona + ' embeds ' + buf.length + ' bytes');
+  });
+
+  check(persona + ': headshot is a circle (transparent corners, opaque centre)', () => {
+    const { createCanvas, Image } = require('canvas');
+    const img = new Image(); img.src = Buffer.from(attachments.find((x) => x.contentId === 'headshot').contentBytes, 'base64');
+    const c = createCanvas(img.width, img.height); const ctx = c.getContext('2d'); ctx.drawImage(img, 0, 0);
+    const alpha = (x, y) => ctx.getImageData(x, y, 1, 1).data[3];
+    const n = img.width - 1;
+    for (const [x, y] of [[0, 0], [n, 0], [0, n], [n, n], [4, 4]]) assert.strictEqual(alpha(x, y), 0, 'corner ' + x + ',' + y + ' not transparent');
+    for (const [x, y] of [[n >> 1, n >> 1], [n >> 1, 3], [3, n >> 1], [n >> 1, n - 3]]) assert.strictEqual(alpha(x, y), 255, 'inside ' + x + ',' + y + ' not opaque');
   });
 }
 
