@@ -8933,7 +8933,7 @@ app.post('/api/nominations/cycles/:id/annual-meeting-notice', async (req, res) =
     const escAssoc = String(assocLegal).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     const pageFooterHtml = `
       <div>${escAssoc} &nbsp;|&nbsp; c/o Bedrock Association Management, LLC</div>
-      <div>12808 W Airport Blvd, Ste 253, Sugar Land, TX 77478 &nbsp;|&nbsp; (832) 588-2485 &nbsp;|&nbsp; bedrocktx.com</div>
+      <div>${BRAND.service.addressInline} &nbsp;|&nbsp; ${BRAND.service.phone} &nbsp;|&nbsp; ${BRAND.service.website}</div>
     `;
     const buf = await _renderHtmlToPdf(html, { pageNumbers: true, pageFooterHtml });
 
