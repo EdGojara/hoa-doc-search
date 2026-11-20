@@ -375,8 +375,10 @@ function setIssues(subs) {
     const rv = (s.ai_extraction && s.ai_extraction.annie_review) || null;
     if (!Array.isArray(s.extracted_plans) || !s.extracted_plans.length) out.push({ ref: s.reference_number, severity: 'blocking', text: 'No plan/elevation list has been read from the drawings yet.' });
     if (!rv) out.push({ ref: s.reference_number, severity: 'blocking', text: 'Annie has not reviewed this plan yet.' });
-    if (rv && rv.recommendation && !/^approve/.test(rv.recommendation)) out.push({ ref: s.reference_number, severity: 'blocking', text: `Annie recommends: ${rv.recommendation.replace(/_/g, ' ')}.` });
-    for (const i of (rv && rv.issues) || []) if (i.severity === 'blocking') out.push({ ref: s.reference_number, severity: 'blocking', text: i.text });
+    // Annie recommends; the owner decides. A recommendation other than approve is
+    // put in front of Ed as his decision, never a lock on his approval.
+    if (rv && rv.recommendation && !/^approve/.test(rv.recommendation)) out.push({ ref: s.reference_number, severity: 'decision', text: `Annie recommends: ${rv.recommendation.replace(/_/g, ' ')}.` });
+    for (const i of (rv && rv.issues) || []) if (i.severity === 'blocking') out.push({ ref: s.reference_number, severity: 'decision', text: i.text });
     if (!SET_STATUSES_OPEN.includes(s.status)) out.push({ ref: s.reference_number, severity: 'blocking', text: `Already ${s.status}${s.decided_at ? ' on ' + String(s.decided_at).slice(0, 10) : ''}.` });
     // The drawings vs the portal entry and vs Annie's read: a mismatch is shown, not hidden.
     const proposed = (Array.isArray(s.plan_numbers_proposed) ? s.plan_numbers_proposed : []).map((x) => String(x).toUpperCase());
