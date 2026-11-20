@@ -321,6 +321,162 @@ router.get('/', async (req, res) => {
 // ----------------------------------------------------------------------------
 // GET /:id — detail
 // ----------------------------------------------------------------------------
+// ----------------------------------------------------------------------------
+// MASTER PLAN SETS (Ed 2026-11-20): review and approve a builder's related
+// submissions together (e.g. Lennar's nine Woodbridge plans for Still Creek
+// Ranch) on one screen, with one owner action.
+//
+//   GET  /set?refs=REF,REF,...       staff: plans, drawings, Annie's review, issues
+//   POST /set/approve                OWNER ONLY (Ed's signed-in account):
+//        { refs[], conditions[], to[], cc[] }
+//        1. each submission through finalizeSubmission (plans into the catalog,
+//           approved at the community, its own letter, status + decided_by),
+//        2. ONE combined approval letter for the set,
+//        3. ONE email from Annie's Microsoft 365 mailbox (approved signature)
+//           to the builder and developer contacts: the letter attached, the
+//           approved drawings linked (the set is too large to attach),
+//        4. the outbound email and the decision recorded on every submission.
+//   Nothing is approved until Ed presses Approve; the page never decides.
+// ----------------------------------------------------------------------------
+const SET_STATUSES_OPEN = ['received', 'under_review', 'info_requested'];
+const EMAIL_RX = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
+
+// Standard conditions, from the Still Creek Ranch Design Guidelines (2019)
+// and Declaration; prefilled on the page and editable before approval.
+const SCR_STANDARD_CONDITIONS = [
+  'Front-loaded garages shall not protrude more than 15 feet from the front plane of the main house (Design Guidelines, Garages); each lot submission shall show this dimension.',
+  'Main roof pitch shall be between 5:12 and 12:12, patio and shed roofs at least 3:12, with earth-tone shingles and fascia at least 6 inches nominal (Design Guidelines, Roof Form).',
+  'First-floor front and side walls shall be brick, stone or stucco; on two-story homes the front elevation shall be predominantly masonry with a corner wrap of at least 2 feet (Design Guidelines, Exterior Materials).',
+  'Roof penetrations shall not be visible from the front street, and reflective glass is prohibited (Design Guidelines).',
+  'Each lot submission shall identify the approved plan, elevation, and exterior materials and colors.',
+];
+
+function setRefs(raw) {
+  return [...new Set(String(raw || '').split(/[\s,]+/).map((x) => x.trim().toUpperCase()).filter((x) => /^[A-Z0-9]+-MPS-\d{4}-\d{4}$/.test(x)))].slice(0, 40);
+}
+
+async function loadSet(refs) {
+  const { data, error } = await supabase
+    .from('master_plan_submissions')
+    .select(`id, reference_number, submission_title, plan_numbers_proposed, submitter_name, submitter_email, status,
+      submitted_at, decided_at, decided_by, decision_notes, extracted_plans, plans_extracted_at, ai_extraction, letter_pdf_path,
+      community_id, builder_company_id,
+      community:communities(id, name, slug),
+      builder_company:builder_companies(id, company_name, primary_contact_name, primary_contact_email, mailing_address)`)
+    .in('reference_number', refs)
+    .order('reference_number');
+  if (error) throw error;
+  return data || [];
+}
+
+function setIssues(subs) {
+  const out = [];
+  for (const s of subs) {
+    const rv = (s.ai_extraction && s.ai_extraction.annie_review) || null;
+    if (!Array.isArray(s.extracted_plans) || !s.extracted_plans.length) out.push({ ref: s.reference_number, severity: 'blocking', text: 'No plan/elevation list has been read from the drawings yet.' });
+    if (!rv) out.push({ ref: s.reference_number, severity: 'blocking', text: 'Annie has not reviewed this plan yet.' });
+    if (rv && rv.recommendation && !/^approve/.test(rv.recommendation)) out.push({ ref: s.reference_number, severity: 'blocking', text: `Annie recommends: ${rv.recommendation.replace(/_/g, ' ')}.` });
+    for (const i of (rv && rv.issues) || []) if (i.severity === 'blocking') out.push({ ref: s.reference_number, severity: 'blocking', text: i.text });
+    if (!SET_STATUSES_OPEN.includes(s.status)) out.push({ ref: s.reference_number, severity: 'blocking', text: `Already ${s.status}${s.decided_at ? ' on ' + String(s.decided_at).slice(0, 10) : ''}.` });
+    // The drawings vs the portal entry and vs Annie's read: a mismatch is shown, not hidden.
+    const proposed = (Array.isArray(s.plan_numbers_proposed) ? s.plan_numbers_proposed : []).map((x) => String(x).toUpperCase());
+    const read = [...new Set((s.extracted_plans || []).map((p) => String(p.plan_number || '').toUpperCase()))];
+    if (proposed.length && read.length && !read.some((r) => proposed.some((p) => r.startsWith(p)))) out.push({ ref: s.reference_number, severity: 'check', text: `Plan number on the portal (${proposed.join(', ')}) does not match the drawings (${read.join(', ')}).` });
+    if (rv && Array.isArray(rv.elevations) && rv.elevations.length) {
+      const ext = [...new Set((s.extracted_plans || []).map((p) => String(p.elevation || '').toUpperCase()))].sort().join(', ');
+      const ann = [...new Set(rv.elevations.map((e) => String(e).toUpperCase()))].sort().join(', ');
+      if (ext && ann && ext !== ann) out.push({ ref: s.reference_number, severity: 'check', text: `Elevations read differently: plan list ${ext}; Annie's review ${ann}. Confirm against the drawings; the approval uses the plan list.` });
+    }
+    const t = String(s.submission_title || '').toLowerCase().replace(/[^a-z]/g, '');
+    const n = [...new Set((s.extracted_plans || []).map((p) => String(p.plan_name || '').toLowerCase().replace(/[^a-z]/g, '')))];
+    if (t && n.length && !n.includes(t)) out.push({ ref: s.reference_number, severity: 'check', text: `Plan name on the portal ("${s.submission_title}") differs from the drawings ("${[...new Set((s.extracted_plans || []).map((p) => p.plan_name))].join(', ')}"); the letter uses the drawings.` });
+  }
+  return out;
+}
+
+router.get('/set', async (req, res) => {
+  try {
+    const refs = setRefs(req.query.refs);
+    if (!refs.length) return res.status(400).json({ error: 'refs_required' });
+    const subs = await loadSet(refs);
+    const missing = refs.filter((r) => !subs.some((s) => s.reference_number === r));
+    const items = [];
+    for (const s of subs) {
+      const { data: atts, error: ae } = await supabase.from('master_plan_submission_attachments')
+        .select('id, storage_bucket, storage_path, original_filename, mime_type, size_bytes').eq('submission_id', s.id).order('uploaded_at');
+      if (ae) throw ae;
+      const files = [];
+      for (const a of atts || []) {
+        const { data: sg } = await supabase.storage.from(a.storage_bucket || STORAGE_BUCKET).createSignedUrl(a.storage_path, 60 * 60 * 4);
+        files.push({ name: a.original_filename, size_bytes: a.size_bytes, url: sg && sg.signedUrl });
+      }
+      items.push({
+        id: s.id, reference_number: s.reference_number, title: s.submission_title, status: s.status, submitted_at: s.submitted_at,
+        decided_at: s.decided_at, decided_by: s.decided_by, plans: s.extracted_plans || [],
+        review: (s.ai_extraction && s.ai_extraction.annie_review) || null, files,
+      });
+    }
+    const first = subs[0] || {};
+    const sameGroup = subs.every((s) => s.community_id === first.community_id && s.builder_company_id === first.builder_company_id);
+    const issues = setIssues(subs);
+    if (!sameGroup) issues.unshift({ ref: '*', severity: 'blocking', text: 'These submissions are not all from the same builder and community.' });
+    for (const r of missing) issues.unshift({ ref: r, severity: 'blocking', text: 'Submission not found.' });
+    const recs = items.map((i) => (i.review && i.review.recommendation) || 'not reviewed');
+    res.json({
+      community: first.community || null, builder: first.builder_company || null, items, issues, missing,
+      recommendation: recs.every((r) => r === 'approve') ? 'approve' : recs.every((r) => /^approve/.test(r)) ? 'approve_with_conditions' : 'needs_attention',
+      proposed_conditions: first.community && /still creek/i.test(first.community.name) ? SCR_STANDARD_CONDITIONS : [],
+      proposed_to: [...new Set(subs.map((s) => s.submitter_email).filter(Boolean))],
+      ready: !issues.some((i) => i.severity === 'blocking'),
+    });
+  } catch (err) {
+    console.error('[master_plan_submissions] set load failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+router.post('/set/approve', express.json({ limit: '64kb' }), async (req, res) => {
+  try {
+    const { requireOwner } = require('./_require_admin');
+    const owner = await requireOwner(req, res); if (!owner) return;
+    const b = req.body || {};
+    const refs = setRefs(Array.isArray(b.refs) ? b.refs.join(',') : b.refs);
+    const conditions = (Array.isArray(b.conditions) ? b.conditions : []).map((c) => String(c).trim()).filter(Boolean);
+    if (!refs.length) return res.status(400).json({ error: 'refs_required' });
+
+    // Everything is checked before anything is approved.
+    const subs = await loadSet(refs);
+    if (subs.length !== refs.length) return res.status(409).json({ error: 'some submissions were not found', missing: refs.filter((r) => !subs.some((s) => s.reference_number === r)) });
+    const blocking = setIssues(subs).filter((i) => i.severity === 'blocking');
+    if (blocking.length) return res.status(409).json({ error: 'the set is not ready to approve', issues: blocking });
+    const first = subs[0];
+    if (!subs.every((s) => s.community_id === first.community_id && s.builder_company_id === first.builder_company_id)) return res.status(409).json({ error: 'mixed builders or communities' });
+
+    const decidedBy = owner.full_name || 'Ed Gojara';
+    const action = conditions.length ? 'approve_with_conditions' : 'approve';
+    const results = [];
+    for (const s of subs) {
+      const r = await finalizeSubmission(s.id, { action, approved_plans: s.extracted_plans, conditions: conditions.length ? conditions : null, decided_by: decidedBy, notify: true });
+      results.push({ ref: s.reference_number, status: r.status, plans: (r.created_master_plan_ids || []).length });
+    }
+
+    // Each applicant is notified through the normal decision notification (finalizeSubmission,
+    // notify: true): the standard letter on the submission, its portal record and the builder
+    // email. The set screen adds no letter and no email of its own (Ed 2026-11-20).
+    const now = new Date().toISOString();
+    for (const s of subs) {
+      const ax = { ...(s.ai_extraction || {}), set_decision: { set_refs: refs, approved_by: decidedBy, approved_by_email: owner.email || null, approved_at: now, via: 'master plan set review (one action, standard finalize per submission)', conditions } };
+      const u = await supabase.from('master_plan_submissions').update({ ai_extraction: ax }).eq('id', s.id);
+      if (u.error) console.warn('[master_plan_submissions] set record failed:', s.reference_number, u.error.message);
+    }
+    res.json({ ok: true, results });
+  } catch (err) {
+    if (err.statusCode) return res.status(err.statusCode).json({ error: err.message });
+    console.error('[master_plan_submissions] set approve failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
 // GET /api/master-plan-submissions/:id/letter — the letter's permanent address.
 //
 // Same fix, same reason as builder-applications/:id/letter. The stored
@@ -484,142 +640,140 @@ async function renderMasterPlanLetterPdfBuffer(letterArgs) {
   }
 }
 
-router.post('/:id/finalize', express.json({ limit: '256kb' }), async (req, res) => {
-  try {
-    const { action, approved_plans, conditions, denial_reasons, decided_by } = req.body || {};
-    if (!action) return res.status(400).json({ error: 'action is required' });
-    const validActions = ['approve', 'approve_with_conditions', 'deny', 'request_more_info'];
-    if (!validActions.includes(action)) return res.status(400).json({ error: 'invalid action' });
-    if (!decided_by) return res.status(400).json({ error: 'decided_by is required' });
-    if (action === 'approve_with_conditions' && !conditions) {
-      return res.status(400).json({ error: 'conditions are required for approve_with_conditions' });
-    }
-    if (action === 'deny' && !denial_reasons) {
-      return res.status(400).json({ error: 'denial_reasons are required for deny' });
-    }
-    if ((action === 'approve' || action === 'approve_with_conditions')
-        && (!Array.isArray(approved_plans) || approved_plans.length === 0)) {
-      return res.status(400).json({ error: 'approved_plans array is required for approval' });
-    }
+// One decision path for a master plan submission. The single-submission route
+// and the set approval both call it (Ed 2026-11-20).
+//   opts: { action, approved_plans, conditions, denial_reasons, decided_by, notify }
+// Approvals also record the plans as approved AT THIS COMMUNITY
+// (master_plan_community_approvals): per-lot builder letters validate against
+// that, and the June approvals only got it through a later bulk fix.
+async function finalizeSubmission(id, opts = {}) {
+  const { action, approved_plans, conditions, denial_reasons, decided_by, notify = true } = opts;
+  const bad = (msg, code = 400) => Object.assign(new Error(msg), { statusCode: code });
+  if (!action) throw bad('action is required');
+  const validActions = ['approve', 'approve_with_conditions', 'deny', 'request_more_info'];
+  if (!validActions.includes(action)) throw bad('invalid action');
+  if (!decided_by) throw bad('decided_by is required');
+  if (action === 'approve_with_conditions' && !conditions) throw bad('conditions are required for approve_with_conditions');
+  if (action === 'deny' && !denial_reasons) throw bad('denial_reasons are required for deny');
+  if ((action === 'approve' || action === 'approve_with_conditions') && (!Array.isArray(approved_plans) || approved_plans.length === 0)) {
+    throw bad('approved_plans array is required for approval');
+  }
 
-    // Load submission + relationships
-    const { data: submission, error: loadErr } = await supabase
-      .from('master_plan_submissions')
-      .select(`*,
-        community:communities(id, name, slug),
-        builder_company:builder_companies(id, company_name, primary_contact_name, primary_contact_email, mailing_address)
-      `)
-      .eq('id', req.params.id)
-      .single();
-    if (loadErr) throw loadErr;
-    if (!submission) return res.status(404).json({ error: 'submission not found' });
+  const { data: submission, error: loadErr } = await supabase
+    .from('master_plan_submissions')
+    .select(`*,
+      community:communities(id, name, slug),
+      builder_company:builder_companies(id, company_name, primary_contact_name, primary_contact_email, mailing_address)
+    `)
+    .eq('id', id)
+    .single();
+  if (loadErr) throw loadErr;
+  if (!submission) throw bad('submission not found', 404);
 
-    const responseType = action === 'approve' ? 'approved'
-                      : action === 'approve_with_conditions' ? 'approved_with_conditions'
-                      : action === 'deny' ? 'denied'
-                      : 'info_requested';
+  const responseType = action === 'approve' ? 'approved'
+                    : action === 'approve_with_conditions' ? 'approved_with_conditions'
+                    : action === 'deny' ? 'denied'
+                    : 'info_requested';
+  const conditionsText = typeof conditions === 'string' ? conditions : Array.isArray(conditions) ? conditions.join('\n') : null;
 
-    // Create master_plans rows for approved batches.
-    let createdMasterPlanIds = [];
-    if (action === 'approve' || action === 'approve_with_conditions') {
-      for (const p of approved_plans) {
-        const planNumber = String(p.plan_number || '').trim().toUpperCase();
-        const elevation = String(p.elevation || '').trim().toUpperCase();
-        if (!planNumber || !elevation) continue;
-        const { data: row, error: planErr } = await supabase
-          .from('master_plans')
-          .insert({
-            builder_company_id: submission.builder_company_id,
-            plan_number: planNumber,
-            plan_name: p.plan_name || null,
-            elevation,
-            elevation_orientation: p.elevation_orientation || null,
-            square_footage: p.square_footage || null,
-            stories: p.stories || null,
-            default_materials: {},
-            status: 'approved',
-            notes: `Approved via ${submission.reference_number} on ${new Date().toISOString().slice(0,10)}.`,
-            first_approval_application_id: null,
-          })
-          .select('id')
-          .single();
-        if (planErr) {
-          // Unique constraint conflict — plan already in catalog. Look up the
-          // existing row and include its id so we still record the linkage.
-          if (planErr.code === '23505') {
-            const { data: existing } = await supabase
-              .from('master_plans')
-              .select('id')
-              .eq('builder_company_id', submission.builder_company_id)
-              .eq('plan_number', planNumber)
-              .eq('elevation', elevation)
-              .eq('elevation_orientation', p.elevation_orientation || 'standard')
-              .maybeSingle();
-            if (existing) createdMasterPlanIds.push(existing.id);
-          } else {
-            console.warn('[master_plan_submissions] master_plan insert failed:', planErr.message);
-          }
-          continue;
+  // Create master_plans rows for approved batches.
+  const createdMasterPlanIds = [];
+  if (action === 'approve' || action === 'approve_with_conditions') {
+    for (const p of approved_plans) {
+      const planNumber = String(p.plan_number || '').trim().toUpperCase();
+      const elevation = String(p.elevation || '').trim().toUpperCase();
+      if (!planNumber || !elevation) continue;
+      const { data: row, error: planErr } = await supabase
+        .from('master_plans')
+        .insert({
+          builder_company_id: submission.builder_company_id,
+          plan_number: planNumber,
+          plan_name: p.plan_name || null,
+          elevation,
+          elevation_orientation: p.elevation_orientation || null,
+          square_footage: p.square_footage || null,
+          stories: p.stories || null,
+          default_materials: {},
+          status: 'approved',
+          notes: `Approved via ${submission.reference_number} on ${new Date().toISOString().slice(0, 10)}.`,
+          first_approval_application_id: null,
+        })
+        .select('id')
+        .single();
+      if (planErr) {
+        // Unique constraint conflict: plan already in catalog. Link the existing row.
+        if (planErr.code === '23505') {
+          const { data: existing } = await supabase
+            .from('master_plans')
+            .select('id')
+            .eq('builder_company_id', submission.builder_company_id)
+            .eq('plan_number', planNumber)
+            .eq('elevation', elevation)
+            .eq('elevation_orientation', p.elevation_orientation || 'standard')
+            .maybeSingle();
+          if (existing) createdMasterPlanIds.push(existing.id);
+        } else {
+          console.warn('[master_plan_submissions] master_plan insert failed:', planErr.message);
         }
-        if (row?.id) createdMasterPlanIds.push(row.id);
+        continue;
       }
+      if (row?.id) createdMasterPlanIds.push(row.id);
     }
-
-    let letterPath = null, signedUrl = null, signedUrlExpiresAt = null;
-
-    if (action !== 'request_more_info') {
-      const letterArgs = {
-        community: submission.community.name,
-        builder_company_name: submission.builder_company.company_name,
-        builder_contact_name: submission.builder_company.primary_contact_name || submission.submitter_name || '',
-        builder_mailing_address: submission.builder_company.mailing_address || '',
-        submission_title: submission.submission_title,
-        reference_number: submission.reference_number,
-        approved_plans: action === 'deny' ? [] : approved_plans,
-        decision_type: responseType,
-        conditions, denial_reasons,
-        signer_name: decided_by,
-      };
-
-      const pdfBuffer = await renderMasterPlanLetterPdfBuffer(letterArgs);
-      const year = new Date().getFullYear();
-      const slug = submission.community.slug;
-      const storagePath = `builders/${slug}/master-plan-submissions/${year}/${submission.reference_number}.pdf`;
-
-      const up = await supabase.storage.from(STORAGE_BUCKET_LETTER)
-        .upload(storagePath, pdfBuffer, { contentType: 'application/pdf', upsert: true });
-      if (up.error) throw new Error('letter upload: ' + up.error.message);
-      const { data: signed } = await supabase.storage.from(STORAGE_BUCKET_LETTER)
-        .createSignedUrl(storagePath, 60 * 60 * 24 * 30);
-      letterPath = storagePath;
-      signedUrl = signed?.signedUrl || null;
-      signedUrlExpiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+    // Approved at THIS community (the per-lot validator reads this).
+    for (const mpId of createdMasterPlanIds) {
+      const { error: caErr } = await supabase.from('master_plan_community_approvals').insert({
+        master_plan_id: mpId, community_id: submission.community_id, approved_at: new Date().toISOString(),
+        approved_by: decided_by, approval_notes: `Approved via ${submission.reference_number}`, conditions: conditionsText,
+      });
+      if (caErr && caErr.code !== '23505') console.warn('[master_plan_submissions] community approval insert failed:', caErr.message);
     }
+  }
 
-    // Update submission row with final decision state.
-    const finalStatus = responseType === 'approved' ? 'approved'
-                      : responseType === 'approved_with_conditions' ? 'approved_with_conditions'
-                      : responseType === 'denied' ? 'denied'
-                      : 'info_requested';
+  let letterPath = null, signedUrl = null, signedUrlExpiresAt = null;
+  if (action !== 'request_more_info') {
+    const letterArgs = {
+      community: submission.community.name,
+      builder_company_name: submission.builder_company.company_name,
+      builder_contact_name: submission.builder_company.primary_contact_name || submission.submitter_name || '',
+      builder_mailing_address: submission.builder_company.mailing_address || '',
+      submission_title: submission.submission_title,
+      reference_number: submission.reference_number,
+      approved_plans: action === 'deny' ? [] : approved_plans,
+      decision_type: responseType,
+      conditions, denial_reasons,
+      signer_name: decided_by,
+    };
+    const pdfBuffer = await renderMasterPlanLetterPdfBuffer(letterArgs);
+    const year = new Date().getFullYear();
+    const storagePath = `builders/${submission.community.slug}/master-plan-submissions/${year}/${submission.reference_number}.pdf`;
+    const up = await supabase.storage.from(STORAGE_BUCKET_LETTER)
+      .upload(storagePath, pdfBuffer, { contentType: 'application/pdf', upsert: true });
+    if (up.error) throw new Error('letter upload: ' + up.error.message);
+    const { data: signed } = await supabase.storage.from(STORAGE_BUCKET_LETTER)
+      .createSignedUrl(storagePath, 60 * 60 * 24 * 30);
+    letterPath = storagePath;
+    signedUrl = signed?.signedUrl || null;
+    signedUrlExpiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+  }
 
-    await supabase
-      .from('master_plan_submissions')
-      .update({
-        status: finalStatus,
-        decided_at: new Date().toISOString(),
-        decided_by,
-        decision_notes: typeof conditions === 'string' ? conditions
-                       : Array.isArray(conditions) ? conditions.join('\n')
-                       : typeof denial_reasons === 'string' ? denial_reasons
-                       : Array.isArray(denial_reasons) ? denial_reasons.join('\n')
-                       : null,
-        letter_pdf_path: letterPath,
-        letter_signed_url: signedUrl,
-        letter_signed_url_expires_at: signedUrlExpiresAt,
-        created_master_plan_ids: createdMasterPlanIds,
-      })
-      .eq('id', submission.id);
+  const finalStatus = responseType;
+  const { error: upErr } = await supabase
+    .from('master_plan_submissions')
+    .update({
+      status: finalStatus,
+      decided_at: new Date().toISOString(),
+      decided_by,
+      decision_notes: conditionsText
+        || (typeof denial_reasons === 'string' ? denial_reasons : Array.isArray(denial_reasons) ? denial_reasons.join('\n') : null),
+      letter_pdf_path: letterPath,
+      letter_signed_url: signedUrl,
+      letter_signed_url_expires_at: signedUrlExpiresAt,
+      created_master_plan_ids: createdMasterPlanIds,
+    })
+    .eq('id', submission.id);
+  if (upErr) throw new Error('decision record not saved: ' + upErr.message);
 
+  if (notify) {
     // Fire-and-forget email notification to the builder with the letter link.
     (async () => {
       try {
@@ -642,15 +796,23 @@ router.post('/:id/finalize', express.json({ limit: '256kb' }), async (req, res) 
         console.warn('[master_plan_submissions] decision email failed:', e.message);
       }
     })();
+  }
 
+  return { submission, status: finalStatus, letter_pdf_path: letterPath, letter_signed_url: signedUrl, created_master_plan_ids: createdMasterPlanIds };
+}
+
+router.post('/:id/finalize', express.json({ limit: '256kb' }), async (req, res) => {
+  try {
+    const r = await finalizeSubmission(req.params.id, { ...(req.body || {}), notify: true });
     res.json({
       ok: true,
-      reference_number: submission.reference_number,
-      status: finalStatus,
-      letter_signed_url: signedUrl,
-      created_master_plan_ids: createdMasterPlanIds,
+      reference_number: r.submission.reference_number,
+      status: r.status,
+      letter_signed_url: r.letter_signed_url,
+      created_master_plan_ids: r.created_master_plan_ids,
     });
   } catch (err) {
+    if (err.statusCode) return res.status(err.statusCode).json({ error: err.message });
     console.error('[master_plan_submissions] finalize failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
   }
