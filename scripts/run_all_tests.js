@@ -201,6 +201,7 @@ const CHECKS = [
   'tests/test_ledger_line.js',
   'tests/test_reply_send_safeguards.js',
   'tests/test_reply_inline_images.js',
+  'tests/test_ai_signature_everywhere.js',
   'tests/test_accounting_ownership.js',
   'tests/test_legal_team.js',
   'tests/test_legal_team_e2e.js',
