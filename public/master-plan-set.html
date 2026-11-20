@@ -14,7 +14,7 @@
   th { color: #5b6573; font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: .03em; }
   .pill { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 12px; background: #eef1f5; }
   .pill.approve { background: #e3f4e8; color: #116a2e; } .pill.cond { background: #fff3dc; color: #8a5300; } .pill.no { background: #fde4e4; color: #a11; }
-  .issues li { margin: 4px 0; } .sev { font-weight: 700; } .sev.blocking { color: #a11; } .sev.check { color: #8a5300; }
+  .issues li { margin: 4px 0; } .sev { font-weight: 700; } .sev.blocking { color: #a11; } .sev.decision { color: #a11; } .sev.check { color: #8a5300; }
   details { margin-top: 6px; } summary { cursor: pointer; color: #0B1D34; font-weight: 600; }
   textarea, input[type=text] { width: 100%; box-sizing: border-box; font: inherit; font-size: 13px; padding: 7px; border: 1px solid #c9d1dc; border-radius: 6px; }
   textarea { min-height: 150px; } label { font-weight: 600; font-size: 13px; display: block; margin: 10px 0 4px; }
@@ -67,7 +67,7 @@
     var rec = document.getElementById('rec');
     rec.className = 'rec ' + (j.ready ? (j.recommendation === 'approve' ? 'ok' : 'warn') : 'bad');
     rec.textContent = 'Annie recommends: ' + (j.recommendation === 'approve' ? 'approve' : j.recommendation === 'approve_with_conditions' ? 'approve with conditions' : 'needs attention before approval');
-    document.getElementById('recNote').textContent = j.ready ? 'No blocking issues. Review the drawings and the items below, then approve.' : 'There are blocking items below; the set cannot be approved until they are resolved.';
+    var dec = (j.issues || []).filter(function (x) { return x.severity === 'decision'; }).length; document.getElementById('recNote').textContent = !j.ready ? 'There are blocking items below; the set cannot be approved until they are resolved.' : dec ? 'Annie raised ' + dec + ' item(s) marked Your decision. Approving with conditions covers them; or hold the set.' : 'No blocking issues. Review the drawings and the items below, then approve.';
     var rows = '', reviews = '';
     j.items.forEach(function (i) {
       var els = [], sq = [], st = [];
@@ -84,7 +84,7 @@
     document.getElementById('rows').innerHTML = rows;
     document.getElementById('reviews').innerHTML = reviews;
     var iss = j.issues || [];
-    document.getElementById('issues').innerHTML = iss.length ? iss.map(function (x) { return '<li><span class="sev ' + esc(x.severity) + '">' + (x.severity === 'blocking' ? 'Blocking' : 'Check') + '</span> ' + esc(x.ref) + ': ' + esc(x.text) + '</li>'; }).join('') : '<li>Nothing blocking. Annie&#39;s per-plan notes are folded into the conditions below.</li>';
+    document.getElementById('issues').innerHTML = iss.length ? iss.map(function (x) { return '<li><span class="sev ' + esc(x.severity) + '">' + (x.severity === 'blocking' ? 'Blocking' : x.severity === 'decision' ? 'Your decision' : 'Check') + '</span> ' + esc(x.ref) + ': ' + esc(x.text) + '</li>'; }).join('') : '<li>Nothing blocking. Annie&#39;s per-plan notes are folded into the conditions below.</li>';
     document.getElementById('cond').value = (j.proposed_conditions || []).join('\n');
     var btn = document.getElementById('approveBtn');
     btn.disabled = !j.ready || j.items.every(function (i) { return i.status !== 'received' && i.status !== 'under_review' && i.status !== 'info_requested'; });
