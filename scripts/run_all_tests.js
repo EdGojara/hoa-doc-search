@@ -88,6 +88,7 @@ const CHECKS = [
   'tests/test_budget_four_columns.js',
   'tests/test_check_receipts.js',
   'tests/test_collection_notices.js',
+  'tests/test_lockbox_scanline.js',
   'tests/test_community_archived.js',
   'tests/test_legal_review_suggest.js',
   'tests/test_legal_review_data.js',
