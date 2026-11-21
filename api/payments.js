@@ -437,7 +437,7 @@ router.post('/test/assessment-checkout', express.json({ limit: '8kb' }), async (
     const origin = process.env.APP_BASE_URL || `${req.protocol}://${req.get('host')}`;
     const r = await createAssessmentCheckout({
       property_id: String(b.property_id), payment_method: b.payment_method, initiated_by: 'staff_test',
-      success_url: `${origin}/accounting?test_payment=success`, cancel_url: `${origin}/accounting?test_payment=cancelled`,
+      success_url: `${origin}/admin/accounting?test_payment=success`, cancel_url: `${origin}/admin/accounting?test_payment=cancelled`,
       test_amount_cents: 100,
     });
     if (!r.ok) return res.status(r.status || 500).json({ error: r.error, hint: r.hint });
