@@ -983,7 +983,12 @@ router.post('/:id/refund', express.json({ limit: '32kb' }), async (req, res) => 
       connectedAccountId: payment.connected_account_id || undefined,
       reason: reason || 'requested_by_customer',
       reverseTransfer: !!reverse_transfer,
-      refundApplicationFee: req.body.refund_application_fee === true,
+      // Assessments: the convenience fee is Bedrock's, collected as the
+      // application fee. Refunding the charge reverses the WHOLE transfer from
+      // the association, so unless the application fee comes back too, the
+      // association's own funds pay for refunding Bedrock's fee (Ed 2026-11-21:
+      // fees stay separate from association funds). Always refund it here.
+      refundApplicationFee: payment.product_type === 'assessment_payment' || req.body.refund_application_fee === true,
     });
 
     if (!refund.ok) {
