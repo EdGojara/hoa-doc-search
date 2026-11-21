@@ -1274,4 +1274,39 @@ router.get('/reconciliations/:id/cheat-sheet', async (req, res) => {
   }
 });
 
+// ---------------------------------------------------------------------------
+// Workpaper — the formal reconciliation for one account and month (Ed 2026-11-21).
+// Defaults to the approved version (the posted run's permanent snapshot); ?run_id=
+// opens a specific run's version, ?version=current the working reconciliation.
+//   GET /reconciliations/:id/workpaper        JSON
+//   GET /reconciliations/:id/workpaper.html   review page (with Download PDF)
+//   GET /reconciliations/:id/workpaper.pdf    PDF
+// ---------------------------------------------------------------------------
+const W = require('../lib/banking/rec_workpaper');
+async function loadWorkpaper(req, res) {
+  const w = await W.buildWorkpaper(supabase, { reconciliation_id: req.params.id, run_id: req.query.run_id || null, version: req.query.version || null });
+  if (!w) { res.status(404).json({ error: 'not_found' }); return null; }
+  return w;
+}
+router.get('/reconciliations/:id/workpaper', async (req, res) => {
+  try { const w = await loadWorkpaper(req, res); if (w) res.json({ workpaper: w }); }
+  catch (err) { console.error('[bank-rec] workpaper failed:', err.message); res.status(500).json({ error: safeErrorMessage(err) }); }
+});
+router.get('/reconciliations/:id/workpaper.html', async (req, res) => {
+  try {
+    const w = await loadWorkpaper(req, res); if (!w) return;
+    const qs = new URLSearchParams(Object.fromEntries(Object.entries({ run_id: req.query.run_id, version: req.query.version }).filter(([, v]) => v))).toString();
+    res.type('html').send(W.renderWorkpaperHtml(w, { pdfHref: `/api/bank-rec/reconciliations/${encodeURIComponent(req.params.id)}/workpaper.pdf${qs ? '?' + qs : ''}` }));
+  } catch (err) { console.error('[bank-rec] workpaper page failed:', err.message); res.status(500).json({ error: safeErrorMessage(err) }); }
+});
+router.get('/reconciliations/:id/workpaper.pdf', async (req, res) => {
+  try {
+    const w = await loadWorkpaper(req, res); if (!w) return;
+    const pdf = await W.workpaperPdf(w);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${W.fileName(w)}"`);
+    res.send(pdf);
+  } catch (err) { console.error('[bank-rec] workpaper PDF failed:', err.message); res.status(500).json({ error: safeErrorMessage(err) }); }
+});
+
 module.exports = { router, _test: { resolveBankAccount, cashAccountIdFor } };
