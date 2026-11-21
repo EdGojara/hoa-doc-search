@@ -798,6 +798,7 @@ router.post('/webhook',
       const { stripeMode } = require('../lib/payments/stripe_mode');
       const store = createPaymentStore({
         supabase,
+        stripeLib,
         legacy: {
           checkoutCompleted: handleCheckoutCompleted,
           paymentFailed: handlePaymentFailed,
