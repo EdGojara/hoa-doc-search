@@ -606,7 +606,10 @@ router.get('/connect/status', async (req, res) => {
     if (!community.stripe_connected_account_id) return res.json({ ok: true, has_account: false, onboarded: false });
     if (!stripeLib.isConfigured()) return res.json({ ok: true, has_account: true, account_id: community.stripe_connected_account_id, onboarded: community.stripe_onboarding_status === 'enabled' });
 
-    const st = await stripeLib.retrieveAccount(community.stripe_connected_account_id);
+    // Requirements too, so a restricted account says WHAT Stripe still needs
+    // instead of a bare "restricted" (Ed 2026-11-21, Drama Creek sandbox).
+    const st = await stripeLib.retrieveAccountRequirements(community.stripe_connected_account_id);
+    if (!st.ok) return res.status(502).json({ error: 'stripe_status_unavailable' });
     const onboarded = !!(st.ok && st.details_submitted && st.charges_enabled);
     const newStatus = onboarded ? 'enabled' : (st.details_submitted ? 'restricted' : 'in_progress');
     if (community.stripe_onboarding_status !== newStatus) {
@@ -615,7 +618,8 @@ router.get('/connect/status', async (req, res) => {
         ...(onboarded ? { stripe_onboarded_at: new Date().toISOString() } : {}),
       }).eq('id', community.id);
     }
-    res.json({ ok: true, has_account: true, account_id: community.stripe_connected_account_id, onboarded, details_submitted: st.details_submitted, charges_enabled: st.charges_enabled, payouts_enabled: st.payouts_enabled });
+    res.json({ ok: true, has_account: true, account_id: community.stripe_connected_account_id, onboarded, status: newStatus, details_submitted: st.details_submitted, charges_enabled: st.charges_enabled, payouts_enabled: st.payouts_enabled,
+      currently_due: st.currently_due, past_due: st.past_due, disabled_reason: st.disabled_reason || null });
   } catch (err) {
     console.error('[payments] connect status failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });

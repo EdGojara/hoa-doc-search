@@ -3208,6 +3208,7 @@
         ${kv('Status', badge)}
         ${j.account_id ? kv('Connected account', `<span style="font-family:ui-monospace,monospace; font-size:12px;">${esc(j.account_id)}</span>`) : ''}
         ${j.has_account && !j.onboarded ? kv('Details submitted', j.details_submitted?'yes':'no') : ''}
+        ${j.has_account && !j.onboarded && ((j.currently_due||[]).length || (j.past_due||[]).length || j.disabled_reason) ? kv('Stripe still needs', esc([...(j.past_due||[]), ...(j.currently_due||[]).filter((x)=>!(j.past_due||[]).includes(x))].join(', ') || j.disabled_reason)) : ''}
         <div style="margin-top:14px; display:flex; gap:8px; flex-wrap:wrap;">
           <button style="${BTN}" onclick="opConnect()">${j.has_account ? (j.onboarded?'Manage / re-onboard':'Finish onboarding') : 'Set up online payments'}</button>
           ${!j.onboarded ? `<button style="${GHOST}" onclick="opTestOnboard()" title="Sandbox only: fill Stripe's test KYC via the API so you skip the onboarding form.">⚡ Complete test onboarding</button>` : ''}
