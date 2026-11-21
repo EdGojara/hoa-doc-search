@@ -22,7 +22,7 @@
 
 const express = require('express');
 const crypto = require('crypto');
-const multer = require('multer');
+const { publicUpload } = require('../lib/uploads/public_upload');
 const { createClient } = require('@supabase/supabase-js');
 const { safeErrorMessage } = require('./_safe_error');
 const { sendEmail } = require('../lib/notifications/email');
@@ -107,11 +107,33 @@ function resolveBuilderLandingUrl(companyNames) {
 // still verify (no mass logout), drop the forgeable constant, and FAIL LOUD if
 // nothing is configured rather than silently signing with a guessable key.
 // (Ed 2026-07-28, portal-hardening.)
-const PORTAL_SECRET = process.env.PORTAL_COOKIE_SECRET || process.env.STAFF_PASSWORD || process.env.SUPABASE_KEY || null;
+// 2026-10-16 (launch blockers): sharing STAFF_PASSWORD as the cookie key means
+// anyone who knows the shared staff password can mint a homeowner or Board
+// session for any portal user. In PRODUCTION a dedicated PORTAL_COOKIE_SECRET,
+// different from STAFF_PASSWORD, is now REQUIRED: without it every portal and
+// board session is refused (sign-in and cookie checks both), loudly, while the
+// staff app keeps running. Outside production the old fallback stays so local
+// dev works, with a warning on boot.
+function resolvePortalSecret(env = process.env) {
+  const dedicated = env.PORTAL_COOKIE_SECRET || null;
+  const isProd = env.NODE_ENV === 'production';
+  if (dedicated && env.STAFF_PASSWORD && dedicated === env.STAFF_PASSWORD) {
+    return { secret: null, error: 'PORTAL_COOKIE_SECRET equals STAFF_PASSWORD. Set it to a separate random value.' };
+  }
+  if (dedicated) return { secret: dedicated, error: null };
+  if (isProd) {
+    return { secret: null, error: 'PORTAL_COOKIE_SECRET is not set. Production refuses portal and board sessions until it is.' };
+  }
+  const fallback = env.STAFF_PASSWORD || env.SUPABASE_KEY || null;
+  if (!fallback) return { secret: null, error: 'No PORTAL_COOKIE_SECRET (or dev fallback) set.' };
+  return { secret: fallback, error: null, devFallback: true };
+}
+const _portalSecretState = resolvePortalSecret();
+const PORTAL_SECRET = _portalSecretState.secret;
 if (!PORTAL_SECRET) {
-  console.error('[portal] SECURITY: no PORTAL_COOKIE_SECRET or STAFF_PASSWORD set — portal/board cookies cannot be signed securely and sign-in will refuse.');
-} else if (!process.env.PORTAL_COOKIE_SECRET && !process.env.STAFF_PASSWORD) {
-  console.warn('[portal] Signing portal cookies with SUPABASE_KEY (service-role key reuse). Set PORTAL_COOKIE_SECRET to a dedicated random value.');
+  console.error(`[portal] SECURITY: ${_portalSecretState.error} Every portal/board sign-in and cookie is refused.`);
+} else if (_portalSecretState.devFallback) {
+  console.warn('[portal] DEV ONLY: signing portal cookies with a fallback key (STAFF_PASSWORD/SUPABASE_KEY) because PORTAL_COOKIE_SECRET is unset. Production refuses this.');
 }
 
 function portalSecret() {
@@ -131,6 +153,7 @@ function signCookie(portalUserId) {
 
 function verifyCookie(token) {
   if (!token) return null;
+  if (!PORTAL_SECRET) return null; // no safe key: every session is refused (see resolvePortalSecret)
   const parts = String(token).split('.');
   if (parts.length !== 3) return null;
   const [portalUserId, ts, sig] = parts;
@@ -177,6 +200,7 @@ function signMimicCookie(portalUserId, staffEmail) {
 
 function verifyMimicCookie(token) {
   if (!token) return null;
+  if (!PORTAL_SECRET) return null; // no safe key: every session is refused (see resolvePortalSecret)
   const parts = String(token).split('.');
   if (parts.length !== 4) return null;
   const [portalUserId, emailB64, ts, sig] = parts;
@@ -1743,6 +1767,17 @@ router.get('/me', async (req, res) => {
       community_slug: p.communities?.slug || '',
     }));
 
+    // Portal "Pay now" + "payment processing": the SAME readiness decision the
+    // server checkout refuses on (lib/payments/payment_readiness.js, via
+    // lib/portal/pay_gate.js). Fails closed: any error hides Pay.
+    let payState = { payments_enabled: false, message: null, pending: null };
+    try {
+      const { portalPayState } = require('../lib/portal/pay_gate');
+      payState = await portalPayState(supabase, { communityId: community.id, propertyId: prop.id });
+    } catch (e) {
+      console.warn('[portal /me] pay state failed:', e.message);
+    }
+
     // In manager mode, show the actual homeowner's name in the portal
     // header/greeting — that's what "see what they see" means. Staff email
     // is preserved on the manager banner for audit/identity context.
@@ -1790,14 +1825,21 @@ router.get('/me', async (req, res) => {
         // adds Drama Creek Estates as the canonical demo community.
         is_demo: community.is_demo === true,
         // Can this community actually ACCEPT an online payment right now?
-        // The homeowner-facing "Pay now" button gates on this. Without it the
-        // portal offers a payment path the server refuses at
-        // api/payments.js createAssessmentCheckout (503
-        // community_stripe_not_onboarded) — the homeowner commits to paying and
-        // hits a wall. Same shape as amenities.js `stripe_ready`. Boolean only;
-        // the account id never goes to the browser.
-        // A connected account alone never enables Pay (lib/portal/financial_access).
-        payments_enabled: financialAccess.payments,
+        // The homeowner-facing "Pay now" button. Two checks, both must pass:
+        //   1) THE fail-closed homeowner decision (lib/portal/financial_access):
+        //      balances verified AND payments switched on for this association.
+        //      A connected Stripe account alone never enables Pay.
+        //   2) the payment-readiness evaluation the server checkout refuses on
+        //      (lib/payments/payment_readiness.js via lib/portal/pay_gate.js):
+        //      financials active, Stripe charges + payouts enabled, account in
+        //      the server key's mode. Readiness itself also requires (1).
+        // Boolean only; the account id never goes to the browser.
+        payments_enabled: financialAccess.payments === true && payState.payments_enabled === true,
+        // A submitted payment still settling (ACH takes days). The balance does
+        // not drop until it settles, so the portal says "Payment processing"
+        // and does not invite a second payment. Sent only where balances are
+        // allowed (fail-closed). { amount_cents, since, method, label } | null
+        payment_pending: financialAccess.balance === true ? (payState.pending || null) : null,
       },
       balance,
       compliance,
@@ -2821,6 +2863,52 @@ router.post('/chamber/:broadcastId/viewer', express.json(), async (req, res) => 
 });
 
 // ----------------------------------------------------------------------------
+// GET /api/portal/contacts[?community=<demo-slug>]
+// Local Contacts tile. The page used /api/community-contacts/by-slug, which is
+// a staff route (behind the staff gate) and takes ANY slug. Here the community
+// comes from the caller's portal session; the only slug honoured is a DEMO
+// community's, so the sales demo works without a session and no real
+// community's directory is readable by slug.
+// ----------------------------------------------------------------------------
+router.get('/contacts', async (req, res) => {
+  try {
+    let communityId = null;
+    // A demo community by slug (sales demo; works signed in or not).
+    const slug = String(req.query.community || '').trim();
+    if (slug) {
+      const { data: demo } = await supabase.from('communities')
+        .select('id, is_demo, management_company_id').eq('slug', slug).maybeSingle();
+      if (demo && (demo.is_demo === true || demo.management_company_id === DEMO_MGMT_CO_ID)) communityId = demo.id;
+    }
+    // Otherwise the caller's own community, from the portal session only.
+    if (!communityId) {
+      const resolved = await resolveUserWithRole(req, res);
+      if (!resolved) return; // 401 sent
+      const scoped = await resolveScopedProperty(req, supabase, resolved.user);
+      if (scoped.error === 'property_outside_manager_scope') return res.status(403).json({ error: scoped.error });
+      communityId = scoped.property && scoped.property.community_id;
+      if (!communityId) return res.json({ community: null, trash_schedule: null, grouped: [] });
+    }
+    const { data: community, error: cErr } = await supabase.from('communities')
+      .select('id, name, slug, trash_schedule').eq('id', communityId).maybeSingle();
+    if (cErr) throw cErr;
+    if (!community) return res.status(404).json({ error: 'community_not_found' });
+    const { data: contacts, error } = await supabase.from('community_contacts')
+      .select('id, category, name, phone, email, url, notes, display_order')
+      .eq('community_id', community.id)
+      .eq('is_published', true)
+      .order('display_order')
+      .limit(500);
+    if (error) throw error;
+    const { groupByCategory } = require('./community_contacts');
+    res.json({ community: { name: community.name, slug: community.slug }, trash_schedule: community.trash_schedule || null, grouped: groupByCategory(contacts || []) });
+  } catch (err) {
+    console.error('[portal] contacts failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// ----------------------------------------------------------------------------
 // GET /api/portal/community-calendar
 // One calendar for the community: social events, board meetings, and the dates
 // the clubhouse is already taken.
@@ -3106,10 +3194,12 @@ async function resolveHomeownerScope(req) {
   // portal_users -> contact_id + role
   const { data: user } = await supabase
     .from('portal_users')
-    .select('id, contact_id, email, full_name, role')
+    .select('id, contact_id, email, full_name, role, status')
     .eq('id', portalUserId)
     .maybeSingle();
-  if (!user) return null;
+  // A revoked user is signed out everywhere, including Messages (now reachable
+  // without the staff cookie, so this check is the only one left).
+  if (!user || user.status === 'revoked') return null;
 
   let propertyIds = [];
 
@@ -3140,7 +3230,8 @@ async function resolveHomeownerScope(req) {
     const { data: scopes } = await supabase
       .from('portal_user_properties')
       .select('property_id')
-      .eq('portal_user_id', portalUserId);
+      .eq('portal_user_id', portalUserId)
+      .is('revoked_at', null);   // same rule as resolveScopedProperty
     propertyIds = (scopes || []).map((s) => s.property_id).filter(Boolean);
   }
 
@@ -3374,9 +3465,13 @@ router.post('/messages/:threadId/reply', express.json({ limit: '256kb' }), async
 //                                   + JSON application_data field)
 //   GET   /api/portal/arc         — list MY applications (open + past)
 // ============================================================================
-const portalArcUpload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: 12 * 1024 * 1024, files: 20 },
+// Reachable without the staff login (portal cookie checked in the handler), so
+// it must be a publicUpload(): every field limit + a total-body cap (PR #250).
+const portalArcUpload = publicUpload({
+  route: 'portal.arc_submit',
+  fileSize: 12 * 1024 * 1024,
+  files: 20,
+  maxTotalBytes: 80 * 1024 * 1024,
 });
 
 router.post('/arc/submit', portalArcUpload.any(), async (req, res) => {
@@ -3934,6 +4029,8 @@ router.get('/arc', async (req, res) => {
 
 router.get('/vendor-categories', async (req, res) => {
   try {
+    const resolved = await resolveUserWithRole(req, res);
+    if (!resolved) return; // 401 sent: the form is for signed-in homeowners
     const { data, error } = await supabase
       .from('vendor_categories')
       .select('id, slug, label, display_order')
@@ -4289,9 +4386,11 @@ router.post('/pay/checkout', express.json({ limit: '4kb' }), async (req, res) =>
     const { data: prop, error: pErr } = await supabase.from('properties').select('community_id').eq('id', auth.propertyId).maybeSingle();
     if (pErr) throw pErr;
     if (!prop) return res.status(404).json({ error: 'no_property' });
-    const { canDo } = require('../lib/community/lifecycle');
-    const gate = await canDo('payments', prop.community_id);
-    if (!gate.allowed) return res.status(409).json({ error: 'community_not_taking_payments', detail: gate.reason });
+    // Same gate as the Pay button (/me payments_enabled). Refuse before
+    // creating anything; the checkout then re-verifies the account with Stripe.
+    const { portalCheckoutGate } = require('../lib/portal/pay_gate');
+    const gate = await portalCheckoutGate(supabase, prop.community_id);
+    if (!gate.ready) return res.status(409).json({ error: gate.reason || 'community_not_taking_payments', hint: gate.message });
 
     const origin = process.env.APP_BASE_URL || `${req.protocol}://${req.get('host')}`;
     const { createAssessmentCheckout } = require('./payments');
@@ -4304,7 +4403,7 @@ router.post('/pay/checkout', express.json({ limit: '4kb' }), async (req, res) =>
       payer: { email: resolved.user.email, name: resolved.user.full_name },
       portal_user_id: resolved.user.id,
     });
-    if (!r.ok) return res.status(r.status || 500).json({ error: r.error, hint: r.hint });
+    if (!r.ok) return res.status(r.status || 500).json({ error: r.error, hint: r.hint, pending_amount_cents: r.pending_amount_cents });
     res.json({ ok: true, checkout_url: r.checkout_url, amount_cents: r.amount_cents, convenience_fee_cents: r.convenience_fee_cents, method: r.method });
   } catch (err) {
     console.error('[portal] pay checkout failed:', err.message);
@@ -4650,9 +4749,12 @@ router.get('/builder/master-plan-approvals', async (req, res) => {
 // ============================================================================
 // Residents may attach a few photos so staff can USE the image if they pick
 // the submission. Images only, capped — same memoryStorage pattern as ARC.
-const newsletterPhotoUpload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: 10 * 1024 * 1024, files: 6 },
+// Reachable without the staff login: publicUpload() (PR #250).
+const newsletterPhotoUpload = publicUpload({
+  route: 'portal.newsletter_submission',
+  fileSize: 10 * 1024 * 1024,
+  files: 6,
+  maxTotalBytes: 40 * 1024 * 1024,
 });
 router.post('/newsletter-submissions', newsletterPhotoUpload.array('photos', 6), async (req, res) => {
   try {
@@ -4718,4 +4820,5 @@ module.exports = {
   // source of truth for "what does this portal user have access to."
   resolvePortalUser,
   resolveBuilderLandingUrl,
+  resolvePortalSecret,   // exported for tests/test_portal_launch_gates.js
 };

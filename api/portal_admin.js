@@ -31,6 +31,35 @@ const { sendEmail } = require('../lib/notifications/email');
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 const { BEDROCK_MGMT_CO_ID } = require('../lib/company');
+const { fetchAllQuery } = require('../lib/db/fetch_all');
+
+// `.in('col', ids)` puts every id in the URL. Waterview's ~1,171 property ids
+// (37 chars each) overflow the request-line limit, and each response is capped
+// at 1,000 rows anyway. Chunk the id list and page each chunk.
+const IN_CHUNK = 200;
+async function fetchIn(ids, buildQuery, opts = {}) {
+  const out = [];
+  const list = Array.from(new Set((ids || []).filter(Boolean)));
+  for (let i = 0; i < list.length; i += IN_CHUNK) {
+    const chunk = list.slice(i, i + IN_CHUNK);
+    out.push(...await fetchAllQuery(() => buildQuery(chunk), opts));
+  }
+  return out;
+}
+
+// HOMEOWNER invites go to current OWNERS only. Ownership comes from
+// property_ownerships (end_date IS NULL), the same source v_current_property_owners
+// reads, so co-owners count. A residency alone (a renter, a family member on the
+// lease) never makes someone a homeowner: the homeowner role sees the owner's
+// balance, statements and Pay. Renters reach the portal by the renter path.
+async function currentOwnershipsIn(communityId, { contactIds = null, propertyIds = null } = {}) {
+  const sel = 'id, contact_id, property_id, is_primary, properties:property_id!inner(id, street_address, community_id)';
+  const ids = contactIds || propertyIds || [];
+  const col = contactIds ? 'contact_id' : 'property_id';
+  const rows = await fetchIn(ids, (chunk) => supabase.from('property_ownerships')
+    .select(sel).in(col, chunk).is('end_date', null).eq('properties.community_id', communityId));
+  return rows.filter((r) => r.properties && r.properties.community_id === communityId);
+}
 
 function escapeHtml(s) {
   return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -762,12 +791,9 @@ router.get('/community/:communityId/adoption', async (req, res) => {
     if (cErr) throw cErr;
     if (!community) return res.status(404).json({ error: 'community_not_found' });
 
-    // Step 1: properties in this community
-    const { data: properties } = await supabase
-      .from('properties')
-      .select('id, street_address')
-      .eq('community_id', communityId)
-      .limit(2000);
+    // Step 1: properties in this community (paged: large communities pass 1,000)
+    const properties = await fetchAllQuery(() => supabase
+      .from('properties').select('id, street_address').eq('community_id', communityId));
     const propertyIds = (properties || []).map((p) => p.id);
     const propertyById = Object.fromEntries((properties || []).map((p) => [p.id, p]));
     if (propertyIds.length === 0) {
@@ -778,45 +804,36 @@ router.get('/community/:communityId/adoption', async (req, res) => {
       });
     }
 
-    // Step 2: current residencies (one row per resident on a property)
-    const { data: residencies } = await supabase
-      .from('property_residencies')
-      .select('contact_id, property_id, residency_type')
-      .in('property_id', propertyIds)
-      .is('end_date', null)
-      .limit(2000);
-    const contactIds = Array.from(new Set((residencies || []).map((r) => r.contact_id).filter(Boolean)));
+    // Step 2: current OWNERS (one row per owner per lot). Renters are not
+    // homeowner-invite candidates, so they are not on this list.
+    const ownerships = await currentOwnershipsIn(communityId, { propertyIds });
+    const contactIds = Array.from(new Set(ownerships.map((r) => r.contact_id).filter(Boolean)));
+    // Residency annotates (owner-occupied vs. renting the lot out); display only.
+    const residencies = await fetchIn(propertyIds, (chunk) => supabase
+      .from('property_residencies').select('id, contact_id, property_id, residency_type')
+      .in('property_id', chunk).is('end_date', null));
+    const residencyTypeFor = {};
+    for (const r of residencies) residencyTypeFor[`${r.contact_id}:${r.property_id}`] = r.residency_type;
 
-    // Step 3: contact details (only for current residents we just found)
-    const { data: contacts } = contactIds.length
-      ? await supabase
-          .from('contacts')
-          .select('id, full_name, preferred_name, primary_email')
-          .in('id', contactIds)
-          .limit(2000)
-      : { data: [] };
+    // Step 3: contact details (only for the current owners we just found)
+    const contacts = await fetchIn(contactIds, (chunk) => supabase
+      .from('contacts').select('id, full_name, preferred_name, primary_email').in('id', chunk));
     const contactById = Object.fromEntries((contacts || []).map((c) => [c.id, c]));
 
     // Step 4: portal_users for these contacts (matched by contact_id OR email)
     const emails = Array.from(new Set(
       (contacts || []).map((c) => (c.primary_email || '').toLowerCase().trim()).filter(Boolean)
     ));
-    const { data: pUsersByContact } = contactIds.length
-      ? await supabase
-          .from('portal_users')
-          .select('id, email, contact_id, status, invited_at, first_login_at, last_login_at, login_count')
-          .eq('management_company_id', BEDROCK_MGMT_CO_ID)
-          .in('contact_id', contactIds)
-          .limit(2000)
-      : { data: [] };
-    const { data: pUsersByEmail } = emails.length
-      ? await supabase
-          .from('portal_users')
-          .select('id, email, contact_id, status, invited_at, first_login_at, last_login_at, login_count')
-          .eq('management_company_id', BEDROCK_MGMT_CO_ID)
-          .in('email', emails)
-          .limit(2000)
-      : { data: [] };
+    const pUsersByContact = await fetchIn(contactIds, (chunk) => supabase
+      .from('portal_users')
+      .select('id, email, contact_id, status, invited_at, first_login_at, last_login_at, login_count')
+      .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+      .in('contact_id', chunk));
+    const pUsersByEmail = await fetchIn(emails, (chunk) => supabase
+      .from('portal_users')
+      .select('id, email, contact_id, status, invited_at, first_login_at, last_login_at, login_count')
+      .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+      .in('email', chunk));
     // Merge both lookups by id, contact_id-first wins (more specific match)
     const portalUserByContactId = {};
     const portalUserByEmail = {};
@@ -838,9 +855,9 @@ router.get('/community/:communityId/adoption', async (req, res) => {
     let logged_in_ever = 0;
     let active_30d = 0;
 
-    const rows = (residencies || []).map((r) => {
+    const rows = ownerships.map((r) => {
       const c = contactById[r.contact_id];
-      if (!c) return null; // contact deleted, residency stale
+      if (!c) return null; // contact deleted, ownership row stale
       const email = (c.primary_email || '').toLowerCase().trim();
       const property = propertyById[r.property_id] || {};
       const u = portalUserByContactId[c.id] || (email ? portalUserByEmail[email] : null);
@@ -858,7 +875,8 @@ router.get('/community/:communityId/adoption', async (req, res) => {
         contact_id: c.id,
         name: c.preferred_name || c.full_name || '',
         email: c.primary_email || '',
-        residency_type: r.residency_type || null,
+        residency_type: residencyTypeFor[`${r.contact_id}:${r.property_id}`] || null,
+        is_owner: true,
         property_id: r.property_id,
         property_address: property.street_address || '',
         portal_user_id: u ? u.id : null,
@@ -934,32 +952,22 @@ router.post('/community/:communityId/bulk-invite', async (req, res) => {
     if (!community) return res.status(404).json({ error: 'community_not_found' });
 
     // Fetch all contacts in one shot (idempotent membership check below)
-    const { data: contacts } = await supabase
-      .from('contacts')
-      .select('id, full_name, preferred_name, primary_email')
-      .in('id', contact_ids);
+    const contacts = await fetchIn(contact_ids, (chunk) => supabase
+      .from('contacts').select('id, full_name, preferred_name, primary_email').in('id', chunk));
     const contactById = Object.fromEntries((contacts || []).map((c) => [c.id, c]));
 
-    // Fetch current residencies for these contacts to find their property in
-    // THIS community (a contact may own elsewhere; we only grant the in-community
-    // property to avoid accidentally granting cross-community access).
-    const { data: residencies } = await supabase
-      .from('property_residencies')
-      .select('contact_id, property_id, properties:property_id(id, street_address, community_id)')
-      .in('contact_id', contact_ids)
-      .is('end_date', null);
-    // Build a map: contact_id -> property in THIS community (the first match;
-    // a contact with two properties in the same community is rare and either
-    // works for invite purposes).
+    // Find each contact's CURRENTLY OWNED lot in THIS community. Owners only:
+    // a renter invited as 'homeowner' would see the owner's balance and Pay.
+    // A contact who owns elsewhere gets only the in-community lot (no
+    // cross-community grant); two lots here is rare and either works.
+    const ownerships = await currentOwnershipsIn(communityId, { contactIds: contact_ids });
     const propertyForContact = {};
-    for (const r of (residencies || [])) {
-      if (r.properties && r.properties.community_id === communityId) {
-        if (!propertyForContact[r.contact_id]) {
-          propertyForContact[r.contact_id] = {
-            property_id: r.property_id,
-            street_address: r.properties.street_address || '',
-          };
-        }
+    for (const r of ownerships) {
+      if (!propertyForContact[r.contact_id]) {
+        propertyForContact[r.contact_id] = {
+          property_id: r.property_id,
+          street_address: r.properties.street_address || '',
+        };
       }
     }
 
@@ -967,13 +975,14 @@ router.post('/community/:communityId/bulk-invite', async (req, res) => {
     const lowerEmails = (contacts || [])
       .map((c) => (c.primary_email || '').toLowerCase().trim())
       .filter(Boolean);
-    const { data: existingUsers } = lowerEmails.length
-      ? await supabase
-          .from('portal_users')
-          .select('id, email, contact_id, status')
-          .eq('management_company_id', BEDROCK_MGMT_CO_ID)
-          .in('email', lowerEmails)
-      : { data: [] };
+    // ...and by contact_id, so a contact already on the portal under another
+    // email is not invited a second time.
+    const existingUsers = [
+      ...await fetchIn(lowerEmails, (chunk) => supabase.from('portal_users')
+        .select('id, email, contact_id, status').eq('management_company_id', BEDROCK_MGMT_CO_ID).in('email', chunk)),
+      ...await fetchIn(contact_ids, (chunk) => supabase.from('portal_users')
+        .select('id, email, contact_id, status').eq('management_company_id', BEDROCK_MGMT_CO_ID).in('contact_id', chunk)),
+    ];
     const existingByEmail = {};
     const existingByContactId = {};
     for (const u of (existingUsers || [])) {
@@ -998,9 +1007,9 @@ router.post('/community/:communityId/bulk-invite', async (req, res) => {
 
       const prop = propertyForContact[cid];
       if (!prop) {
-        // Contact isn't a current resident in THIS community — refuse to grant
-        // access. Avoids accidentally inviting an ex-owner whose record is stale.
-        results.push({ contact_id: cid, status: 'skipped', reason: 'no_current_residency_in_community' });
+        // Not a current OWNER in THIS community (a renter, an ex-owner, or a
+        // contact from elsewhere): no homeowner access.
+        results.push({ contact_id: cid, status: 'skipped', reason: 'not_current_owner_in_community' });
         continue;
       }
 
