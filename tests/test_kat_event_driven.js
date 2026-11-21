@@ -28,7 +28,7 @@ function fakeDb(seed = {}) {
   let n = 0; const reads = {};
   const from = (table) => {
     const st = { filters: [], op: 'select', row: null, patch: null, single: false };
-    const match = (r) => st.filters.every(([k, op, v]) => (op === 'eq' ? r[k] === v : op === 'in' ? v.includes(r[k]) : op === 'gte' ? String(r[k]) >= String(v) : true));
+    const match = (r) => st.filters.every(([k, op, v]) => (op === 'eq' ? r[k] === v : op === 'neq' ? r[k] !== v : op === 'in' ? v.includes(r[k]) : op === 'gte' ? String(r[k]) >= String(v) : true));
     const exec = () => {
       const rows = (T[table] = T[table] || []);
       if (st.op === 'insert') { const r = { id: `id${++n}`, ...st.row }; rows.push(r); return { data: st.single ? r : [r], error: null }; }
@@ -37,7 +37,8 @@ function fakeDb(seed = {}) {
       const hit = rows.filter(match); return { data: st.single ? hit[0] || null : hit, error: null };
     };
     const q = {
-      select() { return q; }, order() { return q; }, limit() { return q; },
+      select() { return q; }, order() { return q; }, limit() { return q; }, range() { return q; },
+      neq(k, v) { st.filters.push([k, 'neq', v]); return q; }, lte() { return q; },
       eq(k, v) { st.filters.push([k, 'eq', v]); return q; }, in(k, v) { st.filters.push([k, 'in', v]); return q; }, gte(k, v) { st.filters.push([k, 'gte', v]); return q; },
       insert(row) { st.op = 'insert'; st.row = row; return q; }, update(p) { st.op = 'update'; st.patch = p; return q; },
       single() { st.single = true; return q; }, maybeSingle() { st.single = true; return q; },
@@ -105,12 +106,12 @@ const quiet = { log() {}, warn() {}, error() {} };
   {
     const blocked = { id: 'int1', community_id: 'c1', process: 'interest', status: 'prepared', period_month: '2026-11-01', run_date: '2026-11-01', preview: {}, exceptions: [{ code: 'bank_not_reconciled', severity: 'blocking' }] };
     const auto = { community_id: 'c1', process: 'bank_reconciliation', enabled: true, settings: { bank_account_ids: ['ba1', 'ba2'] } };
-    const db = fakeDb({ accounting_runs: [blocked], community_accounting_automation: [auto], bank_reconciliations: [{ community_id: 'c1', bank_account_id: 'ba1', period_end: '2026-10-31', status: 'reconciled' }] });
+    const db = fakeDb({ accounting_runs: [blocked], community_accounting_automation: [auto], bank_reconciliations: [{ id: 'rec1', community_id: 'c1', bank_account_id: 'ba1', period_end: '2026-10-31', status: 'reconciled', difference_cents: 0 }] });
     const r1 = await R.onBankReconciled(db, { community_id: 'c1', period_end: '2026-10-31', logger: quiet });
     check('one of two accounts reconciled: the interest run is left as it is', !r1.refreshed.length && r1.waiting_on_accounts === 1 && blocked.status === 'prepared');
     const r2 = await R.onBankReconciled(db, { community_id: 'c1', period_end: '2026-09-30', logger: quiet });
     check('a different month-end does not touch the November run', !r2.refreshed.length && blocked.status === 'prepared');
-    db.T.bank_reconciliations.push({ community_id: 'c1', bank_account_id: 'ba2', period_end: '2026-10-31', status: 'reconciled' });
+    db.T.bank_reconciliations.push({ id: 'rec2', community_id: 'c1', bank_account_id: 'ba2', period_end: '2026-10-31', status: 'reconciled', difference_cents: 0 });
     const r3 = await R.onBankReconciled(db, { community_id: 'c1', period_end: '2026-10-31', logger: quiet });
     const ev = db.T.accounting_run_events.find((e) => e.run_id === 'int1' && e.event === 'superseded');
     check('all accounts reconciled: Kat refreshes the blocked interest run (supersede, then prepare again)', r3.refreshed.length === 1 && r3.refreshed[0].from === 'int1' && blocked.status === 'superseded' && ev && /approved bank reconciliation for 2026-10-31/.test(ev.actor));
@@ -119,8 +120,9 @@ const quiet = { log() {}, warn() {}, error() {} };
     check('an interest run not waiting on the bank is never refreshed', !r4.refreshed.length && clean.T.accounting_runs[0].status === 'prepared');
   }
   const runsSrc = src('lib/accounting/monthly_runs.js');
-  check('wired: approving a reconciled bank run calls onBankReconciled after it is marked posted, outside the posting failure path',
-    /'posted', KAT, result\);[\s\S]{0,400}run\.process === 'bank_reconciliation' && result\.status === 'reconciled'[\s\S]{0,200}onBankReconciled\(/.test(runsSrc));
+  // Keyed on the computed standing (Ed 2026-11-21): an approval is not a reconciliation.
+  check('wired: approving a bank run whose standing is Reconciled calls onBankReconciled after it is marked posted, outside the posting failure path',
+    /'posted', KAT, result\);[\s\S]{0,400}run\.process === 'bank_reconciliation' && result\.standing === 'reconciled'[\s\S]{0,200}onBankReconciled\(/.test(runsSrc));
   check('the refresh path never approves or posts', !/approveAndPost\(|postInterest\(/.test(runsSrc.slice(runsSrc.indexOf('async function onBankReconciled'), runsSrc.indexOf('async function onBankReconciled') + 2500)));
 
   console.log('Positive Pay: arrival and cutoff slots');

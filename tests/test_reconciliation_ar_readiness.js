@@ -32,7 +32,7 @@ function fakeDb(tables) {
     from(table) {
       const rows = tables[table] || [];
       const q = {
-        select() { return q; }, eq() { return q; }, order() { return q; },
+        select() { return q; }, eq() { return q; }, neq() { return q; }, order() { return q; },
         in(col, vals) { q._in = { col, vals: vals.map(String) }; return q; },
         not() { return q; }, is() { return q; }, gte() { return q; }, limit() { return q; }, ilike() { return q; },
         range(from) { q._from = from; return q; },
@@ -58,7 +58,7 @@ function world({ subCents, glCents, converted }) {
     ],
     v_homeowner_current_balance: [{ vantaca_account_id: 'A1', property_id: 'p1', contact_id: 'c1', balance_cents: subCents }],
     conversion_batches: converted ? [{ id: 'b1', community_id: 'X', batch_code: 'CONV', as_of_date: '2026-07-31', status: 'posted' }] : [],
-    bank_reconciliations: [{ bank_account_id: 'ba1', period_end: '2026-08-31', status: 'reconciled', difference_cents: 0, bank_accounts: { account_nickname: 'Operating' } }],
+    bank_reconciliations: [{ id: 'r1', bank_account_id: 'ba1', period_end: '2026-08-31', status: 'reconciled', difference_cents: 0, bank_accounts: { account_nickname: 'Operating' } }],
     community_budgets: [{ id: 'bud1', fiscal_year: 2026, status: 'approved' }],
     budget_line_items: [{ id: 1 }, { id: 2 }],
   });
