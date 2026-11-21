@@ -200,9 +200,10 @@ router.post('/users', async (req, res) => {
       try {
         const communityName = await _firstCommunityName(community_ids);
         const { sendPortalInvite } = require('../lib/email/portal_invite');
-        await sendPortalInvite({ toEmail: email, toName: full_name, communityName, magicLink, role });
-        emailed = true;
-        await logAudit('invite_emailed', { portal_user_id: user.id, performed_by: invited_by, notes: `to=${email}` });
+        const send = await sendPortalInvite({ toEmail: email, toName: full_name, communityName, magicLink, role });
+        emailed = !!(send && send.ok);
+        if (emailed) await logAudit('invite_emailed', { portal_user_id: user.id, performed_by: invited_by, notes: `to=${email}` });
+        else console.warn('[portal_admin] invite email not sent:', send && send.error);
       } catch (e) { console.warn('[portal_admin] invite email failed:', e.message); }
     }
 
@@ -310,9 +311,10 @@ router.post('/users/:id/magic-link', async (req, res) => {
           const { data: sc } = await supabase.from('portal_user_communities').select('communities:community_id(name)').eq('portal_user_id', req.params.id).is('revoked_at', null).limit(1).maybeSingle();
           const communityName = sc && sc.communities ? sc.communities.name : null;
           const { sendPortalInvite } = require('../lib/email/portal_invite');
-          await sendPortalInvite({ toEmail: u.email, toName: u.full_name, communityName, magicLink: magic_link, role: u.role });
-          emailed = true;
-          await logAudit('invite_emailed', { portal_user_id: req.params.id, performed_by: performedBy, notes: `to=${u.email}` });
+          const send = await sendPortalInvite({ toEmail: u.email, toName: u.full_name, communityName, magicLink: magic_link, role: u.role });
+          emailed = !!(send && send.ok);
+          if (emailed) await logAudit('invite_emailed', { portal_user_id: req.params.id, performed_by: performedBy, notes: `to=${u.email}` });
+          else console.warn('[portal_admin] invite email not sent:', send && send.error);
         }
       } catch (e) { console.warn('[portal_admin] invite email failed:', e.message); }
     }
@@ -458,6 +460,41 @@ router.post('/users/:id/revoke-property', async (req, res) => {
 });
 
 // ============================================================================
+// POST /api/portal-admin/community/:communityId/homeowner-balances   (OWNER ONLY)
+//   { on: true, note }  -> balance tile live + verification stamp (who/when from the session)
+//   { on: false }       -> balance tile hidden, stamp removed
+// Homeowners see balances only after this. Online payments are never switched on here.
+// ============================================================================
+router.post('/community/:communityId/homeowner-balances', async (req, res) => {
+  try {
+    const { requireOwner } = require('./_require_admin');
+    const owner = await requireOwner(req, res);
+    if (!owner) return;
+    const communityId = req.params.communityId;
+    const { on, note } = req.body || {};
+    if (typeof on !== 'boolean') return res.status(400).json({ error: 'on_must_be_boolean' });
+    const { data: current, error: curErr } = await supabase.from('communities')
+      .select('id, name, is_demo, portal_module_config').eq('id', communityId).maybeSingle();
+    if (curErr) throw curErr;
+    if (!current) return res.status(404).json({ error: 'community_not_found' });
+    const fa = require('../lib/portal/financial_access');
+    const verifiedBy = owner.email || owner.id;
+    const cfg = on
+      ? fa.balancesOnConfig(current.portal_module_config, { verifiedBy, note: typeof note === 'string' ? note.slice(0, 500) : null, at: new Date().toISOString() })
+      : fa.balancesOffConfig(current.portal_module_config);
+    const { error: upErr } = await supabase.from('communities').update({ portal_module_config: cfg }).eq('id', communityId);
+    if (upErr) throw upErr;
+    await logAudit(on ? 'homeowner_balances_verified_on' : 'homeowner_balances_off', {
+      resource_type: 'community', resource_id: communityId, performed_by: verifiedBy, notes: (note || '').slice(0, 500),
+    });
+    res.json({ ok: true, community_id: communityId, access: fa.decideFinancialAccess({ ...current, portal_module_config: cfg }) });
+  } catch (err) {
+    console.error('[portal_admin] homeowner-balances failed:', err.message);
+    res.status(500).json({ error: 'homeowner_balances_failed' });
+  }
+});
+
+// ============================================================================
 // GET /api/portal-admin/community/:communityId/module-config
 // ----------------------------------------------------------------------------
 // Returns the current per-tile visibility config for a community plus the
@@ -564,6 +601,7 @@ router.patch('/community/:communityId/module-config', async (req, res) => {
         newCfg[k] = { ...(newCfg[k] || {}), ...(module_patch[k] || {}) };
       }
     }
+    if (newCfg) newCfg = require('../lib/portal/financial_access').carryFinancialStamp(current.portal_module_config, newCfg);
     if (newCfg) update.portal_module_config = newCfg;
     if (typeof portal_active === 'boolean') update.portal_active = portal_active;
     if (typeof portal_welcome_message === 'string') update.portal_welcome_message = portal_welcome_message;
@@ -932,6 +970,10 @@ router.post('/community/:communityId/bulk-invite', async (req, res) => {
       .eq('id', communityId)
       .maybeSingle();
     if (!community) return res.status(404).json({ error: 'community_not_found' });
+    // What the invite may promise: only what this association's portal shows.
+    const access = await require('../lib/portal/financial_access').financialAccessFor(supabase, communityId)
+      .catch(() => ({ balance: false, payments: false }));
+    const { sendPortalInvite } = require('../lib/email/portal_invite');
 
     // Fetch all contacts in one shot (idempotent membership check below)
     const { data: contacts } = await supabase
@@ -952,6 +994,21 @@ router.post('/community/:communityId/bulk-invite', async (req, res) => {
     // a contact with two properties in the same community is rare and either
     // works for invite purposes).
     const propertyForContact = {};
+    // The OWNER of record comes first (ownership_tenures + property_ownerships,
+    // the same source online payments use), so an owner who rents the home out
+    // is invited to the lot they own. Residency is the fallback for contacts
+    // with no owner record. (Ed 2026-11-21: 70 LOPF lots are rentals.)
+    const { data: ownerRows, error: ownerErr } = await supabase
+      .from('property_ownerships')
+      .select('contact_id, tenure:tenure_id(property_id, community_id, kind, end_date, properties:property_id(street_address))')
+      .in('contact_id', contact_ids);
+    if (ownerErr) console.warn('[portal_admin] bulk-invite owner lookup failed:', ownerErr.message);
+    for (const o of (ownerRows || [])) {
+      const t = o.tenure;
+      if (t && t.kind === 'owner' && !t.end_date && t.community_id === communityId && !propertyForContact[o.contact_id]) {
+        propertyForContact[o.contact_id] = { property_id: t.property_id, street_address: (t.properties && t.properties.street_address) || '' };
+      }
+    }
     for (const r of (residencies || [])) {
       if (r.properties && r.properties.community_id === communityId) {
         if (!propertyForContact[r.contact_id]) {
@@ -1000,7 +1057,7 @@ router.post('/community/:communityId/bulk-invite', async (req, res) => {
       if (!prop) {
         // Contact isn't a current resident in THIS community — refuse to grant
         // access. Avoids accidentally inviting an ex-owner whose record is stale.
-        results.push({ contact_id: cid, status: 'skipped', reason: 'no_current_residency_in_community' });
+        results.push({ contact_id: cid, status: 'skipped', reason: 'not_a_current_owner_or_resident_in_community' });
         continue;
       }
 
@@ -1097,32 +1154,10 @@ router.post('/community/:communityId/bulk-invite', async (req, res) => {
       // eslint-disable-next-line no-await-in-loop
       await Promise.all(slice.map(async (item) => {
         const url = magicLinkUrl(req, item.token);
-        const firstName = (item.full_name || '').split(/\s+/)[0] || '';
         try {
-          await sendEmail({
-            to: item.email,
-            subject: `Welcome to your ${community.name} homeowner portal`,
-            html: `
-              <p>Hi${firstName ? ' ' + escapeHtml(firstName) : ''},</p>
-              <p>Bedrock Association Management is rolling out the homeowner portal for <strong>${escapeHtml(community.name)}</strong>. You're invited!</p>
-              <p>You'll find your account balance, compliance status, governing documents, board meeting schedule, and quick ways to submit ARC requests or reserve the clubhouse — all in one place for ${escapeHtml(item.property_address || 'your home')}.</p>
-              <p style="margin: 22px 0;">
-                <a href="${escapeHtml(url)}" style="display:inline-block; background:#1A3050; color:white; padding:13px 24px; border-radius:7px; text-decoration:none; font-weight:500; font-family: Inter, Arial, sans-serif;">
-                  Set up your portal access →
-                </a>
-              </p>
-              <p style="font-size:13px; color:#666;">This invite link is valid for 7 days. If you need a fresh one, just reply to this email and we'll send another.</p>
-              <p style="font-size:12px; color:#888;">Or paste this URL in your browser:<br><span style="font-family:monospace; font-size:11px; word-break:break-all;">${escapeHtml(url)}</span></p>
-              <p style="color:#555; font-size:11px; margin-top:26px; padding-top:14px; border-top:1px solid #ddd;">
-                Bedrock Association Management · (832) 588-2485 · info@bedrocktx.com · bedrocktx.com
-              </p>
-            `,
-            tags: [
-              { name: 'module', value: 'portal_admin' },
-              { name: 'event', value: 'bulk_invite' },
-              { name: 'community', value: community.slug || '' },
-            ],
-          });
+          const send = await sendPortalInvite({ toEmail: item.email, toName: item.full_name, communityName: community.name,
+            magicLink: url, role: 'homeowner', balance: access.balance, payments: access.payments });
+          if (!(send && send.ok)) throw new Error((send && send.error) || 'send failed');
           emailResultByUserId[item.user_id] = { sent: true };
           await logAudit('magic_link_sent', { portal_user_id: item.user_id, notes: 'via=bulk_invite' });
         } catch (e) {
