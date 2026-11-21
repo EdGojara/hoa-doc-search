@@ -2500,7 +2500,7 @@
           <td class="num" style="color:#047857;">${m.deposits_in_transit_cents?'+'+fmt(m.deposits_in_transit_cents):'—'}</td>
           <td class="num" style="color:#b91c1c;">${m.outstanding_checks_cents?fmt(m.outstanding_checks_cents):'—'}</td>
           <td class="num" style="font-weight:700; color:${rc};">${m.residual_cents?fmt(m.residual_cents):'$0.00'}</td>
-          <td title="${esc((m.standing_reasons||[]).join('; '))}">${standingBadge(m.standing)}${m.reconciliation_id?` <a href="/api/bank-rec/reconciliations/${encodeURIComponent(m.reconciliation_id)}/workpaper.html" target="_blank" rel="noopener" onclick="event.stopPropagation()" style="font-size:11px;margin-left:6px;">Workpaper</a>`:''}</td></tr>`;
+          <td title="${esc((m.standing_reasons||[]).join('; '))}">${standingBadge(m.standing)}${(m.reconciliation_id||m.run_id)?` <a href="${m.reconciliation_id?`/api/bank-rec/reconciliations/${encodeURIComponent(m.reconciliation_id)}`:`/api/bank-rec/runs/${encodeURIComponent(m.run_id)}`}/workpaper.html" target="_blank" rel="noopener" onclick="event.stopPropagation()" style="font-size:11px;margin-left:6px;">Workpaper</a>`:''}</td></tr>`;
       }).join('');
       return `<div class="card" style="margin-bottom:10px;"><div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
           <strong style="font-size:13.5px;">${nm}</strong>
@@ -2567,7 +2567,7 @@
         <h2 class="sec" style="margin:0;">Reconciliation — ${esc(j.account_nickname||'')}${esc(j.account_last4?(' ···'+j.account_last4):'')}${j.gl_account_number?' · GL '+esc(j.gl_account_number):''} · ${esc(fmtDate(periodEnd))}</h2>
         <span style="font-size:15px;" title="${esc((j.standing_reasons||[]).join('; '))}">${standingBadge(j.standing)} <span style="font-weight:600;font-size:13px;color:${tied?'#047857':'#b45309'};">· worksheet ${tied?'balances':'off by '+fmt(w.difference_cents)}</span></span>
       </div>
-      ${j.reconciliation_id ? `<div style="margin-top:6px;font-size:12.5px;"><a href="/api/bank-rec/reconciliations/${encodeURIComponent(j.reconciliation_id)}/workpaper.html" target="_blank" rel="noopener">Open the reconciliation workpaper</a> · <a href="/api/bank-rec/reconciliations/${encodeURIComponent(j.reconciliation_id)}/workpaper.pdf">Download PDF</a></div>` : ''}
+      ${(j.reconciliation_id||j.run_id) ? (()=>{ const base = j.reconciliation_id ? `/api/bank-rec/reconciliations/${encodeURIComponent(j.reconciliation_id)}` : `/api/bank-rec/runs/${encodeURIComponent(j.run_id)}`; return `<div style="margin-top:6px;font-size:12.5px;"><a href="${base}/workpaper.html" target="_blank" rel="noopener">Open the reconciliation workpaper</a> · <a href="${base}/workpaper.pdf">Download PDF</a></div>`; })() : ''}
       ${j.standing && j.standing!=='reconciled' && (j.standing_reasons||[]).length ? `<div style="margin-top:6px;font-size:12.5px;color:${j.standing==='stale'?'#9b2c2c':'#92400e'};">${esc(j.standing_label||'')}: ${esc(j.standing_reasons.join('; '))}.</div>` : ''}
       <div style="display:flex;gap:24px;flex-wrap:wrap;margin:10px 0 4px;font-size:13px;">
         <div><table style="border:none;"><tbody>
