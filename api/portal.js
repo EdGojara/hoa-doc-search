@@ -4415,6 +4415,87 @@ router.post('/pay/checkout', express.json({ limit: '4kb' }), async (req, res) =>
   }
 });
 
+// ============================================================================
+// Funding-aware assessment payment (Ed 2026-11-21): public/portal-pay.html at /portal/pay.
+//   POST /pay/setup    { property_id? }                         -> Payment Element options + fee schedule
+//   POST /pay/quote    { property_id?, payment_method_id }       -> assessment / fee / disclosure / total + quote_token
+//   POST /pay/confirm  { property_id?, payment_method_id, quote_token } -> creates + confirms the PaymentIntent
+// Same homeowner gates as /pay/checkout above (session scope, portal open via
+// resolveScopedProperty, paying role, lifecycle canDo('payments')); the
+// payment gates (mode, financial_access, connected account, balance, fee
+// config) live in lib/payments/assessment_intent.js. The fee and total are
+// decided ONLY on the server (lib/payments/fee_quote.js); confirm recomputes
+// them and never reads a client total.
+// ============================================================================
+async function authorizeIntentPayment(req, res) {
+  const resolved = await resolveUserWithRole(req, res);
+  if (!resolved) return null;
+  const scoped = await resolveScopedProperty({ query: {} }, supabase, resolved.user);
+  const { authorizeHomeownerPayment } = require('../lib/payments/homeowner_checkout');
+  const auth = authorizeHomeownerPayment({
+    user: resolved.user, mimic: resolved.mimic, scoped,
+    requestedPropertyId: (req.body && req.body.property_id) || null,
+  });
+  if (!auth.ok) { res.status(auth.status).json({ error: auth.error, detail: auth.detail }); return null; }
+  const { data: prop, error: pErr } = await supabase.from('properties').select('community_id').eq('id', auth.propertyId).maybeSingle();
+  if (pErr) throw pErr;
+  if (!prop) { res.status(404).json({ error: 'no_property' }); return null; }
+  const { canDo } = require('../lib/community/lifecycle');
+  const gate = await canDo('payments', prop.community_id);
+  if (!gate.allowed) { res.status(409).json({ error: 'community_not_taking_payments', detail: gate.reason }); return null; }
+  return { user: resolved.user, propertyId: auth.propertyId };
+}
+const intentDeps = () => ({ supabase, stripeLib: require('../lib/payments/stripe') });
+const sendIntentResult = (res, r) => (r.ok ? res.json(r) : res.status(r.status || 500).json({ error: r.error, hint: r.hint, quote: r.quote }));
+
+router.post('/pay/setup', express.json({ limit: '4kb' }), async (req, res) => {
+  try {
+    const a = await authorizeIntentPayment(req, res);
+    if (!a) return;
+    const { setupAssessmentPayment } = require('../lib/payments/assessment_intent');
+    const r = await setupAssessmentPayment(intentDeps(), { propertyId: a.propertyId, initiatedBy: 'homeowner_portal' });
+    sendIntentResult(res, r.ok ? { ...r, property_id: a.propertyId } : r);
+  } catch (err) {
+    console.error('[portal] pay setup failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+router.post('/pay/quote', express.json({ limit: '4kb' }), async (req, res) => {
+  try {
+    const a = await authorizeIntentPayment(req, res);
+    if (!a) return;
+    const { quoteAssessmentPayment } = require('../lib/payments/assessment_intent');
+    const r = await quoteAssessmentPayment(intentDeps(), { propertyId: a.propertyId, initiatedBy: 'homeowner_portal',
+      paymentMethodId: String((req.body && req.body.payment_method_id) || '') });
+    sendIntentResult(res, r);
+  } catch (err) {
+    console.error('[portal] pay quote failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+router.post('/pay/confirm', express.json({ limit: '8kb' }), async (req, res) => {
+  try {
+    const a = await authorizeIntentPayment(req, res);
+    if (!a) return;
+    const b = req.body || {};
+    const origin = process.env.APP_BASE_URL || `${req.protocol}://${req.get('host')}`;
+    const { confirmAssessmentPayment } = require('../lib/payments/assessment_intent');
+    const r = await confirmAssessmentPayment(intentDeps(), {
+      propertyId: a.propertyId, initiatedBy: 'homeowner_portal',
+      paymentMethodId: String(b.payment_method_id || ''), quoteToken: String(b.quote_token || ''),
+      payer: { email: a.user.email, name: a.user.full_name }, portalUserId: a.user.id,
+      returnUrl: `${origin}/portal/pay?returned=1`,
+      mandate: { ip: String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0].trim(), userAgent: String(req.headers['user-agent'] || '').slice(0, 500) },
+    });
+    sendIntentResult(res, r);
+  } catch (err) {
+    console.error('[portal] pay confirm failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
 router.post('/autopay/begin', express.json({ limit: '16kb' }), async (req, res) => {
   // PAUSED (Ed 2026-09-27): autopay charges do not yet run through the payment
   // webhook / tenure posting pipeline, so enrolling would promise payments that

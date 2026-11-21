@@ -577,6 +577,19 @@
         </label>
       </div>
 
+      <div class="kill-switch" id="payFeesBox">
+        <div class="label-block">
+          <strong>Online payment fees</strong>
+          <div class="help" id="payFeesHelp">Owner only. Homeowners cannot pay online until these are set.</div>
+          <div style="display:flex; flex-wrap:wrap; gap:10px; margin-top:8px; font-size:13px;">
+            <label>Credit surcharge %<br><input id="payFeeCredit" type="text" inputmode="decimal" placeholder="e.g. 2.9" style="width:90px"></label>
+            <label>Debit/prepaid flat $<br><input id="payFeeDebit" type="text" inputmode="decimal" placeholder="0.00" style="width:90px"></label>
+            <label>Bank (ACH) flat $<br><input id="payFeeAch" type="text" inputmode="decimal" placeholder="0.00" style="width:90px"></label>
+          </div>
+        </div>
+        <button type="button" id="payFeesSave" class="primary">Save fees</button>
+      </div>
+
       <div class="tile-grid-admin" id="moduleConfigGrid">
         <!-- Tile rows rendered by JS -->
       </div>
@@ -911,6 +924,7 @@ function renderModuleConfig() {
   $('portalActiveToggle').checked = _portalActive;
   $('killSwitchLabel').textContent = _portalActive ? 'On' : 'Off';
   renderBalancesSwitch();
+  renderPayFees();
 
   // Per-tile grid
   const grid = $('moduleConfigGrid');
@@ -978,6 +992,39 @@ async function saveTileStatus(moduleKey, newStatus) {
       badgeEl.textContent = '✗ save failed';
     }
     toast('Save failed: ' + err.message, 'error');
+  }
+}
+
+// Payment fee rules (lib/payments/fee_quote.js). Credit cards only may be
+// surcharged (max 3%); debit/prepaid never surcharged; ACH flat. Owner-only write.
+function renderPayFees() {
+  const f = (_moduleConfig && _moduleConfig.payment_fees) || null;
+  $('payFeeCredit').value = f ? String(f.credit_surcharge_bps / 100) : '';
+  $('payFeeDebit').value = f ? (f.debit_fee_cents / 100).toFixed(2) : '';
+  $('payFeeAch').value = f ? (f.ach_fee_cents / 100).toFixed(2) : '';
+  $('payFeesHelp').textContent = f
+    ? `Set by ${f.set_by || 'owner'}${f.set_at ? ' on ' + new Date(f.set_at).toLocaleString() : ''}. Debit and prepaid cards are never surcharged.`
+    : 'Owner only. Not set: homeowners cannot pay online until these are set. Credit surcharge max 3%; debit and prepaid cards are never surcharged.';
+}
+
+async function savePayFees() {
+  if (!_currentCommunityId) return;
+  const num = (id) => { const v = String($(id).value || '').replace(/[^0-9.]/g, ''); return v === '' ? NaN : parseFloat(v); };
+  const pct = num('payFeeCredit'), debit = num('payFeeDebit'), ach = num('payFeeAch');
+  if ([pct, debit, ach].some((n) => !isFinite(n) || n < 0)) { toast('Enter all three fees (0 is allowed).', 'error'); return; }
+  if (pct > 3) { toast('Credit surcharge cannot exceed 3%.', 'error'); return; }
+  try {
+    const r = await fetch(`/api/portal-admin/community/${encodeURIComponent(_currentCommunityId)}/payment-fees`, {
+      method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ credit_surcharge_bps: Math.round(pct * 100), debit_fee_cents: Math.round(debit * 100), ach_fee_cents: Math.round(ach * 100) }),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (r.status === 403) throw new Error('only the owner can change this');
+    if (!r.ok) throw new Error(j.detail || j.error || `API ${r.status}`);
+    toast('Payment fees saved.', 'success');
+    await loadAdoption(_currentCommunityId);
+  } catch (err) {
+    toast('Could not save fees: ' + err.message, 'error');
   }
 }
 
@@ -1084,6 +1131,7 @@ async function savePortalActive(newActive) {
 
   // Portal-active kill switch
   $('balancesToggle').addEventListener('change', (e) => saveBalances(e.target.checked));
+  $('payFeesSave').addEventListener('click', savePayFees);
   $('portalActiveToggle').addEventListener('change', (e) => {
     savePortalActive(e.target.checked);
   });

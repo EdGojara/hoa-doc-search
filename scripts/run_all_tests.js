@@ -297,6 +297,7 @@ const CHECKS = [
   'tests/test_character_registry.js',
   'tests/test_character_approval.js',
   'tests/test_payment_foundation.js',
+  'tests/test_payment_quote.js',          // funding-aware fees: credit-only surcharge cap, server-side confirm, PI webhook settlement
   'tests/test_portal_financials_fail_closed.js',
   'tests/test_portal_launch.js',
   'tests/sql/469_payment_rehearsal.mjs',
