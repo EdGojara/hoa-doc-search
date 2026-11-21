@@ -101,7 +101,7 @@
   async function api(path, body) {
     const r = await fetch(apiBase + path, {
       method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(Object.assign({ property_id: propertyId }, body || {})),
+      body: JSON.stringify(Object.assign({ property_id: propertyId }, params.get('staff_test') === '1' && params.get('amount') ? { test_amount_cents: parseInt(params.get('amount'), 10) } : {}, body || {})),
     });
     const j = await r.json().catch(() => ({}));
     if (r.status === 401) { location.href = '/portal-login.html'; throw new Error('Please sign in again.'); }
