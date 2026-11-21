@@ -29,3 +29,22 @@ assert.deepStrictEqual([d.balance, d.payments], [false, false]);
 assert.strictEqual(off.homeowner_financials, undefined);
 
 console.log('test_portal_launch: ok');
+
+// Server-side portal gate: only lots in an open association; fail-closed.
+(async () => {
+  const { isOpenCommunity, openPropertyIds } = require('../lib/portal/portal_open');
+  assert.ok(isOpenCommunity({ portal_active: true }) && isOpenCommunity({ is_demo: true }));
+  assert.ok(!isOpenCommunity({ portal_active: false }) && !isOpenCommunity(null));
+  const fake = (rows, error = null) => ({ from: () => ({ select: () => ({ in: async () => ({ data: rows, error }) }) }) });
+  const open = await openPropertyIds(fake([
+    { id: 'lopf-lot', communities: { portal_active: false, is_demo: false } },
+    { id: 'wv-lot', communities: { portal_active: true, is_demo: false } },
+  ]), ['lopf-lot', 'wv-lot']);
+  assert.deepStrictEqual([...open], ['wv-lot'], 'a closed association serves nothing');
+  assert.strictEqual((await openPropertyIds(fake(null, { message: 'down' }), ['wv-lot'])).size, 0, 'lookup failure = closed');
+  const fs = require('fs');
+  const portal = fs.readFileSync(require('path').join(__dirname, '..', 'api', 'portal.js'), 'utf8');
+  assert.ok(portal.includes("const props = linked.filter((p) => isOpenCommunity(p.communities));"), 'every data route via resolveScopedProperty is gated');
+  assert.ok(/\.eq\('portal_user_id', portalUserId\)\s*\n\s*\.is\('revoked_at', null\);\s*\/\/ revoked access is no access/.test(portal), 'messages ignore revoked access');
+  console.log('test_portal_launch (server gate): ok');
+})().catch((e) => { console.error(e); process.exit(1); });
