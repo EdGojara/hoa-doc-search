@@ -461,14 +461,18 @@ router.post('/test/assessment-intent/:step', express.json({ limit: '8kb' }), asy
     if (!b.property_id) return res.status(400).json({ error: 'property_id_required' });
     const AI = require('../lib/payments/assessment_intent');
     const deps = { supabase, stripeLib };
-    const common = { propertyId: String(b.property_id), initiatedBy: 'staff_test', testAmountCents: 100 };
+    // Optional test amount so staff can exercise fee tiers (e.g. the ACH threshold);
+    // test mode only (requireTestMode above), whole cents between $0.50 and $5,000.
+    const amt = b.test_amount_cents == null ? 100 : Number(b.test_amount_cents);
+    if (!Number.isInteger(amt) || amt < 50 || amt > 500000) return res.status(400).json({ error: 'test_amount_cents_invalid' });
+    const common = { propertyId: String(b.property_id), initiatedBy: 'staff_test', testAmountCents: amt };
     const origin = process.env.APP_BASE_URL || `${req.protocol}://${req.get('host')}`;
     let r;
     if (req.params.step === 'setup') r = await AI.setupAssessmentPayment(deps, common);
     else if (req.params.step === 'quote') r = await AI.quoteAssessmentPayment(deps, { ...common, paymentMethodId: String(b.payment_method_id || '') });
     else if (req.params.step === 'confirm') {
       r = await AI.confirmAssessmentPayment(deps, { ...common, paymentMethodId: String(b.payment_method_id || ''), quoteToken: String(b.quote_token || ''),
-        returnUrl: `${origin}/portal/pay?staff_test=1&returned=1&property_id=${encodeURIComponent(String(b.property_id))}`,
+        returnUrl: `${origin}/portal/pay?staff_test=1&returned=1&property_id=${encodeURIComponent(String(b.property_id))}${b.test_amount_cents ? `&amount=${amt}` : ''}`,
         mandate: { ip: String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0].trim(), userAgent: String(req.headers['user-agent'] || '').slice(0, 500) } });
     } else return res.status(404).json({ error: 'unknown_step' });
     if (!r.ok) return res.status(r.status || 500).json({ error: r.error, hint: r.hint, quote: r.quote });
