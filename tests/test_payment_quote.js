@@ -54,7 +54,7 @@ function fakeSupabase(tables) {
 }
 
 const P1 = 'prop-1', C = 'comm-1', TEN = 'ten-1';
-const FEES = { card_fee_bps: 350, debit_card_fee_bps: null, ach_fee_cents: 595 };
+const FEES = { card_fee_bps: 350, debit_card_fee_bps: null, ach_fee_cents: 295, ach_tier_threshold_cents: 35000, ach_fee_above_cents: 595 };
 function world({ balance = 25000, fees = FEES, sandbox = false } = {}) {
   const cfg = { balance: { status: 'live' }, homeowner_financials: { verified_at: '2026-11-01', verified_by: 'owner', payments: true } };
   if (fees) cfg.payment_fees = fees;
@@ -116,10 +116,19 @@ t('card: optional debit override applies to debit and prepaid only', () => {
   assert.strictEqual(FQ.computeFee({ assessmentCents: 100000, config: c, methodKind: 'card', funding: 'unknown' }).fee_cents, 3500);
   assert.strictEqual(FQ.classifyPaymentMethod({ id: 'pm_x', type: 'card', card: { funding: 'weird' } }).funding, 'unknown');
 });
-t('bank account (ACH): flat ach_fee_cents, $5.95', () => {
-  const f = FQ.computeFee({ assessmentCents: 90000, config: cfg(), methodKind: 'us_bank_account' });
-  assert.strictEqual(f.fee_cents, 595); assert.strictEqual(f.fee_kind, 'ach_fee'); assert.match(f.disclosure, /\$5\.95 processing fee/);
-  assert.strictEqual(FQ.computeFee({ assessmentCents: 900000, config: cfg(), methodKind: 'us_bank_account' }).fee_cents, 595, 'flat, not proportional');
+t('bank account (ACH): $2.95 up to and including $350, $5.95 above, on the payment amount', () => {
+  const cases = [[2500, 295], [10000, 295], [35000, 295], [35001, 595], [71900, 595], [150000, 595]];
+  for (const [amt, fee] of cases) {
+    const f = FQ.computeFee({ assessmentCents: amt, config: cfg(), methodKind: 'us_bank_account' });
+    assert.strictEqual(f.fee_cents, fee, `ACH fee on ${amt}`); assert.strictEqual(f.fee_kind, 'ach_fee');
+  }
+  assert.match(FQ.computeFee({ assessmentCents: 2500, config: cfg(), methodKind: 'us_bank_account' }).disclosure, /\$2\.95 processing fee/);
+  assert.match(FQ.computeFee({ assessmentCents: 150000, config: cfg(), methodKind: 'us_bank_account' }).disclosure, /\$5\.95 processing fee/);
+  assert.match(FQ.achScheduleText(cfg()), /\$2\.95 .* up to \$350\.00; \$5\.95 above \$350\.00/);
+  // One flat fee when no tier is set; threshold and above must come together.
+  assert.strictEqual(FQ.computeFee({ assessmentCents: 150000, config: { ...cfg(), ach_tier_threshold_cents: null, ach_fee_above_cents: null }, methodKind: 'us_bank_account' }).fee_cents, 295);
+  assert.strictEqual(FQ.validateFeeConfig(cfg({ ach_fee_above_cents: null })).ok, false);
+  assert.strictEqual(FQ.validateFeeConfig(cfg({ ach_tier_threshold_cents: 0 })).ok, false);
   assert.strictEqual(FQ.computeFee({ assessmentCents: 25000, config: cfg({ ach_fee_cents: 0 }), methodKind: 'us_bank_account' }).fee_cents, 0);
 });
 t('typo guard: card fee above 10% refused', () => {
@@ -148,12 +157,12 @@ t('setup: publishable key must exist and match the secret key mode', async () =>
   const ok = await AI.setupAssessmentPayment(deps(sb, st), { ...base, env: { STRIPE_PUBLISHABLE_KEY: 'pk_live_x' } });
   assert.ok(ok.ok, JSON.stringify(ok));
   assert.strictEqual(ok.elements.paymentMethodCreation, 'manual'); assert.strictEqual(ok.elements.onBehalfOf, 'acct_test_1');
-  assert.strictEqual(ok.assessment_cents, 25000); assert.match(ok.fee_schedule.card, /3\.5% processing fee/); assert.match(ok.fee_schedule.ach, /\$5\.95/);
+  assert.strictEqual(ok.assessment_cents, 25000); assert.match(ok.fee_schedule.card, /3\.5% processing fee/); assert.match(ok.fee_schedule.ach, /\$2\.95 .*\$5\.95 above/);
   assert.ok(!('payment_fees' in ok) && !JSON.stringify(ok).includes('card_fee_bps'), 'raw fee config never sent to the browser');
 });
 t('quote: per funding type, server-computed, signed', async () => {
   const sb = world(); const st = fakeStripe();
-  const exp = { pm_credit_visa: 875, pm_debit_visa: 875, pm_prepaid_mc: 875, pm_unknown_card: 875, pm_bank_ach: 595 };
+  const exp = { pm_credit_visa: 875, pm_debit_visa: 875, pm_prepaid_mc: 875, pm_unknown_card: 875, pm_bank_ach: 295 };
   for (const [pm, fee] of Object.entries(exp)) {
     const q = await AI.quoteAssessmentPayment(deps(sb, st), { ...base, paymentMethodId: pm });
     assert.ok(q.ok, `${pm}: ${JSON.stringify(q)}`);

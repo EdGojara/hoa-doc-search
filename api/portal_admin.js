@@ -496,7 +496,7 @@ router.post('/community/:communityId/homeowner-balances', async (req, res) => {
 
 // ============================================================================
 // POST /api/portal-admin/community/:communityId/payment-fees   (OWNER ONLY)
-//   { card_fee_bps, debit_card_fee_bps|null, ach_fee_cents }  -> set the rules
+//   { card_fee_bps, debit_card_fee_bps|null, ach_fee_cents, ach_tier_threshold_cents|null, ach_fee_above_cents|null }
 //   { clear: true }                                           -> remove them (online payment refused)
 // The ONLY writer of portal_module_config.payment_fees (lib/payments/fee_quote.js).
 // Validated by the same function the payment flow uses, so a value that would be
@@ -520,7 +520,9 @@ router.post('/community/:communityId/payment-fees', async (req, res) => {
     } else {
       const { validateFeeConfig } = require('../lib/payments/fee_quote');
       const v = validateFeeConfig({ card_fee_bps: b.card_fee_bps, debit_card_fee_bps: b.debit_card_fee_bps == null ? null : b.debit_card_fee_bps,
-        ach_fee_cents: b.ach_fee_cents });
+        ach_fee_cents: b.ach_fee_cents,
+        ach_tier_threshold_cents: b.ach_tier_threshold_cents == null ? null : b.ach_tier_threshold_cents,
+        ach_fee_above_cents: b.ach_fee_above_cents == null ? null : b.ach_fee_above_cents });
       if (!v.ok) return res.status(400).json({ error: v.error, detail: v.detail });
       fees = { ...v.config, set_by: owner.email || owner.id, set_at: new Date().toISOString() };
       cfg.payment_fees = fees;
@@ -529,7 +531,7 @@ router.post('/community/:communityId/payment-fees', async (req, res) => {
     if (upErr) throw upErr;
     await logAudit(fees ? 'payment_fees_set' : 'payment_fees_cleared', {
       resource_type: 'community', resource_id: communityId, performed_by: owner.email || owner.id,
-      notes: fees ? `card ${fees.card_fee_bps}bps, debit ${fees.debit_card_fee_bps == null ? 'same' : fees.debit_card_fee_bps + 'bps'}, ach ${fees.ach_fee_cents}c` : 'cleared',
+      notes: fees ? `card ${fees.card_fee_bps}bps, debit ${fees.debit_card_fee_bps == null ? 'same' : fees.debit_card_fee_bps + 'bps'}, ach ${fees.ach_fee_cents}c${fees.ach_tier_threshold_cents != null ? ` up to ${fees.ach_tier_threshold_cents}c, ${fees.ach_fee_above_cents}c above` : ''}` : 'cleared',
     });
     res.json({ ok: true, community_id: communityId, payment_fees: fees });
   } catch (err) {
