@@ -560,6 +560,23 @@
         </label>
       </div>
 
+      <div class="kill-switch">
+        <div class="label-block">
+          <strong>Homeowner balances</strong>
+          <div class="help" id="balancesHelp">
+            Owner only. Turn on once this association's homeowner balances are verified.
+            Records who verified and when. Online payments stay off.
+          </div>
+        </div>
+        <label class="toggle">
+          <span id="balancesLabel">—</span>
+          <span class="switch">
+            <input type="checkbox" id="balancesToggle">
+            <span class="slider"></span>
+          </span>
+        </label>
+      </div>
+
       <div class="tile-grid-admin" id="moduleConfigGrid">
         <!-- Tile rows rendered by JS -->
       </div>
@@ -893,6 +910,7 @@ function renderModuleConfig() {
   // Kill switch
   $('portalActiveToggle').checked = _portalActive;
   $('killSwitchLabel').textContent = _portalActive ? 'On' : 'Off';
+  renderBalancesSwitch();
 
   // Per-tile grid
   const grid = $('moduleConfigGrid');
@@ -960,6 +978,39 @@ async function saveTileStatus(moduleKey, newStatus) {
       badgeEl.textContent = '✗ save failed';
     }
     toast('Save failed: ' + err.message, 'error');
+  }
+}
+
+function renderBalancesSwitch() {
+  const hf = (_moduleConfig && _moduleConfig.homeowner_financials) || {};
+  const on = !!(_moduleConfig && _moduleConfig.balance && _moduleConfig.balance.status === 'live' && hf.verified_at && hf.verified_by);
+  $('balancesToggle').checked = on;
+  $('balancesLabel').textContent = on ? 'On' : 'Off';
+  $('balancesHelp').textContent = on
+    ? `Verified by ${hf.verified_by} on ${new Date(hf.verified_at).toLocaleString()}. Online payments ${hf.payments === true ? 'on' : 'off'}.`
+    : "Owner only. Turn on once this association's homeowner balances are verified. Records who verified and when. Online payments stay off.";
+}
+
+async function saveBalances(on) {
+  if (!_currentCommunityId) return;
+  let note = null;
+  if (on) {
+    note = prompt('Turn ON homeowner balances. Homeowners will see their account balance and transactions (no online payments). Note what you verified (optional):', '');
+    if (note === null) { renderBalancesSwitch(); return; }
+  } else if (!confirm('Turn OFF homeowner balances? Homeowners stop seeing their balance immediately.')) { renderBalancesSwitch(); return; }
+  try {
+    const r = await fetch(`/api/portal-admin/community/${encodeURIComponent(_currentCommunityId)}/homeowner-balances`, {
+      method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ on, note }),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (r.status === 403) throw new Error('only the owner can change this');
+    if (!r.ok) throw new Error(j.error || `API ${r.status}`);
+    toast(`Homeowner balances ${on ? 'on' : 'off'}.`, 'success');
+    await loadAdoption(_currentCommunityId);
+  } catch (err) {
+    renderBalancesSwitch();
+    toast('Could not change balances: ' + err.message, 'error');
   }
 }
 
@@ -1032,6 +1083,7 @@ async function savePortalActive(newActive) {
   $('quickDeselect').addEventListener('click', quickDeselect);
 
   // Portal-active kill switch
+  $('balancesToggle').addEventListener('change', (e) => saveBalances(e.target.checked));
   $('portalActiveToggle').addEventListener('change', (e) => {
     savePortalActive(e.target.checked);
   });
