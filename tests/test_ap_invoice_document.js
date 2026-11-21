@@ -16,6 +16,7 @@
 //      needs_review and the reason in its notes.
 // Offline and deterministic.
 // ============================================================================
+require('./_support/no_prod_network'); // unit test: loopback only, no production keys (Issue #27 follow-up)
 const assert = require('assert');
 const Module = require('module');
 
