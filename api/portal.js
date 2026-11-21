@@ -3177,6 +3177,41 @@ async function resolveHomeownerScope(req) {
 }
 
 // ----------------------------------------------------------------------------
+// Staff notification for portal messages (Ed 2026-11-21 portal testing).
+// The staff Messages inbox was retired 2026-07-13 (superseded by
+// Communications), so a portal message landed in homeowner_threads where no
+// staff screen could read or answer it. Each homeowner message now also goes
+// to Bedrock's catch-all inbox with Reply-To set to the homeowner, so staff
+// see it where they already work and answer by email. Demo communities skip.
+// ----------------------------------------------------------------------------
+async function notifyStaffOfPortalMessage({ threadId, propertyId, scope, subject, body, isReply }) {
+  try {
+    const { data: p, error } = await supabase.from('properties')
+      .select('street_address, communities:community_id(name, is_demo)').eq('id', propertyId).maybeSingle();
+    if (error) throw new Error(error.message);
+    if (!p || (p.communities && p.communities.is_demo)) return { skipped: true };
+    const community = (p.communities && p.communities.name) || 'Community';
+    const who = scope.full_name || scope.email || 'Homeowner';
+    const to = process.env.PORTAL_MESSAGES_TO || 'info@bedrocktx.com';
+    const send = await sendEmail({
+      to,
+      replyTo: scope.email || undefined,
+      subject: `[Portal ${isReply ? 'reply' : 'message'}] ${community}, ${p.street_address || ''}: ${subject || ''}`.slice(0, 250),
+      html: `<p><b>${escapeHtml(who)}</b> (${escapeHtml(scope.email || 'no email')}) sent a ${isReply ? 'reply' : 'message'} from the homeowner portal.</p>
+        <p><b>Community:</b> ${escapeHtml(community)}<br><b>Property:</b> ${escapeHtml(p.street_address || '')}<br><b>Subject:</b> ${escapeHtml(subject || '')}</p>
+        <div style="white-space:pre-wrap; border-left:3px solid #D4AF37; padding:6px 12px; margin:12px 0;">${escapeHtml(body)}</div>
+        <p style="color:#666; font-size:12px;">Reply to this email to answer the homeowner directly. Thread ${escapeHtml(threadId)}.</p>`,
+      tags: [{ name: 'module', value: 'portal_messages' }],
+    });
+    if (!(send && send.ok)) console.error(`[portal/messages] staff notification NOT sent for thread ${threadId}:`, send && send.error);
+    return send;
+  } catch (e) {
+    console.error(`[portal/messages] staff notification failed for thread ${threadId}:`, e.message);
+    return { ok: false, error: e.message };
+  }
+}
+
+// ----------------------------------------------------------------------------
 // GET /api/portal/messages
 // List the homeowner's open threads across all accessible properties.
 // Query params:
@@ -3364,6 +3399,7 @@ router.post('/messages', express.json({ limit: '256kb' }), async (req, res) => {
       await supabase.from('homeowner_threads').delete().eq('id', thread.id);
       return res.status(500).json({ error: 'create_failed' });
     }
+    await notifyStaffOfPortalMessage({ threadId: thread.id, propertyId, scope, subject, body, isReply: false });
 
     res.status(201).json({ thread });
   } catch (err) {
@@ -3386,7 +3422,7 @@ router.post('/messages/:threadId/reply', express.json({ limit: '256kb' }), async
     // Verify ownership of the thread
     const { data: thread } = await supabase
       .from('homeowner_threads')
-      .select('id, property_id')
+      .select('id, property_id, subject')
       .eq('id', req.params.threadId)
       .maybeSingle();
     if (!thread) return res.status(404).json({ error: 'not_found' });
@@ -3406,6 +3442,7 @@ router.post('/messages/:threadId/reply', express.json({ limit: '256kb' }), async
       .select()
       .single();
     if (error) return res.status(500).json({ error: 'reply_failed' });
+    await notifyStaffOfPortalMessage({ threadId: thread.id, propertyId: thread.property_id, scope, subject: thread.subject, body, isReply: true });
 
     // Status auto-flips via the thread-activity-sync trigger:
     // homeowner reply during closure_pending -> cancels close offer
