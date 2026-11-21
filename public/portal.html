@@ -542,6 +542,18 @@
     .picker-grid { grid-template-columns: 1fr; }
     .picker-head h2 { font-size: 26px; }
     .header-chip { padding: 6px 10px; font-size: 11.5px; }
+    /* Phone header (Ed 2026-11-21 portal testing): the wordmark, two chips,
+       name and Sign out did not fit, so the wordmark clipped under the banner
+       and everything wrapped. Keep the mark, drop the wordmark text and the
+       name (the hero card greets them), tighten the chips. */
+    header.top .brand > div { display: none; }
+    header.top .brand img { height: 38px !important; }
+    .top-right { gap: 8px; }
+    .top-right .user-name { display: none; }
+    #logoutBtn { padding: 6px 10px; font-size: 12px; }
+    /* Demo banner on one line so it matches the 32px offset below. */
+    #demoBanner { font-size: 11px !important; padding: 7px 10px !important; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    #demoBanner a { margin-left: 6px !important; font-size: 11px !important; }
   }
 
   /* Mimic mode — body gets padding-top so the fixed banner doesn't cover
@@ -677,7 +689,10 @@
 <div id="chamberBanner" style="display:none; margin-bottom:16px;"></div>
 
 <!-- Tile grid -->
-<div class="section-label" id="tileSectionLabel">Your community</div>
+<!-- Section labels are added per section by renderTiles(). This static label
+     sat above an always-empty grid, showing an orphan "Your community"
+     heading at the top of every portal (Ed 2026-11-21 portal testing). -->
+<div class="section-label" id="tileSectionLabel" style="display:none;">Your community</div>
 <div class="tile-grid" id="tileGrid"></div>
 
 </main>
