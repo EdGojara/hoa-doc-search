@@ -2464,8 +2464,9 @@
     catch(e){ return ''; }
     if (!accts.length) return '';
     const summaries = await Promise.all(accts.map(async (a) => {
-      if (!a.account_last4) return { acct: a, months: [] };
-      try { const d = await (await fetch(`/api/bank-rec/boundary-summary?community_id=${CID}&account_last4=${a.account_last4}`)).json(); return { acct: a, months: (d && d.months) || [] }; }
+      // Keyed by the unique account id: two accounts can share last four digits
+      // (an operating account and its ICS sweep can).
+      try { const d = await (await fetch(`/api/bank-rec/boundary-summary?community_id=${CID}&bank_account_id=${encodeURIComponent(a.id)}`)).json(); return { acct: a, months: (d && d.months) || [] }; }
       catch(e){ return { acct: a, months: [] }; }
     }));
     const withStmts = summaries.filter((s)=>s.months.length).length;
@@ -2474,7 +2475,7 @@
       <h2 class="sec" style="margin:0 0 4px;">All accounts — reconciliation status</h2>
       <div class="sub muted" style="font-size:12.5px;"><strong>${withStmts}</strong> of <strong>${accts.length}</strong> accounts have statements uploaded · <strong>${allTied}</strong> fully reconciled. Drop statements above to reconcile the rest; click any month to open its worksheet.</div></div>`;
     const cards = summaries.map(({ acct, months }) => {
-      const nm = esc(acct.account_nickname || acct.bank_name || 'Account') + (acct.account_last4 ? (' ····' + acct.account_last4) : '');
+      const nm = esc(acct.account_nickname || acct.bank_name || 'Account') + (acct.account_last4 ? (' ····' + acct.account_last4) : '') + (acct.gl_account_number ? ` <span class="muted" style="font-weight:400;font-size:12px;">GL ${esc(acct.gl_account_number)}</span>` : '');
       if (!months.length) {
         return `<div class="card" style="margin-bottom:10px; opacity:.72;"><div style="display:flex; justify-content:space-between; align-items:center;">
           <strong style="font-size:13.5px;">${nm}</strong>
@@ -2484,7 +2485,7 @@
       const rows = months.slice().sort((a,b)=>(b.period_end||'').localeCompare(a.period_end||'')).map((m)=>{
         const t = m.reconciled;
         const rc = Math.abs(m.residual_cents)<=100 ? '#047857' : (m.residual_cents<0?'#b91c1c':'#b45309');
-        return `<tr style="cursor:pointer; ${t?'':'background:#fff7ed;'}" onclick="wsOpen('${m.period_end}','${acct.account_last4}')" title="Open reconciliation worksheet">
+        return `<tr style="cursor:pointer; ${t?'':'background:#fff7ed;'}" onclick="wsOpen('${m.period_end}','${acct.id}')" title="Open reconciliation worksheet">
           <td>${esc(fmtDate(m.period_end))}</td><td class="num">${fmt(m.book_cents)}</td><td class="num">${fmt(m.bank_cents)}</td>
           <td class="num" style="color:#047857;">${m.deposits_in_transit_cents?'+'+fmt(m.deposits_in_transit_cents):'—'}</td>
           <td class="num" style="color:#b91c1c;">${m.outstanding_checks_cents?fmt(m.outstanding_checks_cents):'—'}</td>
@@ -2502,15 +2503,15 @@
 
   // Traditional clearing worksheet: GL | Bank columns, matches pre-checked,
   // Accept/Reopen per line, uncleared GL items carry forward.
-  window.wsOpen = async function(periodEnd, accountLast4){
+  window.wsOpen = async function(periodEnd, bankAccountId){
     const d = $('drill'); if(!d) return;
     d.innerHTML = '<div class="card muted" style="padding:14px;">Loading worksheet…</div>';
     d.scrollIntoView({behavior:'smooth', block:'start'});
-    const acctQ = accountLast4 ? `&account_last4=${accountLast4}` : '';
+    const acctQ = bankAccountId ? `&bank_account_id=${encodeURIComponent(bankAccountId)}` : '';
     let j; try { j = await (await fetch(`/api/bank-rec/worksheet?community_id=${CID}&period_end=${periodEnd}${acctQ}`)).json(); }
     catch(e){ d.innerHTML='<div class="card" style="padding:14px;color:#b91c1c">Could not load worksheet.</div>'; return; }
     if (!j || j.error){ d.innerHTML='<div class="card" style="padding:14px;color:#b91c1c">'+esc((j&&j.error)||'error')+'</div>'; return; }
-    const w = j.worksheet; window._wsCtx = { periodEnd, baId: j.bank_account_id, acct: accountLast4||'' }; window._wsSel = {};
+    const w = j.worksheet; window._wsCtx = { periodEnd, baId: j.bank_account_id, acct: j.bank_account_id||bankAccountId||'' }; window._wsSel = {};
     const amt = (c)=>`<span style="color:${c<0?'#b91c1c':'#111'}">${fmt(c)}</span>`;
     const hdr = (t)=>`<tr><td colspan="7" style="background:#f1f5f9;font-weight:700;font-size:12px;padding:6px 8px;">${t}</td></tr>`;
     // one row per matched group (bank line(s) ↔ GL line(s)); action = accept|reopen
@@ -2553,7 +2554,7 @@
     const bb=(c)=>c==null?'—':fmt(c);
     d.innerHTML = `<div class="card">
       <div style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:8px;">
-        <h2 class="sec" style="margin:0;">Reconciliation — ${esc(j.account_last4?('···'+j.account_last4):'')} · ${esc(fmtDate(periodEnd))}</h2>
+        <h2 class="sec" style="margin:0;">Reconciliation — ${esc(j.account_nickname||'')}${esc(j.account_last4?(' ···'+j.account_last4):'')}${j.gl_account_number?' · GL '+esc(j.gl_account_number):''} · ${esc(fmtDate(periodEnd))}</h2>
         <span style="font-weight:700;font-size:15px;color:${tied?'#047857':'#b45309'};">${tied?'✓ Reconciled':'Out of balance · '+fmt(w.difference_cents)}</span>
       </div>
       <div style="display:flex;gap:24px;flex-wrap:wrap;margin:10px 0 4px;font-size:13px;">
@@ -2642,10 +2643,19 @@
     $('body').innerHTML = importCard + (summaryHtml || '<div class="card muted" style="padding:24px;">No bank statements imported yet — drop one above to start.</div>') + '<div id="drill"></div>';
   }
 
+  // Auto-route a file only when exactly ONE account has its last four digits.
+  // An operating account and its ICS sweep can share last four digits: a shared last4
+  // leaves the choice to the person instead of guessing.
+  function brLast4Hits(name) {
+    const m = (String(name || '').match(/(\d{3,5})\D*\.(pdf|xls|xlsx|png|jpe?g)$/i) || [])[1];
+    if (!m) return { m: null, hits: [] };
+    return { m, hits: (window._brAccts || []).filter((a) => a.account_last4 && m.slice(-4) === a.account_last4) };
+  }
   function brAcctOptions(selectedFor) {
-    const m = (String(selectedFor || '').match(/(\d{3,5})\D*\.(pdf|xls|xlsx|png|jpe?g)$/i) || [])[1];
-    return (window._brAccts || []).map((a) =>
-      `<option value="${a.id}" ${a.account_last4 && m && m.slice(-4) === a.account_last4 ? 'selected' : ''}>${esc(a.account_nickname || a.bank_name || 'Account')}${a.account_last4 ? (' ····' + a.account_last4) : ''}</option>`
+    const { hits } = brLast4Hits(selectedFor);
+    const pick = hits.length === 1 ? hits[0].id : null;
+    return (hits.length === 1 ? '' : '<option value="">Choose account…</option>') + (window._brAccts || []).map((a) =>
+      `<option value="${a.id}" ${a.id === pick ? 'selected' : ''}>${esc(a.account_nickname || a.bank_name || 'Account')}${a.account_last4 ? (' ····' + a.account_last4) : ''}</option>`
     ).join('');
   }
   window.brFilesChosen = function(input) {
@@ -2653,11 +2663,11 @@
     const el = $('brFileList'); if (!el) return;
     if (!window._brFiles.length) { el.innerHTML = ''; return; }
     const rows = window._brFiles.map((f, i) => {
-      const m = (f.name.match(/(\d{3,5})\D*\.(pdf|xls|xlsx|png|jpe?g)$/i) || [])[1];
+      const { m, hits } = brLast4Hits(f.name);
       return `<tr>
         <td style="padding:6px 8px; font-size:12.5px;">${esc(f.name)}</td>
         <td style="padding:6px 8px;"><select id="brsel-${i}" style="min-width:230px; font-size:12.5px;">${brAcctOptions(f.name)}</select></td>
-        <td id="brstat-${i}" style="padding:6px 8px; font-size:12px;" class="muted">${m ? 'matched ····' + m.slice(-4) : 'pick account'}</td>
+        <td id="brstat-${i}" style="padding:6px 8px; font-size:12px;" class="muted">${hits.length === 1 ? 'matched ····' + m.slice(-4) : (hits.length > 1 ? `<span style="color:#b45309;">${hits.length} accounts end ····${m.slice(-4)}: choose one</span>` : 'pick account')}</td>
       </tr>`;
     }).join('');
     el.innerHTML = `<table style="width:100%; border-collapse:collapse;">

@@ -670,7 +670,7 @@ router.put('/accounts/:id/opening-position', express.json(), async (req, res) =>
 // The accountant's view: each month-end's GL cash balance vs the bank statement,
 // with the online deposits-in-transit (from the payout settlement key) explained
 // and the rest surfaced as a review residual. Reads live, no persistence.
-//   GET /boundary-summary?community_id=...&account_last4=...
+//   GET /boundary-summary?community_id=...&bank_account_id=...  (account_last4 only if unique)
 // ---------------------------------------------------------------------------
 // "Credit Distribution" hits the cash account on both sides (net zero) — an
 // internal subledger reclass, not real cash. Excluded from the matchable items.
@@ -728,29 +728,51 @@ async function reconcileMonthCore(community_id, ba, cashAcctId, period_end) {
   return { openPos, isLive, eraStart, cutover, glItems, bankItems, glBalance, bankEnding, thisStmt, glBeginAt, result };
 }
 
+// Resolve the ONE bank account a request means. The unique bank_account_id is
+// the key. Last four digits are not unique: an operating account and its ICS
+// sweep can share them, and a last4 lookup silently returned whichever row the
+// database listed first (Ed 2026-11-21). last4 is
+// still accepted from older links, but only when exactly one account has it.
+const OPERATING_GL = ['1000', '1005', '10100'];
+async function resolveBankAccount(community_id, { bank_account_id, account_last4 }) {
+  const { data: bas } = await supabase.from('bank_accounts')
+    .select('id, account_last4, account_nickname, gl_account_number').eq('community_id', community_id);
+  const list = bas || [];
+  if (bank_account_id) {
+    const ba = list.find((a) => a.id === bank_account_id);
+    return ba ? { ba } : { status: 404, error: 'bank_account_not_found' };
+  }
+  if (account_last4) {
+    const hits = list.filter((a) => a.account_last4 === account_last4);
+    if (hits.length === 1) return { ba: hits[0] };
+    if (!hits.length) return { status: 404, error: 'bank_account_not_found' };
+    return { status: 409, error: 'ambiguous_account_last4', detail: `${hits.length} accounts end ${account_last4}; pass bank_account_id`, candidates: hits.map((a) => ({ id: a.id, account_nickname: a.account_nickname, gl_account_number: a.gl_account_number })) };
+  }
+  for (const n of OPERATING_GL) { const ba = list.find((a) => String(a.gl_account_number) === n); if (ba) return { ba }; }
+  return list[0] ? { ba: list[0] } : { status: 404, error: 'bank_account_not_found' };
+}
+
+// The GL cash account for a bank account: its own mapped number. Falling back to
+// 1000 when the mapped number is missing would put a second account's activity on
+// operating cash, so the fallback applies only when no number is mapped at all.
+async function cashAccountIdFor(community_id, ba) {
+  const tryNums = ba.gl_account_number ? [String(ba.gl_account_number)] : OPERATING_GL;
+  for (const n of tryNums) {
+    const { data: a } = await supabase.from('chart_of_accounts').select('id').eq('community_id', community_id).eq('account_number', n).maybeSingle();
+    if (a) return a.id;
+  }
+  return null;
+}
+
 router.get('/boundary-summary', async (req, res) => {
   try {
     const community_id = req.query.community_id;
     if (!community_id) return res.status(400).json({ error: 'community_id_required' });
-    const account_last4 = req.query.account_last4 || null;
-
-    // bank account + its GL cash account
-    // A community can have several bank accounts — pick the requested one, else
-    // default to the operating-cash account (don't error on multiple rows).
-    const { data: bas } = await supabase.from('bank_accounts')
-      .select('id, account_last4, gl_account_number').eq('community_id', community_id);
-    const ba = account_last4
-      ? (bas || []).find((a) => a.account_last4 === account_last4)
-      : ((bas || []).find((a) => ['1000', '1005', '10100'].includes(String(a.gl_account_number))) || (bas || [])[0]);
-    if (!ba) return res.status(404).json({ error: 'bank_account_not_found' });
-
-    const tryNums = [ba.gl_account_number, '1000', '1005', '10100'].filter(Boolean);
-    let cashAcctId = null;
-    for (const n of tryNums) {
-      const { data: a } = await supabase.from('chart_of_accounts').select('id').eq('community_id', community_id).eq('account_number', n).maybeSingle();
-      if (a) { cashAcctId = a.id; break; }
-    }
-    if (!cashAcctId) return res.status(404).json({ error: 'cash_account_not_found' });
+    const r = await resolveBankAccount(community_id, { bank_account_id: req.query.bank_account_id || null, account_last4: req.query.account_last4 || null });
+    if (!r.ba) return res.status(r.status).json({ error: r.error, detail: r.detail, candidates: r.candidates });
+    const ba = r.ba;
+    const cashAcctId = await cashAccountIdFor(community_id, ba);
+    if (!cashAcctId) return res.status(404).json({ error: 'cash_account_not_found', gl_account_number: ba.gl_account_number });
 
     // One row per month-end — reconcile each with the SAME engine the worksheet
     // uses (reconcileMonthCore), so the summary status matches the detail exactly.
@@ -774,7 +796,7 @@ router.get('/boundary-summary', async (req, res) => {
       });
     }
 
-    return res.json({ account_last4: ba.account_last4, months });
+    return res.json({ bank_account_id: ba.id, account_last4: ba.account_last4, account_nickname: ba.account_nickname, gl_account_number: ba.gl_account_number, months });
   } catch (err) {
     console.error('[bank-rec] boundary-summary failed:', err);
     res.status(500).json({ error: safeErrorMessage(err) });
@@ -785,7 +807,7 @@ router.get('/boundary-summary', async (req, res) => {
 // Clearing worksheet — the traditional bank-rec register (GL | Bank columns).
 // Every live GL cash line and bank line through period-end; matches pre-populated,
 // each Accept/Reopen decision persisted (bank_rec_clearing) and carried forward.
-//   GET  /worksheet?community_id=&account_last4=&period_end=
+//   GET  /worksheet?community_id=&bank_account_id=&period_end=  (account_last4 only if unique)
 //   POST /worksheet/clear  { community_id, bank_account_id, side, source_id, status, match_group? }
 // ---------------------------------------------------------------------------
 router.get('/worksheet', async (req, res) => {
@@ -793,24 +815,11 @@ router.get('/worksheet', async (req, res) => {
     const community_id = req.query.community_id;
     const period_end = req.query.period_end;
     if (!community_id || !period_end) return res.status(400).json({ error: 'community_id_and_period_end_required' });
-    const account_last4 = req.query.account_last4 || null;
-
-    // A community can have several bank accounts — pick the requested one, else
-    // default to the operating-cash account (don't error on multiple rows).
-    const { data: bas } = await supabase.from('bank_accounts')
-      .select('id, account_last4, gl_account_number').eq('community_id', community_id);
-    const ba = account_last4
-      ? (bas || []).find((a) => a.account_last4 === account_last4)
-      : ((bas || []).find((a) => ['1000', '1005', '10100'].includes(String(a.gl_account_number))) || (bas || [])[0]);
-    if (!ba) return res.status(404).json({ error: 'bank_account_not_found' });
-
-    const tryNums = [ba.gl_account_number, '1000', '1005', '10100'].filter(Boolean);
-    let cashAcctId = null;
-    for (const n of tryNums) {
-      const { data: a } = await supabase.from('chart_of_accounts').select('id').eq('community_id', community_id).eq('account_number', n).maybeSingle();
-      if (a) { cashAcctId = a.id; break; }
-    }
-    if (!cashAcctId) return res.status(404).json({ error: 'cash_account_not_found' });
+    const r = await resolveBankAccount(community_id, { bank_account_id: req.query.bank_account_id || null, account_last4: req.query.account_last4 || null });
+    if (!r.ba) return res.status(r.status).json({ error: r.error, detail: r.detail, candidates: r.candidates });
+    const ba = r.ba;
+    const cashAcctId = await cashAccountIdFor(community_id, ba);
+    if (!cashAcctId) return res.status(404).json({ error: 'cash_account_not_found', gl_account_number: ba.gl_account_number });
 
     // Reconcile this month with the shared engine (same as the summary card).
     const core = await reconcileMonthCore(community_id, ba, cashAcctId, period_end);
@@ -842,7 +851,7 @@ router.get('/worksheet', async (req, res) => {
       open_bank_unrecorded: full.open_bank_unrecorded.filter((b) => inMonth(b.date)),
       // open GL deposits/checks carry forward — keep the cumulative outstanding set
     };
-    return res.json({ bank_account_id: ba.id, account_last4: ba.account_last4, era_start: eraStart, worksheet });
+    return res.json({ bank_account_id: ba.id, account_last4: ba.account_last4, account_nickname: ba.account_nickname, gl_account_number: ba.gl_account_number, era_start: eraStart, worksheet });
   } catch (err) {
     console.error('[bank-rec] worksheet failed:', err);
     res.status(500).json({ error: safeErrorMessage(err) });
@@ -1219,4 +1228,4 @@ router.get('/reconciliations/:id/cheat-sheet', async (req, res) => {
   }
 });
 
-module.exports = { router };
+module.exports = { router, _test: { resolveBankAccount, cashAccountIdFor } };
