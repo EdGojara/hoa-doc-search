@@ -309,6 +309,14 @@ t('ACH failure never leaves a credit, and a late "paid" goes to review instead o
   await run(st, ev('evt_9', 'checkout.session.async_payment_succeeded', sess('paid')));
   assert.strictEqual(st.credits.length, 0); assert.strictEqual(st.pay.needs_review, true);
 });
+t('a declined card then a successful retry on the same checkout credits once, no review (G1)', async () => {
+  const st = fakeStore();
+  const pi = { id: 'pi_1', last_payment_error: { message: 'Your card was declined.' }, metadata: { product_type: 'assessment_payment', payment_group_id: 'grp-1' } };
+  await run(st, ev('evt_d1', 'payment_intent.payment_failed', pi));
+  assert.notStrictEqual(st.pay.state, 'failed', 'a declined attempt does not fail the payment');
+  await run(st, ev('evt_d2', 'checkout.session.completed', sess('paid')));
+  assert.strictEqual(st.credits.length, 1); assert.strictEqual(st.pay.posting, 'posted'); assert.ok(!st.pay.needs_review);
+});
 
 // ---------------------------------------------------------------- 3. seller cannot receive buyer payment after transfer
 t('after a transfer, a payment credits the tenure captured at checkout, never whoever owns the lot now', async () => {
