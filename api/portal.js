@@ -2107,7 +2107,7 @@ router.get('/compliance', async (req, res) => {
     const [obsResp, lettersResp, photosResp] = await Promise.all([
       observationIds.length
         ? supabase.from('property_observations')
-            .select('id, ai_description, reviewer_description, category_id, ai_confidence, reviewer_status, created_at')
+            .select('id, ai_description, category_id, ai_confidence, reviewer_status, created_at, inspection_photo_id')
             .in('id', observationIds)
         : Promise.resolve({ data: [] }),
       violationIds.length
@@ -2118,12 +2118,21 @@ router.get('/compliance', async (req, res) => {
             .eq('direction', 'outbound')
             .order('sent_at', { ascending: false })
         : Promise.resolve({ data: [] }),
-      observationIds.length
-        ? supabase.from('inspection_photos')
-            .select('id, observation_id, storage_path, captured_at')
-            .in('observation_id', observationIds)
-        : Promise.resolve({ data: [] }),
+      Promise.resolve({ data: [] }),   // photos load below, from each observation's photo
     ]);
+    if (obsResp.error) console.warn('[portal/compliance] observations lookup failed:', obsResp.error.message);
+    if (lettersResp.error) console.warn('[portal/compliance] letters lookup failed:', lettersResp.error.message);
+    // An observation points at its photo (property_observations.inspection_photo_id);
+    // inspection_photos has no observation_id, so the old query returned nothing
+    // and homeowners never saw the photo behind a notice (Ed 2026-11-21).
+    const photoIds = (obsResp.data || []).map((o) => o.inspection_photo_id).filter(Boolean);
+    if (photoIds.length) {
+      const { data: ph, error: phErr } = await supabase.from('inspection_photos')
+        .select('id, storage_path, captured_at').in('id', photoIds);
+      if (phErr) console.warn('[portal/compliance] photos lookup failed:', phErr.message);
+      const obsByPhoto = Object.fromEntries((obsResp.data || []).map((o) => [o.inspection_photo_id, o.id]));
+      photosResp.data = (ph || []).map((p) => ({ ...p, observation_id: obsByPhoto[p.id] }));
+    }
 
     const obsById = Object.fromEntries((obsResp.data || []).map((o) => [o.id, o]));
     const lettersByViolation = (lettersResp.data || []).reduce((m, l) => {
@@ -2196,7 +2205,7 @@ router.get('/compliance', async (req, res) => {
         resolved_at: v.resolved_at,
         cure_period_ends_at: v.cure_period_ends_at,
         days_until_cure: daysUntilCure,
-        observation_summary: (obs?.reviewer_description || obs?.ai_description || '').trim() || null,
+        observation_summary: (obs?.ai_description || '').trim() || null,
         letters: letterLinks,
         photos: photoLinks,
       };
@@ -2370,7 +2379,7 @@ router.get('/documents', async (req, res) => {
     // Pull homeowner-appropriate library_documents for this community
     const { data: docs, error } = await supabase
       .from('library_documents')
-      .select('id, category, title, period_label, effective_date, file_path, file_name_normalized, status, approval_status, created_at')
+      .select('id, category, title, period_label, effective_date, file_path, file_name_normalized, status, approval_status, uploaded_at')
       .eq('management_company_id', BEDROCK_MGMT_CO_ID)
       .eq('community_id', community.id)
       .eq('status', 'current')
@@ -2994,7 +3003,7 @@ router.get('/meetings', async (req, res) => {
     try {
       const { data: docs } = await supabase
         .from('library_documents')
-        .select('id, category, title, period_label, effective_date, file_path, file_name_normalized, created_at')
+        .select('id, category, title, period_label, effective_date, file_path, file_name_normalized, uploaded_at')
         .eq('management_company_id', BEDROCK_MGMT_CO_ID)
         .eq('community_id', community.id)
         .eq('status', 'current')
@@ -3301,30 +3310,60 @@ router.post('/messages', express.json({ limit: '256kb' }), async (req, res) => {
     const { computeFirstResponseDueAt } = require('../lib/messaging/sla_engine');
     const dueAt = computeFirstResponseDueAt(new Date()).toISOString();
 
+    // A thread needs a contact. A portal user invited with an email that does
+    // not match their contact record has none, and every message they sent
+    // failed with a bare create_failed (Ed 2026-11-21 portal testing). Fall
+    // back to the lot's current owner of record (same source as payments).
+    let contactId = scope.contact_id;
+    if (!contactId) {
+      const { data: ten, error: tenErr } = await supabase.from('ownership_tenures')
+        .select('id').eq('property_id', propertyId).eq('kind', 'owner').is('end_date', null).limit(1).maybeSingle();
+      if (tenErr) console.warn('[portal/messages] owner tenure lookup failed:', tenErr.message);
+      if (ten) {
+        const { data: own, error: ownErr } = await supabase.from('property_ownerships')
+          .select('contact_id').eq('tenure_id', ten.id).order('is_primary', { ascending: false }).limit(1).maybeSingle();
+        if (ownErr) console.warn('[portal/messages] owner contact lookup failed:', ownErr.message);
+        contactId = own ? own.contact_id : null;
+      }
+    }
+    if (!contactId) {
+      console.warn(`[portal/messages] no contact for portal user ${scope.portal_user_id} on property ${propertyId}`);
+      return res.status(409).json({ error: 'no_contact_on_file', message: 'We could not match your account to this home. Please call (832) 588-2485 or email info@bedrocktx.com and we will fix it.' });
+    }
+
     const { data: thread, error: thErr } = await supabase
       .from('homeowner_threads')
       .insert({
         community_id: prop.community_id,
         property_id: propertyId,
-        primary_contact_id: scope.contact_id,
+        primary_contact_id: contactId,
         subject,
         next_action_status: 'awaiting_staff_first_response',
         first_response_due_at: dueAt,
       })
       .select()
       .single();
-    if (thErr) return res.status(500).json({ error: 'create_failed' });
+    if (thErr) {
+      console.error('[portal/messages] thread insert failed:', thErr.message);
+      return res.status(500).json({ error: 'create_failed' });
+    }
 
     // First message — the body the homeowner just typed.
-    await supabase.from('messages').insert({
+    const { error: msgErr } = await supabase.from('messages').insert({
       thread_id: thread.id,
       direction: 'inbound',
       sender_type: 'homeowner',
-      sender_id: scope.contact_id,
+      sender_id: contactId,
       sender_display_name: scope.full_name || scope.email,
       channel: 'portal',
       body_text: body,
     });
+    if (msgErr) {
+      // Never leave a thread with no message: the homeowner would think it sent.
+      console.error('[portal/messages] first message insert failed:', msgErr.message);
+      await supabase.from('homeowner_threads').delete().eq('id', thread.id);
+      return res.status(500).json({ error: 'create_failed' });
+    }
 
     res.status(201).json({ thread });
   } catch (err) {
@@ -3435,13 +3474,20 @@ router.post('/arc/submit', portalArcUpload.any(), async (req, res) => {
     // Schema uses community_services to scope ARC vs fob vs clubhouse per
     // community; for ARC we expect type='arc' (or arc_application — depends
     // on community).
-    const { data: service } = await supabase
+    // `name` is not a column on community_services: selecting it failed the
+    // whole query, so EVERY portal ARC submission returned
+    // arc_not_configured_for_community (Ed 2026-11-21 portal testing).
+    const { data: service, error: svcErr } = await supabase
       .from('community_services')
-      .select('id, service_type, name')
+      .select('id, service_type, display_name_override')
       .eq('community_id', community.id)
       .in('service_type', ['arc', 'arc_application'])
       .limit(1)
       .maybeSingle();
+    if (svcErr) {
+      console.error('[portal/arc/submit] service lookup failed:', svcErr.message);
+      return res.status(500).json({ error: 'arc_lookup_failed' });
+    }
     if (!service) {
       return res.status(400).json({ error: 'arc_not_configured_for_community' });
     }
