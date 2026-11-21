@@ -180,14 +180,14 @@ function fakeDb(tables) {
     from(table) {
       const st = { eq: [], inF: [], order: [], from: 0, to: Infinity, head: false };
       const rows = () => {
-        let r = (tables[table] || []).filter((x) => st.eq.every(([k, v]) => x[k] === v) && st.inF.every(([k, vs]) => vs.includes(x[k])));
+        let r = (tables[table] || []).filter((x) => st.eq.every(([k, v]) => x[k] === v) && (st.neq || []).every(([k, v]) => x[k] !== v) && st.inF.every(([k, vs]) => vs.includes(x[k])));
         for (const [k, asc] of st.order.slice().reverse()) r = r.slice().sort((a, b) => (a[k] > b[k] ? 1 : a[k] < b[k] ? -1 : 0) * (asc ? 1 : -1));
         return r;
       };
       const q = {
         select(_c, opts) { if (opts && opts.head) st.head = true; return q; },
         eq(k, v) { st.eq.push([k, v]); return q; }, in(k, vs) { st.inF.push([k, vs]); return q; },
-        not() { return q; }, is() { return q; }, gte() { return q; },
+        neq(k, v) { st.neq = (st.neq || []).concat([[k, v]]); return q; }, not() { return q; }, is() { return q; }, gte() { return q; },
         order(k, o) { st.order.push([k, !o || o.ascending !== false]); return q; },
         range(a, b) { st.from = a; st.to = b; return q; }, limit(n) { st.to = st.from + n - 1; return q; },
         maybeSingle() { return Promise.resolve({ data: rows()[0] || null, error: null }); },
@@ -204,10 +204,10 @@ function fakeDb(tables) {
 
 (async () => {
   const { fetchFacts } = require('../lib/community/data_readiness');
-  const busy = Array.from({ length: 600 }, (_, i) => ({ community_id: 'c1', bank_account_id: 'A', period_end: `20${10 + Math.floor(i / 12)}-${String((i % 12) + 1).padStart(2, '0')}-28`, status: 'reconciled', difference_cents: 0 }));
+  const busy = Array.from({ length: 600 }, (_, i) => ({ id: `rA${i}`, community_id: 'c1', bank_account_id: 'A', period_end: `20${10 + Math.floor(i / 12)}-${String((i % 12) + 1).padStart(2, '0')}-28`, status: 'reconciled', difference_cents: 0 }));
   const db = fakeDb({
     bank_accounts: [{ id: 'A', community_id: 'c1', account_nickname: 'Busy', is_active: true }, { id: 'B', community_id: 'c1', account_nickname: 'Quiet', is_active: true }],
-    bank_reconciliations: busy.concat([{ community_id: 'c1', bank_account_id: 'B', period_end: '2009-01-31', status: 'unbalanced', difference_cents: 500 }]),
+    bank_reconciliations: busy.concat([{ id: 'rB', community_id: 'c1', bank_account_id: 'B', period_end: '2009-01-31', status: 'unbalanced', difference_cents: 500 }]),
   });
   const f = await fetchFacts(db, community(), NOW);
   t('bank: every active account gets its own latest rec, even behind 600 rows of another account', () => {

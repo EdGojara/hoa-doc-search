@@ -3408,21 +3408,24 @@ async function buildFinancialSectionData(cid, sectionKey, cutoff) {
     let recs = [];
     try {
       const { data, error } = await supabase.from('bank_reconciliations')
-        .select('bank_account_id, period_end, status, difference_cents, bank_ending_balance_cents, gl_ending_balance_cents, bank_accounts(account_nickname, bank_name, account_last4)')
-        .eq('community_id', cid).lte('period_end', cutoff)
+        .select('id, bank_account_id, period_end, status, difference_cents, bank_ending_balance_cents, gl_ending_balance_cents, prepared_at, updated_at, bank_accounts(account_nickname, bank_name, account_last4)')
+        .eq('community_id', cid).neq('status', 'voided').lte('period_end', cutoff)
         .order('period_end', { ascending: false }).limit(200);
       if (error) throw error;
       recs = data || [];
     } catch (e) { console.warn('[board_packets] bank_reconciliations not ready:', e.message); }
     const latestByAcct = {};
     for (const r of recs) { if (!latestByAcct[r.bank_account_id]) latestByAcct[r.bank_account_id] = r; }
+    // Reconciled only by standing (Ed 2026-11-21): never an approval or a reconciliation the GL has moved under.
+    await require('../lib/banking/rec_standing').withStandings(supabase, Object.values(latestByAcct));
     const accounts = Object.values(latestByAcct).map((r) => ({
       account: (r.bank_accounts && (r.bank_accounts.account_nickname || r.bank_accounts.bank_name)) || '—',
       last4: r.bank_accounts && r.bank_accounts.account_last4,
       period_end: r.period_end, status: r.status,
       difference: cNull(r.difference_cents),
       bank_ending: cNull(r.bank_ending_balance_cents), gl_ending: cNull(r.gl_ending_balance_cents),
-      reconciled: r.status === 'reconciled' && Number(r.difference_cents || 0) === 0,
+      standing: r.standing, standing_label: r.standing_label,
+      reconciled: r.standing === 'reconciled',
     }));
     // No reconciliations on file for this period is a real gap, not a clean
     // "$0" — flag it for the owner rather than silently rendering "nothing".

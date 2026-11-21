@@ -36,6 +36,9 @@ const { safeErrorMessage } = require('./_safe_error');
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 const { BEDROCK_MGMT_CO_ID } = require('../lib/company');
 const { countsInGl } = require('../lib/accounting/je_status');
+// Reconciled / Unreconciled / Stale: the one answer every screen shows (Ed 2026-11-21).
+const { withStandings } = require('../lib/banking/rec_standing');
+const { insertStatementVersion } = require('../lib/banking/statement_versions');
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024 } });
 const router = express.Router();
@@ -143,7 +146,8 @@ router.get('/reconciliations', async (req, res) => {
     if (status) q = q.eq('status', status);
     const { data, error } = await q;
     if (error) throw error;
-    res.json({ reconciliations: data || [] });
+    const rows = await withStandings(supabase, data || []);
+    res.json({ reconciliations: rows });
   } catch (err) {
     console.error('[bank-rec] list recs failed:', err);
     res.status(500).json({ error: safeErrorMessage(err) });
@@ -171,10 +175,14 @@ router.get('/reconciliations/:id', async (req, res) => {
     let bankStatement = null;
     let checkRegister = null;
     let glExport = null;
+    let bankStatementLines = [];
     if (rec.bank_statement_import_id) {
+      // By id, active or superseded: the exact statement this reconciliation was saved against.
       const { data } = await supabase.from('bank_statement_imports')
         .select('*').eq('id', rec.bank_statement_import_id).maybeSingle();
       bankStatement = data;
+      bankStatementLines = await require('../lib/db/fetch_all').fetchAllQuery(() => supabase.from('bank_statement_transactions')
+        .select('id, posting_date, amount_cents, description, check_number, transaction_type').eq('bank_statement_import_id', rec.bank_statement_import_id), { orderBy: 'id' });
     }
     if (rec.check_register_import_id) {
       const { data } = await supabase.from('vantaca_imports')
@@ -187,10 +195,11 @@ router.get('/reconciliations/:id', async (req, res) => {
       glExport = data;
     }
 
+    await withStandings(supabase, [rec]);
     res.json({
       reconciliation: rec,
       items: items || [],
-      sources: { bank_statement: bankStatement, check_register: checkRegister, gl_export: glExport },
+      sources: { bank_statement: bankStatement, bank_statement_lines: bankStatementLines, check_register: checkRegister, gl_export: glExport },
     });
   } catch (err) {
     console.error('[bank-rec] get rec failed:', err);
@@ -261,33 +270,9 @@ router.post('/reconciliations/:id/bank-statement', upload.single('file'), async 
       return res.status(500).json({ error: 'extraction_failed', detail: e.message });
     }
 
-    // Insert bank_statement_imports row
-    const { data: bsi, error: bsiErr } = await supabase.from('bank_statement_imports').insert({
-      management_company_id: BEDROCK_MGMT_CO_ID,
-      community_id: rec.community_id,
-      bank_account_id: rec.bank_account_id || null,
-      statement_period_start: extracted.period_start || null,
-      statement_period_end: extracted.period_end || null,
-      beginning_balance_cents: extracted.beginning_balance_cents ?? null,
-      ending_balance_cents: extracted.ending_balance_cents ?? null,
-      total_deposits_cents: extracted.total_deposits_cents ?? null,
-      total_withdrawals_cents: extracted.total_withdrawals_cents ?? null,
-      total_fees_cents: extracted.total_fees_cents ?? null,
-      total_interest_cents: extracted.total_interest_cents ?? null,
-      source_filename: req.file.originalname || null,
-      source_storage_path: storagePath,
-      source_sha256: sha,
-      source_file_size_bytes: req.file.size,
-      source_file_mime: req.file.mimetype,
-      extraction_raw: extracted,
-      extraction_warnings: warnings,
-      status: 'completed',
-    }).select('*').single();
-    if (bsiErr) throw bsiErr;
-
-    // Insert transaction rows
+    // Same supersede rule as the account upload: a prior statement for this account and
+    // statement end is voided and kept with its lines; nothing is deleted.
     const txRows = (extracted.transactions || []).filter((t) => t.posting_date && t.amount_cents != null).map((t) => ({
-      bank_statement_import_id: bsi.id,
       posting_date: t.posting_date,
       amount_cents: t.amount_cents,
       description: t.description || null,
@@ -295,19 +280,52 @@ router.post('/reconciliations/:id/bank-statement', upload.single('file'), async 
       transaction_type: t.transaction_type || 'other',
       raw_extracted_text: null,
     }));
-    if (txRows.length > 0) {
-      const { error: txErr } = await supabase.from('bank_statement_transactions').insert(txRows);
-      if (txErr) console.warn('[bank-rec] tx insert failed:', txErr.message);
+    let ver;
+    try {
+      ver = await insertStatementVersion(supabase, {
+        bank_account_id: rec.bank_account_id || null, period_end: rec.bank_account_id ? (extracted.period_end || null) : null, txRows,
+        actor: (req.user && (req.user.email || req.user.id)) || null,
+        base: {
+          management_company_id: BEDROCK_MGMT_CO_ID,
+          community_id: rec.community_id,
+          bank_account_id: rec.bank_account_id || null,
+          statement_period_start: extracted.period_start || null,
+          statement_period_end: extracted.period_end || null,
+          beginning_balance_cents: extracted.beginning_balance_cents ?? null,
+          ending_balance_cents: extracted.ending_balance_cents ?? null,
+          total_deposits_cents: extracted.total_deposits_cents ?? null,
+          total_withdrawals_cents: extracted.total_withdrawals_cents ?? null,
+          total_fees_cents: extracted.total_fees_cents ?? null,
+          total_interest_cents: extracted.total_interest_cents ?? null,
+          source_filename: req.file.originalname || null,
+          source_storage_path: storagePath,
+          source_sha256: sha,
+          source_file_size_bytes: req.file.size,
+          source_file_mime: req.file.mimetype,
+          extraction_raw: extracted,
+          extraction_warnings: warnings,
+        },
+      });
+    } catch (e) {
+      if (e.code === 'statement_write_failed') return res.status(500).json({ error: 'statement_not_saved', detail: 'The statement could not be saved completely. Any previously imported statement is unchanged and still active.' });
+      throw e;
+    }
+    const bsi = ver.bsi;
+
+    // Link to the reconciliation only while it is a working draft. A reconciliation that
+    // was approved or reconciled keeps the statement it was saved against (it now reads
+    // Stale if that statement was superseded); its evidence is never repointed.
+    const [st] = await withStandings(supabase, [{ ...rec }]);
+    const locked = st.approved || st.standing === 'reconciled' || st.standing === 'stale' || rec.status === 'reconciled';
+    if (!locked) {
+      await supabase.from('bank_reconciliations').update({
+        bank_statement_import_id: bsi.id,
+        bank_ending_balance_cents: extracted.ending_balance_cents ?? null,
+      }).eq('id', id);
     }
 
-    // Link to rec
-    await supabase.from('bank_reconciliations').update({
-      bank_statement_import_id: bsi.id,
-      bank_ending_balance_cents: extracted.ending_balance_cents ?? null,
-    }).eq('id', id);
-
     const kat = await afterStatementImported({ bank_account_id: rec.bank_account_id || null, statement_period_end: extracted.period_end || null });
-    res.json({ bank_statement_import: bsi, transaction_count: txRows.length, warnings, kat });
+    res.json({ bank_statement_import: bsi, transaction_count: ver.transaction_count, superseded_statement_ids: ver.superseded, linked_to_reconciliation: !locked, warnings, kat });
   } catch (err) {
     console.error('[bank-rec] attach bank statement failed:', err);
     res.status(500).json({ error: safeErrorMessage(err) });
@@ -320,9 +338,10 @@ router.post('/reconciliations/:id/bank-statement', upload.single('file'), async 
 // bank_account_id, so a freshly imported month shows up automatically.
 //
 // Idempotent: the same file (sha256) returns the existing import without
-// re-inserting; a different file for the same account+period_end REPLACES the
-// prior statement and its transactions (re-upload of a corrected statement).
-// This is what stops a double-upload from double-counting cash.
+// re-inserting; a different file for the same account+period_end SUPERSEDES the
+// prior statement (voided, kept with its lines as evidence) and becomes the
+// active version. Only active statements are read for current calculations, so
+// a double-upload never double-counts cash.
 // ---------------------------------------------------------------------------
 router.post('/accounts/:accountId/bank-statement', upload.single('file'), async (req, res) => {
   try {
@@ -361,41 +380,10 @@ router.post('/accounts/:accountId/bank-statement', upload.single('file'), async 
       return res.status(500).json({ error: 'extraction_failed', detail: e.message });
     }
 
-    // Replace any prior statement for this account+period (corrected re-upload).
-    if (extracted.period_end) {
-      const { data: priors } = await supabase.from('bank_statement_imports')
-        .select('id').eq('bank_account_id', ba.id).eq('statement_period_end', extracted.period_end);
-      for (const p of (priors || [])) {
-        await supabase.from('bank_statement_transactions').delete().eq('bank_statement_import_id', p.id);
-        await supabase.from('bank_statement_imports').delete().eq('id', p.id);
-      }
-    }
-
-    const { data: bsi, error: bsiErr } = await supabase.from('bank_statement_imports').insert({
-      management_company_id: BEDROCK_MGMT_CO_ID,
-      community_id: ba.community_id,
-      bank_account_id: ba.id,
-      statement_period_start: extracted.period_start || null,
-      statement_period_end: extracted.period_end || null,
-      beginning_balance_cents: extracted.beginning_balance_cents ?? null,
-      ending_balance_cents: extracted.ending_balance_cents ?? null,
-      total_deposits_cents: extracted.total_deposits_cents ?? null,
-      total_withdrawals_cents: extracted.total_withdrawals_cents ?? null,
-      total_fees_cents: extracted.total_fees_cents ?? null,
-      total_interest_cents: extracted.total_interest_cents ?? null,
-      source_filename: req.file.originalname || null,
-      source_storage_path: storagePath,
-      source_sha256: sha,
-      source_file_size_bytes: req.file.size,
-      source_file_mime: req.file.mimetype,
-      extraction_raw: extracted,
-      extraction_warnings: warnings,
-      status: 'completed',
-    }).select('*').single();
-    if (bsiErr) throw bsiErr;
-
+    // A corrected re-upload for the same account and statement end SUPERSEDES the prior
+    // statement (voided, kept with every line as evidence); it never deletes it. The new
+    // version is written in full first, so a failure leaves the original active.
     const txRows = (extracted.transactions || []).filter((t) => t.posting_date && t.amount_cents != null).map((t) => ({
-      bank_statement_import_id: bsi.id,
       posting_date: t.posting_date,
       amount_cents: t.amount_cents,
       description: t.description || null,
@@ -403,15 +391,44 @@ router.post('/accounts/:accountId/bank-statement', upload.single('file'), async 
       transaction_type: t.transaction_type || 'other',
       raw_extracted_text: null,
     }));
-    if (txRows.length > 0) {
-      const { error: txErr } = await supabase.from('bank_statement_transactions').insert(txRows);
-      if (txErr) console.warn('[bank-rec] community tx insert failed:', txErr.message);
+    let ver;
+    try {
+      ver = await insertStatementVersion(supabase, {
+        bank_account_id: ba.id, period_end: extracted.period_end || null, txRows,
+        actor: (req.user && (req.user.email || req.user.id)) || null,
+        base: {
+          management_company_id: BEDROCK_MGMT_CO_ID,
+          community_id: ba.community_id,
+          bank_account_id: ba.id,
+          statement_period_start: extracted.period_start || null,
+          statement_period_end: extracted.period_end || null,
+          beginning_balance_cents: extracted.beginning_balance_cents ?? null,
+          ending_balance_cents: extracted.ending_balance_cents ?? null,
+          total_deposits_cents: extracted.total_deposits_cents ?? null,
+          total_withdrawals_cents: extracted.total_withdrawals_cents ?? null,
+          total_fees_cents: extracted.total_fees_cents ?? null,
+          total_interest_cents: extracted.total_interest_cents ?? null,
+          source_filename: req.file.originalname || null,
+          source_storage_path: storagePath,
+          source_sha256: sha,
+          source_file_size_bytes: req.file.size,
+          source_file_mime: req.file.mimetype,
+          extraction_raw: extracted,
+          extraction_warnings: warnings,
+        },
+      });
+    } catch (e) {
+      if (e.code === 'statement_write_failed') return res.status(500).json({ error: 'statement_not_saved', detail: 'The corrected statement could not be saved completely. The previously imported statement is unchanged and still active.' });
+      throw e;
     }
+    const bsi = ver.bsi;
+    // Reconciliations saved against a superseded statement now read Stale (rec_standing); their evidence is untouched.
 
     const kat = await afterStatementImported({ bank_account_id: ba.id, statement_period_end: extracted.period_end || null });
     res.json({
       bank_statement_import: bsi,
-      transaction_count: txRows.length,
+      transaction_count: ver.transaction_count,
+      superseded_statement_ids: ver.superseded,
       period_end: extracted.period_end || null,
       ending_balance_cents: extracted.ending_balance_cents ?? null,
       warnings,
@@ -711,7 +728,7 @@ async function reconcileMonthCore(community_id, ba, cashAcctId, period_end) {
   // to reconcile. Otherwise the bank starts after the cutover (ingested) / at the
   // era start (live).
   const isBaseline = !isLive && cutover && period_end <= cutover;
-  let stmtQ = supabase.from('bank_statement_imports').select('id, statement_period_end, beginning_balance_cents, ending_balance_cents').eq('bank_account_id', ba.id).lte('statement_period_end', period_end).order('statement_period_end', { ascending: true });
+  let stmtQ = supabase.from('bank_statement_imports').select('id, statement_period_end, beginning_balance_cents, ending_balance_cents').eq('bank_account_id', ba.id).eq('status', 'completed').lte('statement_period_end', period_end).order('statement_period_end', { ascending: true });
   if (isLive || !cutover) stmtQ = stmtQ.gte('statement_period_end', eraStart);
   else if (!isBaseline) stmtQ = stmtQ.gt('statement_period_end', cutover);
   const { data: stmts } = await stmtQ;
@@ -764,6 +781,30 @@ async function cashAccountIdFor(community_id, ba) {
   return null;
 }
 
+// The stored reconciliations of one bank account, keyed by month, each with
+// its standing. Months before the community's GL cutover are before conversion:
+// trustEd's GL did not exist yet, so they are neither reconciled nor a failure.
+async function storedStandingByMonth(community_id, bank_account_id) {
+  const { data: recs, error } = await supabase.from('bank_reconciliations')
+    .select('id, bank_account_id, period_end, status, difference_cents, gl_ending_balance_cents, prepared_at, updated_at')
+    .eq('bank_account_id', bank_account_id).neq('status', 'voided').order('period_end', { ascending: true }).limit(500);
+  if (error) throw error;
+  await withStandings(supabase, recs || []);
+  const byEnd = new Map();
+  // Keyed by MONTH: a statement can end on the last business day (10/30) while the
+  // reconciliation is stored at the calendar month end (10/31).
+  for (const r of recs || []) byEnd.set(String(r.period_end).slice(0, 7), r);
+  const { data: comm } = await supabase.from('communities').select('gl_cutover_date').eq('id', community_id).maybeSingle();
+  return { byEnd, cutover: (comm && comm.gl_cutover_date) || null };
+}
+function standingFields(stored, period_end, cutover) {
+  const pe = String(period_end).slice(0, 10);
+  const r = stored.get(pe.slice(0, 7));
+  if (cutover && pe < String(cutover).slice(0, 10)) return { standing: 'before_conversion', standing_label: 'Before conversion', standing_reasons: [`before the ${String(cutover).slice(0, 10)} GL cutover`], reconciliation_id: r ? r.id : null, approved: false };
+  if (!r) return { standing: 'unreconciled', standing_label: 'Unreconciled', standing_reasons: ['no reconciliation saved for the month'], reconciliation_id: null, approved: false };
+  return { standing: r.standing, standing_label: r.standing_label, standing_reasons: r.standing_reasons, reconciliation_id: r.id, approved: !!r.approved };
+}
+
 router.get('/boundary-summary', async (req, res) => {
   try {
     const community_id = req.query.community_id;
@@ -778,9 +819,10 @@ router.get('/boundary-summary', async (req, res) => {
     // uses (reconcileMonthCore), so the summary status matches the detail exactly.
     const { data: stmts } = await supabase.from('bank_statement_imports')
       .select('statement_period_end, ending_balance_cents')
-      .eq('bank_account_id', ba.id).order('statement_period_end', { ascending: true });
+      .eq('bank_account_id', ba.id).eq('status', 'completed').order('statement_period_end', { ascending: true });
     const monthEnds = (stmts || []).filter((st) => st.ending_balance_cents != null).map((st) => st.statement_period_end);
     const months = [];
+    const { byEnd: storedRecs, cutover } = await storedStandingByMonth(community_id, ba.id);
     for (const ME of monthEnds) {
       const core = await reconcileMonthCore(community_id, ba, cashAcctId, ME);
       const sum = core.result.summary;
@@ -792,11 +834,13 @@ router.get('/boundary-summary', async (req, res) => {
         deposits_in_transit_cents: sum.deposits_in_transit_total_cents,
         outstanding_checks_cents: sum.outstanding_checks_total_cents,
         residual_cents: sum.difference_cents,
+        // reconciled: the live worksheet balances today. It is NOT the month's standing.
         reconciled: sum.balanced,
+        ...standingFields(storedRecs, ME, cutover),
       });
     }
 
-    return res.json({ bank_account_id: ba.id, account_last4: ba.account_last4, account_nickname: ba.account_nickname, gl_account_number: ba.gl_account_number, months });
+    return res.json({ bank_account_id: ba.id, account_last4: ba.account_last4, account_nickname: ba.account_nickname, gl_account_number: ba.gl_account_number, gl_cutover_date: cutover, months });
   } catch (err) {
     console.error('[bank-rec] boundary-summary failed:', err);
     res.status(500).json({ error: safeErrorMessage(err) });
@@ -851,7 +895,8 @@ router.get('/worksheet', async (req, res) => {
       open_bank_unrecorded: full.open_bank_unrecorded.filter((b) => inMonth(b.date)),
       // open GL deposits/checks carry forward — keep the cumulative outstanding set
     };
-    return res.json({ bank_account_id: ba.id, account_last4: ba.account_last4, account_nickname: ba.account_nickname, gl_account_number: ba.gl_account_number, era_start: eraStart, worksheet });
+    const { byEnd: storedRecs, cutover } = await storedStandingByMonth(community_id, ba.id);
+    return res.json({ bank_account_id: ba.id, account_last4: ba.account_last4, account_nickname: ba.account_nickname, gl_account_number: ba.gl_account_number, era_start: eraStart, worksheet, ...standingFields(storedRecs, period_end, cutover) });
   } catch (err) {
     console.error('[bank-rec] worksheet failed:', err);
     res.status(500).json({ error: safeErrorMessage(err) });
@@ -1069,7 +1114,7 @@ router.post('/reconciliations/:id/run-match', async (req, res) => {
       if (rec.bank_account_id && periodEnd) {
         const { data: stmts } = await supabase.from('bank_statement_imports')
           .select('id, statement_period_end, ending_balance_cents')
-          .eq('bank_account_id', rec.bank_account_id)
+          .eq('bank_account_id', rec.bank_account_id).eq('status', 'completed')
           .lte('statement_period_end', periodEnd)
           .gte('statement_period_end', covStart)
           .order('statement_period_end', { ascending: true });
@@ -1221,6 +1266,7 @@ router.get('/reconciliations/:id/cheat-sheet', async (req, res) => {
         .order('category').order('check_number', { nullsFirst: false }).order('date_ref'),
     ]);
     if (!rec) return res.status(404).send('Not found');
+    await withStandings(supabase, [rec]);
     res.json({ reconciliation: rec, items: items || [] });
   } catch (err) {
     console.error('[bank-rec] cheat sheet failed:', err);
