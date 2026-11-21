@@ -795,11 +795,22 @@ async function storedStandingByMonth(community_id, bank_account_id) {
   // reconciliation is stored at the calendar month end (10/31).
   for (const r of recs || []) byEnd.set(String(r.period_end).slice(0, 7), r);
   const { data: comm } = await supabase.from('communities').select('gl_cutover_date').eq('id', community_id).maybeSingle();
+  // Kat's latest live run per month (posted > prepared/held), so an unsaved month still opens a workpaper.
+  const { data: runs } = await supabase.from('accounting_runs').select('id, period_month, status, created_at').eq('process', 'bank_reconciliation').eq('subject_id', bank_account_id).in('status', ['posted', 'prepared', 'held']).order('created_at', { ascending: false }).limit(500);
+  const runByMonth = new Map();
+  for (const r of runs || []) { const k = String(r.period_month).slice(0, 7); const cur = runByMonth.get(k); if (!cur || (cur.status !== 'posted' && r.status === 'posted')) runByMonth.set(k, r); }
+  byEnd.runs = runByMonth;
   return { byEnd, cutover: (comm && comm.gl_cutover_date) || null };
 }
 function standingFields(stored, period_end, cutover) {
   const pe = String(period_end).slice(0, 10);
   const r = stored.get(pe.slice(0, 7));
+  const run = stored.runs && stored.runs.get(pe.slice(0, 7));
+  const runFields = { run_id: run ? run.id : null, run_status: run ? run.status : null };
+  const out = standingFieldsCore(r, pe, cutover);
+  return { ...out, ...runFields };
+}
+function standingFieldsCore(r, pe, cutover) {
   if (cutover && pe < String(cutover).slice(0, 10)) return { standing: 'before_conversion', standing_label: 'Before conversion', standing_reasons: [`before the ${String(cutover).slice(0, 10)} GL cutover`], reconciliation_id: r ? r.id : null, approved: false };
   if (!r) return { standing: 'unreconciled', standing_label: 'Unreconciled', standing_reasons: ['no reconciliation saved for the month'], reconciliation_id: null, approved: false };
   return { standing: r.standing, standing_label: r.standing_label, standing_reasons: r.standing_reasons, reconciliation_id: r.id, approved: !!r.approved };
@@ -1308,5 +1319,22 @@ router.get('/reconciliations/:id/workpaper.pdf', async (req, res) => {
     res.send(pdf);
   } catch (err) { console.error('[bank-rec] workpaper PDF failed:', err.message); res.status(500).json({ error: safeErrorMessage(err) }); }
 });
+
+// The same workpaper opened from one of Kat's runs (prepared, held or posted), so a month
+// with no saved reconciliation yet can still be reviewed.
+for (const [suffix, kind] of [['', 'json'], ['.html', 'html'], ['.pdf', 'pdf']]) {
+  router.get(`/runs/:runId/workpaper${suffix}`, async (req, res) => {
+    try {
+      const w = await W.buildWorkpaper(supabase, { run_id: req.params.runId });
+      if (!w) return res.status(404).json({ error: 'not_found' });
+      if (kind === 'json') return res.json({ workpaper: w });
+      if (kind === 'html') return res.type('html').send(W.renderWorkpaperHtml(w, { pdfHref: `/api/bank-rec/runs/${encodeURIComponent(req.params.runId)}/workpaper.pdf` }));
+      const pdf = await W.workpaperPdf(w);
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `attachment; filename="${W.fileName(w)}"`);
+      res.send(pdf);
+    } catch (err) { console.error('[bank-rec] run workpaper failed:', err.message); res.status(500).json({ error: safeErrorMessage(err) }); }
+  });
+}
 
 module.exports = { router, _test: { resolveBankAccount, cashAccountIdFor } };

@@ -17,12 +17,23 @@ const w = {
   people: { prepared_by: 'Kat Reed', prepared_at: '2026-09-02T15:00:00Z', approved_by: 'owner@example.com', approved_at: '2026-09-03T15:00:00Z', posted_by: 'Kat Reed', posted_at: '2026-09-03T15:00:01Z' },
   versions: [{ run_id: 'RUN12345', status: 'posted' }], history: [{ at: '2026-09-03T15:00:00Z', event: 'approved', actor: 'owner@example.com' }],
   generated_at: '2026-11-21T18:00:00Z',
+  attention: {
+    bank_not_in_gl: [{ date_ref: '2026-08-15', description: 'Bank fee', amount_cents: 1000, bank_transaction_id: 'bankline1', kind: 'bank only', carried: false }],
+    gl_not_on_bank: [{ date_ref: '2025-10-21', description: 'Check 40 refund', amount_cents: -100, kind: 'outstanding check', aged: true, carried: true, check_number: '40' }, { date_ref: '2026-08-31', description: 'Lockbox', amount_cents: 5000, kind: 'deposit in transit' }],
+    other: [{ description: 'Stale: GL cash at period end is now 5000.00, saved as 4500.00', code: 'stale' }],
+  },
 };
 const html = renderWorkpaperHtml(w, { pdfHref: '/x.pdf' });
 for (const s of ['Bank Reconciliation', 'Sample Homeowners Association, Inc.', 'GL 1000', 'Stale', '$1,000.00', '$900.00', '($150.00)', '$800.00', '$790.00', '(since superseded)',
   'Bank fee not in the GL', 'Outstanding checks', 'Deposits in transit', 'Bank items not yet in the GL', 'Deposit detail: homeowner receipts', '1 Main', 'owner@example.com', 'Download PDF', 'A zero difference alone is not a reconciliation'])
   assert.ok(html.includes(s), `workpaper shows ${s}`);
 assert.ok(!html.includes('<b>') || html.includes('Pool vendor &lt;b&gt;'), 'text is escaped');
+// Needs attention comes first and splits the three lists, flagging aged timing items.
+const att = html.indexOf('Needs attention'), summ = html.indexOf('<h2>Summary</h2>');
+assert.ok(att > 0 && att < summ, 'Needs attention appears before the summary');
+for (const s of ['1. Bank transactions not found in the GL', '2. GL transactions not on the bank statement', '3. Other unresolved exceptions and changes', 'aged: investigate', 'timing', 'bank bankline', 'check 40', 'carried'])
+  assert.ok(html.includes(s), `attention shows ${s}`);
+assert.ok(!renderWorkpaperHtml({ ...w, standing: 'reconciled', standing_label: 'Reconciled' }).includes('Needs attention'), 'a reconciled month has no attention block');
 assert.ok(!renderWorkpaperHtml(w, { forPdf: true }).includes('Download PDF'), 'the PDF carries no download button');
 assert.strictEqual(fileName(w), 'Sample-HOA_Bank-Reconciliation_Operating_2026-08-31.pdf');
 console.log('test_bank_rec_workpaper: ok');
