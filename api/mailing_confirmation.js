@@ -21,6 +21,7 @@ const { requireStaff, requireAdmin } = require('./_require_admin');
 const { fetchAllQuery } = require('../lib/db/fetch_all');
 const { isOperational } = require('../lib/community/lifecycle');
 const ME = require('../lib/enforcement/mailing_evidence');
+const { recordRunConfirmation } = require('../lib/enforcement/record_mailing');
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 const router = express.Router();
@@ -48,6 +49,10 @@ async function printedLettersNeedingReview(communityIds) {
   const ctx0 = await ME.loadMailingContext(supabase, [], communityIds);
   const unconfirmed = await fetchAllQuery(() => supabase.from('interactions').select(LETTER_COLS)
     .in('type', LETTER_TYPES).in('community_id', communityIds).not('printed_at', 'is', null).is('mailed_at', null));
+  // Letters marked mailed since evidence became required: a click-time stamp from
+  // the old Mail Queue button still needs its real date (effectiveMailing decides).
+  const recentlyStamped = await fetchAllQuery(() => supabase.from('interactions').select(LETTER_COLS)
+    .in('type', LETTER_TYPES).in('community_id', communityIds).not('printed_at', 'is', null).gte('mailed_at', ME.EVIDENCE_REQUIRED_FROM));
   let scoped = [];
   for (const s of ctx0.scopes) {
     // Central-day window, widened a day on each side then filtered exactly by scopeFor.
@@ -57,7 +62,7 @@ async function printedLettersNeedingReview(communityIds) {
       .in('type', LETTER_TYPES).eq('community_id', s.community_id).gte('printed_at', from).lt('printed_at', to)));
   }
   const seen = new Map();
-  for (const l of unconfirmed.concat(scoped)) seen.set(l.id, flat(l));
+  for (const l of unconfirmed.concat(recentlyStamped, scoped)) seen.set(l.id, flat(l));
   // pull the rest of each touched print run so the batch is complete
   const runs = new Map();
   for (const l of seen.values()) runs.set(ME.batchKey(l), { community_id: l.community_id, printed_at: l.printed_at });
@@ -123,84 +128,14 @@ router.post('/batches/confirm', express.json(), async (req, res) => {
     const v = ME.validateBatchConfirmation({ batchLetters, outcomes, mailedOn: b.mailed_on, today: todayCentral(), ctx });
     if (!v.ok) return res.status(400).json({ error: 'invalid_confirmation', detail: v.errors.join(' '), errors: v.errors });
 
-    const entries = Object.entries(outcomes);
-    const count = (o) => entries.filter(([, x]) => x === o).length;
-    const anyMailed = count('mailed') > 0;
-    const { data: conf, error: cErr } = await supabase.from('mailing_batch_confirmations').insert({
-      community_id: b.community_id, delivery_method: method, printed_at: b.printed_at,
-      mailed_on: anyMailed ? b.mailed_on : null, letter_count: entries.length,
-      mailed_count: count('mailed'), not_mailed_count: count('not_mailed'), held_count: count('held'), excluded_count: count('excluded'),
-      note: b.note ? String(b.note).slice(0, 2000) : null,
-      confirmed_by_user_id: staff.user.id, confirmed_by_name: who,
-    }).select('id').single();
-    if (cErr) throw cErr;
-
-    const byId = new Map(batchLetters.map((l) => [l.id, l]));
-    const notes = b.notes || {};
-    const evidence = entries.map(([id, o]) => ({
-      interaction_id: id, community_id: b.community_id, violation_id: byId.get(id).violation_id || null,
-      batch_confirmation_id: conf.id, outcome: o, mailed_on: o === 'mailed' ? b.mailed_on : null, delivery_method: method,
-      note: notes[id] ? String(notes[id]).slice(0, 1000) : (b.note ? String(b.note).slice(0, 1000) : null),
-      recorded_by_user_id: staff.user.id, recorded_by_name: who,
-    }));
-    const { error: eErr } = await supabase.from('letter_mailing_evidence').insert(evidence);
-    if (eErr) {
-      console.error('[mailing.confirm] evidence insert failed after batch row', conf.id, eErr.message);
-      return res.status(500).json({ error: 'evidence_not_saved', detail: 'The confirmation was not saved. Nothing about the letters changed. Please try again.' });
+    try {
+      const r = await recordRunConfirmation({ db: supabase, staff, communityId: b.community_id, method, printedAt: b.printed_at,
+        mailedOn: b.mailed_on, outcomes, batchLetters, notes: b.notes || {}, note: b.note || null });
+      res.json({ ok: true, ...r });
+    } catch (e) {
+      if (e.code === 'evidence_not_saved') return res.status(500).json({ error: 'evidence_not_saved', detail: e.message });
+      throw e;
     }
-
-    // Fill the canonical mailed date only where it is empty (never overwrite a
-    // recorded date). No cure deadline, letter date, PDF, mail piece or charge.
-    const fillIds = entries.filter(([id, o]) => o === 'mailed' && !byId.get(id).mailed_at).map(([id]) => id);
-    let filled = 0;
-    if (fillIds.length) {
-      const { data: up, error: uErr } = await supabase.from('interactions')
-        .update({ mailed_at: `${b.mailed_on}T12:00:00+00:00` }).in('id', fillIds).is('mailed_at', null).select('id');
-      if (uErr) console.error('[mailing.confirm] mailed_at fill failed (evidence is saved):', uErr.message);
-      filled = (up || []).length;
-    }
-
-    // Cure-deadline safeguard: a letter confirmed mailed later than the date its
-    // deadline was counted from flags the case; escalation waits for an admin.
-    // The deadline itself is not changed here.
-    let flagged = 0;
-    if (anyMailed) {
-      const mailedLetters = entries.filter(([, o]) => o === 'mailed').map(([id]) => byId.get(id)).filter((l) => l.violation_id);
-      if (mailedLetters.length) {
-        const vids = [...new Set(mailedLetters.map((l) => l.violation_id))];
-        const openCases = await inChunks((ids) => supabase.from('violations').select('id, cure_period_ends_at').in('id', ids).is('resolved_at', null), vids);
-        const cureBy = new Map(openCases.map((v) => [v.id, v.cure_period_ends_at]));
-        const flags = ME.cureDeadlineFlags({ letters: mailedLetters, mailedOn: b.mailed_on, openViolationIds: openCases.map((v) => v.id) });
-        if (flags.length) {
-          const already = new Set((await ME.loadOpenReviewHolds(supabase, { violationIds: flags.map((f) => f.violation_id) })).map((h) => h.violation_id));
-          const rows = flags.filter((f) => !already.has(f.violation_id)).map((f) => ({
-            community_id: b.community_id, violation_id: f.violation_id, interaction_id: f.interaction_id, kind: 'cure_deadline_review',
-            reason: f.reason, basis_date: f.basis_date, confirmed_mailed_on: f.confirmed_mailed_on,
-            cure_period_ends_at_flagged: cureBy.get(f.violation_id) || null, flagged_by_user_id: staff.user.id,
-          }));
-          if (rows.length) {
-            const { error: hErr } = await supabase.from('enforcement_review_holds').insert(rows);
-            if (hErr) console.error('[mailing.confirm] cure-deadline review holds NOT saved (evidence is saved):', hErr.message);
-            else flagged = rows.length;
-          }
-        }
-      }
-    }
-
-    // A line on each case timeline so the history reads in one place.
-    const LABEL = { mailed: `confirmed mailed on ${b.mailed_on}`, not_mailed: 'confirmed NOT mailed yet', held: 'held, not mailed', excluded: 'pulled from the mailing' };
-    const timeline = entries.filter(([id]) => byId.get(id).violation_id).map(([id, o]) => ({
-      community_id: b.community_id, property_id: byId.get(id).property_id, violation_id: byId.get(id).violation_id,
-      type: 'observation_note', direction: 'internal', subject: 'Mailing confirmed by staff',
-      content: `${who}: letter printed ${ME.centralDate(b.printed_at)} was ${LABEL[o]}.${notes[id] ? ' Note: ' + String(notes[id]).slice(0, 300) : ''} Letter dates and the cure deadline were not changed.`,
-      sent_by_user_id: staff.user.id, sent_at: new Date().toISOString(),
-    }));
-    if (timeline.length) {
-      const { error: tErr } = await supabase.from('interactions').insert(timeline);
-      if (tErr) console.warn('[mailing.confirm] timeline notes failed (evidence is saved):', tErr.message);
-    }
-
-    res.json({ ok: true, confirmation_id: conf.id, mailed: count('mailed'), not_mailed: count('not_mailed'), held: count('held'), excluded: count('excluded'), mailed_date_filled: filled, cure_deadline_reviews: flagged });
   } catch (err) {
     console.error('[mailing.confirm] failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
