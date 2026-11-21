@@ -90,6 +90,47 @@ async function loadOwnedSession(req, res) {
   return { visitor, session: s };
 }
 
+// ---- a handoff must reach a person (Ed 2026-11-21 portal testing) ---------
+// Handoff only set claire_sessions.handoff_requested, which no screen or job
+// reads, while Claire told the homeowner "I have passed this to the team".
+// Now it also emails Bedrock's catch-all inbox with the conversation and
+// Reply-To the visitor. Demo communities and staff test sessions skip.
+async function notifyHandoff(session, reason) {
+  try {
+    if (!session || session.role === 'staff') return { skipped: true };
+    const { data: c } = await supabase.from('communities').select('name, is_demo').eq('id', session.community_id).maybeSingle();
+    if (!c || c.is_demo) return { skipped: true };
+    let address = '';
+    if (session.property_id) {
+      const { data: p } = await supabase.from('properties').select('street_address').eq('id', session.property_id).maybeSingle();
+      address = (p && p.street_address) || '';
+    }
+    const { data: turns, error: tErr } = await supabase.from('claire_session_turns')
+      .select('seq, speaker, text').eq('session_id', session.id).order('seq', { ascending: false }).limit(16);
+    if (tErr) console.warn('[claire] handoff transcript read failed:', tErr.message);
+    const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
+    const convo = (turns || []).reverse().filter((t) => t.text)
+      .map((t) => `<p><b>${esc(t.speaker)}:</b> ${esc(t.text)}</p>`).join('');
+    const who = session.visitor_name || session.visitor_email || session.board_email || 'A visitor';
+    const { sendEmail } = require('../lib/notifications/email');
+    const send = await sendEmail({
+      to: process.env.CLAIRE_HANDOFF_TO || process.env.PORTAL_MESSAGES_TO || 'info@bedrocktx.com',
+      replyTo: session.visitor_email || session.board_email || undefined,
+      subject: `[Claire handoff] ${c.name}${address ? ', ' + address : ''}: ${who}`.slice(0, 250),
+      html: `<p><b>${esc(who)}</b> (${esc(session.visitor_email || session.board_email || 'no email')}) asked Claire for a person.</p>
+        <p><b>Community:</b> ${esc(c.name)}${address ? `<br><b>Property:</b> ${esc(address)}` : ''}<br><b>Reason:</b> ${esc(reason)}</p>
+        <div style="border-left:3px solid #D4AF37; padding:6px 12px; margin:12px 0;">${convo || '<p>(no transcript)</p>'}</div>
+        <p style="color:#666; font-size:12px;">Claire told them the team has the conversation. Reply to this email to answer them. Session ${esc(session.id)}.</p>`,
+      tags: [{ name: 'module', value: 'claire_handoff' }],
+    });
+    if (!(send && send.ok)) console.error(`[claire] HANDOFF EMAIL NOT SENT for session ${session.id}:`, send && send.error);
+    return send;
+  } catch (e) {
+    console.error(`[claire] handoff notification failed for session ${session && session.id}:`, e.message);
+    return { ok: false, error: e.message };
+  }
+}
+
 async function nextSeq(sessionId) {
   const { count, error } = await supabase
     .from('claire_session_turns').select('id', { count: 'exact', head: true }).eq('session_id', sessionId);
@@ -351,6 +392,7 @@ router.post('/session/:id/turn', async (req, res) => {
     await supabase.from('claire_sessions')
       .update({ handoff_requested: true, handoff_reason: verdict.reason })
       .eq('id', session.id);
+    if (!session.handoff_requested) await notifyHandoff(session, verdict.reason);   // once per session
     return res.json({ blocked: true, reason: verdict.reason, sentences: [verdict.reply], reply: verdict.reply });
   }
 
@@ -548,6 +590,7 @@ router.post('/session/:id/handoff', async (req, res) => {
     await supabase.from('claire_sessions')
       .update({ handoff_requested: true, handoff_reason: reason, status: 'handoff' }).eq('id', ctx.session.id);
     await logTurn(ctx.session.id, 'system', `Handoff requested: ${reason}`);
+    await notifyHandoff(ctx.session, reason);
     res.json({ ok: true, message: 'I have passed this to the team with everything we covered, so you will not have to repeat it.' });
   } catch (err) {
     console.error('[claire] handoff failed:', err.message);
