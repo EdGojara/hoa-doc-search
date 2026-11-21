@@ -1497,6 +1497,7 @@ function renderPortal(ctx) {
   const tpl = $('portalTemplate');
   $('app').innerHTML = '';
   $('app').appendChild(tpl.content.cloneNode(true));
+  window._portalCtx = ctx;   // the tour reads what this portal actually shows
 
   // Top bar
   $('userName').textContent = ctx.user.name || ctx.user.email;
@@ -2038,28 +2039,45 @@ function renderPropertyPicker(ctx) {
 // Slide content — kept here so it's easy to edit copy without touching markup.
 // Each slide: { icon, title (allows <em> for gold accent), body }.
 // Length discipline: under 280 chars of body per slide. People skim overlays.
-const TUTORIAL_SLIDES = [
-  {
-    icon: '👋',
-    title: 'Welcome to your <em>community portal</em>',
-    body: 'This is your one place for everything related to your home and community — your balance, compliance status, governing documents, and quick ways to request services. Built by Bedrock, made for you.',
-  },
-  {
-    icon: '🏠',
-    title: 'See your <em>account at a glance</em>',
-    body: 'The hero card up top shows your current balance, compliance status, and any open requests. Click the tiles below for full detail on each. Everything updates as we process things on our end.',
-  },
-  {
-    icon: '🎉',
-    title: 'Make a <em>request anytime</em>',
-    body: 'Submit an architectural request, ask for a new pool fob, or reserve the clubhouse — all from the "Make a request" tiles. Questions? Email info@bedrocktx.com or call (832) 588-2485. Welcome aboard!',
-  },
-];
+// The tour names only what THIS homeowner's portal shows. It used to promise
+// "your balance" and "governing documents" to associations that have neither
+// switched on (Ed 2026-11-21, LOPF portal testing).
+function _tourList(items) {
+  return items.length > 1 ? items.slice(0, -1).join(', ') + ', and ' + items[items.length - 1] : (items[0] || '');
+}
+function tutorialSlides() {
+  const ctx = window._portalCtx || {};
+  const cfg = (ctx.community && ctx.community.portal_module_config) || {};
+  const live = (k) => (cfg[k] && cfg[k].status) === 'live';
+  const balanceOn = !!(ctx.balance && ctx.balance.status !== 'hidden');
+  const have = [];
+  if (balanceOn) have.push('your balance');
+  if (live('compliance')) have.push('compliance status');
+  if (live('documents')) have.push('governing documents');
+  if (live('messages')) have.push('messages with our team');
+  have.push('quick ways to make a request');
+  const glance = ['compliance status', 'any open requests'];
+  if (balanceOn) glance.unshift('current balance');
+  const asks = [];
+  if (live('arc')) asks.push('submit an architectural request');
+  if (live('key_fob')) asks.push('ask for a new pool fob');
+  if (live('clubhouse')) asks.push('reserve the clubhouse');
+  return [
+    { icon: '👋', title: 'Welcome to your <em>community portal</em>',
+      body: `This is your one place for your home and community: ${_tourList(have)}. Built by Bedrock, made for you.` },
+    { icon: '🏠', title: 'See your <em>account at a glance</em>',
+      body: `The card up top shows your ${_tourList(glance)}. Click the tiles below for full detail. Everything updates as we process things on our end.` },
+    { icon: '🎉', title: 'Make a <em>request anytime</em>',
+      body: `${asks.length ? _tourList(asks).replace(/^./, (c) => c.toUpperCase()) + ' from the "Make a request" tiles. ' : ''}Questions? Email info@bedrocktx.com or call (832) 588-2485. Welcome aboard!` },
+  ];
+}
+let TUTORIAL_SLIDES = tutorialSlides();
 
 let _tutorialSlideIndex = 0;
 let _tutorialShouldDismiss = false;
 
 function showTutorialOverlay({ updateDismissed = false } = {}) {
+  TUTORIAL_SLIDES = tutorialSlides();
   _tutorialSlideIndex = 0;
   _tutorialShouldDismiss = !!updateDismissed;
   const tpl = $('tutorialOverlayTemplate');
@@ -2149,7 +2167,12 @@ function _dismissTutorial() {
   // every portal-* subpage can read it. Covers cases where the user
   // arrives at /portal without going through the picker (deep link,
   // refresh after auth, etc.).
-  if (ctx?.property?.id) {
+  // Not when this load is about to show the multi-property picker: storing the
+  // server's default lot first made renderPortal think a lot was already
+  // chosen, so owners of two or more lots never saw the picker and "Switch
+  // property" reloaded the same lot (Ed 2026-11-21 portal testing).
+  const willPick = !ctx?.demo && Array.isArray(ctx?.properties) && ctx.properties.length >= 2 && !getStoredPropertyId();
+  if (ctx?.property?.id && !willPick) {
     try { setStoredPropertyId(ctx.property.id); } catch (_) {}
   }
   applyDemoBanner(ctx);

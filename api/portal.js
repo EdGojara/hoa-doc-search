@@ -3301,30 +3301,60 @@ router.post('/messages', express.json({ limit: '256kb' }), async (req, res) => {
     const { computeFirstResponseDueAt } = require('../lib/messaging/sla_engine');
     const dueAt = computeFirstResponseDueAt(new Date()).toISOString();
 
+    // A thread needs a contact. A portal user invited with an email that does
+    // not match their contact record has none, and every message they sent
+    // failed with a bare create_failed (Ed 2026-11-21 portal testing). Fall
+    // back to the lot's current owner of record (same source as payments).
+    let contactId = scope.contact_id;
+    if (!contactId) {
+      const { data: ten, error: tenErr } = await supabase.from('ownership_tenures')
+        .select('id').eq('property_id', propertyId).eq('kind', 'owner').is('end_date', null).limit(1).maybeSingle();
+      if (tenErr) console.warn('[portal/messages] owner tenure lookup failed:', tenErr.message);
+      if (ten) {
+        const { data: own, error: ownErr } = await supabase.from('property_ownerships')
+          .select('contact_id').eq('tenure_id', ten.id).order('is_primary', { ascending: false }).limit(1).maybeSingle();
+        if (ownErr) console.warn('[portal/messages] owner contact lookup failed:', ownErr.message);
+        contactId = own ? own.contact_id : null;
+      }
+    }
+    if (!contactId) {
+      console.warn(`[portal/messages] no contact for portal user ${scope.portal_user_id} on property ${propertyId}`);
+      return res.status(409).json({ error: 'no_contact_on_file', message: 'We could not match your account to this home. Please call (832) 588-2485 or email info@bedrocktx.com and we will fix it.' });
+    }
+
     const { data: thread, error: thErr } = await supabase
       .from('homeowner_threads')
       .insert({
         community_id: prop.community_id,
         property_id: propertyId,
-        primary_contact_id: scope.contact_id,
+        primary_contact_id: contactId,
         subject,
         next_action_status: 'awaiting_staff_first_response',
         first_response_due_at: dueAt,
       })
       .select()
       .single();
-    if (thErr) return res.status(500).json({ error: 'create_failed' });
+    if (thErr) {
+      console.error('[portal/messages] thread insert failed:', thErr.message);
+      return res.status(500).json({ error: 'create_failed' });
+    }
 
     // First message — the body the homeowner just typed.
-    await supabase.from('messages').insert({
+    const { error: msgErr } = await supabase.from('messages').insert({
       thread_id: thread.id,
       direction: 'inbound',
       sender_type: 'homeowner',
-      sender_id: scope.contact_id,
+      sender_id: contactId,
       sender_display_name: scope.full_name || scope.email,
       channel: 'portal',
       body_text: body,
     });
+    if (msgErr) {
+      // Never leave a thread with no message: the homeowner would think it sent.
+      console.error('[portal/messages] first message insert failed:', msgErr.message);
+      await supabase.from('homeowner_threads').delete().eq('id', thread.id);
+      return res.status(500).json({ error: 'create_failed' });
+    }
 
     res.status(201).json({ thread });
   } catch (err) {
