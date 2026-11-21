@@ -543,6 +543,7 @@ const _STAFF_GATE_PUBLIC = [
   /^\/api\/portal\/autopay$/,                  // GET this owner's standing authorisation
   /^\/api\/portal\/autopay\/(begin|complete|cancel)$/, // enrol / finish / stop
   /^\/api\/portal\/pay\/checkout$/,             // homeowner pays own balance (portal cookie; server derives lot/owner/amount)
+  /^\/api\/portal\/pay\/(setup|quote|confirm)$/, // funding-aware pay flow (portal cookie; server derives lot/owner/amount/fee)
   // Board portal API — every handler enforces requireBoardViewer (staff JWT OR
   // a board member's portal magic-link cookie whose email holds an active seat)
   // + canSeeCommunity per-community scope (lib/portal/board_access.js,
@@ -1717,6 +1718,8 @@ app.get('/portal/vendor-directory/vendor',   (req, res) => res.sendFile(require(
 app.get('/inspector-voice', (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'inspector-voice.html')));
 app.get('/portal/acc-review',(req, res) => res.sendFile(require('path').join(__dirname, 'public', 'portal-acc-review.html')));
 app.get('/portal/payments',  (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'portal.html')));
+// Funding-aware Pay flow (card type / bank known before the amount is fixed). Auth: portal cookie, checked by /api/portal/pay/*.
+app.get('/portal/pay',       (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'portal-pay.html')));
 
 // Board portal — extensionless route mirrors the homeowner /portal pattern so
 // the "Board View →" switch (href="/board-portal") and the reciprocal

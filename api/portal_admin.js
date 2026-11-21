@@ -495,6 +495,52 @@ router.post('/community/:communityId/homeowner-balances', async (req, res) => {
 });
 
 // ============================================================================
+// POST /api/portal-admin/community/:communityId/payment-fees   (OWNER ONLY)
+//   { card_fee_bps, debit_card_fee_bps|null, ach_fee_cents, ach_tier_threshold_cents|null, ach_fee_above_cents|null }
+//   { clear: true }                                           -> remove them (online payment refused)
+// The ONLY writer of portal_module_config.payment_fees (lib/payments/fee_quote.js).
+// Validated by the same function the payment flow uses, so a value that would be
+// refused at payment time is refused here.
+// ============================================================================
+router.post('/community/:communityId/payment-fees', async (req, res) => {
+  try {
+    const { requireOwner } = require('./_require_admin');
+    const owner = await requireOwner(req, res);
+    if (!owner) return;
+    const communityId = req.params.communityId;
+    const b = req.body || {};
+    const { data: current, error: curErr } = await supabase.from('communities')
+      .select('id, name, portal_module_config').eq('id', communityId).maybeSingle();
+    if (curErr) throw curErr;
+    if (!current) return res.status(404).json({ error: 'community_not_found' });
+    const cfg = { ...(current.portal_module_config || {}) };
+    let fees = null;
+    if (b.clear === true) {
+      delete cfg.payment_fees;
+    } else {
+      const { validateFeeConfig } = require('../lib/payments/fee_quote');
+      const v = validateFeeConfig({ card_fee_bps: b.card_fee_bps, debit_card_fee_bps: b.debit_card_fee_bps == null ? null : b.debit_card_fee_bps,
+        ach_fee_cents: b.ach_fee_cents,
+        ach_tier_threshold_cents: b.ach_tier_threshold_cents == null ? null : b.ach_tier_threshold_cents,
+        ach_fee_above_cents: b.ach_fee_above_cents == null ? null : b.ach_fee_above_cents });
+      if (!v.ok) return res.status(400).json({ error: v.error, detail: v.detail });
+      fees = { ...v.config, set_by: owner.email || owner.id, set_at: new Date().toISOString() };
+      cfg.payment_fees = fees;
+    }
+    const { error: upErr } = await supabase.from('communities').update({ portal_module_config: cfg }).eq('id', communityId);
+    if (upErr) throw upErr;
+    await logAudit(fees ? 'payment_fees_set' : 'payment_fees_cleared', {
+      resource_type: 'community', resource_id: communityId, performed_by: owner.email || owner.id,
+      notes: fees ? `card ${fees.card_fee_bps}bps, debit ${fees.debit_card_fee_bps == null ? 'same' : fees.debit_card_fee_bps + 'bps'}, ach ${fees.ach_fee_cents}c${fees.ach_tier_threshold_cents != null ? ` up to ${fees.ach_tier_threshold_cents}c, ${fees.ach_fee_above_cents}c above` : ''}` : 'cleared',
+    });
+    res.json({ ok: true, community_id: communityId, payment_fees: fees });
+  } catch (err) {
+    console.error('[portal_admin] payment-fees failed:', err.message);
+    res.status(500).json({ error: 'payment_fees_failed' });
+  }
+});
+
+// ============================================================================
 // GET /api/portal-admin/community/:communityId/module-config
 // ----------------------------------------------------------------------------
 // Returns the current per-tile visibility config for a community plus the

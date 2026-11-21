@@ -577,6 +577,21 @@
         </label>
       </div>
 
+      <div class="kill-switch" id="payFeesBox">
+        <div class="label-block">
+          <strong>Online payment fees</strong>
+          <div class="help" id="payFeesHelp">Owner only. Homeowners cannot pay online until these are set.</div>
+          <div style="display:flex; flex-wrap:wrap; gap:10px; margin-top:8px; font-size:13px;">
+            <label>Card fee %<br><input id="payFeeCredit" type="text" inputmode="decimal" placeholder="e.g. 3.5" style="width:90px"></label>
+            <label>Debit card fee % (blank = same)<br><input id="payFeeDebit" type="text" inputmode="decimal" placeholder="" style="width:90px"></label>
+            <label>Bank fee $<br><input id="payFeeAch" type="text" inputmode="decimal" placeholder="e.g. 2.95" style="width:90px"></label>
+            <label>Up to and including $<br><input id="payFeeAchThreshold" type="text" inputmode="decimal" placeholder="e.g. 350.00" style="width:90px"></label>
+            <label>Bank fee above that $<br><input id="payFeeAchAbove" type="text" inputmode="decimal" placeholder="e.g. 5.95" style="width:90px"></label>
+          </div>
+        </div>
+        <button type="button" id="payFeesSave" class="primary">Save fees</button>
+      </div>
+
       <div class="tile-grid-admin" id="moduleConfigGrid">
         <!-- Tile rows rendered by JS -->
       </div>
@@ -911,6 +926,7 @@ function renderModuleConfig() {
   $('portalActiveToggle').checked = _portalActive;
   $('killSwitchLabel').textContent = _portalActive ? 'On' : 'Off';
   renderBalancesSwitch();
+  renderPayFees();
 
   // Per-tile grid
   const grid = $('moduleConfigGrid');
@@ -978,6 +994,50 @@ async function saveTileStatus(moduleKey, newStatus) {
       badgeEl.textContent = '✗ save failed';
     }
     toast('Save failed: ' + err.message, 'error');
+  }
+}
+
+// Payment processing fees (lib/payments/fee_quote.js): card %, optional debit %,
+// bank account flat $. Bedrock's processing revenue, disclosed before payment.
+// Owner-only write.
+function renderPayFees() {
+  const f = (_moduleConfig && _moduleConfig.payment_fees) || null;
+  const ok = !!(f && f.card_fee_bps != null);
+  $('payFeeCredit').value = ok ? String(f.card_fee_bps / 100) : '';
+  $('payFeeDebit').value = ok && f.debit_card_fee_bps != null ? String(f.debit_card_fee_bps / 100) : '';
+  $('payFeeAch').value = ok ? (f.ach_fee_cents / 100).toFixed(2) : '';
+  $('payFeeAchThreshold').value = ok && f.ach_tier_threshold_cents != null ? (f.ach_tier_threshold_cents / 100).toFixed(2) : '';
+  $('payFeeAchAbove').value = ok && f.ach_fee_above_cents != null ? (f.ach_fee_above_cents / 100).toFixed(2) : '';
+  $('payFeesHelp').textContent = ok
+    ? `Set by ${f.set_by || 'owner'}${f.set_at ? ' on ' + new Date(f.set_at).toLocaleString() : ''}. Shown to homeowners with the total before they pay.`
+    : 'Owner only. Not set: homeowners cannot pay online until these are set.';
+}
+
+async function savePayFees() {
+  if (!_currentCommunityId) return;
+  const raw = (id) => String($(id).value || '').replace(/[^0-9.]/g, '');
+  const num = (id) => { const v = raw(id); return v === '' ? NaN : parseFloat(v); };
+  const card = num('payFeeCredit'), ach = num('payFeeAch');
+  const debitRaw = raw('payFeeDebit'); const debit = debitRaw === '' ? null : parseFloat(debitRaw);
+  if (!isFinite(card) || card < 0 || !isFinite(ach) || ach < 0 || (debit !== null && (!isFinite(debit) || debit < 0))) { toast('Enter the card % and bank account $ (0 is allowed).', 'error'); return; }
+  if (card > 10 || (debit !== null && debit > 10)) { toast('A card fee above 10% looks like a typo.', 'error'); return; }
+  const thrRaw = raw('payFeeAchThreshold'), aboveRaw = raw('payFeeAchAbove');
+  if ((thrRaw === '') !== (aboveRaw === '')) { toast('Set both the bank fee threshold and the fee above it, or leave both blank.', 'error'); return; }
+  const thr = thrRaw === '' ? null : parseFloat(thrRaw), above = aboveRaw === '' ? null : parseFloat(aboveRaw);
+  if (thr !== null && (!isFinite(thr) || thr <= 0 || !isFinite(above) || above < 0)) { toast('Bank fee threshold must be above $0 and the fee above it $0 or more.', 'error'); return; }
+  try {
+    const r = await fetch(`/api/portal-admin/community/${encodeURIComponent(_currentCommunityId)}/payment-fees`, {
+      method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ card_fee_bps: Math.round(card * 100), debit_card_fee_bps: debit === null ? null : Math.round(debit * 100), ach_fee_cents: Math.round(ach * 100),
+        ach_tier_threshold_cents: thr === null ? null : Math.round(thr * 100), ach_fee_above_cents: above === null ? null : Math.round(above * 100) }),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (r.status === 403) throw new Error('only the owner can change this');
+    if (!r.ok) throw new Error(j.detail || j.error || `API ${r.status}`);
+    toast('Payment fees saved.', 'success');
+    await loadAdoption(_currentCommunityId);
+  } catch (err) {
+    toast('Could not save fees: ' + err.message, 'error');
   }
 }
 
@@ -1084,6 +1144,7 @@ async function savePortalActive(newActive) {
 
   // Portal-active kill switch
   $('balancesToggle').addEventListener('change', (e) => saveBalances(e.target.checked));
+  $('payFeesSave').addEventListener('click', savePayFees);
   $('portalActiveToggle').addEventListener('change', (e) => {
     savePortalActive(e.target.checked);
   });

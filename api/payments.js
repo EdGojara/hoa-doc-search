@@ -448,6 +448,37 @@ router.post('/test/assessment-checkout', express.json({ limit: '8kb' }), async (
   }
 });
 
+// POST /api/payments/test/assessment-intent/(setup|quote|confirm)  (staff, TEST MODE ONLY)
+// The staff equivalent of /api/portal/pay/* for verifying the funding-aware flow
+// end to end with Stripe test cards: a $1.00 assessment on a chosen lot (the mode
+// gate still allows only the payment-sandbox lot under a test key). Same module,
+// same fee rules, same gates. Open /portal/pay?staff_test=1&property_id=<lot>.
+router.post('/test/assessment-intent/:step', express.json({ limit: '8kb' }), async (req, res) => {
+  const { requireTestMode } = require('../lib/payments/stripe_mode');
+  if (!requireTestMode(res)) return;
+  try {
+    const b = req.body || {};
+    if (!b.property_id) return res.status(400).json({ error: 'property_id_required' });
+    const AI = require('../lib/payments/assessment_intent');
+    const deps = { supabase, stripeLib };
+    const common = { propertyId: String(b.property_id), initiatedBy: 'staff_test', testAmountCents: 100 };
+    const origin = process.env.APP_BASE_URL || `${req.protocol}://${req.get('host')}`;
+    let r;
+    if (req.params.step === 'setup') r = await AI.setupAssessmentPayment(deps, common);
+    else if (req.params.step === 'quote') r = await AI.quoteAssessmentPayment(deps, { ...common, paymentMethodId: String(b.payment_method_id || '') });
+    else if (req.params.step === 'confirm') {
+      r = await AI.confirmAssessmentPayment(deps, { ...common, paymentMethodId: String(b.payment_method_id || ''), quoteToken: String(b.quote_token || ''),
+        returnUrl: `${origin}/portal/pay?staff_test=1&returned=1&property_id=${encodeURIComponent(String(b.property_id))}`,
+        mandate: { ip: String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0].trim(), userAgent: String(req.headers['user-agent'] || '').slice(0, 500) } });
+    } else return res.status(404).json({ error: 'unknown_step' });
+    if (!r.ok) return res.status(r.status || 500).json({ error: r.error, hint: r.hint, quote: r.quote });
+    res.json(r);
+  } catch (err) {
+    console.error('[payments] test assessment-intent failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
 // POST /api/payments/test/payment-sandbox  { action: plan | apply | plan_remove | remove }
 // (admin, TEST MODE ONLY). Provisions or removes the Drama Creek payment-sandbox
 // lot, in one transaction; the plan actions run everything and roll back.
@@ -756,10 +787,12 @@ router.post('/connect/test-onboard', express.json(), async (req, res) => {
 
 // ============================================================================
 // POST /api/payments/webhook  (raw body required for signature verification)
-// Stripe sends events here. We handle:
-//   checkout.session.completed       → mark payments succeeded, confirm rental
-//   payment_intent.payment_failed    → mark payments failed
-//   charge.refunded                  → mark payments refunded
+// Stripe sends events here; lib/payments/payment_lifecycle.js decides what each
+// does. Platform endpoint must subscribe to (scripts/stripe_preflight.js checks):
+//   checkout.session.completed / async_payment_succeeded / async_payment_failed / expired
+//   payment_intent.succeeded / processing / payment_failed / canceled
+//   charge.refunded, charge.dispute.created, charge.dispute.closed
+// Connected-accounts endpoint: account.updated.
 //
 // Stripe Connect: webhook events include `account` (the connected account id)
 // when the event originated from a connected account. We log it but use
