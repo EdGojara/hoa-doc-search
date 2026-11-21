@@ -232,7 +232,7 @@
 
     $('assocName').textContent = setup.association_name || 'your association';
     $('dueAmt').textContent = usd(setup.assessment_cents);
-    $('feeCard').textContent = setup.fee_schedule.credit + '. ' + setup.fee_schedule.debit + '.';
+    $('feeCard').textContent = setup.fee_schedule.card + '.' + (setup.fee_schedule.debit ? ' ' + setup.fee_schedule.debit + '.' : '');
     $('feeAch').textContent = setup.fee_schedule.ach + '.';
     document.querySelectorAll('input[name="kind"]').forEach((i) => i.addEventListener('change', () => choose(i.value)));
     $('btnReview').addEventListener('click', review);

@@ -54,7 +54,7 @@ function fakeSupabase(tables) {
 }
 
 const P1 = 'prop-1', C = 'comm-1', TEN = 'ten-1';
-const FEES = { credit_surcharge_bps: 290, debit_fee_cents: 0, prepaid_as: 'debit', ach_fee_cents: 0 };
+const FEES = { card_fee_bps: 350, debit_card_fee_bps: null, ach_fee_cents: 595 };
 function world({ balance = 25000, fees = FEES, sandbox = false } = {}) {
   const cfg = { balance: { status: 'live' }, homeowner_financials: { verified_at: '2026-11-01', verified_by: 'owner', payments: true } };
   if (fees) cfg.payment_fees = fees;
@@ -99,42 +99,37 @@ const base = { propertyId: P1, initiatedBy: 'homeowner_portal' };
 
 // ---------------------------------------------------------------- fee rules
 const cfg = (o = {}) => ({ ...FEES, ...o });
-t('credit: surcharge = round(assessment * bps / 10000)', () => {
-  const f = FQ.computeFee({ assessmentCents: 25000, config: cfg(), methodKind: 'card', funding: 'credit' });
-  assert.strictEqual(f.fee_cents, 725); assert.strictEqual(f.fee_kind, 'credit_surcharge');
-  assert.match(f.fee_label, /2\.9%/); assert.match(f.disclosure, /not more than our cost/);
-});
-t('credit: surcharge capped at 3% (config above 300 bps refused; compute caps; half-cent never crosses the cap)', () => {
-  assert.strictEqual(FQ.validateFeeConfig(cfg({ credit_surcharge_bps: 301 })).ok, false);
-  assert.strictEqual(FQ.validateFeeConfig(cfg({ credit_surcharge_bps: 300 })).ok, true);
-  assert.strictEqual(FQ.computeFee({ assessmentCents: 25000, config: cfg({ credit_surcharge_bps: 450 }), methodKind: 'card', funding: 'credit' }).fee_cents, 750);
-  // 50c at 3% = 1.5c: rounding up would be 4%; must be 1c.
-  assert.strictEqual(FQ.computeFee({ assessmentCents: 50, config: cfg({ credit_surcharge_bps: 300 }), methodKind: 'card', funding: 'credit' }).fee_cents, 1);
-  for (const a of [1, 7, 33, 99, 101, 12345, 142500, 999999]) {
-    const fee = FQ.computeFee({ assessmentCents: a, config: cfg({ credit_surcharge_bps: 300 }), methodKind: 'card', funding: 'credit' }).fee_cents;
-    assert.ok(fee * 10000 <= a * 300, `fee ${fee} on ${a} exceeds 3%`);
+t('card: processing fee = round(amount * card_fee_bps / 10000), same for credit, debit, prepaid, unknown', () => {
+  for (const funding of ['credit', 'debit', 'prepaid', 'unknown']) {
+    const f = FQ.computeFee({ assessmentCents: 25000, config: cfg(), methodKind: 'card', funding });
+    assert.strictEqual(f.fee_cents, 875, funding); assert.strictEqual(f.fee_kind, 'card_fee');
+    assert.match(f.fee_label, /3\.5%/); assert.match(f.disclosure, /3\.5% processing fee \(\$8\.75\)/);
   }
+  assert.strictEqual(FQ.computeFee({ assessmentCents: 71900, config: cfg(), methodKind: 'card', funding: 'credit' }).fee_cents, 2517);
+  assert.strictEqual(FQ.computeFee({ assessmentCents: 150000, config: cfg(), methodKind: 'card', funding: 'debit' }).fee_cents, 5250);
 });
-t('debit, prepaid and unknown funding are never surcharged (only the flat debit fee)', () => {
-  for (const funding of ['debit', 'prepaid', 'unknown']) {
-    const f0 = FQ.computeFee({ assessmentCents: 25000, config: cfg({ credit_surcharge_bps: 300 }), methodKind: 'card', funding });
-    assert.strictEqual(f0.fee_cents, 0, funding); assert.ok(!/surcharge \(/.test(f0.fee_label || ''), funding);
-    const f1 = FQ.computeFee({ assessmentCents: 25000, config: cfg({ credit_surcharge_bps: 300, debit_fee_cents: 150 }), methodKind: 'card', funding });
-    assert.strictEqual(f1.fee_cents, 150, funding); assert.strictEqual(f1.fee_kind, 'debit_fee');
-    const f2 = FQ.computeFee({ assessmentCents: 900000, config: cfg({ credit_surcharge_bps: 300, debit_fee_cents: 150 }), methodKind: 'card', funding });
-    assert.strictEqual(f2.fee_cents, 150, `${funding}: flat, not proportional`);
-  }
+t('card: optional debit override applies to debit and prepaid only', () => {
+  const c = cfg({ debit_card_fee_bps: 250 });
+  assert.strictEqual(FQ.computeFee({ assessmentCents: 100000, config: c, methodKind: 'card', funding: 'debit' }).fee_cents, 2500);
+  assert.strictEqual(FQ.computeFee({ assessmentCents: 100000, config: c, methodKind: 'card', funding: 'prepaid' }).fee_cents, 2500);
+  assert.strictEqual(FQ.computeFee({ assessmentCents: 100000, config: c, methodKind: 'card', funding: 'credit' }).fee_cents, 3500);
+  assert.strictEqual(FQ.computeFee({ assessmentCents: 100000, config: c, methodKind: 'card', funding: 'unknown' }).fee_cents, 3500);
   assert.strictEqual(FQ.classifyPaymentMethod({ id: 'pm_x', type: 'card', card: { funding: 'weird' } }).funding, 'unknown');
-  assert.strictEqual(FQ.classifyPaymentMethod({ id: 'pm_x', type: 'card', card: {} }).funding, 'unknown');
 });
-t('ACH: flat ach_fee_cents', () => {
+t('bank account (ACH): flat ach_fee_cents, $5.95', () => {
+  const f = FQ.computeFee({ assessmentCents: 90000, config: cfg(), methodKind: 'us_bank_account' });
+  assert.strictEqual(f.fee_cents, 595); assert.strictEqual(f.fee_kind, 'ach_fee'); assert.match(f.disclosure, /\$5\.95 processing fee/);
+  assert.strictEqual(FQ.computeFee({ assessmentCents: 900000, config: cfg(), methodKind: 'us_bank_account' }).fee_cents, 595, 'flat, not proportional');
   assert.strictEqual(FQ.computeFee({ assessmentCents: 25000, config: cfg({ ach_fee_cents: 0 }), methodKind: 'us_bank_account' }).fee_cents, 0);
-  const f = FQ.computeFee({ assessmentCents: 90000, config: cfg({ ach_fee_cents: 200 }), methodKind: 'us_bank_account' });
-  assert.strictEqual(f.fee_cents, 200); assert.strictEqual(f.fee_kind, 'ach_fee');
+});
+t('typo guard: card fee above 10% refused', () => {
+  assert.strictEqual(FQ.validateFeeConfig(cfg({ card_fee_bps: 1001 })).ok, false);
+  assert.strictEqual(FQ.validateFeeConfig(cfg({ card_fee_bps: 1000 })).ok, true);
+  assert.strictEqual(FQ.validateFeeConfig(cfg({ debit_card_fee_bps: 5000 })).ok, false);
 });
 t('missing or malformed fee config refuses (never a default fee)', async () => {
-  for (const bad of [undefined, null, {}, { credit_surcharge_bps: 290 }, cfg({ debit_fee_cents: -1 }), cfg({ ach_fee_cents: 1.5 }),
-    cfg({ credit_surcharge_bps: '290' }), cfg({ prepaid_as: 'credit' })]) {
+  for (const bad of [undefined, null, {}, { card_fee_bps: 350 }, cfg({ debit_card_fee_bps: -1 }), cfg({ ach_fee_cents: 1.5 }),
+    cfg({ card_fee_bps: '350' }), cfg({ card_fee_bps: null })]) {
     assert.strictEqual(FQ.validateFeeConfig(bad).ok, false, JSON.stringify(bad));
   }
   const sb = world({ fees: null }); const st = fakeStripe();
@@ -153,12 +148,12 @@ t('setup: publishable key must exist and match the secret key mode', async () =>
   const ok = await AI.setupAssessmentPayment(deps(sb, st), { ...base, env: { STRIPE_PUBLISHABLE_KEY: 'pk_live_x' } });
   assert.ok(ok.ok, JSON.stringify(ok));
   assert.strictEqual(ok.elements.paymentMethodCreation, 'manual'); assert.strictEqual(ok.elements.onBehalfOf, 'acct_test_1');
-  assert.strictEqual(ok.assessment_cents, 25000); assert.match(ok.fee_schedule.debit, /never a surcharge|No fee/);
-  assert.ok(!('payment_fees' in ok) && !JSON.stringify(ok).includes('credit_surcharge_bps'), 'raw fee config never sent to the browser');
+  assert.strictEqual(ok.assessment_cents, 25000); assert.match(ok.fee_schedule.card, /3\.5% processing fee/); assert.match(ok.fee_schedule.ach, /\$5\.95/);
+  assert.ok(!('payment_fees' in ok) && !JSON.stringify(ok).includes('card_fee_bps'), 'raw fee config never sent to the browser');
 });
 t('quote: per funding type, server-computed, signed', async () => {
   const sb = world(); const st = fakeStripe();
-  const exp = { pm_credit_visa: 725, pm_debit_visa: 0, pm_prepaid_mc: 0, pm_unknown_card: 0, pm_bank_ach: 0 };
+  const exp = { pm_credit_visa: 875, pm_debit_visa: 875, pm_prepaid_mc: 875, pm_unknown_card: 875, pm_bank_ach: 595 };
   for (const [pm, fee] of Object.entries(exp)) {
     const q = await AI.quoteAssessmentPayment(deps(sb, st), { ...base, paymentMethodId: pm });
     assert.ok(q.ok, `${pm}: ${JSON.stringify(q)}`);
@@ -176,7 +171,7 @@ t('quote/confirm keep every existing gate (TEST key refuses a real lot; payments
   assert.strictEqual((await AI.quoteAssessmentPayment(deps(off, st), { ...base, paymentMethodId: 'pm_credit_visa' })).error, 'online_payments_not_enabled');
   const sand = world({ sandbox: true });
   const q = await AI.quoteAssessmentPayment(deps(sand, st, TEST), { ...base, initiatedBy: 'staff_test', paymentMethodId: 'pm_credit_visa', testAmountCents: 100 });
-  assert.ok(q.ok && q.assessment_cents === 100 && q.fee_cents === 3, JSON.stringify(q));
+  assert.ok(q.ok && q.assessment_cents === 100 && q.fee_cents === 4, JSON.stringify(q));
 });
 
 // ---------------------------------------------------------------- confirm
@@ -193,9 +188,9 @@ t('confirm: writes assessment + fee rows, then a destination-charge PI for the s
   assert.ok(r.ok, JSON.stringify(r)); assert.strictEqual(r.status, 'succeeded');
   const rows = sb._db.payments;
   assert.strictEqual(rows.length, 2);
-  const a = rows.find((x) => x.fee_type === 'assessment'); const f = rows.find((x) => x.fee_type === 'credit_surcharge');
+  const a = rows.find((x) => x.fee_type === 'assessment'); const f = rows.find((x) => x.fee_type === 'card_fee');
   assert.strictEqual(a.amount_cents, 25000); assert.strictEqual(a.payee, 'community_association'); assert.strictEqual(a.connected_account_id, 'acct_test_1');
-  assert.strictEqual(f.amount_cents, 725); assert.strictEqual(f.payee, 'management_company');
+  assert.strictEqual(f.amount_cents, 875); assert.strictEqual(f.payee, 'management_company');
   for (const x of rows) {
     assert.strictEqual(x.payment_group_id, r.group_id); assert.strictEqual(x.settlement_state, 'awaiting_payment');
     assert.strictEqual(x.tenure_id, TEN); assert.strictEqual(x.product_type, 'assessment_payment');
@@ -203,15 +198,15 @@ t('confirm: writes assessment + fee rows, then a destination-charge PI for the s
     assert.strictEqual(x.payment_method_type, 'card'); assert.strictEqual(x.status, 'pending');
   }
   const pi = st.created[0];
-  assert.strictEqual(pi.amountCents, 25725); assert.strictEqual(pi.applicationFeeCents, 725);
+  assert.strictEqual(pi.amountCents, 25875); assert.strictEqual(pi.applicationFeeCents, 875);
   assert.strictEqual(pi.connectedAccountId, 'acct_test_1'); assert.strictEqual(pi.methodKind, 'card');
   assert.strictEqual(pi.metadata.payment_group_id, r.group_id); assert.strictEqual(pi.metadata.product_type, 'assessment_payment');
   assert.strictEqual(pi.metadata.payment_flow, 'payment_element'); assert.strictEqual(pi.metadata.tenure_id, TEN);
   assert.strictEqual(pi.metadata.trusted_account_number, 'T-TEST-1'); assert.strictEqual(pi.metadata.initiated_by, 'homeowner_portal');
-  assert.match(pi.description, /surcharge/i);
+  assert.match(pi.description, /Processing fee \(3\.5% card\)/);
 });
-t('confirm: no fee row when the fee is zero (debit card)', async () => {
-  const sb = world(); const st = fakeStripe();
+t('confirm: no fee row when the fee is zero', async () => {
+  const sb = world({ fees: cfg({ card_fee_bps: 0 }) }); const st = fakeStripe();
   const q = await quoted(sb, st, 'pm_debit_visa');
   const r = await AI.confirmAssessmentPayment(deps(sb, st), { ...base, paymentMethodId: 'pm_debit_visa', quoteToken: q.quote_token });
   assert.ok(r.ok); assert.strictEqual(sb._db.payments.length, 1);
@@ -231,10 +226,10 @@ t('confirm recomputes server-side: tampered token, swapped card, changed balance
   sb._db.v_current_owner_balance[0].balance_cents = 30000;
   const ch = await AI.confirmAssessmentPayment(deps(sb, st), { ...base, paymentMethodId: 'pm_credit_visa', quoteToken: q.quote_token });
   assert.strictEqual(ch.error, 'quote_changed'); assert.strictEqual(ch.status, 409);
-  assert.strictEqual(ch.quote.total_cents, 30870); assert.ok(ch.quote.quote_token);
+  assert.strictEqual(ch.quote.total_cents, 31050); assert.ok(ch.quote.quote_token);
   // Fee rule changed after review.
   sb._db.v_current_owner_balance[0].balance_cents = 25000;
-  sb._db.communities[0].portal_module_config.payment_fees = cfg({ credit_surcharge_bps: 300 });
+  sb._db.communities[0].portal_module_config.payment_fees = cfg({ card_fee_bps: 300 });
   assert.strictEqual((await AI.confirmAssessmentPayment(deps(sb, st), { ...base, paymentMethodId: 'pm_credit_visa', quoteToken: q.quote_token })).error, 'quote_changed');
   // Expired quote.
   const old = FQ.signQuote({ p: P1, pm: 'pm_credit_visa' }, { now: Date.now() - 3600 * 1000 });
@@ -367,7 +362,7 @@ t('payment_fees: tile edits cannot wipe or forge it; never presented to the brow
   const prev = { balance: { status: 'live' }, payment_fees: FEES, homeowner_financials: { verified_at: 'x', verified_by: 'y' } };
   const replaced = FA.carryFinancialStamp(prev, { balance: { status: 'live' }, calendar: { status: 'live' } });
   assert.deepStrictEqual(replaced.payment_fees, FEES, 'full replace keeps it');
-  const forged = FA.carryFinancialStamp(prev, { ...prev, payment_fees: { credit_surcharge_bps: 300, debit_fee_cents: 999, ach_fee_cents: 999 } });
+  const forged = FA.carryFinancialStamp(prev, { ...prev, payment_fees: { card_fee_bps: 300, debit_card_fee_bps: null, ach_fee_cents: 999 } });
   assert.deepStrictEqual(forged.payment_fees, FEES, 'input cannot change it');
   assert.ok(!('payment_fees' in FA.carryFinancialStamp({}, { payment_fees: FEES })), 'input cannot create it');
   const shown = FA.presentedModuleConfig(prev, { balance: true });

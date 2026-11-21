@@ -496,11 +496,11 @@ router.post('/community/:communityId/homeowner-balances', async (req, res) => {
 
 // ============================================================================
 // POST /api/portal-admin/community/:communityId/payment-fees   (OWNER ONLY)
-//   { credit_surcharge_bps, debit_fee_cents, ach_fee_cents }  -> set the rules
+//   { card_fee_bps, debit_card_fee_bps|null, ach_fee_cents }  -> set the rules
 //   { clear: true }                                           -> remove them (online payment refused)
 // The ONLY writer of portal_module_config.payment_fees (lib/payments/fee_quote.js).
 // Validated by the same function the payment flow uses, so a value that would be
-// refused at payment time is refused here. Credit surcharge is capped at 300 bps.
+// refused at payment time is refused here.
 // ============================================================================
 router.post('/community/:communityId/payment-fees', async (req, res) => {
   try {
@@ -519,8 +519,8 @@ router.post('/community/:communityId/payment-fees', async (req, res) => {
       delete cfg.payment_fees;
     } else {
       const { validateFeeConfig } = require('../lib/payments/fee_quote');
-      const v = validateFeeConfig({ credit_surcharge_bps: b.credit_surcharge_bps, debit_fee_cents: b.debit_fee_cents,
-        ach_fee_cents: b.ach_fee_cents, prepaid_as: 'debit' });
+      const v = validateFeeConfig({ card_fee_bps: b.card_fee_bps, debit_card_fee_bps: b.debit_card_fee_bps == null ? null : b.debit_card_fee_bps,
+        ach_fee_cents: b.ach_fee_cents });
       if (!v.ok) return res.status(400).json({ error: v.error, detail: v.detail });
       fees = { ...v.config, set_by: owner.email || owner.id, set_at: new Date().toISOString() };
       cfg.payment_fees = fees;
@@ -529,7 +529,7 @@ router.post('/community/:communityId/payment-fees', async (req, res) => {
     if (upErr) throw upErr;
     await logAudit(fees ? 'payment_fees_set' : 'payment_fees_cleared', {
       resource_type: 'community', resource_id: communityId, performed_by: owner.email || owner.id,
-      notes: fees ? `credit ${fees.credit_surcharge_bps}bps, debit ${fees.debit_fee_cents}c, ach ${fees.ach_fee_cents}c` : 'cleared',
+      notes: fees ? `card ${fees.card_fee_bps}bps, debit ${fees.debit_card_fee_bps == null ? 'same' : fees.debit_card_fee_bps + 'bps'}, ach ${fees.ach_fee_cents}c` : 'cleared',
     });
     res.json({ ok: true, community_id: communityId, payment_fees: fees });
   } catch (err) {
