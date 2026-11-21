@@ -210,10 +210,10 @@ t('test-only routes refuse unless Stripe is in test mode', () => {
 
 // ---------------------------------------------------------------- fake store mirroring migration 469
 function fakeStore({ tenureId = SELLER } = {}) {
-  const events = new Map(); const credits = []; const reversals = []; let failNextPost = 0;
+  const events = new Map(); const credits = []; const reversals = []; const recoveries = []; let failNextPost = 0;
   const pay = { id: 'pay-1', group: 'grp-1', state: 'awaiting_payment', posting: 'not_posted', tenure: tenureId, amount: 20000, needs_review: false };
   const s = {
-    pay, credits, reversals, events,
+    pay, credits, reversals, recoveries, events,
     failPostOnce() { failNextPost = 1; },
     async claimEvent(e) {
       const cur = events.get(e.id);
@@ -251,6 +251,7 @@ function fakeStore({ tenureId = SELLER } = {}) {
       pay.posting = 'reversed'; reversals.push({ id, kind, reason }); return { action: 'reversed' };
     },
     async flagReview() { pay.needs_review = true; },
+    async recoverDisputedFunds(id, { chargeId, disputeId }) { recoveries.push({ id, chargeId, disputeId }); return { action: 'recovered' }; },
     async legacyCheckoutCompleted() {}, async legacyPaymentFailed() {}, async legacyChargeRefunded() {}, async accountUpdated() {},
   };
   return s;
@@ -378,17 +379,19 @@ t('a full-amount dispute reverses as a chargeback; a partial dispute is flagged'
   await run(st, ev('evt_20', 'checkout.session.completed', sess('paid')));
   await run(st, ev('evt_21', 'charge.dispute.created', { id: 'dp_1', payment_intent: 'pi_1', amount: 5000 }));
   assert.strictEqual(st.reversals.length, 0); assert.strictEqual(st.pay.needs_review, true);
-  await run(st, ev('evt_22', 'charge.dispute.created', { id: 'dp_2', payment_intent: 'pi_1', amount: st.pay.amount }));
+  assert.strictEqual(st.recoveries.length, 0, 'a partial dispute recovers nothing automatically');
+  await run(st, ev('evt_22', 'charge.dispute.created', { id: 'dp_2', charge: 'ch_9', payment_intent: 'pi_1', amount: st.pay.amount }));
   assert.deepStrictEqual(st.reversals.map((r) => r.kind), ['chargeback']);
+  assert.deepStrictEqual(st.recoveries, [{ id: st.pay.id, chargeId: 'ch_9', disputeId: 'dp_2' }], 'the association share is pulled back from its Stripe account');
 });
 
 // ---------------------------------------------------------------- GL accounts come from account roles
 let worldSeq = 0;
-function storeWorld({ roles = true } = {}) {
+function storeWorld({ roles = true, stripeLib = null } = {}) {
   // Own community per test: the tests run concurrently and share the journal stub.
   const C = `comm-store-${++worldSeq}`;
   const sb = fakeSupabase({
-    payments: [{ id: 'pay-1', community_id: C, property_id: P1, amount_cents: 20000, settlement_state: 'settled', posting_state: 'not_posted' }],
+    payments: [{ id: 'pay-1', community_id: C, property_id: P1, amount_cents: 20000, connected_account_id: 'acct_hoa', settlement_state: 'settled', posting_state: 'not_posted' }],
     communities: [{ id: C, gl_cutover_date: '2026-08-01' }],
     // Deliberately NOT 1090/1300: code must follow the role, not a number.
     chart_of_accounts: [
@@ -413,7 +416,7 @@ function storeWorld({ roles = true } = {}) {
     return { data: null, error: null };
   };
   const mine = () => journal.filter((e) => e.community_id === C);
-  return { sb, calls, mine, store: createPaymentStore({ supabase: sb, log: quiet }) };
+  return { sb, calls, mine, store: createPaymentStore({ supabase: sb, stripeLib, log: quiet }) };
 }
 t('posting uses the community\'s stripe_clearing / homeowner_ar ROLE accounts, never 1090/1300 by number', async () => {
   const { store, calls, mine } = storeWorld();
@@ -449,6 +452,17 @@ t('reversal with no account roles stays a draft and is flagged; the ledger still
   assert.strictEqual(mine().length, 0);
   assert.ok(!calls.some((c) => c.fn === 'payment_commit_reversal'));
   assert.ok(calls.some((c) => c.fn === 'payment_flag_review'));
+});
+t('chargeback recovery pulls exactly the assessment back from the association; a Stripe failure is flagged, never thrown', async () => {
+  const asked = [];
+  let w = storeWorld({ stripeLib: { recoverDisputedTransfer: async (a) => { asked.push(a); return { ok: true, reversal_id: 'trr_1', amount_cents: a.amountCents }; } } });
+  let r = await w.store.recoverDisputedFunds('pay-1', { chargeId: 'ch_1', disputeId: 'dp_1' });
+  assert.strictEqual(r.action, 'recovered');
+  assert.deepStrictEqual(asked, [{ chargeId: 'ch_1', amountCents: 20000, disputeId: 'dp_1' }]);
+  w = storeWorld({ stripeLib: { recoverDisputedTransfer: async () => ({ ok: false, error: 'insufficient funds' }) } });
+  r = await w.store.recoverDisputedFunds('pay-1', { chargeId: 'ch_1', disputeId: 'dp_1' });
+  assert.strictEqual(r.action, 'recovery_failed');
+  assert.ok(w.calls.some((c) => c.fn === 'payment_flag_review' && /not recovered/.test(c.args.p_reason)));
 });
 
 // ---------------------------------------------------------------- payment sandbox: the one demo exception
