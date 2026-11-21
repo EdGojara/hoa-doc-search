@@ -2107,7 +2107,7 @@ router.get('/compliance', async (req, res) => {
     const [obsResp, lettersResp, photosResp] = await Promise.all([
       observationIds.length
         ? supabase.from('property_observations')
-            .select('id, ai_description, reviewer_description, category_id, ai_confidence, reviewer_status, created_at')
+            .select('id, ai_description, category_id, ai_confidence, reviewer_status, created_at, inspection_photo_id')
             .in('id', observationIds)
         : Promise.resolve({ data: [] }),
       violationIds.length
@@ -2118,12 +2118,21 @@ router.get('/compliance', async (req, res) => {
             .eq('direction', 'outbound')
             .order('sent_at', { ascending: false })
         : Promise.resolve({ data: [] }),
-      observationIds.length
-        ? supabase.from('inspection_photos')
-            .select('id, observation_id, storage_path, captured_at')
-            .in('observation_id', observationIds)
-        : Promise.resolve({ data: [] }),
+      Promise.resolve({ data: [] }),   // photos load below, from each observation's photo
     ]);
+    if (obsResp.error) console.warn('[portal/compliance] observations lookup failed:', obsResp.error.message);
+    if (lettersResp.error) console.warn('[portal/compliance] letters lookup failed:', lettersResp.error.message);
+    // An observation points at its photo (property_observations.inspection_photo_id);
+    // inspection_photos has no observation_id, so the old query returned nothing
+    // and homeowners never saw the photo behind a notice (Ed 2026-11-21).
+    const photoIds = (obsResp.data || []).map((o) => o.inspection_photo_id).filter(Boolean);
+    if (photoIds.length) {
+      const { data: ph, error: phErr } = await supabase.from('inspection_photos')
+        .select('id, storage_path, captured_at').in('id', photoIds);
+      if (phErr) console.warn('[portal/compliance] photos lookup failed:', phErr.message);
+      const obsByPhoto = Object.fromEntries((obsResp.data || []).map((o) => [o.inspection_photo_id, o.id]));
+      photosResp.data = (ph || []).map((p) => ({ ...p, observation_id: obsByPhoto[p.id] }));
+    }
 
     const obsById = Object.fromEntries((obsResp.data || []).map((o) => [o.id, o]));
     const lettersByViolation = (lettersResp.data || []).reduce((m, l) => {
@@ -2196,7 +2205,7 @@ router.get('/compliance', async (req, res) => {
         resolved_at: v.resolved_at,
         cure_period_ends_at: v.cure_period_ends_at,
         days_until_cure: daysUntilCure,
-        observation_summary: (obs?.reviewer_description || obs?.ai_description || '').trim() || null,
+        observation_summary: (obs?.ai_description || '').trim() || null,
         letters: letterLinks,
         photos: photoLinks,
       };
@@ -2370,7 +2379,7 @@ router.get('/documents', async (req, res) => {
     // Pull homeowner-appropriate library_documents for this community
     const { data: docs, error } = await supabase
       .from('library_documents')
-      .select('id, category, title, period_label, effective_date, file_path, file_name_normalized, status, approval_status, created_at')
+      .select('id, category, title, period_label, effective_date, file_path, file_name_normalized, status, approval_status, uploaded_at')
       .eq('management_company_id', BEDROCK_MGMT_CO_ID)
       .eq('community_id', community.id)
       .eq('status', 'current')
@@ -2994,7 +3003,7 @@ router.get('/meetings', async (req, res) => {
     try {
       const { data: docs } = await supabase
         .from('library_documents')
-        .select('id, category, title, period_label, effective_date, file_path, file_name_normalized, created_at')
+        .select('id, category, title, period_label, effective_date, file_path, file_name_normalized, uploaded_at')
         .eq('management_company_id', BEDROCK_MGMT_CO_ID)
         .eq('community_id', community.id)
         .eq('status', 'current')
@@ -3465,13 +3474,20 @@ router.post('/arc/submit', portalArcUpload.any(), async (req, res) => {
     // Schema uses community_services to scope ARC vs fob vs clubhouse per
     // community; for ARC we expect type='arc' (or arc_application — depends
     // on community).
-    const { data: service } = await supabase
+    // `name` is not a column on community_services: selecting it failed the
+    // whole query, so EVERY portal ARC submission returned
+    // arc_not_configured_for_community (Ed 2026-11-21 portal testing).
+    const { data: service, error: svcErr } = await supabase
       .from('community_services')
-      .select('id, service_type, name')
+      .select('id, service_type, display_name_override')
       .eq('community_id', community.id)
       .in('service_type', ['arc', 'arc_application'])
       .limit(1)
       .maybeSingle();
+    if (svcErr) {
+      console.error('[portal/arc/submit] service lookup failed:', svcErr.message);
+      return res.status(500).json({ error: 'arc_lookup_failed' });
+    }
     if (!service) {
       return res.status(400).json({ error: 'arc_not_configured_for_community' });
     }

@@ -41,6 +41,17 @@ const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY
 const json64 = express.json({ limit: '64kb' });
 const json256 = express.json({ limit: '256kb' });  // larger for message bodies with attachments metadata
 
+// contacts has full_name / primary_email / primary_phone. The staff inbox
+// renders first_name, last_name, email_primary, phone_primary. Selecting those
+// names failed the whole query, so the staff inbox listed NO threads and staff
+// never saw a homeowner's portal message (Ed 2026-11-21 portal testing). Read
+// the real columns and present them under the names the inbox expects.
+function presentContact(c) {
+  if (!c) return c;
+  const name = String(c.preferred_name || c.full_name || '').trim();
+  return { ...c, first_name: name, last_name: '', email_primary: c.primary_email || null, phone_primary: c.primary_phone || null };
+}
+
 // =============================================================================
 // GET /threads  — staff master inbox
 //
@@ -77,7 +88,7 @@ router.get('/threads', async (req, res) => {
         created_at, updated_at,
         communities:community_id(name),
         properties:property_id(street_address, lot_number),
-        contacts:primary_contact_id(first_name, last_name, email_primary)
+        contacts:primary_contact_id(full_name, preferred_name, primary_email)
       `, { count: 'exact' })
       .order('last_message_at', { ascending: false, nullsFirst: false });
 
@@ -103,7 +114,7 @@ router.get('/threads', async (req, res) => {
       const daysOpen = row.created_at
         ? Math.floor((Date.now() - new Date(row.created_at).getTime()) / (1000 * 60 * 60 * 24))
         : 0;
-      return { ...row, sla_color: slaColor, days_open: daysOpen };
+      return { ...row, contacts: presentContact(row.contacts), sla_color: slaColor, days_open: daysOpen };
     });
 
     res.json({ threads: decorated, total: count || 0, limit, offset });
@@ -190,12 +201,13 @@ router.get('/threads/:id', async (req, res) => {
         *,
         communities:community_id(name),
         properties:property_id(id, street_address, lot_number, community_id),
-        contacts:primary_contact_id(id, first_name, last_name, email_primary, phone_primary, mailing_address)
+        contacts:primary_contact_id(id, full_name, preferred_name, primary_email, primary_phone, mailing_address)
       `)
       .eq('id', req.params.id)
       .maybeSingle();
     if (thErr) return res.status(500).json({ error: safeErrorMessage(thErr) });
     if (!thread) return res.status(404).json({ error: 'not_found' });
+    thread.contacts = presentContact(thread.contacts);
 
     const { data: messages } = await supabase
       .from('messages')
@@ -213,13 +225,15 @@ router.get('/threads/:id', async (req, res) => {
       .limit(10);
 
     // Other properties owned by this contact
-    const { data: otherProperties } = await supabase
-      .from('property_owners')
+    const { data: otherProperties, error: opErr } = await supabase
+      .from('property_ownerships')   // property_owners does not exist
       .select(`
         property_id,
         properties:property_id(id, street_address, lot_number, community_id, communities:community_id(name))
       `)
-      .eq('contact_id', thread.primary_contact_id);
+      .eq('contact_id', thread.primary_contact_id)
+      .is('end_date', null);
+    if (opErr) console.warn('[messaging] other properties lookup failed:', opErr.message);
 
     res.json({
       thread,
