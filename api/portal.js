@@ -341,7 +341,7 @@ async function resolveScopedProperty(req, supabase, user) {
       property_id,
       properties:property_id (
         id, street_address, lot_number, vantaca_account_id, community_id,
-        communities:community_id (id, name, slug, hoa_legal_name, portal_active, is_demo)
+        communities:community_id (id, name, slug, hoa_legal_name, portal_active, is_demo, portal_module_config)
       )
     `)
     .eq('portal_user_id', user.id)
@@ -349,7 +349,7 @@ async function resolveScopedProperty(req, supabase, user) {
   // Server-side portal gate: only lots whose association's portal is open.
   const { isOpenCommunity } = require('../lib/portal/portal_open');
   const linked = (scopes || []).map(s => s.properties).filter(Boolean);
-  const props = linked.filter((p) => isOpenCommunity(p.communities));
+  const props = linked.filter((p) => isOpenCommunity(p.communities, user.id));
   if (!props.length) return { property: null, allProperties: [], isManager: false, portalClosed: linked.length > 0 };
 
   const focus = (requestedPropertyId && props.find(p => String(p.id) === requestedPropertyId)) || props[0];
@@ -1468,7 +1468,7 @@ router.get('/me', async (req, res) => {
     // association's portal is switched on. Manager view below is not gated.
     let closedCommunityId = null;
     if (props.length && !req._managerView?.synthetic_property) {
-      const open = await require('../lib/portal/portal_open').openPropertyIds(supabase, props.map((p) => p.id));
+      const open = await require('../lib/portal/portal_open').openPropertyIds(supabase, props.map((p) => p.id), user.id);
       const closed = props.filter((p) => !open.has(p.id));
       if (closed.length) closedCommunityId = closed[0].community_id;
       props = props.filter((p) => open.has(p.id));
@@ -1574,6 +1574,12 @@ router.get('/me', async (req, res) => {
     // Demo communities bypass the portal_active gate by design.
     if (isDemoCommunity) {
       community.portal_active = true;
+    } else if (community.portal_active !== true && !req._managerView?.synthetic_property
+      && require('../lib/portal/portal_open').isPilotUser(community, user.id)) {
+      // Pilot: this association is not launched, but the owner put this
+      // homeowner on its pilot list, so the portal opens for them only.
+      community.portal_active = true;
+      community.pilot = true;
     }
 
     // Balance — single resolver. Tries v_homeowner_current_balance
@@ -3169,7 +3175,7 @@ async function resolveHomeownerScope(req) {
       .eq('portal_user_id', portalUserId)
       .is('revoked_at', null);   // revoked access is no access (was missing)
     const linked = (scopes || []).map((s) => s.property_id).filter(Boolean);
-    const open = await require('../lib/portal/portal_open').openPropertyIds(supabase, linked);
+    const open = await require('../lib/portal/portal_open').openPropertyIds(supabase, linked, portalUserId);
     propertyIds = linked.filter((id) => open.has(id));
   }
 

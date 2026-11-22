@@ -522,7 +522,7 @@ router.get('/portal/properties/:propertyId/threads', async (req, res) => {
       .is('revoked_at', null)
       .maybeSingle();
     if (!scope) return res.status(403).json({ error: 'property_not_in_scope' });
-    const open = await require('../lib/portal/portal_open').openPropertyIds(supabase, [propertyId]);
+    const open = await require('../lib/portal/portal_open').openPropertyIds(supabase, [propertyId], portalUserId);
     if (!open.has(propertyId)) return res.status(403).json({ error: 'portal_not_open' });
 
     const { data, error } = await supabase

@@ -303,6 +303,7 @@ const CHECKS = [
   'tests/test_payment_quote.js',          // funding-aware fees: credit-only surcharge cap, server-side confirm, PI webhook settlement
   'tests/test_portal_financials_fail_closed.js',
   'tests/test_portal_launch.js',
+  'tests/test_portal_invite_roster.js',
   'tests/sql/469_payment_rehearsal.mjs',
   'tests/sql/469_apply_one_e2e.mjs',
   'tests/sql/473_apply_one_e2e.mjs',

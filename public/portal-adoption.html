@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Portal Adoption · Bedrock Intelligence</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;0,700;1,400&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
   /* =============================================================================
      Portal Adoption Admin — Bedrock staff page
@@ -320,6 +321,10 @@
   .section-card .section-sub {
     color: var(--ink-soft); font-size: 13px; margin-bottom: 18px;
   }
+  .ip-banner { border-radius: 8px; padding: 10px 14px; margin-bottom: 14px; font-size: 13px; }
+  .ip-banner.bad { background: rgba(192, 57, 43, 0.10); color: var(--bad); border: 1px solid rgba(192, 57, 43, 0.3); font-weight: 600; }
+  .ip-banner.note { background: var(--cream-soft); color: var(--ink-soft); border: 1px solid var(--rule); }
+  .section-card h3 { font-size: 14px; color: var(--navy); margin: 20px 0 8px; }
   .kill-switch {
     display: flex; align-items: center; justify-content: space-between;
     background: var(--cream-soft);
@@ -463,8 +468,8 @@
       </select>
     </div>
     <div style="font-size: 12px; color: var(--ink-faint);">
-      Eligible = current resident with a primary email on file. Already-invited
-      contacts are skipped automatically on bulk invite.
+      Invitations go to owners of record only. Preview shows exactly who would be
+      invited and why anyone is skipped; nothing is written or sent until the owner approves it.
     </div>
   </div>
 
@@ -502,13 +507,53 @@
     <div class="actions-bar">
       <div class="left">
         <span class="selected-count" id="selectedCount">0 selected</span>
-        <button type="button" class="primary" id="btnBulkInvite" disabled>Invite selected</button>
+        <button type="button" class="primary" id="btnPreviewAll">Preview invitations (all owners)</button>
+        <button type="button" id="btnBulkInvite" disabled>Preview selected</button>
       </div>
       <div class="left">
         <a class="quick" id="quickSelectUninvited">Select eligible-not-yet-invited</a>
         <a class="quick" id="quickSelectStale">Select invited-no-login (7+ days)</a>
         <a class="quick" id="quickDeselect">Clear selection</a>
       </div>
+    </div>
+
+    <!-- Pilot (owner only). While the portal is off, only the homeowners on this
+         list can sign in. Adding one creates or links the account silently and
+         returns a sign-in link for the owner to hand over; nothing is emailed. -->
+    <div class="section-card" id="pilotCard" style="margin-top:0; margin-bottom:22px;">
+      <h2>Pilot <em>homeowners</em></h2>
+      <p class="section-sub" id="pilotSub">Owner only. While the portal is off, only the homeowners listed here can sign in. Use "Add to pilot" on a row below. Nothing is emailed: you get a sign-in link to hand over yourself.</p>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Homeowner</th><th>Email</th><th>Lot(s)</th><th>Signed in</th><th>Action</th></tr></thead>
+        <tbody id="pilotBody"><tr><td colspan="5" style="padding:18px;color:var(--ink-faint);text-align:center;">No pilot homeowners.</td></tr></tbody>
+      </table></div>
+    </div>
+
+    <!-- Invitation preview (dry run). Nothing is written or sent until the owner
+         clicks Create or Send, and both refuse if the list changed since this
+         preview (preview_hash). -->
+    <div class="section-card" id="invitePreviewCard" style="display:none; margin-top:0; margin-bottom:22px;">
+      <h2>Invitation <em>preview</em></h2>
+      <p class="section-sub" id="ipSub">Nothing has been written or sent.</p>
+      <div id="ipBanner"></div>
+      <div class="funnel" id="ipCounts"></div>
+      <div class="actions-bar">
+        <div class="left">
+          <button type="button" id="ipCreate">Create accounts without emailing</button>
+          <button type="button" class="primary" id="ipSend">Send invitations</button>
+          <button type="button" id="ipClose">Close preview</button>
+        </div>
+      </div>
+      <h3 id="ipInviteTitle">Would be invited</h3>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Owner</th><th>Email</th><th>Lot(s)</th><th>Action</th></tr></thead>
+        <tbody id="ipInviteBody"></tbody>
+      </table></div>
+      <h3 id="ipSkipTitle">Skipped</h3>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Owner</th><th>Email on file</th><th>Lot(s)</th><th>Reason</th><th>Include</th></tr></thead>
+        <tbody id="ipSkipBody"></tbody>
+      </table></div>
     </div>
 
     <div class="table-wrap">
@@ -592,6 +637,20 @@
         <button type="button" id="payFeesSave" class="primary">Save fees</button>
       </div>
 
+      <div class="kill-switch">
+        <div class="label-block">
+          <strong>Online payments</strong>
+          <div class="help" id="paymentsHelp">Owner only. Needs balances on and fees saved. Stripe must also be fully set up for this association.</div>
+        </div>
+        <label class="toggle">
+          <span id="paymentsLabel">—</span>
+          <span class="switch">
+            <input type="checkbox" id="paymentsToggle">
+            <span class="slider"></span>
+          </span>
+        </label>
+      </div>
+
       <div class="tile-grid-admin" id="moduleConfigGrid">
         <!-- Tile rows rendered by JS -->
       </div>
@@ -648,6 +707,23 @@ let _portalActive = false;   // current portal_active for selected community
 // Helpers
 // =============================================================================
 function $(id) { return document.getElementById(id); }
+// Owner-only endpoints check the signed-in user's token (requireOwner), so every
+// API call carries it. Falls back to a plain fetch when sign-in is not configured.
+let af = (u, o) => fetch(u, o);
+const _authReady = (async () => {
+  try {
+    const cfg = await (await fetch('/api/auth/config')).json();
+    if (cfg && cfg.enabled && window.supabase && cfg.supabase_url && cfg.supabase_anon_key) {
+      const supa = window.supabase.createClient(cfg.supabase_url, cfg.supabase_anon_key);
+      af = async (u, o) => {
+        o = o || {};
+        const h = Object.assign({}, o.headers || {});
+        try { const ss = (await supa.auth.getSession()).data.session; if (ss && ss.access_token) h.Authorization = 'Bearer ' + ss.access_token; } catch (_) {}
+        return fetch(u, Object.assign({}, o, { headers: h }));
+      };
+    }
+  } catch (_) {}
+})();
 function escapeHtml(s) {
   return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
@@ -684,8 +760,9 @@ function toast(message, type = '') {
 // Data loaders
 // =============================================================================
 async function loadCommunities() {
+  await _authReady;
   try {
-    const r = await fetch('/api/portal-admin/communities', { credentials: 'same-origin' });
+    const r = await af('/api/portal-admin/communities', { credentials: 'same-origin' });
     if (!r.ok) throw new Error('Could not load communities');
     const data = await r.json();
     _communities = data.communities || [];
@@ -703,14 +780,15 @@ async function loadAdoption(communityId) {
   $('resultsWrap').style.display = 'none';
   $('moduleConfigCard').style.display = 'none';
   _selectedContactIds = new Set();
+  if (_preview && _preview.data && _preview.data.community.id !== communityId) { _preview = null; $('invitePreviewCard').style.display = 'none'; }
   try {
     // Fetch adoption + module config in parallel — both are scoped to the
     // same community and the operator usually wants to see both at once.
     const [adoptionRes, moduleRes] = await Promise.all([
-      fetch(`/api/portal-admin/community/${encodeURIComponent(communityId)}/adoption`, {
+      af(`/api/portal-admin/community/${encodeURIComponent(communityId)}/adoption`, {
         credentials: 'same-origin',
       }),
-      fetch(`/api/portal-admin/community/${encodeURIComponent(communityId)}/module-config`, {
+      af(`/api/portal-admin/community/${encodeURIComponent(communityId)}/module-config`, {
         credentials: 'same-origin',
       }),
     ]);
@@ -726,6 +804,7 @@ async function loadAdoption(communityId) {
     renderFunnel(adoptionData.summary || {});
     renderTable();
     renderModuleConfig();
+    loadPilot();
     $('loadingState').style.display = 'none';
     $('resultsWrap').style.display = '';
     $('moduleConfigCard').style.display = '';
@@ -782,6 +861,10 @@ function renderTable() {
       actionHtml = '<span style="color:var(--ink-faint); font-size:11.5px;">—</span>';
     }
 
+    if (hasEmail && c.residency_type !== 'renter') {
+      actionHtml += ` <button class="row-action" data-action="pilot" data-contact-id="${escapeHtml(c.contact_id)}">Add to pilot</button>`;
+    }
+
     const lastLoginCell = hasLoggedIn
       ? `${escapeHtml(fmtDate(c.last_login_at))}<div style="font-size:11px;color:var(--ink-faint);">${c.login_count || 1} login${c.login_count === 1 ? '' : 's'}</div>`
       : (isInvited
@@ -815,6 +898,9 @@ function renderTable() {
   tbody.querySelectorAll('button[data-action="invite"]').forEach((btn) => {
     btn.addEventListener('click', () => inviteSingle(btn.dataset.contactId));
   });
+  tbody.querySelectorAll('button[data-action="pilot"]').forEach((btn) => {
+    btn.addEventListener('click', () => pilotAdd(btn.dataset.contactId));
+  });
   tbody.querySelectorAll('button[data-action="resend"]').forEach((btn) => {
     btn.addEventListener('click', () => resendInvite(btn.dataset.userId, btn));
   });
@@ -836,31 +922,211 @@ function updateSelectionUI() {
 // =============================================================================
 async function inviteSingle(contactId) {
   if (!contactId) return;
-  await bulkInvite([contactId]);
+  await previewInvites([contactId]);
 }
 
-async function bulkInvite(contactIds) {
-  if (!contactIds || !contactIds.length) return;
-  const community = _communities.find((c) => c.id === _currentCommunityId);
-  if (!confirm(`Send portal invitation email to ${contactIds.length} homeowner${contactIds.length === 1 ? '' : 's'} at ${community?.name || 'this community'}?`)) {
-    return;
-  }
-  toast(`Inviting ${contactIds.length} homeowner${contactIds.length === 1 ? '' : 's'}…`);
+// ---- Invitation preview (dry run) -> the owner approves exactly what was shown ----
+let _preview = null; // { contactIds: [..]|null, include: Set, data }
+const SKIP_REASON_LABEL = {
+  no_email: 'No email on file',
+  multiple_emails: 'Several emails in one field',
+  invalid_email: 'Not a valid email',
+  shared_email: 'Same email on different owners',
+  management_inbox: 'Management-company or role inbox',
+  already_has_account: 'Already has an account',
+  portal_access_revoked: 'Access revoked',
+  email_has_other_portal_account: 'Email signs in to another account',
+  portal_account_other_email: 'Has an account under another email',
+  not_a_current_owner: 'Not a current owner',
+};
+function lotsText(r) { return (r.properties || []).map((p) => p.street_address).join('; ') || '—'; }
+
+async function previewInvites(contactIds) {
+  const keep = _preview && _preview.include ? _preview.include : new Set();
+  _preview = { contactIds: contactIds && contactIds.length ? contactIds : null, include: keep, data: null };
+  await refreshPreview();
+}
+
+async function refreshPreview() {
+  if (!_currentCommunityId || !_preview) return;
+  $('invitePreviewCard').style.display = '';
+  $('ipSub').textContent = 'Loading preview…';
+  $('ipCreate').disabled = true;
+  $('ipSend').disabled = true;
   try {
-    const r = await fetch(`/api/portal-admin/community/${encodeURIComponent(_currentCommunityId)}/bulk-invite`, {
-      method: 'POST',
-      credentials: 'same-origin',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ contact_ids: contactIds, invited_by: 'portal-adoption-ui' }),
+    const r = await af(`/api/portal-admin/community/${encodeURIComponent(_currentCommunityId)}/bulk-invite`, {
+      method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ dry_run: true, contact_ids: _preview.contactIds, include_flagged: [..._preview.include] }),
     });
-    if (!r.ok) throw new Error(`API ${r.status}`);
-    const data = await r.json();
-    const msg = `Invited ${data.invited}, skipped ${data.skipped}. Email sent on the invited rows.`;
-    toast(msg, data.invited > 0 ? 'success' : 'warn');
-    // Refresh adoption to show updated statuses
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error || `API ${r.status}`);
+    _preview.data = j;
+    renderPreview();
+  } catch (err) {
+    $('ipSub').textContent = 'Could not load the preview: ' + err.message;
+  }
+}
+
+function renderPreview() {
+  const d = _preview && _preview.data;
+  if (!d) return;
+  const c = d.counts || {};
+  const scope = _preview.contactIds ? `${_preview.contactIds.length} selected contact${_preview.contactIds.length === 1 ? '' : 's'}` : 'every owner of record';
+  const mentions = d.invitation_mentions || {};
+  $('ipSub').textContent = `${d.community.name}: ${scope}. Nothing has been written or sent. Portal is ${d.community.portal_active ? 'ON' : 'OFF'}. `
+    + `The invitation will mention ${mentions.balance ? 'the account balance' : 'no balance'}${mentions.payments ? ' and online payments' : ''}. Preview ${d.preview_hash}.`;
+  const banners = [];
+  if (!d.cross_check.ok) banners.push(`<div class="ip-banner bad">Lot count mismatch: ${d.cross_check.owner_lots} lots on the owner list vs ${d.cross_check.live_lots} live lots. Create and Send are refused until this is fixed.</div>`);
+  if (d.send_in_progress) banners.push('<div class="ip-banner bad">Invitations for this community are sending right now. Preview again when it finishes.</div>');
+  if (c.invite_existing_silent) banners.push(`<div class="ip-banner note">${c.invite_existing_silent} account(s) were created without an email and have not been emailed yet. Send emails them; Create skips them.</div>`);
+  $('ipBanner').innerHTML = banners.join('');
+  const by = c.by_reason || {};
+  const card = (label, num, sub, cls) => `<div class="funnel-card ${cls || ''}"><div class="label">${escapeHtml(label)}</div><div class="num">${Number(num || 0).toLocaleString()}</div><div class="pct">${escapeHtml(sub || '')}</div></div>`;
+  $('ipCounts').innerHTML = card('Owners', c.owners, `${c.lots || 0} lots`)
+    + card('Would be invited', c.invite, `${c.invite_new || 0} new accounts`, 'good')
+    + card('Skipped', c.skipped, Object.entries(by).map(([k, v]) => `${v} ${SKIP_REASON_LABEL[k] || k}`).join(', '), c.skipped ? 'warn' : '');
+  const canWrite = d.cross_check.ok && !d.send_in_progress;
+  $('ipCreate').disabled = !canWrite || !c.invite_new;
+  $('ipCreate').textContent = `Create ${c.invite_new || 0} account${c.invite_new === 1 ? '' : 's'} without emailing${d.community.portal_active ? '' : ' (broader launch: owner approval)'}`;
+  $('ipSend').disabled = !canWrite || !c.invite || !d.community.portal_active;
+  $('ipSend').textContent = d.community.portal_active ? `Send ${c.invite || 0} invitation${c.invite === 1 ? '' : 's'}` : 'Send invitations (turn the portal on first)';
+  $('ipInviteTitle').textContent = `Would be invited (${c.invite || 0})`;
+  $('ipInviteBody').innerHTML = (d.invite || []).map((r) => `<tr>
+      <td class="row-name">${escapeHtml(r.name || '—')}</td>
+      <td><span class="row-email">${escapeHtml(r.email)}</span>${r.override ? ` <label style="font-size:11px;"><input type="checkbox" class="ip-include" data-contact-id="${escapeHtml(r.contact_id)}" checked> included by you</label>` : ''}</td>
+      <td class="row-address">${escapeHtml(lotsText(r))}</td>
+      <td>${r.action === 'email_existing' ? 'Email only (account exists)' : 'Create account'}</td></tr>`).join('')
+    || '<tr><td colspan="4" style="padding:18px;color:var(--ink-faint);text-align:center;">Nobody to invite.</td></tr>';
+  $('ipSkipTitle').textContent = `Skipped (${c.skipped || 0})`;
+  $('ipSkipBody').innerHTML = (d.skipped || []).map((r) => `<tr>
+      <td class="row-name">${escapeHtml(r.name || '—')}</td>
+      <td>${r.email ? `<span class="row-email">${escapeHtml(r.email)}</span>` : '<span class="row-empty-email">none</span>'}</td>
+      <td class="row-address">${escapeHtml(lotsText(r))}</td>
+      <td>${escapeHtml(SKIP_REASON_LABEL[r.reason] || r.reason)}${r.detail ? `<div style="font-size:11px;color:var(--ink-faint);">${escapeHtml(r.detail)}</div>` : ''}</td>
+      <td>${r.reason === 'management_inbox' ? `<input type="checkbox" class="ip-include" data-contact-id="${escapeHtml(r.contact_id)}" title="Include only after confirming this inbox belongs to the owner">` : ''}</td></tr>`).join('')
+    || '<tr><td colspan="5" style="padding:18px;color:var(--ink-faint);text-align:center;">Nobody skipped.</td></tr>';
+  $('invitePreviewCard').querySelectorAll('.ip-include').forEach((cb) => cb.addEventListener('change', () => {
+    if (cb.checked) _preview.include.add(cb.dataset.contactId); else _preview.include.delete(cb.dataset.contactId);
+    refreshPreview();
+  }));
+}
+
+// ---- Pilot (owner only) ----
+async function loadPilot() {
+  if (!_currentCommunityId) return;
+  try {
+    const r = await af(`/api/portal-admin/community/${encodeURIComponent(_currentCommunityId)}/pilot`, { credentials: 'same-origin' });
+    const j = await r.json().catch(() => ({}));
+    if (r.status === 403) { $('pilotBody').innerHTML = '<tr><td colspan="5" style="padding:18px;color:var(--ink-faint);text-align:center;">Only the owner can see and change the pilot list.</td></tr>'; return; }
+    if (!r.ok) throw new Error(j.error || `API ${r.status}`);
+    const m = j.members || [];
+    $('pilotSub').textContent = `Owner only. Portal is ${j.community.portal_active ? 'ON for everyone' : 'OFF: only these homeowners can sign in'}. ${m.length} on the list. Nothing is emailed: you hand over the sign-in link yourself.`;
+    $('pilotBody').innerHTML = m.map((u) => `<tr>
+        <td class="row-name">${escapeHtml(u.name || '—')}</td>
+        <td><span class="row-email">${escapeHtml(u.email)}</span></td>
+        <td class="row-address">${escapeHtml((u.lots || []).join('; ') || '—')}</td>
+        <td>${u.first_login_at ? escapeHtml(fmtDate(u.last_login_at || u.first_login_at)) : '<span style="color:var(--ink-faint);">not yet</span>'}</td>
+        <td><button class="row-action" data-pilot-link="${escapeHtml(u.portal_user_id)}">New sign-in link</button>
+            <button class="row-action" data-pilot-remove="${escapeHtml(u.portal_user_id)}">Remove</button></td></tr>`).join('')
+      || '<tr><td colspan="5" style="padding:18px;color:var(--ink-faint);text-align:center;">No pilot homeowners.</td></tr>';
+    $('pilotBody').querySelectorAll('[data-pilot-link]').forEach((b) => b.addEventListener('click', () => pilotAction('link', b.dataset.pilotLink)));
+    $('pilotBody').querySelectorAll('[data-pilot-remove]').forEach((b) => b.addEventListener('click', () => pilotAction('remove', b.dataset.pilotRemove)));
+  } catch (err) {
+    $('pilotBody').innerHTML = `<tr><td colspan="5" style="padding:18px;color:var(--bad);text-align:center;">Could not load the pilot list: ${escapeHtml(err.message)}</td></tr>`;
+  }
+}
+
+function showHandoverLink(who, link) {
+  // Shown once, for the owner to hand over personally. Never emailed.
+  prompt(`Sign-in link for ${who} (valid 7 days, works once). Copy it and hand it over yourself. Nothing was emailed.`, link);
+}
+
+async function pilotAdd(contactId) {
+  const c = _contacts.find((x) => x.contact_id === contactId);
+  if (!c) return;
+  if (!confirm(`Add ${c.name || c.email} to the pilot? This creates or links their portal account without emailing them, and the portal opens for them only. You will get a sign-in link to hand over yourself.`)) return;
+  try {
+    let r = await af(`/api/portal-admin/community/${encodeURIComponent(_currentCommunityId)}/pilot`, {
+      method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'add', contact_id: contactId }),
+    });
+    let j = await r.json().catch(() => ({}));
+    if (r.status === 409 && j.reason === 'management_inbox'
+      && confirm(`${c.email} looks like a management-company or role inbox (${j.detail || ''}). Add anyway, because you confirmed it belongs to the owner?`)) {
+      r = await af(`/api/portal-admin/community/${encodeURIComponent(_currentCommunityId)}/pilot`, {
+        method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'add', contact_id: contactId, include_flagged: true }),
+      });
+      j = await r.json().catch(() => ({}));
+    }
+    if (r.status === 403) throw new Error('only the owner can do this');
+    if (!r.ok) throw new Error(j.reason ? `${SKIP_REASON_LABEL[j.reason] || j.reason}${j.detail ? ' (' + j.detail + ')' : ''}` : (j.error || `API ${r.status}`));
+    toast(`${c.name || c.email} is on the pilot. No email was sent.`, 'success');
+    showHandoverLink(c.name || c.email, j.sign_in_link);
     await loadAdoption(_currentCommunityId);
   } catch (err) {
-    toast('Bulk invite failed: ' + err.message, 'error');
+    toast('Could not add to pilot: ' + err.message, 'error');
+  }
+}
+
+async function pilotAction(action, portalUserId) {
+  if (action === 'remove' && !confirm('Remove this homeowner from the pilot? While the portal is off they will see "not yet available" again. Their account is kept.')) return;
+  try {
+    const r = await af(`/api/portal-admin/community/${encodeURIComponent(_currentCommunityId)}/pilot`, {
+      method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action, portal_user_id: portalUserId }),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (r.status === 403) throw new Error('only the owner can do this');
+    if (!r.ok) throw new Error(j.error || `API ${r.status}`);
+    if (action === 'link') showHandoverLink('this homeowner', j.sign_in_link);
+    else toast('Removed from the pilot.', 'success');
+    await loadPilot();
+  } catch (err) {
+    toast('Could not change the pilot: ' + err.message, 'error');
+  }
+}
+
+async function previewWrite(mode) {
+  const d = _preview && _preview.data;
+  if (!d) return;
+  const c = d.counts || {};
+  const msg = mode === 'send'
+    ? `Send ${c.invite} portal invitation email${c.invite === 1 ? '' : 's'} to ${d.community.name} owners, exactly as previewed? This emails homeowners and cannot be recalled.`
+    : `Create ${c.invite_new} portal account${c.invite_new === 1 ? '' : 's'} for ${d.community.name} owners WITHOUT emailing anyone? Owners can then sign in by entering their email.`;
+  if (!confirm(msg)) return;
+  // While the portal is off the association is in pilot: creating accounts for
+  // every owner is a broader launch, approved explicitly by the owner.
+  let broader = false;
+  if (mode === 'create_only' && !d.community.portal_active) {
+    const typed = prompt(`${d.community.name} is in pilot. Creating accounts for all ${c.invite_new} owners is a broader launch. Type BROADER LAUNCH to approve it.`, '');
+    if (typed !== 'BROADER LAUNCH') { toast('Not approved. Nothing was created.', 'warn'); return; }
+    broader = true;
+  }
+  const btn = mode === 'send' ? $('ipSend') : $('ipCreate');
+  btn.disabled = true;
+  try {
+    const r = await af(`/api/portal-admin/community/${encodeURIComponent(_currentCommunityId)}/bulk-invite`, {
+      method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mode, preview_hash: d.preview_hash, contact_ids: _preview.contactIds, include_flagged: [..._preview.include],
+        portal_active_expected: d.community.portal_active, broader_launch_approved: broader }),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (r.status === 403) throw new Error('only the owner can do this');
+    if (r.status === 409) {
+      toast(`Refused: ${j.detail || j.error}. The preview was refreshed; review it again.`, 'error');
+      await refreshPreview();
+      return;
+    }
+    if (!r.ok) throw new Error(j.error || `API ${r.status}`);
+    const fails = (j.failures || []).length;
+    if (mode === 'send') toast(`${j.accounts_created} accounts created; ${j.emails_queued} invitations sending in the background${fails ? `; ${fails} failed` : ''}. Preview again in a few minutes to confirm.`, fails ? 'warn' : 'success');
+    else toast(`${j.accounts_created} accounts created, no email sent${fails ? `; ${fails} failed` : ''}.`, fails ? 'warn' : 'success');
+    await loadAdoption(_currentCommunityId);
+    await refreshPreview();
+  } catch (err) {
+    toast('Could not complete: ' + err.message, 'error');
+    btn.disabled = false;
   }
 }
 
@@ -868,7 +1134,7 @@ async function resendInvite(userId, btn) {
   if (!userId) return;
   if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
   try {
-    const r = await fetch(`/api/portal-admin/users/${encodeURIComponent(userId)}/resend-invite`, {
+    const r = await af(`/api/portal-admin/users/${encodeURIComponent(userId)}/resend-invite`, {
       method: 'POST',
       credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },
@@ -927,6 +1193,7 @@ function renderModuleConfig() {
   $('killSwitchLabel').textContent = _portalActive ? 'On' : 'Off';
   renderBalancesSwitch();
   renderPayFees();
+  renderPaymentsSwitch();
 
   // Per-tile grid
   const grid = $('moduleConfigGrid');
@@ -972,7 +1239,7 @@ async function saveTileStatus(moduleKey, newStatus) {
     tileEl.classList.add(newStatus);
   }
   try {
-    const r = await fetch(`/api/portal-admin/community/${encodeURIComponent(_currentCommunityId)}/module-config`, {
+    const r = await af(`/api/portal-admin/community/${encodeURIComponent(_currentCommunityId)}/module-config`, {
       method: 'PATCH',
       credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },
@@ -1026,7 +1293,7 @@ async function savePayFees() {
   const thr = thrRaw === '' ? null : parseFloat(thrRaw), above = aboveRaw === '' ? null : parseFloat(aboveRaw);
   if (thr !== null && (!isFinite(thr) || thr <= 0 || !isFinite(above) || above < 0)) { toast('Bank fee threshold must be above $0 and the fee above it $0 or more.', 'error'); return; }
   try {
-    const r = await fetch(`/api/portal-admin/community/${encodeURIComponent(_currentCommunityId)}/payment-fees`, {
+    const r = await af(`/api/portal-admin/community/${encodeURIComponent(_currentCommunityId)}/payment-fees`, {
       method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ card_fee_bps: Math.round(card * 100), debit_card_fee_bps: debit === null ? null : Math.round(debit * 100), ach_fee_cents: Math.round(ach * 100),
         ach_tier_threshold_cents: thr === null ? null : Math.round(thr * 100), ach_fee_above_cents: above === null ? null : Math.round(above * 100) }),
@@ -1051,6 +1318,40 @@ function renderBalancesSwitch() {
     : "Owner only. Turn on once this association's homeowner balances are verified. Records who verified and when. Online payments stay off.";
 }
 
+function renderPaymentsSwitch() {
+  const hf = (_moduleConfig && _moduleConfig.homeowner_financials) || {};
+  const on = hf.payments === true;
+  $('paymentsToggle').checked = on;
+  $('paymentsLabel').textContent = on ? 'On' : 'Off';
+  $('paymentsHelp').textContent = on
+    ? `On${hf.payments_set_by ? ` (set by ${hf.payments_set_by} on ${new Date(hf.payments_set_at).toLocaleString()})` : ''}. Homeowners can pay once Stripe is fully set up for this association.`
+    : 'Owner only. Needs balances on and fees saved. Stripe must also be fully set up for this association.';
+}
+
+async function savePayments(on) {
+  if (!_currentCommunityId) return;
+  const q = on ? 'Turn ON online payments? Homeowners will see Pay now and can be charged the processing fees you saved.'
+    : 'Turn OFF online payments? Homeowners stop being able to pay online immediately. Payments already in progress still settle.';
+  if (!confirm(q)) { renderPaymentsSwitch(); return; }
+  try {
+    const r = await af(`/api/portal-admin/community/${encodeURIComponent(_currentCommunityId)}/homeowner-payments`, {
+      method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ on }),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (r.status === 403) throw new Error('only the owner can change this');
+    if (j.error === 'balances_not_verified') throw new Error('turn on homeowner balances first');
+    if (j.error === 'payment_fees_not_set') throw new Error('save the payment fees first');
+    if (!r.ok) throw new Error(j.error || `API ${r.status}`);
+    const ready = j.access && j.access.payments;
+    toast(on ? (ready ? 'Online payments on.' : `Online payments on, but not live yet: ${j.access && j.access.reason}.`) : 'Online payments off.', on && !ready ? 'warn' : 'success');
+    await loadAdoption(_currentCommunityId);
+  } catch (err) {
+    renderPaymentsSwitch();
+    toast('Could not change payments: ' + err.message, 'error');
+  }
+}
+
 async function saveBalances(on) {
   if (!_currentCommunityId) return;
   let note = null;
@@ -1059,7 +1360,7 @@ async function saveBalances(on) {
     if (note === null) { renderBalancesSwitch(); return; }
   } else if (!confirm('Turn OFF homeowner balances? Homeowners stop seeing their balance immediately.')) { renderBalancesSwitch(); return; }
   try {
-    const r = await fetch(`/api/portal-admin/community/${encodeURIComponent(_currentCommunityId)}/homeowner-balances`, {
+    const r = await af(`/api/portal-admin/community/${encodeURIComponent(_currentCommunityId)}/homeowner-balances`, {
       method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ on, note }),
     });
@@ -1084,10 +1385,16 @@ async function savePortalActive(newActive) {
       return;
     }
   }
+  if (_portalActive !== true && newActive === true) {
+    if (!confirm('Turn the portal ON for EVERY homeowner with an account in this community? This ends the pilot and is a broader launch (owner only).')) {
+      $('portalActiveToggle').checked = false;
+      return;
+    }
+  }
   _portalActive = newActive;
   $('killSwitchLabel').textContent = newActive ? 'On' : 'Off';
   try {
-    const r = await fetch(`/api/portal-admin/community/${encodeURIComponent(_currentCommunityId)}/module-config`, {
+    const r = await af(`/api/portal-admin/community/${encodeURIComponent(_currentCommunityId)}/module-config`, {
       method: 'PATCH',
       credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },
@@ -1096,6 +1403,7 @@ async function savePortalActive(newActive) {
         updated_by: 'portal-adoption-ui',
       }),
     });
+    if (r.status === 403) throw new Error('only the owner can turn a portal on');
     if (!r.ok) throw new Error(`API ${r.status}`);
     toast(`Portal ${newActive ? 'enabled' : 'disabled'} for this community.`, 'success');
   } catch (err) {
@@ -1121,16 +1429,12 @@ async function savePortalActive(newActive) {
       $('loadingState').innerHTML = 'Pick a community to start.';
     }
   });
-  $('btnBulkInvite').addEventListener('click', () => {
-    // For bulk invite, send only contact_ids that are eligible — the server
-    // will silently skip the rest with reason: 'already_invited' or 'no_email',
-    // but pre-filtering here gives the operator a clearer confirmation count.
-    const eligible = Array.from(_selectedContactIds).filter((cid) => {
-      const c = _contacts.find((x) => x.contact_id === cid);
-      return c && c.email && c.email.includes('@') && !c.portal_user_id;
-    });
-    bulkInvite(eligible);
-  });
+  // Selected rows preview as-is: the server names every skip and its reason.
+  $('btnBulkInvite').addEventListener('click', () => previewInvites(Array.from(_selectedContactIds)));
+  $('btnPreviewAll').addEventListener('click', () => { _preview = null; previewInvites(null); });
+  $('ipCreate').addEventListener('click', () => previewWrite('create_only'));
+  $('ipSend').addEventListener('click', () => previewWrite('send'));
+  $('ipClose').addEventListener('click', () => { $('invitePreviewCard').style.display = 'none'; _preview = null; });
   $('selectAllCheck').addEventListener('change', (e) => {
     if (e.target.checked) {
       quickSelectEligibleNotInvited();
@@ -1144,6 +1448,7 @@ async function savePortalActive(newActive) {
 
   // Portal-active kill switch
   $('balancesToggle').addEventListener('change', (e) => saveBalances(e.target.checked));
+  $('paymentsToggle').addEventListener('change', (e) => savePayments(e.target.checked));
   $('payFeesSave').addEventListener('click', savePayFees);
   $('portalActiveToggle').addEventListener('change', (e) => {
     savePortalActive(e.target.checked);
