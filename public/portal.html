@@ -1072,7 +1072,8 @@ async function finishAutopayIfReturning() {
   main.insertBefore(banner, main.firstChild);
   try {
     if (!sid) throw new Error('Stripe did not return a session, so nothing was set up.');
-    const r = await fetch('/api/portal/autopay/complete', {
+    const _pid = getStoredPropertyId();
+    const r = await fetch('/api/portal/autopay/complete' + (_pid ? '?property_id=' + encodeURIComponent(_pid) : ''), {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ session_id: sid }),
     });
@@ -1564,7 +1565,8 @@ function renderPortal(ctx) {
     if (!wrap) return;
     window._payCtx.autopay_available = !!window._payCtx.payments_enabled;
     try {
-      const r = await fetch('/api/portal/autopay');
+      const _pid = getStoredPropertyId();
+      const r = await fetch('/api/portal/autopay' + (_pid ? '?property_id=' + encodeURIComponent(_pid) : ''));
       if (!r.ok) return;
       const j = await r.json();
       const a = j.autopay;
