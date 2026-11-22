@@ -1,0 +1,245 @@
+{
+ "actor": "phase1_identity_sync_2026_11_22",
+ "characters": [
+  {
+   "slug": "amanda_albright",
+   "display_name": "Amanda Albright",
+   "roster_persona": "amanda",
+   "versions": [],
+   "releases": [],
+   "mappings": [
+    {
+     "provider": "heygen",
+     "kind": "look",
+     "resolve": {
+      "heygen_look_in_group_named": "Amanda Albright (Bedrock) 2026-10-21 face 16x9"
+     },
+     "license_class": "owned",
+     "channel": "video",
+     "notes": "CANDIDATE replacement avatar (16:9 with headroom) built 2026-11-22 from the 10/21 office portrait: original face, hair and clothing pixels unchanged; only background (and hair crown) extended above/beside. Not active until Ed approves the test video and the setting is switched.",
+     "sources": [
+      {
+       "component": "face",
+       "version_no": 4
+      }
+     ]
+    },
+    {
+     "provider": "heygen",
+     "kind": "avatar_group",
+     "resolve": {
+      "heygen_group_named": "Amanda Albright (Bedrock) 2026-10-21 face 16x9"
+     },
+     "license_class": "owned",
+     "notes": "CANDIDATE replacement avatar (16:9 with headroom) built 2026-11-22 from the 10/21 office portrait: original face, hair and clothing pixels unchanged; only background (and hair crown) extended above/beside. Not active until Ed approves the test video and the setting is switched.",
+     "sources": [
+      {
+       "component": "face",
+       "version_no": 4
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "slug": "claire_bennett",
+   "display_name": "Claire Bennett",
+   "roster_persona": "claire",
+   "versions": [],
+   "releases": [],
+   "mappings": [
+    {
+     "provider": "heygen",
+     "kind": "look",
+     "resolve": {
+      "heygen_look_in_group_named": "Claire Bennett (Bedrock) 2026-10-22 face 16x9"
+     },
+     "license_class": "owned",
+     "channel": "video",
+     "notes": "CANDIDATE replacement avatar (16:9 with headroom) built 2026-11-22 from the approved headset portrait: original face, hair and clothing pixels unchanged; only background (and hair crown) extended above/beside. Not active until Ed approves the test video and the setting is switched.",
+     "sources": [
+      {
+       "component": "face",
+       "version_no": 2
+      }
+     ]
+    },
+    {
+     "provider": "heygen",
+     "kind": "avatar_group",
+     "resolve": {
+      "heygen_group_named": "Claire Bennett (Bedrock) 2026-10-22 face 16x9"
+     },
+     "license_class": "owned",
+     "notes": "CANDIDATE replacement avatar (16:9 with headroom) built 2026-11-22 from the approved headset portrait: original face, hair and clothing pixels unchanged; only background (and hair crown) extended above/beside. Not active until Ed approves the test video and the setting is switched.",
+     "sources": [
+      {
+       "component": "face",
+       "version_no": 2
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "slug": "paige_chandler",
+   "display_name": "Paige Chandler",
+   "roster_persona": "paige",
+   "versions": [],
+   "releases": [],
+   "mappings": [
+    {
+     "provider": "heygen",
+     "kind": "look",
+     "resolve": {
+      "heygen_look_in_group_named": "Paige Chandler (Bedrock) 2026-11-17 face 16x9"
+     },
+     "license_class": "owned",
+     "channel": "video",
+     "notes": "CANDIDATE replacement avatar (16:9 with headroom) built 2026-11-22 from her approved 10/21 gentle-smile photo (same approved face; the square portrait could not be widened cleanly): original face, hair and clothing pixels unchanged; only background (and hair crown) extended above/beside. Not active until Ed approves the test video and the setting is switched.",
+     "sources": [
+      {
+       "component": "face",
+       "version_no": 2
+      }
+     ]
+    },
+    {
+     "provider": "heygen",
+     "kind": "avatar_group",
+     "resolve": {
+      "heygen_group_named": "Paige Chandler (Bedrock) 2026-11-17 face 16x9"
+     },
+     "license_class": "owned",
+     "notes": "CANDIDATE replacement avatar (16:9 with headroom) built 2026-11-22 from her approved 10/21 gentle-smile photo (same approved face; the square portrait could not be widened cleanly): original face, hair and clothing pixels unchanged; only background (and hair crown) extended above/beside. Not active until Ed approves the test video and the setting is switched.",
+     "sources": [
+      {
+       "component": "face",
+       "version_no": 2
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "slug": "annie_reeves",
+   "display_name": "Annie Reeves",
+   "roster_persona": "annie",
+   "versions": [],
+   "releases": [],
+   "mappings": [
+    {
+     "provider": "heygen",
+     "kind": "look",
+     "resolve": {
+      "heygen_look_in_group_named": "Annie Reeves (Bedrock) 2026-10-22 face 16x9"
+     },
+     "license_class": "owned",
+     "channel": "video",
+     "notes": "CANDIDATE replacement avatar (16:9 with headroom) built 2026-11-22 from the approved original: original face, hair and clothing pixels unchanged; only background (and hair crown) extended above/beside. Not active until Ed approves the test video and the setting is switched.",
+     "sources": [
+      {
+       "component": "face",
+       "version_no": 2
+      }
+     ]
+    },
+    {
+     "provider": "heygen",
+     "kind": "avatar_group",
+     "resolve": {
+      "heygen_group_named": "Annie Reeves (Bedrock) 2026-10-22 face 16x9"
+     },
+     "license_class": "owned",
+     "notes": "CANDIDATE replacement avatar (16:9 with headroom) built 2026-11-22 from the approved original: original face, hair and clothing pixels unchanged; only background (and hair crown) extended above/beside. Not active until Ed approves the test video and the setting is switched.",
+     "sources": [
+      {
+       "component": "face",
+       "version_no": 2
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "slug": "miranda_pierce",
+   "display_name": "Miranda Pierce",
+   "roster_persona": "miranda",
+   "versions": [],
+   "releases": [],
+   "mappings": [
+    {
+     "provider": "heygen",
+     "kind": "look",
+     "resolve": {
+      "heygen_look_in_group_named": "Miranda Pierce (Bedrock) 2026-10-22 face 16x9"
+     },
+     "license_class": "owned",
+     "channel": "video",
+     "notes": "CANDIDATE replacement avatar (16:9 with headroom) built 2026-11-22 from the approved original: original face, hair and clothing pixels unchanged; only background (and hair crown) extended above/beside. Not active until Ed approves the test video and the setting is switched.",
+     "sources": [
+      {
+       "component": "face",
+       "version_no": 2
+      }
+     ]
+    },
+    {
+     "provider": "heygen",
+     "kind": "avatar_group",
+     "resolve": {
+      "heygen_group_named": "Miranda Pierce (Bedrock) 2026-10-22 face 16x9"
+     },
+     "license_class": "owned",
+     "notes": "CANDIDATE replacement avatar (16:9 with headroom) built 2026-11-22 from the approved original: original face, hair and clothing pixels unchanged; only background (and hair crown) extended above/beside. Not active until Ed approves the test video and the setting is switched.",
+     "sources": [
+      {
+       "component": "face",
+       "version_no": 2
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "slug": "maggie_sullivan",
+   "display_name": "Maggie Sullivan",
+   "roster_persona": "maggie",
+   "versions": [],
+   "releases": [],
+   "mappings": [
+    {
+     "provider": "heygen",
+     "kind": "look",
+     "resolve": {
+      "heygen_look_in_group_named": "Maggie Sullivan (Bedrock) 2026-10-22 face 16x9"
+     },
+     "license_class": "owned",
+     "channel": "video",
+     "notes": "CANDIDATE replacement avatar (16:9 with headroom) built 2026-11-22 from the approved original: original face, hair and clothing pixels unchanged; only background (and hair crown) extended above/beside. Not active until Ed approves the test video and the setting is switched.",
+     "sources": [
+      {
+       "component": "face",
+       "version_no": 2
+      }
+     ]
+    },
+    {
+     "provider": "heygen",
+     "kind": "avatar_group",
+     "resolve": {
+      "heygen_group_named": "Maggie Sullivan (Bedrock) 2026-10-22 face 16x9"
+     },
+     "license_class": "owned",
+     "notes": "CANDIDATE replacement avatar (16:9 with headroom) built 2026-11-22 from the approved original: original face, hair and clothing pixels unchanged; only background (and hair crown) extended above/beside. Not active until Ed approves the test video and the setting is switched.",
+     "sources": [
+      {
+       "component": "face",
+       "version_no": 2
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
