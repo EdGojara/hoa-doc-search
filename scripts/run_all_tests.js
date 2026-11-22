@@ -89,6 +89,7 @@ const CHECKS = [
   'tests/test_check_receipts.js',
   'tests/test_collection_notices.js',
   'tests/test_lockbox_scanline.js',
+  'tests/test_annual_statement_run.js',     // annual statement: announcement from validated JSON, coupon text, preview watermark, final gates
   'tests/test_community_archived.js',
   'tests/test_legal_review_suggest.js',
   'tests/test_legal_review_data.js',
