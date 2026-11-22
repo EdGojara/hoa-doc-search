@@ -513,6 +513,41 @@ router.post('/test/payment-sandbox', express.json({ limit: '4kb' }), async (req,
   }
 });
 
+// POST /api/payments/recover-events  { payment_intent_id }   (admin)
+// Recovers Stripe events that were never delivered to our webhook (e.g. the
+// endpoint was not yet subscribed to payment_intent.*). Fetches Stripe's OWN
+// events for that PaymentIntent and runs each through the exact webhook path
+// (processWebhookEvent). Each event id is claimed once in stripe_events, so a
+// repeat or a later real delivery is a no-op: nothing can post twice. Creates
+// no charge. (Ed 2026-11-22.)
+router.post('/recover-events', express.json({ limit: '4kb' }), async (req, res) => {
+  try {
+    const { resolveUserRole } = require('./users');
+    const ctx = await resolveUserRole(req);
+    if (!ctx.supabaseUserId || ctx.role !== 'admin') return res.status(403).json({ error: 'admin role required' });
+    const pi = String((req.body || {}).payment_intent_id || '').trim();
+    if (!/^pi_[A-Za-z0-9]+$/.test(pi)) return res.status(400).json({ error: 'payment_intent_id_required' });
+    const list = await stripeLib.listEventsForObject(pi, ['payment_intent.processing', 'payment_intent.succeeded', 'payment_intent.payment_failed', 'payment_intent.canceled']);
+    if (!list.ok) return res.status(502).json({ error: 'stripe_events_unavailable' });
+    const { processWebhookEvent } = require('../lib/payments/payment_lifecycle');
+    const { createPaymentStore } = require('../lib/payments/payment_store');
+    const { stripeMode } = require('../lib/payments/stripe_mode');
+    const results = [];
+    for (const event of list.events.slice().sort((a, b) => a.created - b.created)) {
+      const store = createPaymentStore({ supabase, stripeLib, legacy: {
+        checkoutCompleted: handleCheckoutCompleted, paymentFailed: handlePaymentFailed,
+        chargeRefunded: handleChargeRefunded, accountUpdated: (acct) => handleAccountUpdated(acct, event.id) } });
+      const out = await processWebhookEvent(event, { store, mode: stripeMode() });
+      results.push({ event_id: event.id, type: event.type, http: out.http, duplicate: !!(out.body && out.body.duplicate) });
+    }
+    console.log('[payments] recover-events', pi, 'by', ctx.user && ctx.user.email, JSON.stringify(results));
+    res.json({ ok: true, payment_intent_id: pi, found: list.events.length, results });
+  } catch (err) {
+    console.error('[payments] recover-events failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
 // POST /api/payments/:id/retry-posting  (staff)
 // Re-runs posting for a SETTLED payment that was blocked (closed period, missing
 // account). Idempotent: it resumes where it stopped and can never post twice.
