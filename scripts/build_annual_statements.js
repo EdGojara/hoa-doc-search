@@ -33,6 +33,14 @@
 // amount, scanline present when the lockbox is verified); failures go to the
 // exceptions list and are left out of the print file, never printed blank.
 // A sample run prints current balances only, watermarked NOT FOR MAILING.
+// COUNSEL HOLD (Ed 2026-11-22): an account with an active enforcement state
+// (property_enforcement_states: bankruptcy, with counsel, in collections,
+// lien, judgment, payment plan) is never put in the print file. A statement
+// demanding a pre-petition balance from a debtor in bankruptcy can violate the
+// 11 U.S.C. 362 stay, and an owner represented by collections counsel is
+// contacted through counsel. Held accounts go to <stem>_counsel_hold.csv for
+// Ed and counsel to decide. Accounts carrying legal fees with NO state on file
+// are listed as warnings (possible counsel accounts not yet recorded).
 //
 // Print: the PDF embeds the OCR-A face installed on the machine that runs it
 // (Windows "OCR A Extended"); the run stops if no OCR-A face loads, because a
@@ -108,6 +116,39 @@ function validate(d, { lockbox, sample }) {
   return why;
 }
 
+// Active enforcement state -> why the statement is held (null = mail normally).
+const COUNSEL_HOLD = {
+  in_bankruptcy: 'Bankruptcy on file: automatic stay; any statement goes through bankruptcy counsel',
+  at_legal: 'With collections counsel: contact goes through the attorney',
+  in_collections: 'In collections: contact goes through the collector or counsel',
+  lien_filed: 'Assessment lien filed: confirm with counsel before billing',
+  judgment: 'Judgment entered: confirm with counsel before billing',
+  on_payment_plan: 'On a payment plan: confirm the statement matches the plan terms',
+};
+function counselHoldReason(st) {
+  if (!st || !st.state) return null;
+  const r = COUNSEL_HOLD[st.state];
+  if (!r) return null;
+  const who = st.attorney_firm || st.attorney_name;
+  return who ? `${r} (${who})` : r;
+}
+// Split built statements into mailable and held. states: active
+// property_enforcement_states rows; legalFees: Map property_id -> cents of
+// legal/attorney charges billed. Pure; tested in test_annual_statement_run.js.
+function applyCounselHolds(good, states, legalFees = new Map()) {
+  const byProp = new Map((states || []).map((x) => [x.property_id, x]));
+  const mail = []; const held = []; const unflagged = [];
+  for (const d of good) {
+    const st = byProp.get(d.property_id);
+    const reason = counselHoldReason(st);
+    if (reason) { held.push({ d, state: st.state, reason }); continue; }
+    mail.push(d);
+    const fee = legalFees.get(d.property_id) || 0;
+    if (fee > 0 && !st) unflagged.push({ d, legal_fees_cents: fee });
+  }
+  return { mail, held, unflagged };
+}
+
 const csv = (v) => `"${String(v == null ? '' : v).replace(/"/g, '""')}"`;
 const dollars = (c) => (Math.round(c || 0) / 100).toFixed(2);
 
@@ -164,8 +205,26 @@ async function main() {
       return { d, row, why: validate(d, { lockbox, sample }) };
     } catch (e) { return { d: null, row, why: [e.message] }; }
   });
-  const good = built.filter((b) => b.d && !b.why.length).map((b) => b.d);
-  const bad = built.filter((b) => !b.d || b.why.length);
+  // Every built statement (valid or not) goes through the counsel hold first:
+  // a held account stays held even if it also has a validation problem, so
+  // fixing that problem can never put it into a print file.
+  const withD = built.filter((b) => b.d).map((b) => { b.d.property_id = b.d.property_id || b.row.property_id; b.d._why = b.why; return b.d; });
+
+  // Counsel hold: active enforcement states + legal fees billed (for the
+  // "possibly with counsel but not recorded" warning list).
+  const states = await fetchAllQuery(() => s.from('property_enforcement_states')
+    .select('id, property_id, state, attorney_firm, attorney_name, bankruptcy_case_number').eq('community_id', comm.id).is('ended_at', null), { orderBy: 'id' });
+  const legalRows = await fetchAllQuery(() => s.from('homeowner_transactions')
+    .select('id, property_id, amount_cents, description').eq('community_id', comm.id)
+    .or('description.ilike.%attorney%,description.ilike.%legal fee%'), { orderBy: 'id' });
+  const legalFees = new Map();
+  for (const r of legalRows) if (r.property_id && r.amount_cents > 0) legalFees.set(r.property_id, (legalFees.get(r.property_id) || 0) + r.amount_cents);
+  const ch = sample ? { mail: withD, held: [], unflagged: [] } : applyCounselHolds(withD, states, legalFees);
+  for (const h of ch.held) if (h.d._why && h.d._why.length) h.reason += `; also: ${h.d._why.join('; ')}`;
+  const heldIds = new Set(ch.held.map((h) => h.d.property_id));
+  const good = ch.mail.filter((d) => !d._why.length);
+  ch.unflagged = ch.unflagged.filter((u) => !u.d._why.length);
+  const bad = built.filter((b) => !b.d || (b.why.length && !heldIds.has(b.d.property_id)));
   if (preview && gates.announcement && gates.announcement.preview_note) for (const d of good) d.sample_note = gates.announcement.preview_note;
 
   const label = sample ? 'SAMPLE - BANK SCANLINE TEST - NOT FOR MAILING' : preview ? PREVIEW_LABEL : null;
@@ -194,12 +253,18 @@ async function main() {
   fs.writeFileSync(path.join(out, `${stem}_manifest.csv`), lines.join('\n'));
   const exc = bad.map((b) => ({ account: b.d && b.d.account_number, owner: b.d && b.d.addressee && b.d.addressee.name, property: (b.d && b.d.property_address) || (b.row && b.row.street_address),
     prior_balance: b.d ? dollars(b.d.prior_balance_cents) : '', pay_this_amount: b.d ? dollars(b.d.balance_cents) : '', reasons: b.why }));
+  fs.writeFileSync(path.join(out, `${stem}_counsel_hold.csv`), [['account_number', 'owner', 'property', 'prior_balance', 'held_because'].join(',')]
+    .concat(ch.held.map((h) => [h.d.account_number, h.d.addressee && h.d.addressee.name, h.d.property_address, dollars(h.d.prior_balance_cents), h.reason].map(csv).join(',')))
+    .concat(ch.unflagged.length ? ['', '"NOT HELD - legal fees billed but no enforcement state on file; confirm with counsel:"'] : [])
+    .concat(ch.unflagged.map((u) => [u.d.account_number, u.d.addressee && u.d.addressee.name, u.d.property_address, dollars(u.d.prior_balance_cents), `legal fees billed ${dollars(u.legal_fees_cents)}; no state recorded`].map(csv).join(','))).join('\n'));
   fs.writeFileSync(path.join(out, `${stem}_exceptions.csv`), [['account_number', 'owner', 'property', 'prior_balance', 'pay_this_amount', 'reasons'].join(',')]
     .concat(exc.map((e) => [e.account, e.owner, e.property, e.prior_balance, e.pay_this_amount, e.reasons.join('; ')].map(csv).join(','))).join('\n'));
   const summary = {
     community: comm.name, mode: sample ? 'sample' : preview ? 'preview' : 'billing', year: billing ? billing.year : null,
     assessment_per_lot: billing ? dollars(billing.assessment_cents) : null, due_date: billing ? billing.due_date : null,
     statements: good.length, exceptions: exc.length, owners_on_file: owners.length,
+    counsel_hold: ch.held.length, counsel_unflagged_warnings: ch.unflagged.length,
+    reconciles: good.length + ch.held.length + exc.length === owners.length,
     pages: good.length * (gates.announcement ? 2 : 1), announcement_page: !!gates.announcement,
     total_prior_balance: dollars(good.reduce((t, d) => t + d.prior_balance_cents, 0)),
     total_pay_this_amount: dollars(good.reduce((t, d) => t + d.balance_cents, 0)),
@@ -217,4 +282,4 @@ async function main() {
 
 if (require.main === module) main().catch((e) => { console.error('STOPPED:', e.message); process.exit(1); });
 
-module.exports = { billingGates, validate, args, PREVIEW_LABEL };
+module.exports = { billingGates, validate, args, PREVIEW_LABEL, applyCounselHolds, counselHoldReason, COUNSEL_HOLD };
