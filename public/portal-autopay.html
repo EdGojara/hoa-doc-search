@@ -100,6 +100,15 @@
     return Math.round(n * 100);
   }
 
+  // The lot being set up: the URL's property_id, else the portal's current lot.
+  // Without it an owner of two or more lots got the server's default lot
+  // (Ed 2026-11-22 sandbox test).
+  function propQs() {
+    let pid = params.get('property_id') || '';
+    if (!pid) { try { pid = sessionStorage.getItem('bedrock_portal_property_id') || ''; } catch (_) {} }
+    return pid ? '?property_id=' + encodeURIComponent(pid) : '';
+  }
+
   async function begin() {
     const btn = $('btnContinue');
     $('errTerms').textContent = '';
@@ -107,7 +116,7 @@
     try { cap = capCents(); } catch (e) { $('errTerms').textContent = e.message; return; }
     btn.disabled = true; btn.textContent = 'Opening…';
     try {
-      const r = await fetch('/api/portal/autopay/begin', {
+      const r = await fetch('/api/portal/autopay/begin' + propQs(), {
         method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ accepted_terms_version: terms.version, max_amount_cents: cap }),
       });
@@ -132,7 +141,7 @@
     if (params.get('demo') === '1') return unavailable('Automatic payments are not available in the demo portal.');
     let j;
     try {
-      const r = await fetch('/api/portal/autopay', { credentials: 'same-origin' });
+      const r = await fetch('/api/portal/autopay' + propQs(), { credentials: 'same-origin' });
       if (r.status === 401) { location.href = '/portal-login.html'; return; }
       j = await r.json();
     } catch (_) { return unavailable('Could not load automatic payments. Please try again.'); }
