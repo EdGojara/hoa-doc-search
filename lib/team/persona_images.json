@@ -1014,5 +1014,50 @@
         "status": "proposed 2026-11-22; approval is Ed's in /admin/characters"
       }
     }
+  },
+  "_websites": {
+    "_about": "Named teammate portraits on bedrocktx.com and bedrocktxai.com, as approved (audit 2026-11-22: each is a crop of that teammate's approved production face). scripts/check_identity_drift.js --websites fails if a served file changes. Unnamed illustrative group photos are not tracked.",
+    "amanda": [
+      {
+        "url": "https://bedrocktx.com/images/contributors/amanda-albright.webp",
+        "sha256": "46d93967d46443d9f513525c1c89d78bf8a7a336b2c9401fe9cd91d3d5630789"
+      }
+    ],
+    "annie": [
+      {
+        "url": "https://bedrocktx.com/images/contributors/annie-reeves.webp",
+        "sha256": "e5cdd95ad71207383f688ea38e6a670585ec7bf4e1434a35213975e1d7a1603c"
+      },
+      {
+        "url": "https://bedrocktxai.com/assets/team/annie-reeves.webp",
+        "sha256": "e5cdd95ad71207383f688ea38e6a670585ec7bf4e1434a35213975e1d7a1603c"
+      }
+    ],
+    "claire": [
+      {
+        "url": "https://bedrocktx.com/images/contributors/claire-bennett.webp",
+        "sha256": "642aee1b04693ffcf2abe4a130c5e1ea23fa1c5e0af27901237e9af5c8510b26"
+      },
+      {
+        "url": "https://bedrocktxai.com/assets/team/claire-bennett.webp",
+        "sha256": "642aee1b04693ffcf2abe4a130c5e1ea23fa1c5e0af27901237e9af5c8510b26"
+      }
+    ],
+    "miranda": [
+      {
+        "url": "https://bedrocktx.com/images/contributors/miranda-pierce.webp",
+        "sha256": "bf5b858417ebe1efea95bf333c7da149407edcdc3136b8fa753186cd7a6cf114"
+      },
+      {
+        "url": "https://bedrocktxai.com/assets/team/miranda-pierce.webp",
+        "sha256": "bf5b858417ebe1efea95bf333c7da149407edcdc3136b8fa753186cd7a6cf114"
+      }
+    ],
+    "paige": [
+      {
+        "url": "https://bedrocktx.com/images/contributors/paige-chandler.webp",
+        "sha256": "0ee4d2dd204663ebb13c333c28a6da0f232dccbf015d1583ca4e7dbc605cb927"
+      }
+    ]
   }
 }

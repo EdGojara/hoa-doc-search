@@ -1,0 +1,245 @@
+{
+ "actor": "phase1_identity_sync_2026_11_22",
+ "characters": [
+  {
+   "slug": "amanda_albright",
+   "display_name": "Amanda Albright",
+   "roster_persona": "amanda",
+   "versions": [],
+   "releases": [],
+   "mappings": [
+    {
+     "provider": "heygen",
+     "kind": "look",
+     "resolve": {
+      "heygen_look_in_group_named": "Amanda Albright (Bedrock) 2026-10-21 face"
+     },
+     "license_class": "owned",
+     "channel": "video",
+     "notes": "CANDIDATE replacement avatar built 2026-11-22 from the 10/21 office portrait (1360x1157). Not active: production still uses the old avatar until Ed approves the test video and the setting is switched.",
+     "sources": [
+      {
+       "component": "face",
+       "version_no": 4
+      }
+     ]
+    },
+    {
+     "provider": "heygen",
+     "kind": "avatar_group",
+     "resolve": {
+      "heygen_group_named": "Amanda Albright (Bedrock) 2026-10-21 face"
+     },
+     "license_class": "owned",
+     "notes": "CANDIDATE replacement avatar built 2026-11-22 from the 10/21 office portrait (1360x1157). Not active: production still uses the old avatar until Ed approves the test video and the setting is switched.",
+     "sources": [
+      {
+       "component": "face",
+       "version_no": 4
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "slug": "claire_bennett",
+   "display_name": "Claire Bennett",
+   "roster_persona": "claire",
+   "versions": [],
+   "releases": [],
+   "mappings": [
+    {
+     "provider": "heygen",
+     "kind": "look",
+     "resolve": {
+      "heygen_look_in_group_named": "Claire Bennett (Bedrock) 2026-10-22 face"
+     },
+     "license_class": "owned",
+     "channel": "video",
+     "notes": "CANDIDATE replacement avatar built 2026-11-22 from the approved headset portrait (1374x1145). Not active: production still uses the old avatar until Ed approves the test video and the setting is switched.",
+     "sources": [
+      {
+       "component": "face",
+       "version_no": 2
+      }
+     ]
+    },
+    {
+     "provider": "heygen",
+     "kind": "avatar_group",
+     "resolve": {
+      "heygen_group_named": "Claire Bennett (Bedrock) 2026-10-22 face"
+     },
+     "license_class": "owned",
+     "notes": "CANDIDATE replacement avatar built 2026-11-22 from the approved headset portrait (1374x1145). Not active: production still uses the old avatar until Ed approves the test video and the setting is switched.",
+     "sources": [
+      {
+       "component": "face",
+       "version_no": 2
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "slug": "paige_chandler",
+   "display_name": "Paige Chandler",
+   "roster_persona": "paige",
+   "versions": [],
+   "releases": [],
+   "mappings": [
+    {
+     "provider": "heygen",
+     "kind": "look",
+     "resolve": {
+      "heygen_look_in_group_named": "Paige Chandler (Bedrock) 2026-11-17 face"
+     },
+     "license_class": "owned",
+     "channel": "video",
+     "notes": "CANDIDATE replacement avatar built 2026-11-22 from the 11/17 official portrait (1254x1254). Not active: production still uses the old avatar until Ed approves the test video and the setting is switched.",
+     "sources": [
+      {
+       "component": "face",
+       "version_no": 2
+      }
+     ]
+    },
+    {
+     "provider": "heygen",
+     "kind": "avatar_group",
+     "resolve": {
+      "heygen_group_named": "Paige Chandler (Bedrock) 2026-11-17 face"
+     },
+     "license_class": "owned",
+     "notes": "CANDIDATE replacement avatar built 2026-11-22 from the 11/17 official portrait (1254x1254). Not active: production still uses the old avatar until Ed approves the test video and the setting is switched.",
+     "sources": [
+      {
+       "component": "face",
+       "version_no": 2
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "slug": "annie_reeves",
+   "display_name": "Annie Reeves",
+   "roster_persona": "annie",
+   "versions": [],
+   "releases": [],
+   "mappings": [
+    {
+     "provider": "heygen",
+     "kind": "look",
+     "resolve": {
+      "heygen_look_in_group_named": "Annie Reeves (Bedrock) 2026-10-22 face"
+     },
+     "license_class": "owned",
+     "channel": "video",
+     "notes": "CANDIDATE replacement avatar built 2026-11-22 from the approved original (1312x1199). Not active: production still uses the old avatar until Ed approves the test video and the setting is switched.",
+     "sources": [
+      {
+       "component": "face",
+       "version_no": 2
+      }
+     ]
+    },
+    {
+     "provider": "heygen",
+     "kind": "avatar_group",
+     "resolve": {
+      "heygen_group_named": "Annie Reeves (Bedrock) 2026-10-22 face"
+     },
+     "license_class": "owned",
+     "notes": "CANDIDATE replacement avatar built 2026-11-22 from the approved original (1312x1199). Not active: production still uses the old avatar until Ed approves the test video and the setting is switched.",
+     "sources": [
+      {
+       "component": "face",
+       "version_no": 2
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "slug": "miranda_pierce",
+   "display_name": "Miranda Pierce",
+   "roster_persona": "miranda",
+   "versions": [],
+   "releases": [],
+   "mappings": [
+    {
+     "provider": "heygen",
+     "kind": "look",
+     "resolve": {
+      "heygen_look_in_group_named": "Miranda Pierce (Bedrock) 2026-10-22 face"
+     },
+     "license_class": "owned",
+     "channel": "video",
+     "notes": "CANDIDATE replacement avatar built 2026-11-22 from the approved original (1374x1145). Not active: production still uses the old avatar until Ed approves the test video and the setting is switched.",
+     "sources": [
+      {
+       "component": "face",
+       "version_no": 2
+      }
+     ]
+    },
+    {
+     "provider": "heygen",
+     "kind": "avatar_group",
+     "resolve": {
+      "heygen_group_named": "Miranda Pierce (Bedrock) 2026-10-22 face"
+     },
+     "license_class": "owned",
+     "notes": "CANDIDATE replacement avatar built 2026-11-22 from the approved original (1374x1145). Not active: production still uses the old avatar until Ed approves the test video and the setting is switched.",
+     "sources": [
+      {
+       "component": "face",
+       "version_no": 2
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "slug": "maggie_sullivan",
+   "display_name": "Maggie Sullivan",
+   "roster_persona": "maggie",
+   "versions": [],
+   "releases": [],
+   "mappings": [
+    {
+     "provider": "heygen",
+     "kind": "look",
+     "resolve": {
+      "heygen_look_in_group_named": "Maggie Sullivan (Bedrock) 2026-10-22 face"
+     },
+     "license_class": "owned",
+     "channel": "video",
+     "notes": "CANDIDATE replacement avatar built 2026-11-22 from the approved original (1254x1254). Not active: production still uses the old avatar until Ed approves the test video and the setting is switched.",
+     "sources": [
+      {
+       "component": "face",
+       "version_no": 2
+      }
+     ]
+    },
+    {
+     "provider": "heygen",
+     "kind": "avatar_group",
+     "resolve": {
+      "heygen_group_named": "Maggie Sullivan (Bedrock) 2026-10-22 face"
+     },
+     "license_class": "owned",
+     "notes": "CANDIDATE replacement avatar built 2026-11-22 from the approved original (1254x1254). Not active: production still uses the old avatar until Ed approves the test video and the setting is switched.",
+     "sources": [
+      {
+       "component": "face",
+       "version_no": 2
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
