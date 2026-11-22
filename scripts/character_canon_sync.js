@@ -27,6 +27,7 @@
 //   { env: NAME }                         a Render/env variable
 //   { group_of_env: NAME, look_prefix? }  the HeyGen group (or one look in it) of the look in NAME
 //   { heygen_group_named: "..." }         the one private HeyGen avatar group with exactly this name
+//   { heygen_look_in_group_named: "..." } the single look in that named group
 //   { heygen_voice_for_face: FACE }       persona_voices override, else FACE_VOICE_ID
 //   { tts_voice_for_face: FACE }          persona_tts_voices override (ElevenLabs spoken voice)
 // A resolve that finds nothing is reported and that mapping is skipped (never guessed).
@@ -70,6 +71,15 @@ async function resolveExternalId(resolve) {
     const hit = (d.avatar_group_list || []).filter((g) => g.name === resolve.heygen_group_named);
     if (hit.length > 1) throw new Error(`HeyGen group name "${resolve.heygen_group_named}" matched ${hit.length} groups`);
     return hit.length ? hit[0].id : null;
+  }
+  if (resolve.heygen_look_in_group_named) {
+    const d = await heygenGet('/v2/avatar_group.list?include_public=false');
+    const g = (d.avatar_group_list || []).filter((x) => x.name === resolve.heygen_look_in_group_named);
+    if (g.length !== 1) throw new Error(`HeyGen group name "${resolve.heygen_look_in_group_named}" matched ${g.length} groups`);
+    const looks = await heygenGet(`/v3/avatars/looks?group_id=${g[0].id}&limit=50`);
+    const items = looks.items || looks;
+    if (items.length !== 1) throw new Error(`group "${resolve.heygen_look_in_group_named}" has ${items.length} looks; expected exactly one`);
+    return items[0].id;
   }
   if (resolve.heygen_voice_for_face) {
     const face = resolve.heygen_voice_for_face;

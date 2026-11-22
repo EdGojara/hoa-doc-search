@@ -126,6 +126,12 @@ router.post('/:persona', async (req, res) => {
     const voice_id = String((req.body && req.body.voice_id) || '').trim();
     if (!voice_id) return res.status(400).json({ error: 'voice_id_required' });
     const voice_name = (req.body && req.body.voice_name ? String(req.body.voice_name) : '').trim() || null;
+    // Identity drift guard (Ed 2026-11-22): a voice HeyGen does not have can't
+    // render (Tessa's 'Liz' was saved this way). Refuse anything not in the catalog.
+    try { await getCatalog(); } catch (_) { /* catalog unreachable: checked below */ }
+    if (!_v2ById.size || !_v2ById.has(voice_id)) {
+      return res.status(400).json({ error: 'voice_not_in_catalog', detail: "That voice is not in HeyGen's voice catalog, so it cannot render. Pick a voice from the list." });
+    }
 
     const { error } = await supabase.from('persona_voices').upsert({
       face: m.face, voice_id, voice_name, updated_by: owner.email,
