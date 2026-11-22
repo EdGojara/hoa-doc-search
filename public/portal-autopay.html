@@ -32,6 +32,7 @@
   .err { color: var(--tx-bad, #b91c1c); font-size: 13.5px; margin-top: 10px; min-height: 1em; }
   .note { background: #fff7ed; border: 1px solid #fed7aa; color: #9a3412; border-radius: 9px; padding: 10px 12px; font-size: 13.5px; margin-bottom: 12px; }
   .hidden { display: none; }
+  .counsel { border-left: 3px solid var(--gold, #D4AF37); background: var(--cream, #FAFAF6); padding: 10px 12px; margin: 12px 0; font-size: 14px; line-height: 1.6; }
   @media (max-width: 400px) { .card { padding: 16px; } }
 </style>
 </head>
@@ -43,6 +44,7 @@
   <div id="stepUnavailable" class="card hidden">
     <h2>Automatic payments</h2>
     <p id="unavailText" class="muted"></p>
+    <div id="counsel" class="counsel hidden"></div>
     <p><a href="/portal">Back to the portal</a></p>
   </div>
 
@@ -76,6 +78,25 @@
   const params = new URLSearchParams(location.search);
   let terms = null;
 
+
+  // Account with legal counsel (Ed 2026-11-22): the server refuses payment and
+  // sends the firm on file. Shown as text only; nothing is filled in if missing.
+  function renderCounsel(lh, el) {
+    el.textContent = '';
+    if (!lh) { el.classList.add('hidden'); return; }
+    const c = lh.counsel || {};
+    const add = (tag, text, href) => {
+      const n = document.createElement(href ? 'a' : tag); n.textContent = text;
+      if (href) n.href = href;
+      const row = document.createElement('div'); row.appendChild(n); el.appendChild(row);
+    };
+    if (c.firm) add('strong', c.firm);
+    if (c.attorney && c.attorney !== c.firm) add('span', c.attorney);
+    if (c.phone) add('a', 'Phone: ' + c.phone, 'tel:' + c.phone.replace(/[^\d+]/g, ''));
+    if (c.email) add('a', 'Email: ' + c.email, 'mailto:' + c.email);
+    if (!c.phone && !c.email) add('span', 'Contact details for the firm are being updated. Please contact management if you need them.');
+    el.classList.remove('hidden');
+  }
   function unavailable(msg) { $('unavailText').textContent = msg || 'Automatic payments are not available for this account.'; show('stepUnavailable'); }
 
   function fillList(el, items) {
@@ -148,6 +169,7 @@
       j = await r.json();
     } catch (_) { return unavailable('Could not load automatic payments. Please try again.'); }
     const en = j && j.enrollment;
+    if (j && j.legal_hold) { renderCounsel(j.legal_hold, $('counsel')); return unavailable(j.legal_hold.message); }
     if (!en || !en.available || !en.terms) return unavailable(en && en.reason);
     if (params.get('cancelled') === '1') $('cancelledNote').classList.remove('hidden');
     renderTerms(en.terms, en.association_name);
