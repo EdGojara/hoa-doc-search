@@ -97,5 +97,20 @@ check('final: approved budget + valid announcement passes; notice taken from the
 g = billingGates({ opts: base, community: comm(), budget: { status: 'approved' }, lockbox: lb, announcementRaw: annRaw({ switch_date: '[[x]]' }) });
 check('final: announcement placeholders and missing fees refuse', g.blockers.some((b) => /placeholder/.test(b)) && g.blockers.some((b) => /payment fees/.test(b)));
 
+// Counsel hold: accounts in bankruptcy / with counsel never reach the print file.
+{
+  const { applyCounselHolds, counselHoldReason } = require('../scripts/build_annual_statements');
+  const st = (property_id, state, extra = {}) => ({ property_id, state, ...extra });
+  const D = (property_id) => ({ property_id, account_number: property_id, addressee: { name: 'X' }, prior_balance_cents: 1000 });
+  const r = applyCounselHolds([D('a'), D('b'), D('c'), D('d'), D('e')],
+    [st('a', 'in_bankruptcy', { attorney_firm: 'Firm' }), st('b', 'at_legal'), st('c', 'current')],
+    new Map([['d', 74255], ['c', 500]]));
+  check('counsel hold: bankruptcy and at-legal held, current and clean mailed', r.held.map((h) => h.d.property_id).join() === 'a,b' && r.mail.map((d) => d.property_id).join() === 'c,d,e');
+  check('counsel hold: legal fees with no state is a warning, not a hold', r.unflagged.length === 1 && r.unflagged[0].d.property_id === 'd');
+  check('counsel hold: reason names the firm', /bankruptcy/i.test(r.held[0].reason) && /Firm/.test(r.held[0].reason));
+  check('counsel hold: every non-current state holds', ['in_bankruptcy', 'at_legal', 'in_collections', 'lien_filed', 'judgment', 'on_payment_plan'].every((k) => counselHoldReason({ state: k })) && !counselHoldReason({ state: 'current' }) && !counselHoldReason(null));
+  check('counsel hold: empty inputs are safe', applyCounselHolds([], null).mail.length === 0);
+}
+
 console.log(failures ? `\n\x1b[31m${failures} failed\x1b[0m` : '\n\x1b[32mall annual statement run checks passed\x1b[0m');
 process.exit(failures ? 1 : 0);
