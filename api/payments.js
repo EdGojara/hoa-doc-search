@@ -404,6 +404,16 @@ router.post('/create-checkout-session', express.json({ limit: '128kb' }), async 
 // platform application fee; ACH carries none. The management fee is never
 // skimmed here. Crediting happens only in the webhook, after Stripe confirms the
 // money (lib/payments/payment_lifecycle.js).
+// GET /api/payments/stripe-env   (staff) -- NAMES of Stripe-related environment
+// settings and the key TYPE (pk_test / pk_live / sk_test / whsec ...). Never a
+// value. Lets staff confirm configuration without opening Render.
+router.get('/stripe-env', (req, res) => {
+  const kind = (v) => { const m = String(v || '').match(/^(pk_test|pk_live|sk_test|sk_live|rk_test|rk_live|whsec)_/); return m ? m[1] : (v ? 'set (unrecognised format)' : 'empty'); };
+  const names = Object.keys(process.env).filter((k) => /STRIPE|PUBLISHABLE/i.test(k) && !/^VOTING_/i.test(k)).sort();
+  res.json({ settings: names.map((n) => ({ name: n, type: kind(process.env[n]) })),
+    publishable_key_names_checked: require('../lib/payments/assessment_intent').PK_ENV_NAMES });
+});
+
 // ============================================================================
 // Callers pass ONLY a property they have already authorized (portal session,
 // signed pay link, test route). Owner, tenure, amount and identity are decided
