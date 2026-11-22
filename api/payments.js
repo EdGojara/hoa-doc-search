@@ -548,6 +548,32 @@ router.post('/recover-events', express.json({ limit: '4kb' }), async (req, res) 
   }
 });
 
+// POST /api/payments/test/autopay-run  { step: 'notice'|'charge', today: 'YYYY-MM-DD' }  (admin, TEST mode)
+// Runs the autopay notice or charge job as of a chosen day, so the 10-day notice
+// and the off-session charge can be verified without waiting. Under a test key
+// only demo communities are acted on (autopayAllowedFor). Ed 2026-11-22.
+router.post('/test/autopay-run', express.json({ limit: '4kb' }), async (req, res) => {
+  const { requireTestMode } = require('../lib/payments/stripe_mode');
+  if (!requireTestMode(res)) return;
+  try {
+    const { resolveUserRole } = require('./users');
+    const ctx = await resolveUserRole(req);
+    if (!ctx.supabaseUserId || ctx.role !== 'admin') return res.status(403).json({ error: 'admin role required' });
+    const b = req.body || {};
+    const today = /^\d{4}-\d{2}-\d{2}$/.test(String(b.today || '')) ? String(b.today) : undefined;
+    const AP = require('../lib/payments/autopay');
+    const { sendNotice } = require('../lib/payments/autopay_jobs');
+    let r;
+    if (b.step === 'notice') r = await AP.sendDueNotices({ today, sendEmail: sendNotice });
+    else if (b.step === 'charge') r = await AP.chargeDue({ today });
+    else return res.status(400).json({ error: 'step must be notice or charge' });
+    res.json({ ok: true, step: b.step, today: today || null, result: r });
+  } catch (err) {
+    console.error('[payments] test autopay-run failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
 // POST /api/payments/:id/retry-posting  (staff)
 // Re-runs posting for a SETTLED payment that was blocked (closed period, missing
 // account). Idempotent: it resumes where it stopped and can never post twice.

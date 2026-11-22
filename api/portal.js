@@ -4371,11 +4371,13 @@ router.get('/autopay', async (req, res) => {
     // What the enrollment screen shows BEFORE the homeowner authorises: the fee
     // schedule and the recurring-payment disclosure, decided by the server.
     let enrollment = { available: false, reason: 'Automatic payments are not available yet. Please use Pay now.' };
-    if (AI.autopayChargesEnabled() && (!autopay || autopay.status === 'pending_setup')) {
+    if (!autopay || autopay.status === 'pending_setup') {
       const t = await AI.autopayEnrollmentTerms(intentDeps(), { propertyId: scoped.property.id });
-      enrollment = t.ok
-        ? { available: true, terms: t.terms, association_name: t.pr.community.hoa_legal_name || t.pr.community.name }
-        : { available: false, reason: t.hint || 'Automatic payments are not available for this account.' };
+      if (t.ok && AI.autopayAllowedFor(t.pr.community)) {
+        enrollment = { available: true, terms: t.terms, association_name: t.pr.community.hoa_legal_name || t.pr.community.name };
+      } else if (!t.ok && AI.autopayChargesEnabled()) {
+        enrollment = { available: false, reason: t.hint || 'Automatic payments are not available for this account.' };
+      }
     } else if (autopay && autopay.status !== 'pending_setup') {
       enrollment = { available: false, reason: 'Automatic payments are already set up.' };
     }
