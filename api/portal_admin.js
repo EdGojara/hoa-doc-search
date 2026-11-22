@@ -31,6 +31,7 @@ const { sendEmail } = require('../lib/notifications/email');
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 const { BEDROCK_MGMT_CO_ID } = require('../lib/company');
+const { safeErrorMessage } = require('./_safe_error');
 
 function escapeHtml(s) {
   return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -495,6 +496,38 @@ router.post('/community/:communityId/homeowner-balances', async (req, res) => {
 });
 
 // ============================================================================
+// POST /api/portal-admin/community/:communityId/homeowner-payments   (OWNER ONLY)
+//   { on: true }  -> online payments on (needs balances verified + fees set)
+//   { on: false } -> online payments off immediately; balances stay as they are
+// The only writer of homeowner_financials.payments. Stripe onboarding is still
+// required at every payment (decideFinancialAccess); the response says if it is not.
+// ============================================================================
+router.post('/community/:communityId/homeowner-payments', async (req, res) => {
+  try {
+    const { requireOwner } = require('./_require_admin');
+    const owner = await requireOwner(req, res);
+    if (!owner) return;
+    const communityId = req.params.communityId;
+    const { on } = req.body || {};
+    if (typeof on !== 'boolean') return res.status(400).json({ error: 'on_must_be_boolean' });
+    const fa = require('../lib/portal/financial_access');
+    const { data: current, error: curErr } = await supabase.from('communities').select(fa.COLUMNS).eq('id', communityId).maybeSingle();
+    if (curErr) throw curErr;
+    if (!current) return res.status(404).json({ error: 'community_not_found' });
+    const by = owner.email || owner.id;
+    const next = fa.paymentsSwitchConfig(current.portal_module_config, { on, by, at: new Date().toISOString() });
+    if (!next.ok) return res.status(409).json({ error: next.error });
+    const { error: upErr } = await supabase.from('communities').update({ portal_module_config: next.cfg }).eq('id', communityId);
+    if (upErr) throw upErr;
+    await logAudit(on ? 'homeowner_payments_on' : 'homeowner_payments_off', { resource_type: 'community', resource_id: communityId, performed_by: by });
+    res.json({ ok: true, community_id: communityId, access: fa.decideFinancialAccess({ ...current, portal_module_config: next.cfg }) });
+  } catch (err) {
+    console.error('[portal_admin] homeowner-payments failed:', err.message);
+    res.status(500).json({ error: 'homeowner_payments_failed' });
+  }
+});
+
+// ============================================================================
 // POST /api/portal-admin/community/:communityId/payment-fees   (OWNER ONLY)
 //   { card_fee_bps, debit_card_fee_bps|null, ach_fee_cents, ach_tier_threshold_cents|null, ach_fee_above_cents|null }
 //   { clear: true }                                           -> remove them (online payment refused)
@@ -634,6 +667,13 @@ router.patch('/community/:communityId/module-config', async (req, res) => {
       .eq('id', communityId)
       .maybeSingle();
     if (!current) return res.status(404).json({ error: 'community_not_found' });
+    // Launching an association's portal is the owner's decision (Ed 2026-11-22).
+    // Turning it OFF stays open to staff as the emergency stop.
+    if (portal_active === true && current.portal_active !== true) {
+      const { requireOwner } = require('./_require_admin');
+      const owner = await requireOwner(req, res);
+      if (!owner) return;
+    }
 
     const update = {};
     let newCfg = null;
@@ -972,267 +1012,209 @@ router.get('/community/:communityId/adoption', async (req, res) => {
 });
 
 // ============================================================================
-// POST /api/portal-admin/community/:communityId/bulk-invite
+// POST /api/portal-admin/community/:communityId/bulk-invite   (Ed 2026-11-22)
 // ----------------------------------------------------------------------------
-// Body: { contact_ids: [<uuid>, <uuid>, ...], invited_by?: <staff label> }
+// One roster, three modes. The roster (lib/portal/invite_roster.js) is the
+// owners of record from v_current_property_owners, one row per owner contact,
+// with risky inboxes excluded by default and a reason for every skip.
 //
-// For each contact_id:
-//   - Look up the contact + their current residency in this community
-//   - Idempotent: skip if portal_user already exists (returns reason)
-//   - Create portal_user (role=homeowner, status=invited)
-//   - Grant their current property via portal_user_properties
-//   - Generate 7-day invite magic link + EMAIL it via sendEmail
-//   - Log audit entries
+//   { dry_run: true, contact_ids?, include_flagged? }
+//       PREVIEW. Reads only, writes and sends nothing. Returns who WOULD be
+//       invited (owner, lots, email), who is skipped and why, a lot-count
+//       cross-check against live lots, and preview_hash. Any staffer.
+//   { mode: 'create_only', preview_hash, portal_active_expected, ... }   OWNER ONLY
+//       Creates portal_users + lot grants for the previewed owners WITHOUT
+//       emailing, so "enter your email" sign-in from the printed statement
+//       works. Runs with the portal on or off; refuses if portal_active is not
+//       what the owner expected.
+//   { mode: 'send', preview_hash, ... }   OWNER ONLY
+//       Creates any missing accounts, then emails the invitation in the
+//       background (paced for the mail provider). Refuses unless the portal is on.
 //
-// Returns:
-//   { ok: true,
-//     invited: <N successfully invited + emailed>,
-//     skipped: <N skipped>,
-//     results: [{ contact_id, status: 'invited'|'skipped', reason?: <string>,
-//                 portal_user_id?: <id>, email_sent?: bool }],
-//     community: { id, name } }
-//
-// Concurrency: emails sent in batches of 5 to avoid hammering Resend.
-// On the order of 50-500 homeowners per community — handles in seconds.
+// Both write modes recompute the roster and refuse with 409 preview_changed if
+// its hash is not the one previewed, and 409 if the lot cross-check fails, so
+// what is written and sent is exactly what the owner approved.
+// Accounts are created marked SILENT_CREATE_MARK and re-marked only after the
+// invitation email is accepted by the provider, so a failed or interrupted send
+// shows on the next Preview as "account created, not yet emailed" and is retried.
 // ============================================================================
+const _sendsInFlight = new Set();
+
+async function _insertAuditRows(rows) {
+  for (let i = 0; i < rows.length; i += 200) {
+    const { error } = await supabase.from('portal_audit_log').insert(rows.slice(i, i + 200));
+    if (error) console.warn('[portal_admin] bulk audit insert failed:', error.message);
+  }
+}
+
+// Create portal_users + lot grants for roster rows with action 'create'.
+// Returns { byContact: { contact_id: portal_user_id }, failures: [{ contact_id, reason, detail }] }.
+async function _createRosterAccounts(rows, { performedBy, slug, via, mark }) {
+  const { SILENT_CREATE_MARK } = require('../lib/portal/invite_roster');
+  const invitedByMark = mark || SILENT_CREATE_MARK;
+  const byContact = {};
+  const failures = [];
+  const toUserRow = (r) => ({
+    management_company_id: BEDROCK_MGMT_CO_ID, email: r.email, full_name: r.name || null,
+    role: 'homeowner', status: 'invited', contact_id: r.contact_id, invited_by: invitedByMark,
+  });
+  for (let i = 0; i < rows.length; i += 100) {
+    const slice = rows.slice(i, i + 100);
+    const { data, error } = await supabase.from('portal_users').insert(slice.map(toUserRow)).select('id, contact_id');
+    if (!error) { for (const u of data || []) byContact[u.contact_id] = u.id; continue; }
+    // One bad row fails the whole batch insert; retry this batch row by row so
+    // the rest still land and the bad one is named.
+    console.warn(`[portal_admin] bulk account batch failed, retrying per row: ${error.message}`);
+    for (const r of slice) {
+      const one = await supabase.from('portal_users').insert(toUserRow(r)).select('id, contact_id').single();
+      if (one.error) failures.push({ contact_id: r.contact_id, reason: 'account_insert_failed', detail: safeErrorMessage(one.error) });
+      else byContact[r.contact_id] = one.data.id;
+    }
+  }
+  const grants = [];
+  for (const r of rows) {
+    const uid = byContact[r.contact_id];
+    if (!uid) continue;
+    for (const p of r.properties) grants.push({ portal_user_id: uid, property_id: p.property_id, granted_by: performedBy, revoked_at: null, revoked_by: null });
+  }
+  for (let i = 0; i < grants.length; i += 200) {
+    const slice = grants.slice(i, i + 200);
+    const { error } = await supabase.from('portal_user_properties').upsert(slice, { onConflict: 'portal_user_id,property_id' });
+    if (error) {
+      console.error('[portal_admin] bulk grant batch failed:', error.message);
+      const uids = new Set(slice.map((g) => g.portal_user_id));
+      for (const [cid, uid] of Object.entries(byContact)) if (uids.has(uid)) failures.push({ contact_id: cid, reason: 'lot_grant_failed', detail: safeErrorMessage(error) });
+    }
+  }
+  await _insertAuditRows(Object.values(byContact).map((uid) => ({
+    portal_user_id: uid, action: 'user_invited', performed_by: performedBy, notes: `via=${via} community=${slug} email=not_sent`,
+  })));
+  return { byContact, failures };
+}
+
+// Background invitation sender: one magic link + one email per account, paced.
+// Each success re-marks the account as emailed; a failure leaves it on the
+// "not yet emailed" list for the next Preview.
+async function _sendInvitesInBackground(items, { req, community, access, performedBy }) {
+  const { sendPortalInvite } = require('../lib/email/portal_invite');
+  const perSec = Math.max(1, Number(process.env.PORTAL_INVITE_SEND_PER_SEC || 2));
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  let sent = 0; let failed = 0;
+  try {
+    for (let i = 0; i < items.length; i += perSec) {
+      const started = Date.now();
+      await Promise.all(items.slice(i, i + perSec).map(async (it) => {
+        const token = makeToken();
+        const { error: linkErr } = await supabase.from('portal_magic_links').insert({
+          portal_user_id: it.portal_user_id, token, purpose: 'invite',
+          expires_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(), created_by: performedBy,
+        });
+        if (linkErr) { failed++; console.warn(`[portal_admin] invite link failed for ${it.portal_user_id}: ${linkErr.message}`); return; }
+        const args = { toEmail: it.email, toName: it.name, communityName: community.name, magicLink: magicLinkUrl(req, token),
+          role: 'homeowner', balance: access.balance, payments: access.payments };
+        let send = await sendPortalInvite(args).catch((e) => ({ ok: false, error: e.message }));
+        if (!(send && send.ok)) { await wait(2000); send = await sendPortalInvite(args).catch((e) => ({ ok: false, error: e.message })); }
+        if (!(send && send.ok)) { failed++; console.warn(`[portal_admin] invite email failed for ${it.portal_user_id}: ${(send && send.error) || 'send failed'}`); return; }
+        const { error: upErr } = await supabase.from('portal_users')
+          .update({ invited_by: 'portal-adoption-ui', invited_at: new Date().toISOString() }).eq('id', it.portal_user_id);
+        if (upErr) console.error(`[portal_admin] invite sent but account not re-marked ${it.portal_user_id}: ${upErr.message}`);
+        sent++;
+        await logAudit('magic_link_sent', { portal_user_id: it.portal_user_id, performed_by: performedBy, notes: `purpose=invite via=bulk_invite community=${community.slug}` });
+      }));
+      const elapsed = Date.now() - started;
+      if (elapsed < 1000 && i + perSec < items.length) await wait(1000 - elapsed);
+    }
+  } catch (e) {
+    console.error('[portal_admin] background invite send aborted:', e.message);
+  } finally {
+    _sendsInFlight.delete(community.id);
+    console.log(`[portal_admin] bulk invite send finished community=${community.slug} sent=${sent} failed=${failed} of ${items.length}`);
+  }
+}
+
 router.post('/community/:communityId/bulk-invite', async (req, res) => {
   try {
     const communityId = req.params.communityId;
-    if (!communityId) return res.status(400).json({ error: 'community_id_required' });
-    const { contact_ids, invited_by } = req.body || {};
-    if (!Array.isArray(contact_ids) || contact_ids.length === 0) {
-      return res.status(400).json({ error: 'contact_ids_required' });
+    const b = req.body || {};
+    const contactIds = b.contact_ids == null ? null : b.contact_ids;
+    if (contactIds !== null && (!Array.isArray(contactIds) || contactIds.length === 0 || contactIds.some((x) => typeof x !== 'string'))) {
+      return res.status(400).json({ error: 'contact_ids_invalid' });
     }
-    if (contact_ids.length > 1000) {
-      // Safety cap — bulk inviting >1000 in one request risks Resend rate
-      // limits and is almost certainly a copy/paste mistake.
-      return res.status(400).json({ error: 'contact_ids_too_many', max: 1000, got: contact_ids.length });
+    if (contactIds && contactIds.length > 1000) return res.status(400).json({ error: 'contact_ids_too_many', max: 1000, got: contactIds.length });
+    const includeFlagged = Array.isArray(b.include_flagged) ? b.include_flagged.filter((x) => typeof x === 'string').slice(0, 1000) : [];
+    const mode = b.dry_run === true ? 'preview' : (b.mode === 'send' || b.mode === 'create_only' ? b.mode : null);
+    if (!mode) return res.status(400).json({ error: 'mode_required', detail: 'Preview first (dry_run: true), then mode send or create_only with the preview_hash.' });
+
+    // Writes are the owner's: check before doing any work.
+    let owner = null;
+    if (mode !== 'preview') {
+      const { requireOwner } = require('./_require_admin');
+      owner = await requireOwner(req, res);
+      if (!owner) return;
     }
 
-    // Fetch community context
-    const { data: community } = await supabase
-      .from('communities')
-      .select('id, name, slug, hoa_legal_name')
-      .eq('id', communityId)
-      .maybeSingle();
-    if (!community) return res.status(404).json({ error: 'community_not_found' });
-    // What the invite may promise: only what this association's portal shows.
+    const { loadInviteRoster } = require('../lib/portal/invite_roster');
+    const loaded = await loadInviteRoster(supabase, communityId, { managementCompanyId: BEDROCK_MGMT_CO_ID, contactIds, includeFlagged });
+    if (!loaded.community) return res.status(404).json({ error: 'community_not_found' });
+    const { community, roster, cross_check, hash } = loaded;
     const access = await require('../lib/portal/financial_access').financialAccessFor(supabase, communityId)
       .catch(() => ({ balance: false, payments: false }));
-    const { sendPortalInvite } = require('../lib/email/portal_invite');
+    const preview = {
+      community: { id: community.id, name: community.name, portal_active: community.portal_active === true },
+      preview_hash: hash, cross_check, counts: roster.counts,
+      invitation_mentions: { balance: !!access.balance, payments: !!access.payments },
+      send_in_progress: _sendsInFlight.has(community.id),
+    };
+    if (mode === 'preview') return res.json({ ok: true, dry_run: true, ...preview, invite: roster.invite, skipped: roster.skipped });
 
-    // Fetch all contacts in one shot (idempotent membership check below)
-    const { data: contacts } = await supabase
-      .from('contacts')
-      .select('id, full_name, preferred_name, primary_email')
-      .in('id', contact_ids);
-    const contactById = Object.fromEntries((contacts || []).map((c) => [c.id, c]));
-
-    // Fetch current residencies for these contacts to find their property in
-    // THIS community (a contact may own elsewhere; we only grant the in-community
-    // property to avoid accidentally granting cross-community access).
-    const { data: residencies } = await supabase
-      .from('property_residencies')
-      .select('contact_id, property_id, properties:property_id(id, street_address, community_id)')
-      .in('contact_id', contact_ids)
-      .is('end_date', null);
-    // Build a map: contact_id -> property in THIS community (the first match;
-    // a contact with two properties in the same community is rare and either
-    // works for invite purposes).
-    const propertyForContact = {};
-    // The OWNER of record comes first (ownership_tenures + property_ownerships,
-    // the same source online payments use), so an owner who rents the home out
-    // is invited to the lot they own. Residency is the fallback for contacts
-    // with no owner record. (Ed 2026-11-21: 70 LOPF lots are rentals.)
-    const { data: ownerRows, error: ownerErr } = await supabase
-      .from('property_ownerships')
-      .select('contact_id, tenure:tenure_id(property_id, community_id, kind, end_date, properties:property_id(street_address))')
-      .in('contact_id', contact_ids);
-    if (ownerErr) console.warn('[portal_admin] bulk-invite owner lookup failed:', ownerErr.message);
-    for (const o of (ownerRows || [])) {
-      const t = o.tenure;
-      if (t && t.kind === 'owner' && !t.end_date && t.community_id === communityId && !propertyForContact[o.contact_id]) {
-        propertyForContact[o.contact_id] = { property_id: t.property_id, street_address: (t.properties && t.properties.street_address) || '' };
+    if (!cross_check.ok) return res.status(409).json({ error: 'roster_cross_check_failed', ...preview });
+    if (!b.preview_hash || b.preview_hash !== hash) return res.status(409).json({ error: 'preview_changed', detail: 'The list changed since it was previewed. Preview again.', ...preview });
+    const { isOpenCommunity } = require('../lib/portal/portal_open');
+    if (mode === 'create_only') {
+      if (typeof b.portal_active_expected !== 'boolean') return res.status(400).json({ error: 'portal_active_expected_required' });
+      if (b.portal_active_expected !== (community.portal_active === true)) return res.status(409).json({ error: 'portal_state_changed', ...preview });
+      // While the portal is off the association is in PILOT: accounts are added
+      // one at a time on the pilot list. Creating accounts for every owner is a
+      // broader launch and needs the owner's explicit approval in the request.
+      if (community.portal_active !== true && b.broader_launch_approved !== true) {
+        return res.status(409).json({ error: 'pilot_mode', detail: 'The portal is in pilot. Creating accounts for all owners is a broader launch: approve it explicitly first.', ...preview });
       }
+    } else if (!isOpenCommunity(community)) {
+      return res.status(409).json({ error: 'portal_not_active', detail: 'Turn the portal on before sending invitations.', ...preview });
     }
-    for (const r of (residencies || [])) {
-      if (r.properties && r.properties.community_id === communityId) {
-        if (!propertyForContact[r.contact_id]) {
-          propertyForContact[r.contact_id] = {
-            property_id: r.property_id,
-            street_address: r.properties.street_address || '',
-          };
-        }
-      }
+    if (_sendsInFlight.has(community.id)) return res.status(409).json({ error: 'send_in_progress', ...preview });
+
+    const performedBy = owner.email || owner.id;
+    const toCreate = roster.invite.filter((r) => r.action === 'create');
+    if (mode === 'send') _sendsInFlight.add(community.id);
+    let created;
+    try {
+      created = await _createRosterAccounts(toCreate, { performedBy, slug: community.slug, via: mode === 'send' ? 'bulk_invite' : 'silent_create' });
+    } catch (e) {
+      _sendsInFlight.delete(community.id);
+      throw e;
     }
-
-    // Fetch existing portal_users by email (for idempotency check)
-    const lowerEmails = (contacts || [])
-      .map((c) => (c.primary_email || '').toLowerCase().trim())
-      .filter(Boolean);
-    const { data: existingUsers } = lowerEmails.length
-      ? await supabase
-          .from('portal_users')
-          .select('id, email, contact_id, status')
-          .eq('management_company_id', BEDROCK_MGMT_CO_ID)
-          .in('email', lowerEmails)
-      : { data: [] };
-    const existingByEmail = {};
-    const existingByContactId = {};
-    for (const u of (existingUsers || [])) {
-      if (u.email) existingByEmail[u.email.toLowerCase()] = u;
-      if (u.contact_id) existingByContactId[u.contact_id] = u;
-    }
-
-    // Per-contact processing — but we batch the actual email send in groups
-    // of 5 to keep Resend happy. The DB writes (insert user, grant property,
-    // insert magic_link) are all individual rows and are fine to do in a loop.
-    const results = [];
-    const toEmail = []; // queue of { user_id, email, full_name, token }
-
-    for (const cid of contact_ids) {
-      const c = contactById[cid];
-      if (!c) { results.push({ contact_id: cid, status: 'skipped', reason: 'contact_not_found' }); continue; }
-      const email = (c.primary_email || '').toLowerCase().trim();
-      if (!email || !email.includes('@')) {
-        results.push({ contact_id: cid, status: 'skipped', reason: 'no_email' });
-        continue;
-      }
-
-      const prop = propertyForContact[cid];
-      if (!prop) {
-        // Contact isn't a current resident in THIS community — refuse to grant
-        // access. Avoids accidentally inviting an ex-owner whose record is stale.
-        results.push({ contact_id: cid, status: 'skipped', reason: 'not_a_current_owner_or_resident_in_community' });
-        continue;
-      }
-
-      // Idempotency: if portal_user already exists for this email or contact,
-      // skip (operator can use resend-invite endpoint instead).
-      const existing = existingByEmail[email] || existingByContactId[cid];
-      if (existing) {
-        results.push({
-          contact_id: cid, status: 'skipped',
-          reason: 'already_invited',
-          portal_user_id: existing.id,
-          portal_status: existing.status,
-        });
-        continue;
-      }
-
-      // Create portal_user
-      let userId;
-      try {
-        const { data: newUser, error: insErr } = await supabase
-          .from('portal_users')
-          .insert({
-            management_company_id: BEDROCK_MGMT_CO_ID,
-            email,
-            full_name: c.preferred_name || c.full_name || null,
-            role: 'homeowner',
-            status: 'invited',
-            contact_id: cid,
-            invited_by: invited_by || null,
-          })
-          .select('id')
-          .single();
-        if (insErr) throw insErr;
-        userId = newUser.id;
-      } catch (e) {
-        results.push({ contact_id: cid, status: 'skipped', reason: 'insert_failed', detail: e.message });
-        continue;
-      }
-
-      // Grant the property
-      try {
-        await supabase.from('portal_user_properties').upsert({
-          portal_user_id: userId,
-          property_id: prop.property_id,
-          granted_by: invited_by || null,
-          revoked_at: null,
-          revoked_by: null,
-        }, { onConflict: 'portal_user_id,property_id' });
-      } catch (e) {
-        console.warn(`[portal_admin] bulk-invite grant-property failed for ${userId}: ${e.message}`);
-        // Don't bail — user exists, we just couldn't grant. Operator can fix manually.
-      }
-
-      // Generate magic link (7-day for invite)
-      const token = makeToken();
-      const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
-      try {
-        await supabase.from('portal_magic_links').insert({
-          portal_user_id: userId,
-          token,
-          purpose: 'invite',
-          expires_at: expiresAt.toISOString(),
-          created_by: invited_by || null,
-        });
-      } catch (e) {
-        results.push({ contact_id: cid, status: 'skipped', reason: 'magic_link_failed', detail: e.message });
-        continue;
-      }
-
-      await logAudit('user_invited', { portal_user_id: userId, performed_by: invited_by, notes: `via=bulk_invite community=${community.slug}` });
-      await logAudit('magic_link_generated', { portal_user_id: userId, performed_by: invited_by, notes: 'purpose=invite via=bulk_invite' });
-
-      toEmail.push({
-        user_id: userId,
-        email,
-        full_name: c.preferred_name || c.full_name || '',
-        property_address: prop.street_address,
-        token,
-      });
-      results.push({
-        contact_id: cid, status: 'invited',
-        portal_user_id: userId,
-        email_queued: true,
-      });
-    }
-
-    // Send emails in batches of 5 to avoid Resend rate limits and to
-    // surface failures progressively rather than all-at-end. Mutates
-    // `results` with email_sent: bool per row.
-    const emailResultByUserId = {};
-    const BATCH = 5;
-    for (let i = 0; i < toEmail.length; i += BATCH) {
-      const slice = toEmail.slice(i, i + BATCH);
-      // eslint-disable-next-line no-await-in-loop
-      await Promise.all(slice.map(async (item) => {
-        const url = magicLinkUrl(req, item.token);
-        try {
-          const send = await sendPortalInvite({ toEmail: item.email, toName: item.full_name, communityName: community.name,
-            magicLink: url, role: 'homeowner', balance: access.balance, payments: access.payments });
-          if (!(send && send.ok)) throw new Error((send && send.error) || 'send failed');
-          emailResultByUserId[item.user_id] = { sent: true };
-          await logAudit('magic_link_sent', { portal_user_id: item.user_id, notes: 'via=bulk_invite' });
-        } catch (e) {
-          console.warn(`[portal_admin] bulk-invite email failed for user ${item.user_id}: ${e.message}`);
-          emailResultByUserId[item.user_id] = { sent: false, error: e.message };
-        }
-      }));
-    }
-
-    // Stitch email-send results back into the per-contact results
-    for (const r of results) {
-      if (r.portal_user_id && emailResultByUserId[r.portal_user_id]) {
-        r.email_sent = !!emailResultByUserId[r.portal_user_id].sent;
-        if (!r.email_sent) r.email_error = emailResultByUserId[r.portal_user_id].error || 'unknown';
-      }
-    }
-
-    const invitedCount = results.filter((r) => r.status === 'invited').length;
-    const skippedCount = results.filter((r) => r.status === 'skipped').length;
-    res.json({
-      ok: true,
-      invited: invitedCount,
-      skipped: skippedCount,
-      community: { id: community.id, name: community.name },
-      results,
+    await logAudit(mode === 'send' ? 'bulk_invite_send_approved' : 'bulk_silent_create', {
+      resource_type: 'community', resource_id: community.id, performed_by: performedBy,
+      notes: `hash=${hash}${b.broader_launch_approved === true ? ' broader_launch_approved=true' : ''} accounts_created=${Object.keys(created.byContact).length} failures=${created.failures.length} to_email=${mode === 'send' ? roster.invite.length : 0}`,
     });
+    const result = {
+      ok: true, mode, ...preview,
+      accounts_created: Object.keys(created.byContact).length,
+      failures: created.failures,
+    };
+    if (mode === 'create_only') return res.json(result);
+
+    const failedIds = new Set(created.failures.filter((f) => f.reason === 'account_insert_failed').map((f) => f.contact_id));
+    const items = roster.invite.filter((r) => !failedIds.has(r.contact_id)).map((r) => ({
+      portal_user_id: r.portal_user_id || created.byContact[r.contact_id], email: r.email, name: r.name,
+    })).filter((it) => it.portal_user_id);
+    res.status(202).json({ ...result, emails_queued: items.length,
+      detail: 'Invitations are sending in the background. Preview again in a few minutes: anyone still listed as not yet emailed did not go out.' });
+    setImmediate(() => _sendInvitesInBackground(items, { req, community, access, performedBy }));
   } catch (err) {
     console.error('[portal_admin] bulk-invite failed:', err.message);
-    res.status(500).json({ error: err.message });
+    if (!res.headersSent) res.status(500).json({ error: safeErrorMessage(err) });
   }
 });
 
@@ -1329,6 +1311,14 @@ router.post('/users/:id/resend-invite', async (req, res) => {
       // the operator is told the invite went out when it didn't. (Ed 2026-07-15.)
       emailSent = !!(send && send.ok);
       emailError = emailSent ? null : ((send && send.error) || 'send failed');
+      if (emailSent) {
+        // A silently created account is now emailed: drop it from the bulk
+        // "not yet emailed" list so a later bulk send does not email it twice.
+        const { SILENT_CREATE_MARK } = require('../lib/portal/invite_roster');
+        const { error: markErr } = await supabase.from('portal_users').update({ invited_by: invitedBy || 'resend' })
+          .eq('id', userId).eq('invited_by', SILENT_CREATE_MARK);
+        if (markErr) console.warn('[portal_admin] resend re-mark failed:', markErr.message);
+      }
       await logAudit(emailSent ? 'magic_link_sent' : 'magic_link_send_failed', {
         portal_user_id: userId,
         notes: emailSent ? `via=resend id=${send.vendor_message_id || '?'}` : `via=resend error=${emailError}`,
@@ -1349,6 +1339,146 @@ router.post('/users/:id/resend-invite', async (req, res) => {
   } catch (err) {
     console.error('[portal_admin] resend-invite failed:', err.message);
     res.status(500).json({ error: err.message });
+  }
+});
+
+// ============================================================================
+// Portal PILOT (OWNER ONLY)   (Ed 2026-11-22)
+// ----------------------------------------------------------------------------
+// While an association's portal_active is false, the portal opens ONLY for the
+// portal users on portal_module_config.portal_pilot.user_ids (lib/portal/
+// portal_open.js). Ed picks each pilot homeowner himself. Adding one creates or
+// links that owner's account silently (no email) and returns a sign-in link for
+// Ed to hand over personally. This route is the only writer of portal_pilot;
+// ordinary config writes carry it forward (carryFinancialStamp) and the
+// homeowner browser never receives it (presentedModuleConfig).
+//
+//   GET  /community/:communityId/pilot                         list
+//   POST /community/:communityId/pilot { action:'add', contact_id, include_flagged? }
+//   POST /community/:communityId/pilot { action:'remove', portal_user_id }
+//   POST /community/:communityId/pilot { action:'link', portal_user_id }   fresh sign-in link
+// ============================================================================
+const PILOT_MARK = 'portal-pilot';
+const PILOT_MAX = 50;
+
+async function _issueHandoverLink(req, portalUserId, performedBy) {
+  const token = makeToken();
+  const { error } = await supabase.from('portal_magic_links').insert({
+    portal_user_id: portalUserId, token, purpose: 'invite',
+    expires_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(), created_by: performedBy,
+  });
+  if (error) throw error;
+  await logAudit('magic_link_generated', { portal_user_id: portalUserId, performed_by: performedBy, notes: 'purpose=pilot_handover email=not_sent' });
+  return magicLinkUrl(req, token);
+}
+
+router.get('/community/:communityId/pilot', async (req, res) => {
+  try {
+    const { requireOwner } = require('./_require_admin');
+    const owner = await requireOwner(req, res);
+    if (!owner) return;
+    const { data: c, error } = await supabase.from('communities')
+      .select('id, name, portal_active, portal_module_config').eq('id', req.params.communityId).maybeSingle();
+    if (error) throw error;
+    if (!c) return res.status(404).json({ error: 'community_not_found' });
+    const { pilotUserIds } = require('../lib/portal/portal_open');
+    const ids = pilotUserIds(c);
+    let members = [];
+    if (ids.length) {
+      const { data: users, error: uErr } = await supabase.from('portal_users')
+        .select('id, full_name, email, status, first_login_at, last_login_at').in('id', ids);
+      if (uErr) throw uErr;
+      const { data: grants, error: gErr } = await supabase.from('portal_user_properties')
+        .select('portal_user_id, properties:property_id(street_address, community_id)').in('portal_user_id', ids).is('revoked_at', null);
+      if (gErr) throw gErr;
+      members = (users || []).map((u) => ({
+        portal_user_id: u.id, name: u.full_name || '', email: u.email, status: u.status,
+        first_login_at: u.first_login_at, last_login_at: u.last_login_at,
+        lots: (grants || []).filter((g) => g.portal_user_id === u.id && g.properties && g.properties.community_id === c.id).map((g) => g.properties.street_address),
+      }));
+    }
+    const p = (c.portal_module_config && c.portal_module_config.portal_pilot) || {};
+    res.json({ ok: true, community: { id: c.id, name: c.name, portal_active: c.portal_active === true }, set_by: p.set_by || null, set_at: p.set_at || null, members });
+  } catch (err) {
+    console.error('[portal_admin] pilot list failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+router.post('/community/:communityId/pilot', async (req, res) => {
+  try {
+    const { requireOwner } = require('./_require_admin');
+    const owner = await requireOwner(req, res);
+    if (!owner) return;
+    const communityId = req.params.communityId;
+    const b = req.body || {};
+    if (!['add', 'remove', 'link'].includes(b.action)) return res.status(400).json({ error: 'action_must_be_add_remove_or_link' });
+    const performedBy = owner.email || owner.id;
+    const { data: c, error: cErr } = await supabase.from('communities')
+      .select('id, name, slug, portal_active, portal_module_config').eq('id', communityId).maybeSingle();
+    if (cErr) throw cErr;
+    if (!c) return res.status(404).json({ error: 'community_not_found' });
+    const { pilotUserIds } = require('../lib/portal/portal_open');
+    const ids = pilotUserIds(c);
+    const writePilot = async (nextIds) => {
+      const cfg = { ...(c.portal_module_config || {}), portal_pilot: { user_ids: nextIds, set_by: performedBy, set_at: new Date().toISOString() } };
+      const { error } = await supabase.from('communities').update({ portal_module_config: cfg }).eq('id', communityId);
+      if (error) throw error;
+    };
+
+    if (b.action === 'remove' || b.action === 'link') {
+      const uid = typeof b.portal_user_id === 'string' ? b.portal_user_id : '';
+      if (!ids.includes(uid)) return res.status(404).json({ error: 'not_on_pilot_list' });
+      if (b.action === 'remove') {
+        await writePilot(ids.filter((x) => x !== uid));
+        await logAudit('pilot_user_removed', { portal_user_id: uid, resource_type: 'community', resource_id: communityId, performed_by: performedBy });
+        return res.json({ ok: true, removed: uid, pilot_count: ids.length - 1 });
+      }
+      const link = await _issueHandoverLink(req, uid, performedBy);
+      return res.json({ ok: true, portal_user_id: uid, sign_in_link: link, emailed: false });
+    }
+
+    // add: must be a current owner of record here with a usable, unshared inbox.
+    const contactId = typeof b.contact_id === 'string' ? b.contact_id.trim() : '';
+    if (!contactId) return res.status(400).json({ error: 'contact_id_required' });
+    if (ids.length >= PILOT_MAX) return res.status(409).json({ error: 'pilot_list_full', max: PILOT_MAX });
+    const { loadInviteRoster } = require('../lib/portal/invite_roster');
+    const loaded = await loadInviteRoster(supabase, communityId, {
+      managementCompanyId: BEDROCK_MGMT_CO_ID, contactIds: [contactId], includeFlagged: b.include_flagged === true ? [contactId] : [],
+    });
+    const row = loaded.roster.invite[0];
+    const skip = loaded.roster.skipped[0];
+    let userId = null;
+    let lots = [];
+    if (row && row.action === 'create') {
+      const made = await _createRosterAccounts([row], { performedBy, slug: c.slug, via: 'pilot', mark: PILOT_MARK });
+      if (made.failures.length) return res.status(409).json({ error: made.failures[0].reason, detail: made.failures[0].detail });
+      userId = made.byContact[contactId];
+      lots = row.properties;
+    } else if (row && row.action === 'email_existing') {
+      userId = row.portal_user_id; lots = row.properties;
+    } else if (skip && skip.reason === 'already_has_account') {
+      const { data: u, error: uErr } = await supabase.from('portal_users').select('id')
+        .eq('management_company_id', BEDROCK_MGMT_CO_ID).eq('contact_id', contactId).limit(1).maybeSingle();
+      if (uErr) throw uErr;
+      userId = u && u.id; lots = skip.properties;
+    } else {
+      return res.status(409).json({ error: 'not_eligible', reason: skip ? skip.reason : 'not_a_current_owner', detail: skip && skip.detail });
+    }
+    if (!userId) return res.status(409).json({ error: 'account_not_found' });
+    // Make sure the account can see every lot this owner holds here.
+    const { error: gErr } = await supabase.from('portal_user_properties').upsert(
+      lots.map((p) => ({ portal_user_id: userId, property_id: p.property_id, granted_by: performedBy, revoked_at: null, revoked_by: null })),
+      { onConflict: 'portal_user_id,property_id' });
+    if (gErr) throw gErr;
+    if (!ids.includes(userId)) await writePilot([...ids, userId]);
+    await logAudit('pilot_user_added', { portal_user_id: userId, resource_type: 'community', resource_id: communityId, performed_by: performedBy, notes: `contact=${contactId} email=not_sent` });
+    const link = await _issueHandoverLink(req, userId, performedBy);
+    res.json({ ok: true, portal_user_id: userId, email: (row || skip).email, lots: lots.map((p) => p.street_address),
+      sign_in_link: link, emailed: false, pilot_count: ids.includes(userId) ? ids.length : ids.length + 1 });
+  } catch (err) {
+    console.error('[portal_admin] pilot change failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
   }
 });
 
