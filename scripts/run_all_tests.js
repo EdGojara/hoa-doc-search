@@ -143,6 +143,7 @@ const CHECKS = [
   'tests/test_bank_rec_standing.js',
   'tests/test_bank_rec_prior_copy.js',
   'tests/test_bank_statement_versions.js',
+  'tests/test_bank_statement_tie.js',
   'tests/test_bank_rec_workpaper.js',
   'tests/test_bank_rec_suspense_transfer.js',
   'tests/test_crossfund_transfer_presentation.js',
