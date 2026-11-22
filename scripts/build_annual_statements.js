@@ -205,8 +205,10 @@ async function main() {
       return { d, row, why: validate(d, { lockbox, sample }) };
     } catch (e) { return { d: null, row, why: [e.message] }; }
   });
-  const validGood = built.filter((b) => b.d && !b.why.length).map((b) => { b.d.property_id = b.d.property_id || b.row.property_id; return b.d; });
-  const bad = built.filter((b) => !b.d || b.why.length);
+  // Every built statement (valid or not) goes through the counsel hold first:
+  // a held account stays held even if it also has a validation problem, so
+  // fixing that problem can never put it into a print file.
+  const withD = built.filter((b) => b.d).map((b) => { b.d.property_id = b.d.property_id || b.row.property_id; b.d._why = b.why; return b.d; });
 
   // Counsel hold: active enforcement states + legal fees billed (for the
   // "possibly with counsel but not recorded" warning list).
@@ -217,8 +219,12 @@ async function main() {
     .or('description.ilike.%attorney%,description.ilike.%legal fee%'), { orderBy: 'id' });
   const legalFees = new Map();
   for (const r of legalRows) if (r.property_id && r.amount_cents > 0) legalFees.set(r.property_id, (legalFees.get(r.property_id) || 0) + r.amount_cents);
-  const ch = sample ? { mail: validGood, held: [], unflagged: [] } : applyCounselHolds(validGood, states, legalFees);
-  const good = ch.mail;
+  const ch = sample ? { mail: withD, held: [], unflagged: [] } : applyCounselHolds(withD, states, legalFees);
+  for (const h of ch.held) if (h.d._why && h.d._why.length) h.reason += `; also: ${h.d._why.join('; ')}`;
+  const heldIds = new Set(ch.held.map((h) => h.d.property_id));
+  const good = ch.mail.filter((d) => !d._why.length);
+  ch.unflagged = ch.unflagged.filter((u) => !u.d._why.length);
+  const bad = built.filter((b) => !b.d || (b.why.length && !heldIds.has(b.d.property_id)));
   if (preview && gates.announcement && gates.announcement.preview_note) for (const d of good) d.sample_note = gates.announcement.preview_note;
 
   const label = sample ? 'SAMPLE - BANK SCANLINE TEST - NOT FOR MAILING' : preview ? PREVIEW_LABEL : null;
