@@ -1,0 +1,42 @@
+{
+  "migration": "573_autopay_on_payment_path.sql",
+  "summary": "Autopay on the one-time payment path (PR #411): new nullable columns on assessment_autopay (card funding, setup session, the accepted terms and version, the fee and total named in the 10-day notice) and assessment_autopay_runs.payment_group_id with an index; the run outcome list gains skipped_paused, skipped_not_payable, skipped_fee_changed and skipped_in_flight. Additive only. No enrollments exist; no payments or ledger rows change. Charging stays off until AUTOPAY_CHARGES_ENABLED is set.",
+  "requires": ["383_assessment_autopay.sql"],
+  "preflight": [
+    { "name": "assessment_autopay exists", "sql": "SELECT count(*)::int FROM information_schema.tables WHERE table_name = 'assessment_autopay'", "expect": 1 },
+    { "name": "new columns do not exist yet", "sql": "SELECT count(*)::int FROM information_schema.columns WHERE table_name = 'assessment_autopay' AND column_name IN ('card_funding','setup_session_id','authorized_terms','authorized_terms_version','noticed_fee_cents','noticed_total_cents')", "expect": 0 },
+    { "name": "no autopay enrollments yet", "sql": "SELECT count(*)::int FROM assessment_autopay", "expect": 0 }
+  ],
+  "expected_changes": [
+    "assessment_autopay: new nullable columns card_funding, setup_session_id, authorized_terms, authorized_terms_version, noticed_fee_cents, noticed_total_cents, with their CHECKs.",
+    "assessment_autopay_runs: new nullable column payment_group_id and partial index assessment_autopay_runs_group_idx; outcome CHECK widened with four new skip outcomes.",
+    "Column comments added. No rows added, changed or deleted."
+  ],
+  "objects": {
+    "added": [
+      "column:assessment_autopay.card_funding",
+      "column:assessment_autopay.setup_session_id",
+      "column:assessment_autopay.authorized_terms",
+      "column:assessment_autopay.authorized_terms_version",
+      "column:assessment_autopay.noticed_fee_cents",
+      "column:assessment_autopay.noticed_total_cents",
+      "constraint:assessment_autopay.assessment_autopay_card_funding_check",
+      "constraint:assessment_autopay.assessment_autopay_noticed_fee_cents_check",
+      "constraint:assessment_autopay.assessment_autopay_noticed_total_cents_check",
+      "column:assessment_autopay_runs.payment_group_id",
+      "index:assessment_autopay_runs_group_idx"
+    ],
+    "changed": ["constraint:assessment_autopay_runs.assessment_autopay_runs_outcome_check"],
+    "removed": []
+  },
+  "row_changes": { "assessment_autopay": 0, "assessment_autopay_runs": 0, "payments": 0, "homeowner_transactions": 0 },
+  "protected": [
+    { "table": "payments", "order_by": "id" },
+    { "table": "homeowner_transactions", "order_by": "id" }
+  ],
+  "verify": [
+    { "name": "six new assessment_autopay columns", "sql": "SELECT count(*)::int FROM information_schema.columns WHERE table_name = 'assessment_autopay' AND column_name IN ('card_funding','setup_session_id','authorized_terms','authorized_terms_version','noticed_fee_cents','noticed_total_cents')", "expect": 6 },
+    { "name": "runs.payment_group_id exists", "sql": "SELECT count(*)::int FROM information_schema.columns WHERE table_name = 'assessment_autopay_runs' AND column_name = 'payment_group_id'", "expect": 1 },
+    { "name": "outcome check allows skipped_in_flight", "sql": "SELECT count(*)::int FROM pg_constraint WHERE conname = 'assessment_autopay_runs_outcome_check' AND pg_get_constraintdef(oid) LIKE '%skipped_in_flight%'", "expect": 1 }
+  ]
+}
