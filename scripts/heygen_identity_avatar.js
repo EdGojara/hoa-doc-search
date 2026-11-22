@@ -17,7 +17,7 @@
 //
 //   node scripts/heygen_identity_avatar.js create --name "<group name>" --image <file>
 //   node scripts/heygen_identity_avatar.js status --look <look_id>
-//   node scripts/heygen_identity_avatar.js render --look <look_id> --voice <voice_id|FACE> --script "<text>" --out <file.mp4>
+//   node scripts/heygen_identity_avatar.js render --look <look_id> --voice <voice_id|FACE> --script "<text>" --out <file.mp4> [--fit contain] [--aspect 16:9]
 //
 // COST: creating an avatar and rendering a video use HeyGen credits. Nothing
 // here runs implicitly; every call is an explicit command.
@@ -100,6 +100,8 @@ async function voiceFor(v) {
     if (!look || !voice || !script || !out) throw new Error('--look, --voice, --script and --out are required');
     const body = { type: 'avatar', avatar_id: look, voice_id: voice, script };
     if (arg('--engine')) body.engine = { type: arg('--engine') };
+    if (arg('--fit')) body.fit = arg('--fit');               // 'contain' keeps the whole source frame (no head crop)
+    if (arg('--aspect')) body.aspect_ratio = arg('--aspect');
     const d = await call('POST', '/v3/videos', body);
     const vid = d.video_id || d.id;
     console.log('video', vid);
