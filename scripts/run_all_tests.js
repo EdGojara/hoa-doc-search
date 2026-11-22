@@ -138,6 +138,7 @@ const CHECKS = [
   'tests/test_bank_monthly_rec.js',
   'tests/test_bank_error_carry.js',
   'tests/test_bank_rec_receipts.js',
+  'tests/test_bank_rec_propay_channel.js',
   'tests/test_bank_rec_standing.js',
   'tests/test_bank_rec_prior_copy.js',
   'tests/test_bank_statement_versions.js',
