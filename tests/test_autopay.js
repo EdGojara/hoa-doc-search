@@ -93,7 +93,7 @@ check('every attempt is logged, including the ones that did nothing', () => {
   for (const o of ['noticed', 'charged', 'failed', 'skipped_zero_balance', 'skipped_over_cap', 'skipped_no_notice']) {
     assert.ok(mig.includes(`'${o}'`), `outcome ${o} must be recordable`);
   }
-  assert.ok(/recordRun\(r\.id, \{ amount_cents: 0, outcome: 'skipped_zero_balance'/.test(autopaySrc),
+  assert.ok(/recordRun\(deps, r\.id, \{ amount_cents: 0, outcome: 'skipped_zero_balance'/.test(autopaySrc),
     'a zero-balance skip is still an event worth seeing');
 });
 
@@ -106,19 +106,27 @@ check('the unique index prevents a second live enrolment', () => {
     'cancelled mandates must not block re-enrolment, live ones must');
 });
 
-console.log('\nThe money and the mandate stay with the association');
-check('the customer and the charge run on the connected account', () => {
+console.log('\nOne payment path: platform customer, destination charge, webhook posting (Ed 2026-11-21)');
+check('the old direct charge on the connected account is gone', () => {
   const s = src('lib/payments/stripe.js');
-  const fnStart = s.indexOf('async function chargeOffSession');
-  const fn = s.slice(fnStart, fnStart + 1400);
-  assert.ok(/stripeAccount: opts\.connectedAccountId/.test(fn),
-    'a charge on the platform account would put association money in Bedrock\'s balance');
-  assert.ok(/off_session: 'true'/.test(fn) && /confirm: 'true'/.test(fn),
-    'the homeowner is not present — that is what a standing authorisation means');
+  assert.ok(!/chargeOffSession/.test(s), 'a direct charge bypasses the fee, the payments rows and the posting pipeline');
+  assert.ok(!/chargeOffSession/.test(autopaySrc));
 });
-check('ACH settling as "processing" counts as success', () => {
+check('customer and setup session are created on the platform, the setup bound on_behalf_of the association', () => {
   const s = src('lib/payments/stripe.js');
-  assert.ok(/status === 'succeeded' \|\| pi\.status === 'processing'/.test(s),
+  const block = s.slice(s.indexOf('async function createCustomer'), s.indexOf('async function recoverDisputedTransfer'));
+  assert.ok(!/stripeAccount:/.test(block), 'no Stripe-Account header on enrollment calls');
+  assert.ok(/setup_intent_data: \{ on_behalf_of: opts\.onBehalfOf/.test(block));
+  assert.ok(/onBehalfOf: acct/.test(autopaySrc));
+});
+check('the charge is the one-time payment path, off-session, money to the association', () => {
+  assert.ok(/AI\.chargeAutopayAssessment\(deps,/.test(autopaySrc));
+  assert.ok(/offSession: true/.test(src('lib/payments/assessment_intent.js')));
+  assert.ok(/transfer_data: \{ destination: opts\.connectedAccountId \}/.test(src('lib/payments/stripe.js')),
+    'a destination charge: the assessment goes to the association, only the fee stays');
+});
+check('ACH settling as "processing" counts as charged (never retried as a failure)', () => {
+  assert.ok(/pi\.status === 'succeeded' \|\| pi\.status === 'processing'/.test(src('lib/payments/assessment_intent.js')),
     'ACH does not settle instantly; treating processing as failure would double-charge on retry');
 });
 

@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Automatic Payments · Bedrock Homeowner Portal</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600&family=Inter:wght@400;500;600;700&display=swap">
+<link rel="stylesheet" href="/brand.css">
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--cream, #FAFAF6); color: var(--ink, #1a1a1a);
+    font-family: var(--font-sans, 'Inter', -apple-system, sans-serif); font-size: 15px; line-height: 1.5; -webkit-font-smoothing: antialiased; }
+  header { background: var(--navy, #0B1D34); color: #fff; padding: 14px 16px; display: flex; align-items: center; gap: 12px; }
+  header a { color: var(--gold, #D4AF37); text-decoration: none; font-weight: 600; font-size: 14px; }
+  header .t { font-family: var(--font-serif, Georgia, serif); font-size: 20px; font-weight: 600; }
+  main { max-width: 560px; margin: 0 auto; padding: 20px 16px 48px; }
+  .card { background: #fff; border: 1px solid var(--rule, #E5E3DA); border-radius: 12px; padding: 20px; margin-bottom: 16px; }
+  h2 { font-family: var(--font-serif, Georgia, serif); color: var(--navy, #0B1D34); font-size: 22px; margin: 0 0 6px; }
+  h3 { font-size: 14px; color: var(--navy, #0B1D34); margin: 16px 0 6px; }
+  .muted { color: var(--ink-soft, #4a4a4a); font-size: 13.5px; }
+  ul { margin: 6px 0 0; padding-left: 20px; font-size: 13.5px; }
+  li { margin: 4px 0; }
+  .disclosure { background: var(--cream, #FAFAF6); border-left: 3px solid var(--gold, #D4AF37); padding: 10px 12px 10px 4px; margin: 12px 0; }
+  label.field { display: block; font-size: 13.5px; margin: 14px 0 4px; font-weight: 600; }
+  input[type="text"] { width: 100%; padding: 10px 12px; border: 1px solid var(--rule, #E5E3DA); border-radius: 8px; font-size: 15px; }
+  label.agree { display: flex; gap: 10px; align-items: flex-start; font-size: 13.5px; margin: 14px 0; cursor: pointer; }
+  label.agree input { margin-top: 3px; }
+  button.primary { width: 100%; padding: 13px 16px; border: none; border-radius: 9px; background: var(--navy, #0B1D34); color: #fff; font-weight: 700; font-size: 15px; cursor: pointer; }
+  button.primary:disabled { opacity: .55; cursor: default; }
+  .err { color: var(--tx-bad, #b91c1c); font-size: 13.5px; margin-top: 10px; min-height: 1em; }
+  .note { background: #fff7ed; border: 1px solid #fed7aa; color: #9a3412; border-radius: 9px; padding: 10px 12px; font-size: 13.5px; margin-bottom: 12px; }
+  .hidden { display: none; }
+  @media (max-width: 400px) { .card { padding: 16px; } }
+</style>
+</head>
+<body>
+<header><a href="/portal">&larr; Portal</a><span class="t">Automatic payments</span></header>
+<main>
+  <div id="stepLoading" class="card"><p class="muted">Loading…</p></div>
+
+  <div id="stepUnavailable" class="card hidden">
+    <h2>Automatic payments</h2>
+    <p id="unavailText" class="muted"></p>
+    <p><a href="/portal">Back to the portal</a></p>
+  </div>
+
+  <div id="stepTerms" class="card hidden">
+    <div id="cancelledNote" class="note hidden">You left the authorization page, so nothing was set up and no money has moved.</div>
+    <h2>Pay your balance automatically</h2>
+    <p class="muted">Automatic payments to <b id="assocName"></b> from a card or bank account you choose on the next screen.</p>
+
+    <h3>Processing fees</h3>
+    <ul id="feeList"></ul>
+
+    <h3>How automatic payments work</h3>
+    <div class="disclosure"><ul id="discList"></ul></div>
+
+    <label class="field" for="cap">Maximum per payment (optional)</label>
+    <input type="text" id="cap" inputmode="decimal" placeholder="No maximum" autocomplete="off">
+    <div class="muted">Applies to the total including the fee. Anything above it is not taken; we ask you first.</div>
+
+    <label class="agree"><input type="checkbox" id="agree"><span>I have read these terms, including the processing fee, and authorize automatic payments on these terms.</span></label>
+    <button class="primary" id="btnContinue" disabled>Continue to authorize</button>
+    <div class="muted" style="margin-top:8px;">Next you choose a card or bank account on Stripe's secure page. No money moves when you set this up.</div>
+    <div class="err" id="errTerms"></div>
+  </div>
+</main>
+<script>
+(function () {
+  'use strict';
+  const $ = (id) => document.getElementById(id);
+  const steps = ['stepLoading', 'stepUnavailable', 'stepTerms'];
+  const show = (id) => steps.forEach((s) => $(s).classList.toggle('hidden', s !== id));
+  const params = new URLSearchParams(location.search);
+  let terms = null;
+
+  function unavailable(msg) { $('unavailText').textContent = msg || 'Automatic payments are not available for this account.'; show('stepUnavailable'); }
+
+  function fillList(el, items) {
+    el.textContent = '';
+    (items || []).filter(Boolean).forEach((t) => { const li = document.createElement('li'); li.textContent = t; el.appendChild(li); });
+  }
+
+  function renderTerms(t, assocName) {
+    terms = t;
+    $('assocName').textContent = assocName || 'your association';
+    const fs = t.fee_schedule || {};
+    fillList($('feeList'), [fs.card, fs.debit, fs.ach]);
+    fillList($('discList'), t.disclosure);
+    $('agree').checked = false;
+    $('btnContinue').disabled = true;
+    show('stepTerms');
+  }
+
+  function capCents() {
+    const raw = String($('cap').value || '').replace(/[$,\s]/g, '');
+    if (!raw) return null;
+    const n = Number(raw);
+    if (!Number.isFinite(n) || n <= 0) throw new Error('Enter the maximum as a dollar amount, or leave it blank.');
+    return Math.round(n * 100);
+  }
+
+  async function begin() {
+    const btn = $('btnContinue');
+    $('errTerms').textContent = '';
+    let cap;
+    try { cap = capCents(); } catch (e) { $('errTerms').textContent = e.message; return; }
+    btn.disabled = true; btn.textContent = 'Opening…';
+    try {
+      const r = await fetch('/api/portal/autopay/begin', {
+        method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ accepted_terms_version: terms.version, max_amount_cents: cap }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (r.status === 401) { location.href = '/portal-login.html'; return; }
+      if (r.status === 409 && j.error === 'terms_changed' && j.terms) {
+        renderTerms(j.terms, $('assocName').textContent);
+        $('errTerms').textContent = 'The terms changed since this page loaded. Please read them again.';
+        return;
+      }
+      if (!r.ok || !j.setup_url) throw new Error(j.hint || j.detail || j.error || 'Could not start automatic payments.');
+      location.href = j.setup_url;
+    } catch (e) {
+      $('errTerms').textContent = e.message;
+    } finally {
+      btn.textContent = 'Continue to authorize';
+      btn.disabled = !$('agree').checked;
+    }
+  }
+
+  async function start() {
+    if (params.get('demo') === '1') return unavailable('Automatic payments are not available in the demo portal.');
+    let j;
+    try {
+      const r = await fetch('/api/portal/autopay', { credentials: 'same-origin' });
+      if (r.status === 401) { location.href = '/portal-login.html'; return; }
+      j = await r.json();
+    } catch (_) { return unavailable('Could not load automatic payments. Please try again.'); }
+    const en = j && j.enrollment;
+    if (!en || !en.available || !en.terms) return unavailable(en && en.reason);
+    if (params.get('cancelled') === '1') $('cancelledNote').classList.remove('hidden');
+    renderTerms(en.terms, en.association_name);
+  }
+
+  $('agree').addEventListener('change', () => { $('btnContinue').disabled = !$('agree').checked; });
+  $('btnContinue').addEventListener('click', begin);
+  start();
+})();
+</script>
+</body>
+</html>
