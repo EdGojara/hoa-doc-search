@@ -1568,7 +1568,16 @@ function renderPortal(ctx) {
       if (!r.ok) return;
       const j = await r.json();
       const a = j.autopay;
-      if (!a || a.status === 'cancelled') return;
+      const canEnroll = !!(j.enrollment && j.enrollment.available);
+      if (!a || a.status === 'cancelled') {
+        // Offered only when the server says enrollment is open (switch on, payments on, fee rules set).
+        if (canEnroll) {
+          wrap.innerHTML = '<a href="/portal/autopay" style="color:#2A4870; font-weight:600;">Set up automatic payments</a>'
+            + '<div style="color:#64748b;">See the fees and terms before you authorize anything.</div>';
+          wrap.style.display = 'block';
+        }
+        return;
+      }
 
       // Already enrolled — do not offer it again inside the pay modal.
       if (a.status === 'active' || a.status === 'paused') window._payCtx.autopay_available = false;
@@ -1583,8 +1592,9 @@ function renderPortal(ctx) {
       if (a.status === 'active') {
         body = '<b style="color:#166534;">● Automatic payments are on</b>'
           + '<div style="margin-top:3px;">Next: <b>'
-          + (a.noticed_amount_cents ? money(a.noticed_amount_cents) : 'your balance')
+          + (a.noticed_total_cents ? money(a.noticed_total_cents) : 'your balance plus the processing fee')
           + '</b> on <b>' + day(a.next_charge_at) + '</b>, from ' + escapeHtml(method) + '.</div>'
+          + (a.noticed_total_cents && a.noticed_fee_cents ? '<div style="color:#64748b;">' + money(a.noticed_amount_cents) + ' assessment + ' + money(a.noticed_fee_cents) + ' processing fee.</div>' : '')
           + (a.max_amount_cents ? '<div style="color:#64748b;">We never take more than ' + money(a.max_amount_cents) + '.</div>' : '');
       } else if (a.status === 'paused') {
         // A pause is always something the homeowner needs to act on, so it says
@@ -1595,8 +1605,9 @@ function renderPortal(ctx) {
         body = '<b style="color:#b91c1c;">● Automatic payments stopped</b>'
           + '<div style="margin-top:3px;">' + escapeHtml(a.status_reason || 'The last few payments did not go through.') + '</div>';
       } else if (a.status === 'pending_setup') {
-        body = '<b style="color:#64748b;">Automatic payments — not finished</b>'
-          + '<div style="margin-top:3px;">You started setting this up but did not finish authorising it.</div>';
+        body = '<b style="color:#64748b;">Automatic payments: not finished</b>'
+          + '<div style="margin-top:3px;">You started setting this up but did not finish authorising it.'
+          + (canEnroll ? ' <a href="/portal/autopay" style="color:#2A4870;">Finish setting up</a>' : '') + '</div>';
       }
       if (!body) return;
       wrap.innerHTML = body

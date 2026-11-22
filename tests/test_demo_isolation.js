@@ -53,7 +53,7 @@ const sup = (r) => !!(r && (r.suppressed === true || (r.blocked === true)));
   ok(sup(await lob.createCertifiedLetter({ pdfBuffer: Buffer.from('%PDF-1.4 test'), recipient: { name: 'X', address_line1: '1 St', city: 'Katy', state: 'TX', zip: '77450' }, options: { communityId: DC } })), 'CERTIFIED MAIL (Lob) suppressed for a demo org');
   const stripe = require('../lib/payments/stripe');
   ok(sup(await stripe.createCheckoutSession({ communityId: DC, fees: [{ payee: 'management_company', amount_cents: 100 }], successUrl: 'https://x', cancelUrl: 'https://x', customer: { email: 'blocked@drama.demo' } })), 'STRIPE checkout suppressed for a demo org');
-  ok(sup(await stripe.chargeOffSession({ communityId: DC, amountCents: 100, customerId: 'cus_x', paymentMethodId: 'pm_x' })), 'STRIPE off-session charge suppressed for a demo org');
+  ok(sup(await stripe.createAssessmentPaymentIntent({ communityId: DC, amountCents: 100, offSession: true, customerId: 'cus_x', paymentMethodId: 'pm_x', methodKind: 'card', connectedAccountId: 'acct_x' })), 'STRIPE off-session (autopay) charge suppressed for a demo org');
 
   // ---- 3. Staff queues / portfolio metrics exclude demo ---------------------
   console.log('\n[work queues / metrics — demo excluded]');

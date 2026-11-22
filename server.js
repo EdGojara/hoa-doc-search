@@ -1720,6 +1720,8 @@ app.get('/portal/acc-review',(req, res) => res.sendFile(require('path').join(__d
 app.get('/portal/payments',  (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'portal.html')));
 // Funding-aware Pay flow (card type / bank known before the amount is fixed). Auth: portal cookie, checked by /api/portal/pay/*.
 app.get('/portal/pay',       (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'portal-pay.html')));
+// Automatic payments enrollment: terms + fee schedule before authorising. Auth: portal cookie, checked by /api/portal/autopay*.
+app.get('/portal/autopay',   (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'portal-autopay.html')));
 
 // Board portal — extensionless route mirrors the homeowner /portal pattern so
 // the "Board View →" switch (href="/board-portal") and the reciprocal

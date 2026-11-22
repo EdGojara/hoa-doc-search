@@ -4366,7 +4366,20 @@ router.get('/autopay', async (req, res) => {
     const scoped = await resolveScopedProperty(req, supabase, roleCheck.user);
     if (!scoped.property) return res.json({ autopay: null });
     const { statusForProperty } = require('../lib/payments/autopay');
-    res.json({ ok: true, autopay: await statusForProperty(scoped.property.id) });
+    const AI = require('../lib/payments/assessment_intent');
+    const autopay = await statusForProperty(scoped.property.id);
+    // What the enrollment screen shows BEFORE the homeowner authorises: the fee
+    // schedule and the recurring-payment disclosure, decided by the server.
+    let enrollment = { available: false, reason: 'Automatic payments are not available yet. Please use Pay now.' };
+    if (AI.autopayChargesEnabled() && (!autopay || autopay.status === 'pending_setup')) {
+      const t = await AI.autopayEnrollmentTerms(intentDeps(), { propertyId: scoped.property.id });
+      enrollment = t.ok
+        ? { available: true, terms: t.terms, association_name: t.pr.community.hoa_legal_name || t.pr.community.name }
+        : { available: false, reason: t.hint || 'Automatic payments are not available for this account.' };
+    } else if (autopay && autopay.status !== 'pending_setup') {
+      enrollment = { available: false, reason: 'Automatic payments are already set up.' };
+    }
+    res.json({ ok: true, autopay, enrollment });
   } catch (err) {
     console.error('[portal] autopay status failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
@@ -4497,46 +4510,42 @@ router.post('/pay/confirm', express.json({ limit: '8kb' }), async (req, res) => 
 });
 
 router.post('/autopay/begin', express.json({ limit: '16kb' }), async (req, res) => {
-  // PAUSED (Ed 2026-09-27): autopay charges do not yet run through the payment
-  // webhook / tenure posting pipeline, so enrolling would promise payments that
-  // never credit the owner. Re-enabled only with the reviewed autopay design.
-  return res.status(503).json({ error: 'autopay_unavailable', detail: 'Automatic payments are not available yet. Please use Pay now.' });
-  // eslint-disable-next-line no-unreachable
+  // Enrollment (Ed 2026-11-21): the homeowner has read the terms from GET /autopay
+  // and accepted that exact version. Same paying-homeowner gates as Pay now; the
+  // payment gates, fee rules and the platform Customer + on_behalf_of setup
+  // session live in lib/payments/autopay.js + assessment_intent.js. Refused unless
+  // AUTOPAY_CHARGES_ENABLED=true.
   try {
     const roleCheck = await assertOwnerLikeRole(req, res);
     if (!roleCheck) return;
     const scoped = await resolveScopedProperty(req, supabase, roleCheck.user);
     if (!scoped.property) return res.status(404).json({ error: 'no_property' });
-
-    // resolveScopedProperty joins communities(id, name, slug, hoa_legal_name)
-    // and deliberately not the Stripe account — a dozen endpoints share it and
-    // widening that select to suit this one is how a shared helper turns into
-    // everyone's grab bag. Read what this path needs, here.
-    const { data: community, error: cErr } = await supabase.from('communities')
-      .select('id, name, hoa_legal_name, stripe_connected_account_id')
-      .eq('id', scoped.property.community_id).maybeSingle();
-    if (cErr) throw cErr;
-    if (!community) return res.status(404).json({ error: 'community_not_found' });
+    // A staff "view as" session, a manager, or a non-paying role cannot authorise debits.
+    const { authorizeHomeownerPayment } = require('../lib/payments/homeowner_checkout');
+    const auth = authorizeHomeownerPayment({ user: roleCheck.user, mimic: roleCheck.mimic, scoped, requestedPropertyId: scoped.property.id });
+    if (!auth.ok) return res.status(auth.status).json({ error: auth.error, detail: auth.detail });
 
     const { canDo } = require('../lib/community/lifecycle');
-    const gate = await canDo('payments', community.id);
+    const gate = await canDo('payments', scoped.property.community_id);
     if (!gate.allowed) return res.status(409).json({ error: 'community_not_taking_payments', detail: gate.reason });
 
     const b = req.body || {};
+    const origin = process.env.APP_BASE_URL || `${req.protocol}://${req.get('host')}`;
     const { beginEnrollment } = require('../lib/payments/autopay');
     const r = await beginEnrollment({
-      community,
-      property: { id: scoped.property.id },
+      propertyId: scoped.property.id,
       payer: { name: roleCheck.user.full_name, email: roleCheck.user.email },
-      amountMode: b.amount_mode === 'fixed' ? 'fixed' : 'full_balance',
       maxAmountCents: Number(b.max_amount_cents) > 0 ? Math.round(Number(b.max_amount_cents)) : null,
-      frequency: b.frequency || 'on_due_date',
-      methodKind: b.method_kind === 'card' ? 'card' : 'us_bank_account',
-      successUrl: b.success_url, cancelUrl: b.cancel_url,
+      frequency: ['on_due_date', 'monthly', 'quarterly', 'annually'].includes(b.frequency) ? b.frequency : 'on_due_date',
+      acceptedTermsVersion: String(b.accepted_terms_version || ''),
+      // Never from the client: where Stripe sends the homeowner back.
+      successUrl: `${origin}/portal?autopay=1&session_id={CHECKOUT_SESSION_ID}`,
+      cancelUrl: `${origin}/portal/autopay?cancelled=1`,
       portalUserId: roleCheck.user.id,
-    });
-    if (!r.ok) return res.status(r.status || 500).json({ error: r.error, hint: r.hint });
-    res.json(r);
+      authorizedIp: String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0].trim() || null,
+    }, intentDeps());
+    if (!r.ok) return res.status(r.status || 500).json({ error: r.error, hint: r.hint, terms: r.terms });
+    res.json({ ok: true, setup_url: r.setup_url });
   } catch (err) {
     console.error('[portal] autopay begin failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
@@ -4559,7 +4568,7 @@ router.post('/autopay/complete', express.json({ limit: '8kb' }), async (req, res
     const existing = await statusForProperty(scoped.property.id);
     if (!existing) return res.status(404).json({ error: 'no_enrollment_in_progress' });
 
-    const r = await completeEnrollment({ autopayId: existing.id, sessionId: session_id });
+    const r = await completeEnrollment({ autopayId: existing.id, sessionId: String(session_id) }, intentDeps());
     if (!r.ok) return res.status(400).json({ error: r.error });
     res.json({ ok: true, autopay: await statusForProperty(scoped.property.id) });
   } catch (err) {
