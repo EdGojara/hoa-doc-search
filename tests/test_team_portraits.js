@@ -57,9 +57,9 @@ check('the approved office portrait is stored at native 1360x1157 and designated
   assert.strictEqual(map.placements.email_signature.photo, 'canonical_square');
   assert.strictEqual(map.placements.chat_avatar.photo, 'canonical_square');   // Ed 2026-11-17: one portrait everywhere
 });
-check('identity: face v2 is the reference, the excluded high-resolution set is not used, and M365 is the canonical portrait (Ed 2026-11-17)', () => {
+check('identity: the 10/21 office portrait is the reference (Ed 2026-11-22), the excluded high-resolution set is not used, and M365 is the canonical portrait (Ed 2026-11-17)', () => {
   const map = JSON.parse(fs.readFileSync(path.join(ROOT, 'lib', 'team', 'persona_images.json'), 'utf8')).amanda;
-  assert.match(map.identity_reference.authority, /amanda_legacy_v2\.jpg/);
+  assert.match(map.identity_reference.authority, /3a9694c3112c6940/);
   assert.match(map.high_resolution_review.result, /^EXCLUDED/);
   assert.strictEqual(map.placements.microsoft_365.photo, 'canonical_square');
   for (const k of ['about_us_team', 'informational']) assert.strictEqual(map.placements[k].photo, null, k);
@@ -120,9 +120,9 @@ check('Paige video posters show her production face (the face the videos show)',
   assert.ok(!/team\/paige\.jpg/.test(story), 'no Paige video poster on paige.jpg');
   assert.strictEqual((story.match(/team\/paige_legacy_v1\.jpg/g) || []).length, 3);
 });
-check('Paige: nothing upscaled; identity reference is the production original; HeyGen unchanged; M365 is the canonical portrait (Ed 2026-11-17)', () => {
+check('Paige: nothing upscaled; identity reference is the 11/17 official portrait; HeyGen unchanged; M365 is the canonical portrait (Ed 2026-11-17)', () => {
   const map = JSON.parse(fs.readFileSync(path.join(ROOT, 'lib', 'team', 'persona_images.json'), 'utf8')).paige;
-  assert.match(map.identity_reference.authority, /bbc6c052/);
+  assert.match(map.identity_reference.authority, /8866d23f/);
   assert.strictEqual(map.placements.heygen_avatar.photo, 'unchanged');
   assert.strictEqual(map.placements.microsoft_365.photo, 'canonical_square');
   const dir = path.join(ROOT, map.dir);
@@ -233,6 +233,7 @@ check('one canonical portrait per AI teammate: every index entry is an existing 
   assert.strictEqual(people.length, 16);
   for (const k of people) assert.ok(fs.existsSync(path.join(ROOT, idx[k].canonical)), k + ' canonical file exists');
   assert.deepStrictEqual(people.filter((k) => idx[k].microsoft_365.status === 'NEEDS_ED_REVIEW'), []);
+  for (const k of people) assert.ok(idx[k].registry && /^[a-z]+_[a-z]+$/.test(idx[k].registry.character_slug) && idx[k].registry.face_version >= 1, k + ' names its Character Canon record');
   for (const f of ['public/ask-amanda.html', 'public/board-portal.html']) { const h = fs.readFileSync(path.join(ROOT, f), 'utf8'); assert.ok(h.includes('/assets/presentations/team/amanda.jpg') && !h.includes('amanda-direct-camera-square'), f); }
 });
 
