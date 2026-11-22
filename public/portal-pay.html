@@ -6,6 +6,8 @@
 <title>Pay Your Balance · Bedrock Homeowner Portal</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600&family=Inter:wght@400;500;600;700&display=swap">
 <link rel="stylesheet" href="/brand.css">
+<!-- brand.css --ink is the DARK staff theme's light text; homeowner pages are light. Same values as portal.html (Ed 2026-11-22: autopay terms were unreadable). -->
+<style>:root { --ink: #1a1a1a; --ink-soft: #4a4a4a; --ink-faint: #7a7a7a; }</style>
 <!-- Stripe.js must load from js.stripe.com (PCI): card and bank details go straight to Stripe, never to our server. -->
 <script src="https://js.stripe.com/v3"></script>
 <style>
