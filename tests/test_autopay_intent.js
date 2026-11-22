@@ -138,7 +138,7 @@ t('enrollment: platform customer, setup session on_behalf_of the association, di
   const sb = world({ balance: 0 }); const st = fakeStripe();
   const terms = (await AI.autopayEnrollmentTerms(deps(sb, st), { propertyId: P1 })).terms;
   assert.ok(terms.disclosure.some((l) => /calculated on that payment's actual amount at the time of the charge/.test(l)));
-  assert.ok(terms.disclosure.some((l) => /3\.5% processing fee on card payments/.test(l) && /\$2\.95 .* up to \$350\.00; \$5\.95 above/.test(l)));
+  assert.ok(terms.disclosure.some((l) => /3\.5% processing fee on card payments/.test(l) && /\$2\.95 .* up to and including \$350\.00; \$5\.95 above/.test(l)));
   assert.ok(terms.disclosure.some((l) => /info@bedrocktx\.com, at least 3 business days before the scheduled payment date/.test(l)));
   assert.ok(terms.disclosure.some((l) => /10 days before each payment/.test(l) && /total that will be debited/.test(l)));
   assert.ok(!terms.disclosure.join(' ').includes('—'), 'no em dashes in homeowner text');

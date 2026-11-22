@@ -124,7 +124,7 @@ t('bank account (ACH): $2.95 up to and including $350, $5.95 above, on the payme
   }
   assert.match(FQ.computeFee({ assessmentCents: 2500, config: cfg(), methodKind: 'us_bank_account' }).disclosure, /\$2\.95 processing fee/);
   assert.match(FQ.computeFee({ assessmentCents: 150000, config: cfg(), methodKind: 'us_bank_account' }).disclosure, /\$5\.95 processing fee/);
-  assert.match(FQ.achScheduleText(cfg()), /\$2\.95 .* up to \$350\.00; \$5\.95 above \$350\.00/);
+  assert.match(FQ.achScheduleText(cfg()), /\$2\.95 .* up to and including \$350\.00; \$5\.95 above \$350\.00/);
   // One flat fee when no tier is set; threshold and above must come together.
   assert.strictEqual(FQ.computeFee({ assessmentCents: 150000, config: { ...cfg(), ach_tier_threshold_cents: null, ach_fee_above_cents: null }, methodKind: 'us_bank_account' }).fee_cents, 295);
   assert.strictEqual(FQ.validateFeeConfig(cfg({ ach_fee_above_cents: null })).ok, false);
