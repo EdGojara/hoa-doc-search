@@ -383,6 +383,18 @@ t('stripe.js: setup session and off-session PI go to the platform with on_behalf
   assert.strictEqual(pi.headers['Idempotency-Key'], 'autopay-a-2026-12-15');
 });
 
+t('demo-only sandbox: autopay allowed for a demo community under a TEST key; never a real one without the switch; never a demo under a live key', () => {
+  const AIm = require('../lib/payments/assessment_intent');
+  const demo = { is_demo: true }, real = { is_demo: false };
+  const test = { STRIPE_SECRET_KEY: 'sk_test_x' }, live = { STRIPE_SECRET_KEY: 'sk_live_x' };
+  assert.strictEqual(AIm.autopayAllowedFor(demo, test), true);
+  assert.strictEqual(AIm.autopayAllowedFor(real, test), false);
+  assert.strictEqual(AIm.autopayAllowedFor(demo, live), false);
+  assert.strictEqual(AIm.autopayAllowedFor(real, live), false);
+  assert.strictEqual(AIm.autopayAllowedFor(real, { ...live, AUTOPAY_CHARGES_ENABLED: 'true' }), true);
+  assert.strictEqual(AIm.autopayAllowedFor(null, test), false);
+});
+
 (async () => {
   for (const [name, fn] of queue) {
     try { await fn(); console.log('PASS ', name); } catch (e) { failed++; console.log('FAIL ', name, '\n   ', e.stack || e.message); }
