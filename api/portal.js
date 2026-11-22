@@ -4374,6 +4374,16 @@ router.get('/autopay', async (req, res) => {
     const { statusForProperty } = require('../lib/payments/autopay');
     const AI = require('../lib/payments/assessment_intent');
     const autopay = await statusForProperty(scoped.property.id);
+    // Account at legal (Ed 2026-11-22): no enrollment, and an existing
+    // arrangement is shown as on hold; the homeowner is sent to counsel.
+    const LH = require('../lib/payments/legal_hold');
+    const lh = await LH.legalHoldFor(supabase, scoped.property.id);
+    if (!lh.ok) return res.status(503).json({ error: 'legal_status_unavailable', hint: 'Automatic payments are temporarily unavailable. Please try again later.' });
+    if (lh.hold) {
+      const refusal = LH.legalHoldRefusal(lh.hold);
+      return res.json({ ok: true, autopay, legal_hold: refusal.legal_hold,
+        enrollment: { available: false, reason: lh.hold.message, legal_hold: true } });
+    }
     // What the enrollment screen shows BEFORE the homeowner authorises: the fee
     // schedule and the recurring-payment disclosure, decided by the server.
     let enrollment = { available: false, reason: 'Automatic payments are not available yet. Please use Pay now.' };
@@ -4428,7 +4438,7 @@ router.post('/pay/checkout', express.json({ limit: '4kb' }), async (req, res) =>
       payer: { email: resolved.user.email, name: resolved.user.full_name },
       portal_user_id: resolved.user.id,
     });
-    if (!r.ok) return res.status(r.status || 500).json({ error: r.error, hint: r.hint });
+    if (!r.ok) return res.status(r.status || 500).json({ error: r.error, hint: r.hint, legal_hold: r.legal_hold });
     res.json({ ok: true, checkout_url: r.checkout_url, amount_cents: r.amount_cents, convenience_fee_cents: r.convenience_fee_cents, method: r.method });
   } catch (err) {
     console.error('[portal] pay checkout failed:', err.message);
@@ -4467,7 +4477,7 @@ async function authorizeIntentPayment(req, res) {
   return { user: resolved.user, propertyId: auth.propertyId };
 }
 const intentDeps = () => ({ supabase, stripeLib: require('../lib/payments/stripe') });
-const sendIntentResult = (res, r) => (r.ok ? res.json(r) : res.status(r.status || 500).json({ error: r.error, hint: r.hint, quote: r.quote }));
+const sendIntentResult = (res, r) => (r.ok ? res.json(r) : res.status(r.status || 500).json({ error: r.error, hint: r.hint, quote: r.quote, legal_hold: r.legal_hold }));
 
 router.post('/pay/setup', express.json({ limit: '4kb' }), async (req, res) => {
   try {
@@ -4552,7 +4562,7 @@ router.post('/autopay/begin', express.json({ limit: '16kb' }), async (req, res) 
       portalUserId: roleCheck.user.id,
       authorizedIp: String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0].trim() || null,
     }, intentDeps());
-    if (!r.ok) return res.status(r.status || 500).json({ error: r.error, hint: r.hint, terms: r.terms });
+    if (!r.ok) return res.status(r.status || 500).json({ error: r.error, hint: r.hint, terms: r.terms, legal_hold: r.legal_hold });
     res.json({ ok: true, setup_url: r.setup_url });
   } catch (err) {
     console.error('[portal] autopay begin failed:', err.message);
@@ -4569,6 +4579,12 @@ router.post('/autopay/complete', express.json({ limit: '8kb' }), async (req, res
 
     const { session_id } = req.body || {};
     if (!session_id) return res.status(400).json({ error: 'session_id_required' });
+
+    // An enrollment begun before the account went to counsel is not activated.
+    const LH = require('../lib/payments/legal_hold');
+    const lh = await LH.legalHoldFor(supabase, scoped.property.id);
+    if (!lh.ok) return res.status(503).json({ error: 'legal_status_unavailable' });
+    if (lh.hold) { const rf = LH.legalHoldRefusal(lh.hold); return res.status(rf.status).json({ error: rf.error, hint: rf.hint, legal_hold: rf.legal_hold }); }
 
     // The enrolment must be the one on THIS caller's property — never an id
     // handed in by the client.

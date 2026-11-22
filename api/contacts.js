@@ -2955,12 +2955,16 @@ router.get('/property-lookup', async (req, res) => {
     const LEGAL = ['at_legal', 'in_bankruptcy', 'lien_filed', 'judgment', 'in_collections'];
 
     let stQ = supabase.from('property_enforcement_states')
-      .select('property_id, state, attorney_name, attorney_firm, bankruptcy_case_number, bankruptcy_chapter, effective_at')
+      .select('property_id, state, attorney_name, attorney_firm, attorney_phone, attorney_email, bankruptcy_case_number, bankruptcy_chapter, effective_at')
       .is('ended_at', null);
     if (community_id) stQ = stQ.eq('community_id', community_id);
-    const { data: states } = await stQ.limit(3000);
+    const { data: states, error: stErr } = await stQ.limit(3000);
+    if (stErr) throw stErr;
     const stateBy = new Map((states || []).map((s) => [s.property_id, s]));
-    const legalIds = (states || []).filter((s) => LEGAL.includes(s.state)).map((s) => s.property_id);
+    // Portal payment hold (Ed 2026-11-22) uses the same rule as the payment
+    // gate; a counsel-run payment plan is listed with the accounts at legal.
+    const { holdFromState } = require('../lib/payments/legal_hold');
+    const legalIds = (states || []).filter((s) => LEGAL.includes(s.state) || holdFromState(s)).map((s) => s.property_id);
 
     // Late on ASSESSMENTS — portfolio watchlist. Assessment-class past-due only
     // (assessment + late_fee + interest), matching the amenity-access rule, so
@@ -3019,8 +3023,20 @@ router.get('/property-lookup', async (req, res) => {
       rows = (await sq).data || [];
     }
 
+    // Existing autopay on an account whose payments are on legal hold: flagged
+    // for staff review (never charged; never cancelled automatically).
+    const heldIds = (rows || []).map((r) => r.property_id).filter((id) => holdFromState(stateBy.get(id)));
+    const autopayBy = new Map();
+    for (let i = 0; i < heldIds.length; i += 150) {
+      const { data: ap, error: apErr } = await supabase.from('assessment_autopay')
+        .select('property_id, status').in('property_id', heldIds.slice(i, i + 150)).in('status', ['active', 'paused', 'pending_setup', 'failed']);
+      if (apErr) { console.warn('[property-lookup] autopay review lookup failed:', apErr.message); break; }
+      for (const a of ap || []) autopayBy.set(a.property_id, a.status);
+    }
+
     const results = (rows || []).map((r) => {
       const st = stateBy.get(r.property_id);
+      const hold = holdFromState(st);
       const legalState = st ? st.state : (r.ar_at_legal ? 'at_legal' : (r.ar_in_collections ? 'in_collections' : null));
       return {
         property_id: r.property_id, community_name: r.community_name,
@@ -3034,6 +3050,9 @@ router.get('/property-lookup', async (req, res) => {
         attorney_name: st ? (st.attorney_name || st.attorney_firm) : null,
         bankruptcy_case_number: st ? st.bankruptcy_case_number : null,
         bankruptcy_chapter: st ? st.bankruptcy_chapter : null,
+        payments_blocked: !!hold,
+        counsel_contact_missing: hold && !hold.contact_complete ? hold.missing : null,
+        autopay_review: autopayBy.get(r.property_id) || null,
       };
     });
     const rank = { in_bankruptcy: 5, judgment: 4, lien_filed: 3, at_legal: 2, in_collections: 1 };

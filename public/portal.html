@@ -1569,6 +1569,25 @@ function renderPortal(ctx) {
       const r = await fetch('/api/portal/autopay' + (_pid ? '?property_id=' + encodeURIComponent(_pid) : ''));
       if (!r.ok) return;
       const j = await r.json();
+      // Account with legal counsel (Ed 2026-11-22): no Pay now, no autopay; the
+      // firm on file instead. The server refuses every payment either way.
+      if (j.legal_hold) {
+        window._payCtx.payments_enabled = false;
+        window._payCtx.autopay_available = false;
+        const pb = $('payNowBtn'); if (pb) pb.style.display = 'none';
+        const c = j.legal_hold.counsel || {};
+        const lines = [];
+        if (c.firm) lines.push('<b>' + escapeHtml(c.firm) + '</b>');
+        if (c.attorney && c.attorney !== c.firm) lines.push(escapeHtml(c.attorney));
+        if (c.phone) lines.push('Phone: <a href="tel:' + escapeHtml(c.phone.replace(/[^\d+]/g, '')) + '" style="color:#2A4870;">' + escapeHtml(c.phone) + '</a>');
+        if (c.email) lines.push('Email: <a href="mailto:' + escapeHtml(c.email) + '" style="color:#2A4870;">' + escapeHtml(c.email) + '</a>');
+        if (!c.phone && !c.email) lines.push('<span style="color:#64748b;">Contact details for the firm are being updated. Please contact management if you need them.</span>');
+        wrap.innerHTML = '<div style="border-left:3px solid #D4AF37; padding:6px 10px;">'
+          + '<div>' + escapeHtml(j.legal_hold.message) + '</div>'
+          + '<div style="margin-top:6px; line-height:1.6;">' + lines.join('<br>') + '</div></div>';
+        wrap.style.display = 'block';
+        return;
+      }
       const a = j.autopay;
       const canEnroll = !!(j.enrollment && j.enrollment.available);
       if (!a || a.status === 'cancelled') {

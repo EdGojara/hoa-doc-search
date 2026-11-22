@@ -741,9 +741,19 @@
     else if (opts.q)  url += '?q=' + encodeURIComponent(opts.q);
     window.location.href = url;
   };
-  var LB={ at_legal:{t:'At legal',bg:'#fee2e2',fg:'#991b1b'}, in_bankruptcy:{t:'Bankruptcy §362',bg:'#ede9fe',fg:'#5b21b6'}, lien_filed:{t:'Lien filed',bg:'#ffedd5',fg:'#9a3412'}, judgment:{t:'Judgment',bg:'#fecaca',fg:'#7f1d1d'}, in_collections:{t:'Collections',bg:'#fef3c7',fg:'#92400e'} };
+  var LB={ at_legal:{t:'At legal',bg:'#fee2e2',fg:'#991b1b'}, in_bankruptcy:{t:'Bankruptcy §362',bg:'#ede9fe',fg:'#5b21b6'}, lien_filed:{t:'Lien filed',bg:'#ffedd5',fg:'#9a3412'}, judgment:{t:'Judgment',bg:'#fecaca',fg:'#7f1d1d'}, in_collections:{t:'Collections',bg:'#fef3c7',fg:'#92400e'}, on_payment_plan:{t:'Payment plan',bg:'#dbeafe',fg:'#1e40af'} };
   var STAGE={ courtesy_1:'Courtesy 1', courtesy_2:'Courtesy 2', certified_209:'Certified §209', fine_assessed:'Fine' };
   var AMEN={ restricted:{t:'Amenity restricted',bg:'#fee2e2',fg:'#991b1b',ic:'🚫'}, allowed_payment_plan:{t:'Amenity OK — payment plan',bg:'#dbeafe',fg:'#1e40af',ic:'✓'}, allowed_bankruptcy:{t:'Amenity OK — bankruptcy',bg:'#ede9fe',fg:'#5b21b6',ic:'✓'} };
+  // Portal payment hold flags (Ed 2026-11-22): online payment is blocked for
+  // accounts with counsel; staff complete missing counsel contact details and
+  // review any autopay on file (Homeowner 360 > legal status).
+  function lhFlags(r){
+    var out='';
+    if(r.payments_blocked) out+='<div style="font-size:10.5px; color:#475569; margin-top:2px;">Portal payments blocked</div>';
+    if(r.counsel_contact_missing&&r.counsel_contact_missing.length) out+='<div style="font-size:10.5px; color:#b45309; font-weight:700; margin-top:2px;">Add counsel '+esc(r.counsel_contact_missing.join(', '))+'</div>';
+    if(r.autopay_review) out+='<div style="font-size:10.5px; color:#b91c1c; font-weight:700; margin-top:2px;">Autopay on file ('+esc(r.autopay_review)+'): review</div>';
+    return out;
+  }
   function render(results,note){
     var st=document.getElementById('lookupStatus'), box=document.getElementById('lookupResults');
     st.textContent = note || (results.length+' result'+(results.length===1?'':'s'));
@@ -757,7 +767,7 @@
         +'<td style="padding:8px 10px; border-top:1px solid #eef1f6; text-align:right; white-space:nowrap;">'+money(r.current_balance)+'</td>'
         +'<td style="padding:8px 10px; border-top:1px solid #eef1f6;">'+legalCell+'</td></tr>'; }
       var lb=r.legal_state&&LB[r.legal_state];
-      var legalCell=lb ? '<span style="background:'+lb.bg+'; color:'+lb.fg+'; padding:2px 9px; border-radius:99px; font-size:11px; font-weight:700;">⚖ '+lb.t+'</span>'+(r.attorney_name?'<div style="font-size:10.5px; color:#888; margin-top:2px;">'+esc(r.attorney_name)+'</div>':'')+(r.bankruptcy_case_number?'<div style="font-size:10.5px; color:#888;">Case '+esc(r.bankruptcy_case_number)+'</div>':'') : (r.on_payment_plan?'<span style="color:#2563eb; font-size:11.5px;">Payment plan</span>':'<span style="color:#16a34a; font-size:11.5px;">Good standing</span>');
+      var legalCell=lb ? '<span style="background:'+lb.bg+'; color:'+lb.fg+'; padding:2px 9px; border-radius:99px; font-size:11px; font-weight:700;">⚖ '+lb.t+'</span>'+(r.attorney_name?'<div style="font-size:10.5px; color:#888; margin-top:2px;">'+esc(r.attorney_name)+'</div>':'')+(r.bankruptcy_case_number?'<div style="font-size:10.5px; color:#888;">Case '+esc(r.bankruptcy_case_number)+'</div>':'')+lhFlags(r) : (r.on_payment_plan?'<span style="color:#2563eb; font-size:11.5px;">Payment plan</span>':'<span style="color:#16a34a; font-size:11.5px;">Good standing</span>');
       var viol=r.open_violations>0 ? '<span style="font-weight:600; color:#b45309;">'+r.open_violations+' open</span>'+(r.worst_open_stage?' · '+(STAGE[r.worst_open_stage]||r.worst_open_stage):'') : '<span style="color:#94a3b8;">none</span>';
       return '<tr>'
         +'<td style="padding:8px 10px; border-top:1px solid #eef1f6;"><div style="font-weight:600; color:#0B1D34;">'+esc(r.street_address||'')+(r.unit?' #'+esc(r.unit):'')+'</div><div style="font-size:11px; color:#94a3b8;">'+esc(r.community_name||'')+'</div></td>'

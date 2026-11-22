@@ -1590,6 +1590,7 @@ app.get('/pay/:token', async (req, res) => {
       initiated_by: 'payment_link',
     });
     if (r.ok && r.checkout_url) return res.redirect(302, r.checkout_url);
+    if (r.error === 'account_with_counsel' && r.legal_hold) return res.status(403).send(_payPage('Account with legal counsel', require('./lib/payments/legal_hold').counselHtml(r.legal_hold)));
     if (r.error === 'nothing_due') return res.send(_payPage('Nothing due', `<h1>Your balance is $0</h1><p>There's nothing due right now. Thank you.</p>`));
     if (r.error === 'payment_not_configured' || r.error === 'community_stripe_not_onboarded' || r.error === 'test_mode_sandbox_only' || r.error === 'online_payments_not_enabled') {
       return res.send(_payPage('Online payment coming soon', `<h1>Online payment isn't available yet</h1><p>This community hasn't finished setting up online payments. Please contact management to pay by check or ACH in the meantime.</p>`));

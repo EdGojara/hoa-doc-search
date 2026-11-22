@@ -378,6 +378,57 @@ t('payment_fees: tile edits cannot wipe or forge it; never presented to the brow
   assert.ok(!('payment_fees' in shown) && !('homeowner_financials' in shown));
 });
 
+// ---------------------------------------------------------------- accounts at legal (Ed 2026-11-22)
+const LH = require('../lib/payments/legal_hold');
+t('legal hold: rule per enforcement state, counsel contact only from the record', () => {
+  assert.strictEqual(LH.holdFromState(null), null);
+  assert.strictEqual(LH.holdFromState({ state: 'current' }), null);
+  assert.strictEqual(LH.holdFromState({ state: 'on_payment_plan' }), null, 'management-run plan is not at legal');
+  for (const s of ['at_legal', 'in_collections', 'in_bankruptcy', 'lien_filed', 'judgment']) assert.ok(LH.holdFromState({ state: s }), s);
+  const plan = LH.holdFromState({ state: 'on_payment_plan', attorney_firm: 'Firm PC' });
+  assert.ok(plan && plan.held, 'counsel-run plan holds');
+  const full = LH.holdFromState({ state: 'at_legal', attorney_firm: ' Firm PC ', attorney_phone: '281-555-0100', attorney_email: 'a@firm.test' });
+  assert.deepStrictEqual(full.counsel, { firm: 'Firm PC', attorney: null, phone: '281-555-0100', email: 'a@firm.test' });
+  assert.strictEqual(full.contact_complete, true);
+  assert.strictEqual(full.message, 'Your account is currently being handled by legal counsel. Please contact the law firm listed below regarding your account balance and payment arrangements.');
+  const thin = LH.holdFromState({ state: 'at_legal', attorney_firm: 'Firm PC' });
+  assert.strictEqual(thin.contact_complete, false); assert.deepStrictEqual(thin.missing, ['phone', 'email']);
+  const none = LH.holdFromState({ state: 'in_bankruptcy' });
+  assert.strictEqual(none.contact_complete, false); assert.ok(none.missing.includes('law firm'));
+  assert.ok(!/undefined|null/.test(LH.counselHtml(thin)), 'no blank fields rendered');
+  assert.match(LH.counselHtml({ message: 'm', counsel: { firm: '<b>x</b>' } }), /&lt;b&gt;x&lt;\/b&gt;/);
+});
+t('legal hold: every payment path refuses on the server; clearing the state restores it', async () => {
+  const sb = world(); const st = fakeStripe();
+  sb._db.property_enforcement_states = [{ id: 'es1', property_id: P1, state: 'at_legal', attorney_firm: 'Firm PC', attorney_phone: '281-555-0100', ended_at: null }];
+  const setup = await AI.setupAssessmentPayment(deps(sb, st), { ...base, env: { STRIPE_PUBLISHABLE_KEY: 'pk_live_x' } });
+  assert.strictEqual(setup.error, 'account_with_counsel'); assert.strictEqual(setup.status, 403);
+  assert.strictEqual(setup.legal_hold.counsel.firm, 'Firm PC'); assert.strictEqual(setup.legal_hold.counsel.phone, '281-555-0100');
+  const q = await AI.quoteAssessmentPayment(deps(sb, st), { ...base, paymentMethodId: 'pm_credit_visa' });
+  assert.strictEqual(q.error, 'account_with_counsel');
+  const terms = await AI.autopayEnrollmentTerms(deps(sb, st), { propertyId: P1 });
+  assert.strictEqual(terms.error, 'account_with_counsel');
+  const ap = await AI.autopayQuote(deps(sb, st), { property_id: P1, method_kind: 'card', stripe_payment_method_id: 'pm_x', stripe_customer_id: 'cus_x', tenure_id: TEN, connected_account_id: 'acct_test_1' });
+  assert.strictEqual(ap.ok, false); assert.match(ap.detail, /legal counsel/); assert.ok(!ap.cancel, 'never cancels the enrollment');
+  const core = require('../lib/payments/assessment_checkout');
+  const co = await core.createAssessmentCheckout(deps(sb, st), { propertyId: P1, paymentMethod: 'ach', initiatedBy: 'payment_link', successUrl: 'https://x/ok', cancelUrl: 'https://x/no' });
+  assert.strictEqual(co.error, 'account_with_counsel');
+  assert.strictEqual(st.created.length, 0, 'nothing created at Stripe');
+  // Cleared (ended) -> normal access returns.
+  sb._db.property_enforcement_states[0].ended_at = '2026-11-23T00:00:00Z';
+  const again = await AI.setupAssessmentPayment(deps(sb, st), { ...base, env: { STRIPE_PUBLISHABLE_KEY: 'pk_live_x' } });
+  assert.strictEqual(again.ok, true, again.error);
+});
+t('legal hold: status lookup failure refuses payment (fail closed)', async () => {
+  const sb = world(); const st = fakeStripe();
+  const realFrom = sb.from;
+  sb.from = (tbl) => (tbl === 'property_enforcement_states'
+    ? { select() { return this; }, eq() { return this; }, is() { return this; }, limit() { return Promise.resolve({ data: null, error: { message: 'boom' } }); } }
+    : realFrom(tbl));
+  const r = await AI.setupAssessmentPayment(deps(sb, st), { ...base, env: { STRIPE_PUBLISHABLE_KEY: 'pk_live_x' } });
+  assert.strictEqual(r.error, 'legal_status_unavailable'); assert.strictEqual(r.status, 503);
+});
+
 Promise.all(results).then(() => {
   if (failed) { console.log(`\n${failed} payment quote check(s) FAILED`); process.exit(1); }
   console.log('\nall payment quote checks passed');

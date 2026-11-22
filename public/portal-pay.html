@@ -36,6 +36,7 @@
   .ok { color: var(--tx-ok, #15803d); }
   #pe { margin: 14px 0; min-height: 60px; }
   .hidden { display: none; }
+  .counsel { border-left: 3px solid var(--gold, #D4AF37); background: var(--cream, #FAFAF6); padding: 10px 12px; margin: 12px 0; font-size: 14px; line-height: 1.6; }
   @media (max-width: 400px) { .card { padding: 16px; } .amount { font-size: 24px; } }
 </style>
 </head>
@@ -45,8 +46,9 @@
   <div id="stepLoading" class="card"><p class="muted">Loading your balance…</p></div>
 
   <div id="stepError" class="card hidden">
-    <h2>Online payment unavailable</h2>
+    <h2 id="errTitle">Online payment unavailable</h2>
     <p id="errText" class="muted"></p>
+    <div id="counsel" class="counsel hidden"></div>
     <p><a href="/portal">Back to the portal</a></p>
   </div>
 
@@ -94,6 +96,25 @@
   const propertyId = params.get('property_id') || null;
   const steps = ['stepLoading', 'stepError', 'stepMethod', 'stepReview', 'stepResult'];
   const show = (id) => steps.forEach((s) => $(s).classList.toggle('hidden', s !== id));
+
+  // Account with legal counsel (Ed 2026-11-22): the server refuses payment and
+  // sends the firm on file. Shown as text only; nothing is filled in if missing.
+  function renderCounsel(lh, el) {
+    el.textContent = '';
+    if (!lh) { el.classList.add('hidden'); return; }
+    const c = lh.counsel || {};
+    const add = (tag, text, href) => {
+      const n = document.createElement(href ? 'a' : tag); n.textContent = text;
+      if (href) n.href = href;
+      const row = document.createElement('div'); row.appendChild(n); el.appendChild(row);
+    };
+    if (c.firm) add('strong', c.firm);
+    if (c.attorney && c.attorney !== c.firm) add('span', c.attorney);
+    if (c.phone) add('a', 'Phone: ' + c.phone, 'tel:' + c.phone.replace(/[^\d+]/g, ''));
+    if (c.email) add('a', 'Email: ' + c.email, 'mailto:' + c.email);
+    if (!c.phone && !c.email) add('span', 'Contact details for the firm are being updated. Please contact management if you need them.');
+    el.classList.remove('hidden');
+  }
   const fail = (msg) => { $('errText').textContent = msg || 'Something went wrong. Please try again or contact management.'; show('stepError'); };
 
   let setup = null, stripe = null, elements = null, kind = null, paymentMethodId = null, quote = null;
@@ -220,6 +241,11 @@
     if (params.get('demo') === '1') return fail('Online payment is not available in the demo portal.');
     let r;
     try { r = await api('setup'); } catch (e) { return fail(e.message); }
+    if (!r.ok && r.j.legal_hold) {
+      $('errTitle').textContent = 'Your account is with legal counsel';
+      renderCounsel(r.j.legal_hold, $('counsel'));
+      return fail(r.j.legal_hold.message);
+    }
     if (!r.ok) return fail(r.j.hint || r.j.detail || r.j.error);
     setup = r.j;
     if (typeof Stripe !== 'function') return fail('The secure payment form could not load. Please check your connection and try again.');
