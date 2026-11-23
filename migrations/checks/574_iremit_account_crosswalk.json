@@ -1,0 +1,89 @@
+{
+  "migration": "574_iremit_account_crosswalk.sql",
+  "summary": "New empty table bank_remittance_accounts: which lot a NewFirst payment-file account number belongs to. Only rows a person confirmed are used to match payments. Additive only; nothing posts, matches or changes because of it.",
+  "requires": [],
+  "preflight": [
+    {
+      "name": "table does not exist yet",
+      "sql": "SELECT count(*)::int FROM information_schema.tables WHERE table_name = 'bank_remittance_accounts'",
+      "expect": 0
+    },
+    {
+      "name": "trusted_set_updated_at exists",
+      "sql": "SELECT count(DISTINCT proname)::int FROM pg_proc WHERE proname = 'trusted_set_updated_at'",
+      "expect": 1
+    }
+  ],
+  "expected_changes": [
+    "New table bank_remittance_accounts with its checks, three indexes and the updated_at trigger. No rows.",
+    "Row level security on; only service_role may read or write (no delete).",
+    "No row changes in any table."
+  ],
+  "objects": {
+    "added": [
+      "table:bank_remittance_accounts",
+      "index:uq_bank_remittance_accounts_live",
+      "index:idx_bank_remittance_accounts_community",
+      "index:idx_bank_remittance_accounts_property",
+      "trigger:bank_remittance_accounts.trg_bank_remittance_accounts_updated",
+      "column:bank_remittance_accounts.id",
+      "constraint:bank_remittance_accounts.bank_remittance_accounts_pkey",
+      "index:bank_remittance_accounts_pkey",
+      "column:bank_remittance_accounts.community_id",
+      "constraint:bank_remittance_accounts.bank_remittance_accounts_community_id_fkey",
+      "column:bank_remittance_accounts.property_id",
+      "constraint:bank_remittance_accounts.bank_remittance_accounts_property_id_fkey",
+      "column:bank_remittance_accounts.bank",
+      "constraint:bank_remittance_accounts.bank_remittance_accounts_bank_check",
+      "column:bank_remittance_accounts.association_code",
+      "constraint:bank_remittance_accounts.bank_remittance_accounts_association_code_check",
+      "column:bank_remittance_accounts.remittance_account",
+      "constraint:bank_remittance_accounts.bank_remittance_accounts_remittance_account_check",
+      "column:bank_remittance_accounts.vantaca_account_id",
+      "column:bank_remittance_accounts.status",
+      "constraint:bank_remittance_accounts.bank_remittance_accounts_status_check",
+      "column:bank_remittance_accounts.evidence",
+      "constraint:bank_remittance_accounts.bank_remittance_accounts_evidence_check",
+      "column:bank_remittance_accounts.proposed_by",
+      "column:bank_remittance_accounts.confirmed_by",
+      "column:bank_remittance_accounts.confirmed_at",
+      "column:bank_remittance_accounts.retired_by",
+      "column:bank_remittance_accounts.retired_at",
+      "column:bank_remittance_accounts.retired_reason",
+      "column:bank_remittance_accounts.created_at",
+      "column:bank_remittance_accounts.updated_at",
+      "constraint:bank_remittance_accounts.bank_remittance_accounts_confirmed",
+      "constraint:bank_remittance_accounts.bank_remittance_accounts_retired"
+    ],
+    "changed": [],
+    "removed": []
+  },
+  "row_changes": {
+    "homeowner_transactions": 0,
+    "journal_entries": 0,
+    "properties": 0
+  },
+  "protected": [
+    {
+      "table": "properties",
+      "order_by": "id"
+    }
+  ],
+  "verify": [
+    {
+      "name": "table exists and is empty",
+      "sql": "SELECT count(*)::int FROM bank_remittance_accounts",
+      "expect": 0
+    },
+    {
+      "name": "row level security is on",
+      "sql": "SELECT count(*)::int FROM pg_class WHERE relname = 'bank_remittance_accounts' AND relrowsecurity",
+      "expect": 1
+    },
+    {
+      "name": "anon and authenticated hold no grants",
+      "sql": "SELECT count(*)::int FROM information_schema.role_table_grants WHERE table_name = 'bank_remittance_accounts' AND grantee IN ('anon','authenticated')",
+      "expect": 0
+    }
+  ]
+}
