@@ -24,6 +24,9 @@ const Anthropic = require('../lib/ai/anthropic');
 const { safeErrorMessage } = require('./_safe_error');
 const { getLegalFlag } = require('../lib/enforcement/legal_flag');
 const { resolveCurrentAR } = require('../lib/ar/resolve_current_ar');
+const { currentOwnerBalance } = require('../lib/ar/current_owner_ledger');
+const { matchAddress, normalizeAddress } = require('../lib/entity_resolution');
+const { fetchAllQuery } = require('../lib/db/fetch_all');
 const { planTenurePayment, postTenurePayment } = require('../lib/accounting/homeowner_payment');
 const TP = require('../lib/accounting/transfer_proration');
 
@@ -51,15 +54,38 @@ function balanceFromAR(ar) {
   };
 }
 
+// Every current-owner lot in the community (paged: Waterview is over 1,000).
+function communityLots(community_id) {
+  return fetchAllQuery(() => supabase.from('v_current_property_owners')
+    .select('property_id, street_address, unit, owner_name').eq('community_id', community_id), { orderBy: 'property_id' });
+}
+
+// PURE. Type-ahead: by owner name, by the address as stored, or by the normalized
+// address, so "17711 Delta Springs Ln" finds "17711 Delta Springs Lane".
+function searchLots(lots, q) {
+  const raw = String(q || '').toLowerCase().trim();
+  if (!raw) return (lots || []).slice(0, 25);
+  const canon = normalizeAddress(raw).canonical;
+  const seen = new Set();
+  return (lots || []).filter((l) => {
+    const addr = String(l.street_address || '').toLowerCase();
+    const hit = addr.includes(raw) || String(l.owner_name || '').toLowerCase().includes(raw)
+      || (!!canon && canon.length >= 3 && String(normalizeAddress(addr).canonical || '').includes(canon));
+    if (!hit || seen.has(l.property_id)) return false;
+    seen.add(l.property_id);
+    return true;
+  }).slice(0, 25);
+}
+
 // ----------------------------------------------------------------------------
 // Helper — the disclosure snapshot for a property: current owner, balance, DRV.
 // This is the Part-1 answer (what title is asking for) and is also captured at
 // closing to prove the seller's account cleared.
 // ----------------------------------------------------------------------------
 async function propertySnapshot(community_id, property_id) {
-  const [propRes, ownerRes, ar, violRes, legal] = await Promise.all([
+  const [propRes, ownerRes, ar, violRes, legal, ledgerCheck] = await Promise.all([
     supabase.from('properties')
-      .select('id, community_id, street_address, unit, city, state, zip')
+      .select('id, community_id, street_address, unit, city, state, zip, vantaca_account_id')
       .eq('id', property_id).maybeSingle(),
     supabase.from('v_current_property_owners')
       .select('*').eq('property_id', property_id).maybeSingle(),
@@ -73,6 +99,9 @@ async function propertySnapshot(community_id, property_id) {
     // an at-legal/bankruptcy status is the highest-liability miss at a closing —
     // the one thing title most needs. (Ed 2026-08-06.)
     getLegalFlag(property_id),
+    // The resolver tolerates a failed ledger read (it falls back). A closing must not:
+    // this read throws, so a failure is an error on screen, never an older balance or UNKNOWN.
+    currentOwnerBalance(supabase, property_id),
   ]);
 
   if (propRes.error) throw propRes.error;
@@ -83,6 +112,7 @@ async function propertySnapshot(community_id, property_id) {
 
   if (ownerRes.error) throw ownerRes.error;
   if (violRes.error) throw violRes.error;
+  if (ledgerCheck && prop.vantaca_account_id && (!ar || ar.source !== 'transactions')) throw new Error(`ledger balance on file for ${property_id} but not returned`);
   const owner = ownerRes.data || null;
   const openViolations = violRes.data || [];
 
@@ -146,17 +176,7 @@ router.get('/properties/search', async (req, res) => {
   try {
     const { community_id, q } = req.query;
     if (!community_id) return res.status(400).json({ error: 'community_id_required' });
-    let query = supabase.from('v_current_property_owners')
-      .select('property_id, street_address, unit, owner_name')
-      .eq('community_id', community_id)
-      .limit(25);
-    if (q && q.trim()) {
-      const term = `%${q.trim()}%`;
-      query = query.or(`street_address.ilike.${term},owner_name.ilike.${term}`);
-    }
-    const { data, error } = await query;
-    if (error) throw error;
-    res.json({ properties: data || [] });
+    res.json({ properties: searchLots(await communityLots(community_id), q) });
   } catch (err) {
     console.error('[home-sales] property search failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
@@ -409,20 +429,15 @@ router.post('/scan', upload.single('file'), async (req, res) => {
     }));
 
     // Propose a property match within this community by address.
-    let matches = [];
+    // "matched" is the only status the screen may use without a person choosing.
+    let match = { status: 'none', reason: 'no_address', matches: [] };
     if (extracted.property_address) {
-      // Match on the leading street portion (drop city/state/zip after the first comma).
-      const street = extracted.property_address.split(',')[0].trim();
-      const term = `%${street.replace(/\s+/g, '%')}%`;
-      const { data: mdata } = await supabase.from('v_current_property_owners')
-        .select('property_id, street_address, unit, owner_name')
-        .eq('community_id', community_id)
-        .ilike('street_address', term)
-        .limit(10);
-      matches = mdata || [];
+      const lots = await communityLots(community_id);
+      match = lots.length ? matchAddress(lots, extracted.property_address) : { status: 'none', reason: 'no_properties_loaded', matches: [] };
     }
+    if (match.status !== 'matched') console.warn('[home-sales] scan property not identified:', JSON.stringify({ community_id, status: match.status, reason: match.reason, options: match.matches.length }));
 
-    res.json({ extracted, raw_extracted: parsed, property_matches: matches });
+    res.json({ extracted, raw_extracted: parsed, property_matches: match.matches, property_match: { status: match.status, reason: match.reason } });
   } catch (err) {
     console.error('[home-sales] scan failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
@@ -600,9 +615,15 @@ router.post('/record-closing', express.json({ limit: '256kb' }), async (req, res
     // does not undo the transfer; it is pending and retried (POST /proration-retry).
     const proration = await TP.afterTransfer(supabase, prorationGate, { proposalId: prop.id, postedBy: b.reviewed_by || 'home_sales' });
 
+    // The transfer records the sum of the seller's ledger rows, which is 0 when there
+    // are none. No balance on file is UNKNOWN: clear it so history never reads "cleared".
+    if (snap.balance_status === 'UNKNOWN') {
+      const { error: kErr } = await supabase.from('home_sales').update({ seller_final_balance_cents: null }).eq('id', saleId);
+      if (kErr) console.error('[home-sales] could not mark seller balance unknown on sale', saleId, kErr.message);
+    }
     const { data: sale, error: sErr } = await supabase.from('home_sales').select('*').eq('id', saleId).maybeSingle();
     if (sErr) throw sErr;
-    const sellerFinalCents = t.seller_balance_cents;
+    const sellerFinalCents = snap.balance_status === 'UNKNOWN' ? null : t.seller_balance_cents;
     const sellerCleared = snap.balance_status !== 'UNKNOWN' && Number(sellerFinalCents) === 0;
     res.json({
       sale,
@@ -813,4 +834,4 @@ async function undoRecordClosing(proposalId, createdSaleId, reason) {
 }
 
 module.exports = router;
-module.exports._test = { balanceFromAR, propertySnapshot, sellerMatchesOwner, classifyCheckPayee, validateClosingChecks };
+module.exports._test = { searchLots, balanceFromAR, propertySnapshot, sellerMatchesOwner, classifyCheckPayee, validateClosingChecks };
