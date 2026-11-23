@@ -55,7 +55,7 @@ t('posted months: a backdated payment lists a correction for every month it affe
   assert.deepStrictEqual(r.map((x) => [x.month, x.posted_cents, x.recalculated_cents, x.correction_cents]), [['2026-09', 1000, 500, -500], ['2026-10', 1000, 500, -500]]);
 });
 t('posted months: a correction already made nets out; a reversed payment lists an undercharge', () => {
-  assert.deepStrictEqual(I.reviewPostedInterest({ ...base, rows: [...open, row('2026-09-01', 'interest', 1000), pay('2026-08-15', 60000), row('2026-09-30', 'interest', -500, { txn_type: 'adjustment' })] }), []);
+  assert.deepStrictEqual(I.reviewPostedInterest({ ...base, rows: [...open, row('2026-09-01', 'interest', 1000), pay('2026-08-15', 60000), row('2026-09-30', 'interest', -500, { txn_type: 'adjustment', corrects_month: '2026-09' })] }), []);
   const r = I.reviewPostedInterest({ ...base, rows: [...open, row('2026-09-01', 'interest', 500), pay('2026-08-15', 60000), row('2026-08-20', 'payment_reversal', 60000)] });
   assert.deepStrictEqual(r.map((x) => x.correction_cents), [500]);
 });
