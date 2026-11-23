@@ -94,7 +94,7 @@ check('wiring: runs prepare, approve and refresh journal entries; owner in-app a
   const m = read('lib/accounting/monthly_runs.js');
   assert.ok(/process === 'journal_entry'\) \{\s*preview = await require\('\.\/journal_entry_runs'\)\.preview/.test(m));
   assert.ok(/run\.process === 'journal_entry'\) result = await require\('\.\/journal_entry_runs'\)\.postApproved/.test(m));
-  assert.ok(/const approver = assertInAppApproval\(approval\);/.test(m), 'approval stays the authenticated in-app owner approval');
+  assert.ok(m.includes('let approver = (delegated || granted) ? null : assertInAppApproval(approval);'), 'approval stays the authenticated in-app owner approval, or a database-verified owner authorization (mig 566)');
   assert.ok(/openJournalEntryRun/.test(m) && /items = null/.test(m));
   const jr = read('lib/accounting/journal_entry_runs.js');
   assert.ok(jr.includes("require('./homeowner_charge')") && jr.includes("contains('raw_row_jsonb', { source_reference: e.source_reference })"), 'owner line posts through the sanctioned helper, once per source reference');
@@ -104,6 +104,15 @@ check('wiring: runs prepare, approve and refresh journal entries; owner in-app a
   const ed = read('public/ed.html');
   assert.ok(/journal_entry: 'Journal entries'/.test(ed) && /run\.process==='journal_entry'/.test(ed) && /proc==='journal_entry'/.test(ed));
   assert.ok(/'journal_entry'/.test(read('migrations/558_kat_journal_entry_runs.sql')));
+  // An owner's payment posts as a payment (txn_type + category), other credits stay adjustments.
+  const hc = read('lib/accounting/homeowner_charge.js');
+  assert.ok(/if \(opts\.chargeCategory === 'payment'\) return postLine\(supabase, Object\.assign\(\{\}, opts, \{ txnType: 'payment', chargeCategory: 'payment', amountCents: -opts\.amountCents \}\)\);/.test(hc), 'a payment credit is a payment');
+  assert.ok(/txnType: 'adjustment', chargeCategory: 'adjustment', amountCents: -opts\.amountCents/.test(hc), 'other credits stay adjustments');
+  assert.ok(/total_payments_cents: txnType === 'payment' \? -amountCents : 0/.test(hc), 'the batch total counts the payment');
+  // A line may name its fund (interfund transfer through one configured account): validated, carried, posted.
+  assert.ok(/if \(l\.fund_code && !\(facts\.funds \|\| \{\}\)\[l\.fund_code\]\) \{ lineErr = `line \$\{i \+ 1\}: fund \$\{l\.fund_code\} does not exist for this community`/.test(jr), 'an unknown fund is refused');
+  assert.ok(/\.\.\.\(l\.fund_code \? \{ fund_code: String\(l\.fund_code\) \} : \{\}\)/.test(jr), 'the prepared line keeps its fund');
+  assert.ok(/\.\.\.\(l\.fund_code \? \{ fund_id: FUND\[l\.fund_code\] \} : \{\}\)/.test(jr), 'the posted line carries the fund id');
 });
 
 (async () => {

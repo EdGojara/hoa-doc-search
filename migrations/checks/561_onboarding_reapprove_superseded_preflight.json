@@ -1,0 +1,53 @@
+{
+  "migration": "561_onboarding_reapprove_superseded_preflight.sql",
+  "summary": "conversion_batches_onboarding_guard: the approved preflight hash may be replaced only while the batch is in preflight and unposted and the preflight the earlier approval was bound to has been superseded; the replacement still needs a human approval of the current preflight result. The rest of the 485 body is unchanged. No existing row changes.",
+  "requires": [
+    "481_onboarding_engine.sql",
+    "485_onboarding_operator.sql"
+  ],
+  "preflight": [
+    {
+      "name": "the guard trigger exists on conversion_batches",
+      "sql": "SELECT count(*)::int FROM pg_trigger WHERE tgname = 'trg_conversion_batches_onboarding_guard'",
+      "expect": 1
+    },
+    {
+      "name": "the guard is still strictly write-once",
+      "sql": "SELECT CASE WHEN pg_get_functiondef('conversion_batches_onboarding_guard()'::regprocedure) LIKE '%after the preflight it approved was superseded%' THEN 1 ELSE 0 END",
+      "expect": 0
+    }
+  ],
+  "expected_changes": [
+    "conversion_batches_onboarding_guard is replaced.",
+    "No row in any table changes."
+  ],
+  "objects": {
+    "added": [],
+    "changed": [
+      "function:conversion_batches_onboarding_guard"
+    ],
+    "removed": []
+  },
+  "row_changes": {
+    "conversion_batches": 0,
+    "onboarding_stage_events": 0
+  },
+  "protected": [
+    {
+      "table": "conversion_batches",
+      "order_by": "id"
+    }
+  ],
+  "verify": [
+    {
+      "name": "the guard allows replacing only a superseded approval",
+      "sql": "SELECT CASE WHEN pg_get_functiondef('conversion_batches_onboarding_guard()'::regprocedure) LIKE '%after the preflight it approved was superseded%' THEN 1 ELSE 0 END",
+      "expect": 1
+    },
+    {
+      "name": "the guard trigger still exists",
+      "sql": "SELECT count(*)::int FROM pg_trigger WHERE tgname = 'trg_conversion_batches_onboarding_guard'",
+      "expect": 1
+    }
+  ]
+}

@@ -543,6 +543,7 @@ const _STAFF_GATE_PUBLIC = [
   /^\/api\/portal\/autopay$/,                  // GET this owner's standing authorisation
   /^\/api\/portal\/autopay\/(begin|complete|cancel)$/, // enrol / finish / stop
   /^\/api\/portal\/pay\/checkout$/,             // homeowner pays own balance (portal cookie; server derives lot/owner/amount)
+  /^\/api\/portal\/pay\/(setup|quote|confirm)$/, // funding-aware pay flow (portal cookie; server derives lot/owner/amount/fee)
   // Board portal API — every handler enforces requireBoardViewer (staff JWT OR
   // a board member's portal magic-link cookie whose email holds an active seat)
   // + canSeeCommunity per-community scope (lib/portal/board_access.js,
@@ -1148,6 +1149,10 @@ app.use('/api/newsletters', newslettersRouter);
 
 const masterPlanSubmissionsRouter = require('./api/master_plan_submissions');
 app.use('/api/master-plan-submissions', masterPlanSubmissionsRouter);
+// One-screen review + one-action approval of a builder's master plan set (Ed 2026-11-20).
+app.get('/admin/master-plan-submissions/set', (req, res) => {
+  res.sendFile(require('path').join(__dirname, 'public', 'master-plan-set.html'));
+});
 app.get('/admin/master-plan-submissions', (req, res) => {
   res.sendFile(require('path').join(__dirname, 'public', 'master-plan-submissions-admin.html'));
 });
@@ -1585,6 +1590,7 @@ app.get('/pay/:token', async (req, res) => {
       initiated_by: 'payment_link',
     });
     if (r.ok && r.checkout_url) return res.redirect(302, r.checkout_url);
+    if (r.error === 'account_with_counsel' && r.legal_hold) return res.status(403).send(_payPage('Account with legal counsel', require('./lib/payments/legal_hold').counselHtml(r.legal_hold)));
     if (r.error === 'nothing_due') return res.send(_payPage('Nothing due', `<h1>Your balance is $0</h1><p>There's nothing due right now. Thank you.</p>`));
     if (r.error === 'payment_not_configured' || r.error === 'community_stripe_not_onboarded' || r.error === 'test_mode_sandbox_only' || r.error === 'online_payments_not_enabled') {
       return res.send(_payPage('Online payment coming soon', `<h1>Online payment isn't available yet</h1><p>This community hasn't finished setting up online payments. Please contact management to pay by check or ACH in the meantime.</p>`));
@@ -1713,6 +1719,10 @@ app.get('/portal/vendor-directory/vendor',   (req, res) => res.sendFile(require(
 app.get('/inspector-voice', (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'inspector-voice.html')));
 app.get('/portal/acc-review',(req, res) => res.sendFile(require('path').join(__dirname, 'public', 'portal-acc-review.html')));
 app.get('/portal/payments',  (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'portal.html')));
+// Funding-aware Pay flow (card type / bank known before the amount is fixed). Auth: portal cookie, checked by /api/portal/pay/*.
+app.get('/portal/pay',       (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'portal-pay.html')));
+// Automatic payments enrollment: terms + fee schedule before authorising. Auth: portal cookie, checked by /api/portal/autopay*.
+app.get('/portal/autopay',   (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'portal-autopay.html')));
 
 // Board portal — extensionless route mirrors the homeowner /portal pattern so
 // the "Board View →" switch (href="/board-portal") and the reciprocal
@@ -2306,6 +2316,12 @@ JUDGMENT PRINCIPLES:
 - Never approve something that clearly violates a specific governing document provision
 - Always leave the door open for resubmission if denying
 
+PROPERTY HISTORY AND WHEN TO ASK (Ed 2026-11-19):
+- PROPERTY RECORDS IN TRUSTED, when given, are evidence like the application: an inspection photo of the lot is the photo of the home; a cited violation tells you what the application is about.
+- An application about a condition already cited in a violation is the response to that violation, not an unrelated request. Say whether it asks to approve the existing cited condition or proposes a cure, and decide on that basis. A condition already cited as noncompliant is not approved without the governing-document basis or special approval the documents require.
+- Recommend "request more information" ONLY when the missing item would change the outcome AND cannot be resolved from the application, the photos, or the property records. Otherwise decide.
+- Once the documents and records support a decision, make it. Do not reopen it, hedge it, or ask staff or the Board to reconsider because another reading is theoretically possible. Special approvals and variances follow the existing Committee/Board routing; do not invite them in the recommendation.
+
 DIMENSIONAL RECONCILIATION — HARD RULE (the 280 vs 240 sq ft bug):
 When dimensions appear in multiple places in a packet (homeowner-typed application form, contractor estimate, architect-stamped drawings, site plan, survey), THE ARCHITECT-STAMPED DRAWING CONTROLS. That is the instrument being approved.
 - The application form is often a pre-design estimate or rough number from the homeowner — never controlling.
@@ -2728,7 +2744,7 @@ app.post('/acc-review/letter', upload.any(), async (req, res) => {
       }
       gateRow = gr;
     }
-    const gc = DA.checkFinalDecision(gateRow || { project_summary: body.project_summary, status: 'pending_review' },
+    const gc = DA.checkFinalDecision(gateRow ? { ...gateRow, acc_delegation: await _accDelegation(gateRow.community_id) } : { project_summary: body.project_summary, status: 'pending_review' },
       { decisionType: body.decision_type, texts: [body.body_text, body.project_summary], actor, requireIssuer: true });
     if (!gc.ok) return res.status(gc.status).json({ code: gc.code, error: gc.error, authority: gc.auth });
 
@@ -2906,7 +2922,7 @@ app.get('/acc-review/decisions', async (req, res) => {
   // tag clears once Ed reviews and each case lands in the right section
   // (Pending Ed's approval / Submitted / Completed). Without them the tag was
   // computed from the request text alone and never cleared.
-  const WITH_AUTHORITY = `${WITH_CURRENT}, decision_record, owner_review, approval_gate, approval_gate_reason`;
+  const WITH_AUTHORITY = `${WITH_CURRENT}, decision_record, owner_review, approval_gate, approval_gate_reason, community_id, current_letter_body`;
   const run = async (cols) => {
     const { address, community, q, status, source } = req.query;
     let query = supabase
@@ -2941,9 +2957,13 @@ app.get('/acc-review/decisions', async (req, res) => {
     const DA = require('./lib/acc/decision_authority');
     // The authority internals (record, owner review) stay server-side; the list
     // gets the label and the computed section only.
-    const decisions = (data || []).map(({ decision_record, owner_review, approval_gate, approval_gate_reason, ...r }) => {
-      const a = DA.authorityFor({ ...r, decision_record, owner_review, approval_gate, approval_gate_reason });
-      const out = { ...r, queue_stage: DA.queueStage({ ...r, decision_record }, a) };
+    // Each community's written ACC delegation (migration 569): where one is on
+    // file, Annie's routine decision is ready to send without Ed (Ed 2026-11-18).
+    const delegations = await _accDelegations([...new Set((data || []).map((r) => r.community_id).filter(Boolean))]);
+    const decisions = (data || []).map(({ decision_record, owner_review, approval_gate, approval_gate_reason, current_letter_body, ...r }) => {
+      const row = { ...r, decision_record, owner_review, approval_gate, approval_gate_reason, current_letter_body, acc_delegation: delegations.get(r.community_id) || null };
+      const a = DA.authorityFor(row);
+      const out = { ...r, queue_stage: DA.queueStage(row, a) };
       return a.escalated && a.open ? { ...out, authority: { label: a.label, triggers: a.triggers } } : out;
     });
     res.json({ decisions });
@@ -2957,6 +2977,40 @@ app.get('/acc-review/decisions', async (req, res) => {
 // on, so staff can read the homeowner's own words and answer WITHOUT leaving the
 // queue. (Ed 2026-07-15: "I want to be able to link to email from this page and
 // respond via Annie from their email from here — again ease of use.")
+// GET /acc-review/intake-exceptions — ACC applications that arrived by email (last 60 days)
+// but are not in the queue, with the reason (lib/acc/intake_exceptions). Shown at the top of
+// the ACC queue as "Received, not filed" so nothing disappears silently (Ed 2026-11-17).
+app.get('/acc-review/intake-exceptions', async (req, res) => {
+  try {
+    const { fetchAllQuery } = require('./lib/db/fetch_all');
+    const { findIntakeExceptions } = require('./lib/acc/intake_exceptions');
+    const since = new Date(Date.now() - 60 * 86400000).toISOString();
+    const annie = String(require('./lib/email/graph_send').ANNIE_MAILBOX || '').toLowerCase();
+    const emails = await fetchAllQuery(() => supabase.from('email_messages')
+      .select('id, graph_id, conversation_id, mailbox, direction, subject, sender_email, received_at, has_attachments, classification, triage_status, extracted, community_id, resolved_property_id')
+      .eq('direction', 'inbound').gte('received_at', since)
+      .or(`classification.eq.acc_request,mailbox.ilike.${annie}`));
+    const decisions = await fetchAllQuery(() => supabase.from('acc_decisions')
+      .select('id, reference_number, status, homeowner_address, intake_source_ref, source_email_refs, conversation_id, created_at')
+      .eq('management_company_id', BEDROCK_MGMT_CO_ID));
+    const pids = [...new Set(emails.map((m) => m.resolved_property_id).filter(Boolean))];
+    const addr = {};
+    for (let i = 0; i < pids.length; i += 100) {
+      const { data, error } = await supabase.from('properties').select('id, street_address').in('id', pids.slice(i, i + 100));
+      if (error) throw error;
+      for (const p of data || []) addr[p.id] = p.street_address;
+    }
+    const comms = {};
+    { const { data, error } = await supabase.from('communities').select('id, name'); if (error) throw error; for (const c of data || []) comms[c.id] = c.name; }
+    const rows = findIntakeExceptions({ emails: emails.map((m) => ({ ...m, property_address: addr[m.resolved_property_id] || null })), decisions, accMailboxes: [annie] })
+      .map((r) => ({ ...r, community_name: comms[r.community_id] || null }));
+    res.json({ exceptions: rows, scanned: emails.length });
+  } catch (err) {
+    console.error('[acc-review/intake-exceptions] failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get('/acc-review/decisions/:id/email', async (req, res) => {
   try {
     const { data: d } = await supabase.from('acc_decisions')
@@ -3064,7 +3118,7 @@ app.get('/acc-review/decisions/:id/full', async (req, res) => {
     let finalization = null;
     try { finalization = await require('./lib/acc/finalized').finalizationFor(supabase, data); } catch (_) {}
     // Who may decide this case and what is still missing (Ed 2026-10-20).
-    const authority = require('./lib/acc/decision_authority').authorityFor(data);
+    const authority = require('./lib/acc/decision_authority').authorityFor({ ...data, acc_delegation: await _accDelegation(data.community_id) });
     // The community's instruments a decision may cite, and the authority basis
     // its last recorded decision used, so a standing delegation is entered once.
     authority.documents = await _accAuthorityDocuments(data.community_id);
@@ -3148,7 +3202,7 @@ app.get('/acc-review/decisions/:id/letter', async (req, res) => {
     {
       const DA = require('./lib/acc/decision_authority');
       if (DA.OPEN.includes(dec.status)) {
-        const chk = DA.checkFinalDecision(dec, { decisionType: dec.decision_type, texts: [dec.letter_body || dec.ai_letter_body], actor: await getActingUser(req), requireIssuer: true });
+        const chk = DA.checkFinalDecision({ ...dec, acc_delegation: await _accDelegation(dec.community_id) }, { decisionType: dec.decision_type, texts: [dec.letter_body || dec.ai_letter_body], actor: await getActingUser(req), requireIssuer: true });
         if (!chk.ok) return res.status(chk.status).json({ code: chk.code, error: chk.error });
       }
     }
@@ -3224,7 +3278,7 @@ app.get('/acc-review/decisions/:id/packet', async (req, res) => {
       let packetDec = dec;
       if (dec.status !== 'decided') {
         const DA = require('./lib/acc/decision_authority');
-        const chk = DA.checkFinalDecision(dec, { decisionType: dec.decision_type, texts: [dec.letter_body || dec.ai_letter_body], actor: await getActingUser(req), requireIssuer: true });
+        const chk = DA.checkFinalDecision({ ...dec, acc_delegation: await _accDelegation(dec.community_id) }, { decisionType: dec.decision_type, texts: [dec.letter_body || dec.ai_letter_body], actor: await getActingUser(req), requireIssuer: true });
         if (!chk.ok) { packetDec = { ...dec, letter_pdf_storage_path: null }; res.setHeader('X-Packet-Letter-Withheld', chk.code); }
       }
       const pk = await require('./lib/acc/packet').buildAccPacket({ dec: packetDec, download });
@@ -3261,9 +3315,11 @@ app.get('/acc-review/decisions/:id/packet', async (req, res) => {
 // specialist mailbox — threads with the acknowledgment she already sent), and
 // flips the row to status='decided'. Idempotent-safe: a decided row can be
 // re-finalized (e.g. corrected letter) without creating a duplicate.
-app.post('/acc-review/decisions/:id/finalize', async (req, res) => {
+async function _accFinalizeHandler(req, res) {
   try {
-    const actor = await getActingUser(req);
+    // Annie issuing her own routine decision (lib/acc/annie_issue) arrives with
+    // the agent as the issuer; it is set only in-process, never from HTTP.
+    const actor = req._accAgentIssuer || await getActingUser(req);
     const body = req.body || {};
     const { id } = req.params;
 
@@ -3289,6 +3345,13 @@ app.post('/acc-review/decisions/:id/finalize', async (req, res) => {
     // made (the atomic claim in lib/acc/finalize.js still decides any race).
     if (!require('./lib/acc/finalize').OPEN_STATUSES.includes(dec.status)) {
       return res.status(409).json({ error: `This application is no longer open (${dec.status}${dec.decided_at ? ', decided ' + String(dec.decided_at).slice(0, 10) : ''}). Nothing was sent again.`, already_decided: true });
+    }
+
+    // BACKLOG HOLD (Ed 2026-11-18, lib/acc/backlog_hold): a case that existed
+    // before Annie started issuing gets no decision letter unless Ed sends it
+    // from his own account. New cases are not affected.
+    if (isFinal && require('./lib/acc/backlog_hold').isBacklogHeld(dec) && !require('./lib/acc/decision_authority').isOwnerActor(actor)) {
+      return res.status(409).json({ code: 'backlog_hold', error: 'This application is on the backlog hold: Ed is reviewing its history (an earlier decision may already have been made or sent). No decision letter goes out on it without his authorization. Nothing was sent.' });
     }
 
     // A STALE letter (drafted before the current review, or before evidence
@@ -3323,6 +3386,14 @@ app.post('/acc-review/decisions/:id/finalize', async (req, res) => {
     }
     bodyText = bodyScreen.text;
 
+    // DENIAL APPEAL NOTICE (Ed 2026-11-18): every ACC denial letter tells the
+    // owner how to appeal: the association's own appeal route when its written
+    // delegation names one, and the §209.00505 hearing notice (GLOBAL_RULES).
+    // Injected at render time, never left to the drafter.
+    if (decisionType === 'denied' || /den(?:y|ied|ial)|disapprov/i.test(decisionType)) {
+      bodyText = _accWithAppealNotice(bodyText);
+    }
+
     // DECISION AUTHORITY (Ed 2026-10-20, lib/acc/decision_authority). An
     // approval or denial (by decision type OR by what the letter says) is issued
     // only for an authorized decision recorded on the case: Ed's, the
@@ -3342,8 +3413,17 @@ app.post('/acc-review/decisions/:id/finalize', async (req, res) => {
         const docErr = await _accResolveAuthorityDocument(dec, rec);
         if (docErr) return res.status(409).json({ code: 'decision_record_invalid', error: `Decision record incomplete: ${docErr}. Nothing was sent or marked done.` });
         decRow = { ...dec, decision_record: rec };
+      } else if (isFinal && !DA.authorityFor(dec).record_valid) {
+        // ROUTINE ACC (Ed 2026-11-18): Annie's own determination on her current
+        // review, under the community's written delegation, is the decision.
+        // Built server-side only; the sender issues it and is stamped below.
+        // Ed's two exceptions, committee/Board matters and incomplete cases are
+        // refused inside annieDecisionFor and fall through to the gate below.
+        const annie = DA.annieDecisionFor(dec, await _accDelegation(dec.community_id));
+        if (annie.rec && annie.rec.outcome === decisionType) decRow = { ...dec, decision_record: annie.rec };
+        else if (annie.rec) return res.status(409).json({ code: 'decision_outcome_mismatch', error: `Annie's decision on this application is "${annie.rec.outcome.replace(/_/g, ' ')}", not "${decisionType.replace(/_/g, ' ')}". Staff never decide: send Annie's decision, or ask Annie to re-review. Nothing was sent.` });
       }
-      const authz = DA.checkFinalDecision(decRow, { decisionType, texts: [bodyText], actor, requireIssuer: true });
+      const authz = DA.checkFinalDecision({ ...decRow, acc_delegation: await _accDelegation(dec.community_id) }, { decisionType, texts: [bodyText], actor, requireIssuer: true });
       if (!authz.ok) return res.status(authz.status).json({ code: authz.code, error: authz.error, authority: authz.auth });
       if (authz.final) {
         // Who issued it: the signed-in sender, on the record itself.
@@ -3649,6 +3729,52 @@ app.post('/acc-review/decisions/:id/finalize', async (req, res) => {
     console.error('[acc-review/decisions/:id/finalize] failed:', err.message);
     res.status(err && err.status ? err.status : 500).json({ error: err.message });
   }
+}
+app.post('/acc-review/decisions/:id/finalize', _accFinalizeHandler);
+
+// The required appeal notice for an ACC denial letter: the §209.00505 hearing
+// notice (GLOBAL_RULES) only, placed before the closing. Letters stay in the
+// existing concise format: nothing about Bedrock's authority, delegation or
+// Annie (Ed 2026-11-18); that lives in the internal record. Idempotent.
+function _accWithAppealNotice(text) {
+  const { injectGlobalRule } = require('./lib/global_rules');
+  const statutory = injectGlobalRule('tx_209_00505_arc_denial_hearing');
+  const body = String(text || '');
+  if (body.includes(statutory)) return body;
+  const para = statutory;
+  const m = body.match(/\n\s*(?:Sincerely|Respectfully|Regards|Best regards|Kind regards|Thank you)[,.]?\s*(?:\n|$)/i);
+  return m ? `${body.slice(0, m.index).replace(/\s+$/, '')}\n\n${para}\n${body.slice(m.index)}` : `${body.replace(/\s+$/, '')}\n\n${para}`;
+}
+
+// ANNIE ISSUES HER OWN ROUTINE DECISIONS (Ed 2026-11-18, lib/acc/annie_issue):
+// the same finalize path, with Annie as the issuer. Registered once at boot.
+const _ACC_ANNIE_ISSUER = { id: null, agent: 'annie', email: require('./lib/email/graph_send').ANNIE_MAILBOX, full_name: 'Annie (Bedrock ACC)', is_active: true };
+require('./lib/acc/annie_issue').registerIssuer(async (id, body) => {
+  const out = { status: 200, json: null };
+  const res = { status(c) { out.status = c; return this; }, json(j) { out.json = j; return this; } };
+  await _accFinalizeHandler({ params: { id }, body, headers: {}, _accAgentIssuer: _ACC_ANNIE_ISSUER }, res);
+  return out;
+});
+
+// POST /acc-review/annie/issue-ready (owner only): cases already waiting when
+// Annie started issuing (their reviews predate it). { dry_run: true } lists
+// what she would send; otherwise she issues each one through the same path.
+app.post('/acc-review/annie/issue-ready', express.json({ limit: '8kb' }), async (req, res) => {
+  const { requireOwner } = require('./api/_require_admin');
+  const owner = await requireOwner(req, res); if (!owner) return;
+  try {
+    const dryRun = !(req.body && req.body.dry_run === false);
+    const { data, error } = await supabase.from('acc_decisions').select('id').eq('management_company_id', BEDROCK_MGMT_CO_ID)
+      .in('status', ['pending_review', 'awaiting_info']).order('created_at', { ascending: true }).limit(500);
+    if (error) throw error;
+    const A = require('./lib/acc/annie_issue');
+    const results = [];
+    for (const r of data || []) results.push(await A.issueIfReady(supabase, r.id, { dryRun, source: 'owner_backlog' }));
+    res.json({ dry_run: dryRun, open: (data || []).length, issued: results.filter((x) => x.issued).length, would_issue: results.filter((x) => x.would_issue), results });
+  } catch (err) {
+    console.error('[acc-review/annie/issue-ready] failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // ----------------------------------------------------------------------------
@@ -3774,6 +3900,18 @@ app.post('/acc-review/decisions/:id/redraft', express.json({ limit: '64kb' }), a
 // The governing instruments on file for a community: what a decision may cite
 // as its authority (a delegation, a declaration, guidelines, a resolution).
 const _ACC_AUTHORITY_CATEGORIES = ['declaration_ccrs', 'design_document', 'rules_and_regulations', 'resolutions_and_policies', 'bylaws', 'management_agreement'];
+// The community's written ACC delegation (communities.acc_delegation, migration
+// 569): the instrument under which Bedrock (Annie included) decides ACC
+// applications. null when none is on file, or before 569.
+async function _accDelegations(communityIds) {
+  const out = new Map();
+  if (!communityIds || !communityIds.length) return out;
+  const { data, error } = await supabase.from('communities').select('id, acc_delegation').in('id', communityIds);
+  if (error) { if (!/acc_delegation|does not exist/i.test(error.message || '')) console.warn('[acc-authority] delegation lookup failed:', error.message); return out; }
+  for (const c of data || []) if (c.acc_delegation && typeof c.acc_delegation === 'object') out.set(c.id, c.acc_delegation);
+  return out;
+}
+async function _accDelegation(communityId) { return (await _accDelegations(communityId ? [communityId] : [])).get(communityId) || null; }
 async function _accAuthorityDocuments(communityId) {
   if (!communityId) return [];
   const { data, error } = await supabase.from('library_documents').select('id, title, category, effective_date')
@@ -3885,7 +4023,7 @@ app.post('/acc-review/render-letter', express.json({ limit: '256kb' }), async (r
       }
       // Every status: rendering NEW decision text for a decided case is not its
       // record (GET .../letter serves the stored one), so it is held to the same check.
-      const chk = DA.checkFinalDecision(row, { decisionType: b.decision_type, texts: [screen.text, b.project_summary], actor: await getActingUser(req), requireIssuer: true });
+      const chk = DA.checkFinalDecision(row.id ? { ...row, acc_delegation: await _accDelegation(row.community_id) } : row, { decisionType: b.decision_type, texts: [screen.text, b.project_summary], actor: await getActingUser(req), requireIssuer: true });
       if (!chk.ok) return res.status(chk.status).json({ code: chk.code, draft_saved: !!b.id && DA.OPEN.includes(row.status), error: (b.id && DA.OPEN.includes(row.status) ? 'Your draft was saved. ' : '') + chk.error });
     }
     const pdfBuffer = await renderLetterPdfBuffer({
@@ -8805,7 +8943,7 @@ app.post('/api/nominations/cycles/:id/annual-meeting-notice', async (req, res) =
     const escAssoc = String(assocLegal).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     const pageFooterHtml = `
       <div>${escAssoc} &nbsp;|&nbsp; c/o Bedrock Association Management, LLC</div>
-      <div>12808 W Airport Blvd, Ste 253, Sugar Land, TX 77478 &nbsp;|&nbsp; (832) 588-2485 &nbsp;|&nbsp; bedrocktx.com</div>
+      <div>${BRAND.service.addressInline} &nbsp;|&nbsp; ${BRAND.service.phone} &nbsp;|&nbsp; ${BRAND.service.website}</div>
     `;
     const buf = await _renderHtmlToPdf(html, { pageNumbers: true, pageFooterHtml });
 

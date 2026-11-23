@@ -542,6 +542,18 @@
     .picker-grid { grid-template-columns: 1fr; }
     .picker-head h2 { font-size: 26px; }
     .header-chip { padding: 6px 10px; font-size: 11.5px; }
+    /* Phone header (Ed 2026-11-21 portal testing): the wordmark, two chips,
+       name and Sign out did not fit, so the wordmark clipped under the banner
+       and everything wrapped. Keep the mark, drop the wordmark text and the
+       name (the hero card greets them), tighten the chips. */
+    header.top .brand > div { display: none; }
+    header.top .brand img { height: 38px !important; }
+    .top-right { gap: 8px; }
+    .top-right .user-name { display: none; }
+    #logoutBtn { padding: 6px 10px; font-size: 12px; }
+    /* Demo banner on one line so it matches the 32px offset below. */
+    #demoBanner { font-size: 11px !important; padding: 7px 10px !important; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    #demoBanner a { margin-left: 6px !important; font-size: 11px !important; }
   }
 
   /* Mimic mode — body gets padding-top so the fixed banner doesn't cover
@@ -677,7 +689,10 @@
 <div id="chamberBanner" style="display:none; margin-bottom:16px;"></div>
 
 <!-- Tile grid -->
-<div class="section-label" id="tileSectionLabel">Your community</div>
+<!-- Section labels are added per section by renderTiles(). This static label
+     sat above an always-empty grid, showing an orphan "Your community"
+     heading at the top of every portal (Ed 2026-11-21 portal testing). -->
+<div class="section-label" id="tileSectionLabel" style="display:none;">Your community</div>
 <div class="tile-grid" id="tileGrid"></div>
 
 </main>
@@ -850,7 +865,7 @@ const MODULES = [
   {
     key: 'messages',
     title: 'Messages',
-    description: 'Direct conversation with Bedrock — questions, requests, updates on open items.',
+    description: 'Send Bedrock a question or request about your home. Our team replies by email.',
     icon: '💬',
     section: 'home',
     cta: 'Open messages',
@@ -1016,113 +1031,18 @@ function fmtAsOf(bal) {
   return 'As of ' + fmt(bal.as_of);
 }
 
-// Pay-your-balance flow → Stripe Checkout. ACH (no fee) or card (+ fee). The
-// full assessment routes to the HOA's connected account; nothing is recorded
-// to the books until Stripe confirms the payment via webhook.
+// Pay-your-balance flow -> /portal/pay (public/portal-pay.html). The card's
+// funding type (credit / debit / prepaid) or bank (ACH) is known BEFORE the
+// amount is fixed, and the fee comes only from the server's quote
+// (lib/payments/fee_quote.js): no fee is computed in the browser. Nothing is
+// recorded to the books until Stripe confirms the payment via webhook.
+// (Automatic payments are paused server-side, so the pay flow does not offer them.)
 window.openPayModal = function () {
   const c = window._payCtx || {};
   if (!c.property_id || !(c.amount_cents > 0)) return;
-  // Guard the ACTION, not just the button's visibility — a stale render or a
-  // direct call must not open a modal the server will refuse.
+  // Guard the ACTION, not just the button's visibility.
   if (!c.payments_enabled) return;
-  const amt = c.amount_cents;
-  const cardFee = Math.max(0, Math.round((amt + 30) / (1 - 0.029)) - amt);
-  const usd = (cents) => '$' + (cents / 100).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  const modal = document.createElement('div');
-  modal.id = '_payModal';
-  modal.style.cssText = 'position:fixed; inset:0; background:rgba(11,29,52,0.55); z-index:3000; display:flex; align-items:center; justify-content:center; padding:20px;';
-  modal.innerHTML = `<div style="background:#fff; border-radius:14px; max-width:440px; width:100%; padding:24px; box-shadow:0 16px 50px rgba(0,0,0,0.3);">
-    <h3 style="margin:0 0 4px; color:#0B1D34; font-size:19px;">Pay your balance</h3>
-    <p style="margin:0 0 4px; color:#475569; font-size:13.5px;">Amount due: <b>${usd(amt)}</b></p>
-    <p style="margin:0 0 16px; color:#64748b; font-size:12px;">${c.as_of_label || ''}${/through/.test(c.as_of_label || '') ? '. Anything posted since then is not included.' : ''}</p>
-    <label style="display:block; border:1px solid #e2e8f0; border-radius:10px; padding:12px 14px; margin-bottom:10px; cursor:pointer;">
-      <input type="radio" name="_payMethod" value="ach" checked> <b>Bank transfer (ACH)</b>
-      <div style="color:#15803d; font-size:12.5px; margin-left:22px;">No processing fee · ${usd(amt)}</div>
-    </label>
-    <label style="display:block; border:1px solid #e2e8f0; border-radius:10px; padding:12px 14px; margin-bottom:16px; cursor:pointer;">
-      <input type="radio" name="_payMethod" value="card"> <b>Credit / debit card</b>
-      <div style="color:#64748b; font-size:12.5px; margin-left:22px;">Includes a ${usd(cardFee)} card fee · ${usd(amt + cardFee)} total</div>
-    </label>
-
-    <!-- Autopay, offered at the moment somebody is already paying.
-         This is the highest-value thing a homeowner can switch on and the only
-         moment they are thinking about it. Buried on a settings screen it never
-         gets found; here it is one checkbox at the point of intent.
-         (Ed 2026-08-22, on Vantaca's recurring tab.) -->
-    <label id="_autoWrap" style="display:${c.autopay_available ? 'block' : 'none'}; border:1px solid #e2e8f0; border-radius:10px; padding:12px 14px; margin-bottom:12px; cursor:pointer; background:#f8fafc;">
-      <input type="checkbox" id="_autoOn"> <b>Also pay automatically from now on</b>
-      <div style="color:#64748b; font-size:12.5px; margin-left:22px; line-height:1.45;">
-        We take whatever is owed on the due date, and email you the exact amount
-        at least 10 days before. Cancel any time.
-      </div>
-    </label>
-    <div id="_autoCap" style="display:none; margin:-4px 0 16px 36px;">
-      <label style="font-size:12px; color:#475569;">Never take more than (optional)</label>
-      <input id="_autoMax" type="text" inputmode="decimal" placeholder="e.g. 1000"
-             style="display:block; margin-top:4px; width:150px; padding:7px 10px; border:1px solid #cbd5e1; border-radius:7px; font-size:14px;">
-      <div style="font-size:11.5px; color:#94a3b8; margin-top:4px;">If a balance is ever above this, we stop and ask instead of taking it.</div>
-    </div>
-
-    <div style="display:flex; gap:8px; justify-content:flex-end;">
-      <button id="_payCancel" style="padding:9px 16px; border:1px solid #cbd5e1; background:#fff; border-radius:8px; cursor:pointer; font-weight:600;">Cancel</button>
-      <button id="_payGo" style="padding:9px 18px; border:none; background:#0B1D34; color:#fff; font-weight:700; border-radius:8px; cursor:pointer;">Continue to payment</button>
-    </div>
-    <div id="_payErr" style="color:#b91c1c; font-size:12.5px; margin-top:10px;"></div>
-  </div>`;
-  document.body.appendChild(modal);
-  const close = () => modal.remove();
-  modal.addEventListener('click', (e) => { if (e.target === modal) close(); });
-  modal.querySelector('#_payCancel').onclick = close;
-
-  // The cap only makes sense once autopay is on, and only for a variable
-  // amount — which is the only kind we offer.
-  const autoOn = modal.querySelector('#_autoOn');
-  if (autoOn) {
-    autoOn.onchange = () => {
-      modal.querySelector('#_autoCap').style.display = autoOn.checked ? 'block' : 'none';
-    };
-  }
-
-  modal.querySelector('#_payGo').onclick = async function () {
-    const method = modal.querySelector('input[name="_payMethod"]:checked').value;
-    const wantsAuto = !!(autoOn && autoOn.checked);
-    this.disabled = true; this.textContent = 'Redirecting…';
-    try {
-      // Autopay first, because it is a SETUP session — the homeowner authorises
-      // future debits and no money moves. Doing it after the payment would mean
-      // two Stripe redirects in a row and most people would abandon the second.
-      if (wantsAuto) {
-        const rawCap = (modal.querySelector('#_autoMax').value || '').replace(/[^0-9.]/g, '');
-        const capCents = rawCap ? Math.round(parseFloat(rawCap) * 100) : null;
-        const ar = await fetch('/api/portal/autopay/begin', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            method_kind: method === 'card' ? 'card' : 'us_bank_account',
-            max_amount_cents: capCents && capCents > 0 ? capCents : null,
-            amount_mode: 'full_balance',
-            success_url: location.origin + '/portal?autopay=1',
-            cancel_url: location.href,
-          }),
-        });
-        const aj = await ar.json();
-        if (!ar.ok || aj.error) throw new Error(aj.hint || aj.error || 'Could not set up automatic payments');
-        location.href = aj.setup_url;
-        return;
-      }
-      // The server decides the lot, owner and amount from your signed-in session;
-      // the browser only chooses bank transfer or card.
-      const r = await fetch('/api/portal/pay/checkout', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin',
-        body: JSON.stringify({ payment_method: method, property_id: c.property_id }),
-      });
-      const j = await r.json();
-      if (!r.ok || j.error) throw new Error(j.hint || j.error || 'Could not start payment');
-      location.href = j.checkout_url;
-    } catch (e) {
-      modal.querySelector('#_payErr').textContent = e.message;
-      this.disabled = false; this.textContent = 'Continue to payment';
-    }
-  };
+  location.href = '/portal/pay?property_id=' + encodeURIComponent(c.property_id);
 };
 
 function getQueryParams() {
@@ -1152,7 +1072,8 @@ async function finishAutopayIfReturning() {
   main.insertBefore(banner, main.firstChild);
   try {
     if (!sid) throw new Error('Stripe did not return a session, so nothing was set up.');
-    const r = await fetch('/api/portal/autopay/complete', {
+    const _pid = getStoredPropertyId();
+    const r = await fetch('/api/portal/autopay/complete' + (_pid ? '?property_id=' + encodeURIComponent(_pid) : ''), {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ session_id: sid }),
     });
@@ -1497,6 +1418,7 @@ function renderPortal(ctx) {
   const tpl = $('portalTemplate');
   $('app').innerHTML = '';
   $('app').appendChild(tpl.content.cloneNode(true));
+  window._portalCtx = ctx;   // the tour reads what this portal actually shows
 
   // Top bar
   $('userName').textContent = ctx.user.name || ctx.user.email;
@@ -1643,11 +1565,40 @@ function renderPortal(ctx) {
     if (!wrap) return;
     window._payCtx.autopay_available = !!window._payCtx.payments_enabled;
     try {
-      const r = await fetch('/api/portal/autopay');
+      const _pid = getStoredPropertyId();
+      const r = await fetch('/api/portal/autopay' + (_pid ? '?property_id=' + encodeURIComponent(_pid) : ''));
       if (!r.ok) return;
       const j = await r.json();
+      // Account with legal counsel (Ed 2026-11-22): no Pay now, no autopay; the
+      // firm on file instead. The server refuses every payment either way.
+      if (j.legal_hold) {
+        window._payCtx.payments_enabled = false;
+        window._payCtx.autopay_available = false;
+        const pb = $('payNowBtn'); if (pb) pb.style.display = 'none';
+        const c = j.legal_hold.counsel || {};
+        const lines = [];
+        if (c.firm) lines.push('<b>' + escapeHtml(c.firm) + '</b>');
+        if (c.attorney && c.attorney !== c.firm) lines.push(escapeHtml(c.attorney));
+        if (c.phone) lines.push('Phone: <a href="tel:' + escapeHtml(c.phone.replace(/[^\d+]/g, '')) + '" style="color:#2A4870;">' + escapeHtml(c.phone) + '</a>');
+        if (c.email) lines.push('Email: <a href="mailto:' + escapeHtml(c.email) + '" style="color:#2A4870;">' + escapeHtml(c.email) + '</a>');
+        if (!c.phone && !c.email) lines.push('<span style="color:#64748b;">Contact details for the firm are being updated. Please contact management if you need them.</span>');
+        wrap.innerHTML = '<div style="border-left:3px solid #D4AF37; padding:6px 10px;">'
+          + '<div>' + escapeHtml(j.legal_hold.message) + '</div>'
+          + '<div style="margin-top:6px; line-height:1.6;">' + lines.join('<br>') + '</div></div>';
+        wrap.style.display = 'block';
+        return;
+      }
       const a = j.autopay;
-      if (!a || a.status === 'cancelled') return;
+      const canEnroll = !!(j.enrollment && j.enrollment.available);
+      if (!a || a.status === 'cancelled') {
+        // Offered only when the server says enrollment is open (switch on, payments on, fee rules set).
+        if (canEnroll) {
+          wrap.innerHTML = '<a href="/portal/autopay" style="color:#2A4870; font-weight:600;">Set up automatic payments</a>'
+            + '<div style="color:#64748b;">See the fees and terms before you authorize anything.</div>';
+          wrap.style.display = 'block';
+        }
+        return;
+      }
 
       // Already enrolled — do not offer it again inside the pay modal.
       if (a.status === 'active' || a.status === 'paused') window._payCtx.autopay_available = false;
@@ -1662,8 +1613,9 @@ function renderPortal(ctx) {
       if (a.status === 'active') {
         body = '<b style="color:#166534;">● Automatic payments are on</b>'
           + '<div style="margin-top:3px;">Next: <b>'
-          + (a.noticed_amount_cents ? money(a.noticed_amount_cents) : 'your balance')
+          + (a.noticed_total_cents ? money(a.noticed_total_cents) : 'your balance plus the processing fee')
           + '</b> on <b>' + day(a.next_charge_at) + '</b>, from ' + escapeHtml(method) + '.</div>'
+          + (a.noticed_total_cents && a.noticed_fee_cents ? '<div style="color:#64748b;">' + money(a.noticed_amount_cents) + ' assessment + ' + money(a.noticed_fee_cents) + ' processing fee.</div>' : '')
           + (a.max_amount_cents ? '<div style="color:#64748b;">We never take more than ' + money(a.max_amount_cents) + '.</div>' : '');
       } else if (a.status === 'paused') {
         // A pause is always something the homeowner needs to act on, so it says
@@ -1674,8 +1626,9 @@ function renderPortal(ctx) {
         body = '<b style="color:#b91c1c;">● Automatic payments stopped</b>'
           + '<div style="margin-top:3px;">' + escapeHtml(a.status_reason || 'The last few payments did not go through.') + '</div>';
       } else if (a.status === 'pending_setup') {
-        body = '<b style="color:#64748b;">Automatic payments — not finished</b>'
-          + '<div style="margin-top:3px;">You started setting this up but did not finish authorising it.</div>';
+        body = '<b style="color:#64748b;">Automatic payments: not finished</b>'
+          + '<div style="margin-top:3px;">You started setting this up but did not finish authorising it.'
+          + (canEnroll ? ' <a href="/portal/autopay" style="color:#2A4870;">Finish setting up</a>' : '') + '</div>';
       }
       if (!body) return;
       wrap.innerHTML = body
@@ -2038,28 +1991,45 @@ function renderPropertyPicker(ctx) {
 // Slide content — kept here so it's easy to edit copy without touching markup.
 // Each slide: { icon, title (allows <em> for gold accent), body }.
 // Length discipline: under 280 chars of body per slide. People skim overlays.
-const TUTORIAL_SLIDES = [
-  {
-    icon: '👋',
-    title: 'Welcome to your <em>community portal</em>',
-    body: 'This is your one place for everything related to your home and community — your balance, compliance status, governing documents, and quick ways to request services. Built by Bedrock, made for you.',
-  },
-  {
-    icon: '🏠',
-    title: 'See your <em>account at a glance</em>',
-    body: 'The hero card up top shows your current balance, compliance status, and any open requests. Click the tiles below for full detail on each. Everything updates as we process things on our end.',
-  },
-  {
-    icon: '🎉',
-    title: 'Make a <em>request anytime</em>',
-    body: 'Submit an architectural request, ask for a new pool fob, or reserve the clubhouse — all from the "Make a request" tiles. Questions? Email info@bedrocktx.com or call (832) 588-2485. Welcome aboard!',
-  },
-];
+// The tour names only what THIS homeowner's portal shows. It used to promise
+// "your balance" and "governing documents" to associations that have neither
+// switched on (Ed 2026-11-21, LOPF portal testing).
+function _tourList(items) {
+  return items.length > 1 ? items.slice(0, -1).join(', ') + ', and ' + items[items.length - 1] : (items[0] || '');
+}
+function tutorialSlides() {
+  const ctx = window._portalCtx || {};
+  const cfg = (ctx.community && ctx.community.portal_module_config) || {};
+  const live = (k) => (cfg[k] && cfg[k].status) === 'live';
+  const balanceOn = !!(ctx.balance && ctx.balance.status !== 'hidden');
+  const have = [];
+  if (balanceOn) have.push('your balance');
+  if (live('compliance')) have.push('compliance status');
+  if (live('documents')) have.push('governing documents');
+  if (live('messages')) have.push('messages with our team');
+  have.push('quick ways to make a request');
+  const glance = ['compliance status', 'any open requests'];
+  if (balanceOn) glance.unshift('current balance');
+  const asks = [];
+  if (live('arc')) asks.push('submit an architectural request');
+  if (live('key_fob')) asks.push('ask for a new pool fob');
+  if (live('clubhouse')) asks.push('reserve the clubhouse');
+  return [
+    { icon: '👋', title: 'Welcome to your <em>community portal</em>',
+      body: `This is your one place for your home and community: ${_tourList(have)}. Built by Bedrock, made for you.` },
+    { icon: '🏠', title: 'See your <em>account at a glance</em>',
+      body: `The card up top shows your ${_tourList(glance)}. Click the tiles below for full detail. Everything updates as we process things on our end.` },
+    { icon: '🎉', title: 'Make a <em>request anytime</em>',
+      body: `${asks.length ? _tourList(asks).replace(/^./, (c) => c.toUpperCase()) + ' from the "Make a request" tiles. ' : ''}Questions? Email info@bedrocktx.com or call (832) 588-2485. Welcome aboard!` },
+  ];
+}
+let TUTORIAL_SLIDES = tutorialSlides();
 
 let _tutorialSlideIndex = 0;
 let _tutorialShouldDismiss = false;
 
 function showTutorialOverlay({ updateDismissed = false } = {}) {
+  TUTORIAL_SLIDES = tutorialSlides();
   _tutorialSlideIndex = 0;
   _tutorialShouldDismiss = !!updateDismissed;
   const tpl = $('tutorialOverlayTemplate');
@@ -2149,7 +2119,12 @@ function _dismissTutorial() {
   // every portal-* subpage can read it. Covers cases where the user
   // arrives at /portal without going through the picker (deep link,
   // refresh after auth, etc.).
-  if (ctx?.property?.id) {
+  // Not when this load is about to show the multi-property picker: storing the
+  // server's default lot first made renderPortal think a lot was already
+  // chosen, so owners of two or more lots never saw the picker and "Switch
+  // property" reloaded the same lot (Ed 2026-11-21 portal testing).
+  const willPick = !ctx?.demo && Array.isArray(ctx?.properties) && ctx.properties.length >= 2 && !getStoredPropertyId();
+  if (ctx?.property?.id && !willPick) {
     try { setStoredPropertyId(ctx.property.id); } catch (_) {}
   }
   applyDemoBanner(ctx);

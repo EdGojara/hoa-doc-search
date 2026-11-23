@@ -16,7 +16,7 @@ const codes = (text) => D.checkDecisionReady(text).issues.map((i) => i.code);
 // Minimal read-only PostgREST stand-in: every filter is accepted, data comes from the seed per table.
 function fakeDb(seed, failTables = []) {
   return { from(table) {
-    const q = { select() { return q; }, eq() { return q; }, in() { return q; }, gte() { return q; }, lte() { return q; }, order() { return q; }, limit() { return q; }, range() { return q; },
+    const q = { select() { return q; }, eq() { return q; }, neq() { return q; }, in() { return q; }, gte() { return q; }, lte() { return q; }, order() { return q; }, limit() { return q; }, range() { return q; },
       then(res, rej) { return Promise.resolve(failTables.includes(table) ? { data: null, error: { message: `${table} down` } } : { data: seed[table] || [], error: null }).then(res, rej); } };
     return q;
   } };
@@ -70,7 +70,7 @@ function fakeDb(seed, failTables = []) {
       account_funds: [{ id: 'op', fund_code: 'OPR', fund_name: 'Operating' }, { id: 'res', fund_code: 'RES', fund_name: 'Reserve' }],
       v_trial_balance: [{ account_number: '1000', total_debits_cents: 5000000, total_credits_cents: 900000 }, { account_number: '1201', total_debits_cents: 92563171, total_credits_cents: 0 }],
       bank_accounts: [{ id: 'b1', account_nickname: 'Operating 5313', gl_account_number: '1000' }],
-      bank_reconciliations: [{ bank_account_id: 'b1', period_end: '2026-08-31', status: 'reconciled' }, { bank_account_id: 'b1', period_end: '2026-09-30', status: 'in_progress' }],
+      bank_reconciliations: [{ id: 'r1', bank_account_id: 'b1', period_end: '2026-08-31', status: 'reconciled', difference_cents: 0 }, { id: 'r2', bank_account_id: 'b1', period_end: '2026-09-30', status: 'in_progress', difference_cents: 0 }],
       accounting_periods: [{ period_start: '2026-09-01', period_end: '2026-09-30', status: 'open' }],
       community_budgets: [{ id: 'bud', fiscal_year: 2026, status: 'approved' }],
       budget_line_items: [{ account_id: 'e1', annual_amount_cents: 1000000 }, { account_id: 'r1', annual_amount_cents: 50000000 }],

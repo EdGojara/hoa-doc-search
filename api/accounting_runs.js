@@ -197,6 +197,48 @@ router.post('/run/:id/approve', express.json(), async (req, res) => {
   } catch (err) { fail(res, 'approve', err); }
 });
 
+// Execution grants (migration 567): issued and revoked only from the signed-in owner session.
+// A grant lets the AI team execute the owner's explicit instructions for one community's Kat runs
+// for up to 24 hours; each execution records the instruction. Payments and vendor bank details are
+// never covered.
+const GRANT_PROCESSES = ['journal_entry', 'cutoff_adjustment', 'reclassification', 'bank_reconciliation', 'account_reconciliation'];
+router.get('/grants', async (req, res) => {
+  try {
+    const u = await requireOwner(req, res); if (!u) return;
+    const { data, error } = await supabase.from('owner_execution_grants').select('*').is('revoked_at', null).gt('expires_at', new Date().toISOString()).order('issued_at', { ascending: false }).limit(50);
+    if (error) throw error;
+    res.json({ grants: data || [] });
+  } catch (err) { fail(res, 'grants', err); }
+});
+router.post('/grants', express.json(), async (req, res) => {
+  try {
+    const u = await requireOwner(req, res); if (!u) return;
+    const b = req.body || {};
+    const hours = Math.min(24, Math.max(1, Number(b.hours) || 12));
+    const processes = (Array.isArray(b.processes) && b.processes.length ? b.processes : GRANT_PROCESSES).map(String).filter((p) => GRANT_PROCESSES.includes(p));
+    const max = Math.round(Number(b.max_run_cents));
+    if (!b.community_id || !processes.length || !(max > 0)) return res.status(400).json({ error: 'community, run kinds and a per-run ceiling are required' });
+    // One active grant per community (Ed 2026-11-17: repeated clicks issued 20). A repeat returns the
+    // active grant; to change its scope or ceiling, revoke it first.
+    const { data: active, error: aErr } = await supabase.from('owner_execution_grants').select('*').eq('community_id', b.community_id)
+      .is('revoked_at', null).gt('expires_at', new Date().toISOString()).order('issued_at', { ascending: true }).limit(1);
+    if (aErr) throw aErr;
+    if (active && active.length) return res.json({ grant: active[0], existing: true });
+    const { data, error } = await supabase.from('owner_execution_grants').insert({ owner_user_id: u.user && u.user.id, owner_email: u.email, community_id: b.community_id, processes,
+      max_run_cents: max, note: b.note ? String(b.note).slice(0, 500) : null, expires_at: new Date(Date.now() + hours * 3600e3).toISOString() }).select('*').single();
+    if (error) throw error;
+    res.json({ grant: data });
+  } catch (err) { fail(res, 'grant-issue', err); }
+});
+router.post('/grants/:id/revoke', express.json(), async (req, res) => {
+  try {
+    const u = await requireOwner(req, res); if (!u) return;
+    const { data, error } = await supabase.from('owner_execution_grants').update({ revoked_at: new Date().toISOString(), revoked_by: u.email }).eq('id', req.params.id).is('revoked_at', null).select('id').maybeSingle();
+    if (error) throw error;
+    res.json({ revoked: !!data });
+  } catch (err) { fail(res, 'grant-revoke', err); }
+});
+
 router.post('/run/:id/hold', express.json(), async (req, res) => {
   try {
     const u = await requireOwner(req, res); if (!u) return;

@@ -114,7 +114,9 @@ async function stripe(path, params) {
   // only arrives on an endpoint created to listen to connected accounts
   // (connect: true), which has its own signing secret.
   const HANDLED_PLATFORM = ['checkout.session.completed', 'checkout.session.async_payment_succeeded', 'checkout.session.async_payment_failed',
-    'checkout.session.expired', 'payment_intent.payment_failed', 'charge.refunded', 'charge.dispute.created', 'charge.dispute.closed'];
+    'checkout.session.expired', 'payment_intent.payment_failed', 'charge.refunded', 'charge.dispute.created', 'charge.dispute.closed',
+    // Funding-aware Pay flow (lib/payments/assessment_intent.js, Ed 2026-11-21): no Checkout session.
+    'payment_intent.succeeded', 'payment_intent.processing', 'payment_intent.canceled'];
   const HANDLED_CONNECT = ['account.updated'];
   const hooks = await stripe('webhook_endpoints', 'limit=20');
   const eps = (hooks.body && hooks.body.data) || [];

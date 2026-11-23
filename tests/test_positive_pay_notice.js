@@ -99,7 +99,7 @@ console.log('review on books (in-memory)');
   check('a bank reminder near the cutoff is an exception (the cutoff may be missed)', W.dueAlerts({ ...clean, notice: { reminder: true }, alerts: [{ kind: 'undecided_near_cutoff' }] }, new Date('2026-10-14T14:00:00Z')).map((a) => a.kind).join() === 'reminder_near_cutoff');
   check('every item starts "bank decision unconfirmed", separate from matching our register', rv.items.every((i) => i.bank_decision === 'unconfirmed') && /bank decision unconfirmed/.test(rv.summary) && /A match is not the bank's decision/.test(clean.next));
   { const conf = { items: [{ account_last4: '5313', check_number: '1044', amount_cents: 427587, bank_account_id: 'ba-cg', bank_decision: 'unconfirmed' }] };
-    db.bank_statement_imports = [{ id: 'imp-cg', bank_account_id: 'ba-cg' }]; db.bank_statement_transactions = [{ bank_statement_import_id: 'imp-cg', check_number: '1044', amount_cents: -427587, posting_date: '2026-10-16' }];
+    db.bank_statement_imports = [{ id: 'imp-cg', bank_account_id: 'ba-cg', status: 'completed' }]; db.bank_statement_transactions = [{ bank_statement_import_id: 'imp-cg', check_number: '1044', amount_cents: -427587, posting_date: '2026-10-16' }];
     const ch = await W.confirmFromStatements(sb, conf);
     check('clearing comes from bank activity: a check on the statement is recorded CLEARED, separately from the exception decision', ch && conf.items[0].cleared_date === '2026-10-16' && /check transaction on the bank statement, posted 2026-10-16/.test(conf.items[0].cleared_evidence) && conf.items[0].bank_decision === 'unconfirmed'); }
   { const tri2 = fs.readFileSync(require.resolve('../api/email_triage'), 'utf8');

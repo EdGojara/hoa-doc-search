@@ -83,12 +83,13 @@
         "embedded_px": 120
       },
       "chat_avatar": {
-        "photo": "amanda-direct-camera-square",
+        "photo": "canonical_square",
         "display_px": 50,
         "surfaces": [
           "public/ask-amanda.html",
           "public/board-portal.html"
-        ]
+        ],
+        "note": "Was amanda-direct-camera-square until 2026-11-17; Ed 2026-11-17: \"Use trustEd portraits\" (team-wide portrait standardization)"
       },
       "dashboard_icons_and_notifications": {
         "photo": "canonical_square",
@@ -119,8 +120,8 @@
         "status": "pending: needs a high-resolution relaxed office portrait of the approved face"
       },
       "microsoft_365": {
-        "photo": "unchanged",
-        "status": "mailbox shows face v2 at 648x648 (verified 2026-10-21); v2 is the same identity line as the approved set. Change only on Ed's explicit authorization, from a 648px+ original."
+        "photo": "canonical_square",
+        "status": "set 2026-11-17 from team/amanda.jpg (378x378 source); previous mailbox photo was face v2 648px. Ed 2026-11-17: \"Use trustEd portraits\" (team-wide portrait standardization)"
       }
     },
     "high_resolution_review": {
@@ -136,7 +137,7 @@
       "approved_addition": "amanda-office-portrait (Warm Modern Office Portrait (1).png), approved by Ed 2026-10-21. The collages ('Six Moments in a Modern Office-1', 'Warm Office Portrait Series-2', 'Amanda_ Confident Corporate Portrait Collage') are never used as high-resolution assets."
     },
     "identity_reference": {
-      "authority": "face v2 (Ed 2026-10-21): public/assets/presentations/team/amanda_legacy_v2.jpg, the production portrait and Microsoft 365 photo since 2026-10-04",
+      "authority": "Ed 2026-11-22: the 10/21 approved office portrait is Amanda's primary identity reference (Warm Modern Office Portrait (1).png, 1360x1157, character-canon sha256 3a9694c3112c6940...; registry amanda_albright face v4, proposed for Ed's approval). The eight approved 10/21 photos are supporting images. Earlier faces (team/amanda_legacy_v1.jpg = HeyGen original; team/amanda_legacy_v2.jpg = September candidate) are history only.",
       "must_match": [
         "warm brunette, layered, copper and caramel highlights, past the shoulders",
         "small gold hoop earrings",
@@ -149,9 +150,9 @@
   },
   "paige": {
     "name": "Paige Chandler",
-    "approved": "PENDING Ed's approval (prepared 2026-10-21)",
+    "approved": "2026-11-17",
     "identity_reference": {
-      "authority": "Paige's original production portrait (Ed 2026-10-21): character-canon sha256 bbc6c05239b6d3ac..., 1254x1254, the file uploaded to HeyGen 2026-08-18; public/assets/presentations/team/paige_legacy_v1.jpg is its 640px derivative and stays the HeyGen and video-poster face.",
+      "authority": "Ed 2026-11-17: team/paige.jpg is Paige's official portrait, a square of Warm Professional Office Portrait.png (1254x1254, character-canon sha256 8866d23f279956e5...; registry paige_chandler face v2, proposed for Ed's approval). The 2026-08-18 production original (character-canon sha256 bbc6c05239b6d3ac..., team/paige_legacy_v1.jpg) stays the HeyGen and video-poster face until Ed approves a new look.",
       "must_match": [
         "apparent age 27 to 33",
         "round, soft face, full cheeks, rounded chin",
@@ -276,8 +277,8 @@
         "status": "original production portrait remains the avatar reference until Ed approves a change"
       },
       "microsoft_365": {
-        "photo": "unchanged",
-        "status": "not modified; needs separate authorization"
+        "photo": "canonical_square",
+        "status": "set 2026-11-17 from team/paige.jpg. Ed 2026-11-17: \"Use trustEd portraits\" (team-wide portrait standardization)"
       }
     },
     "excluded": [
@@ -286,7 +287,9 @@
     ],
     "backups": [
       "public/assets/presentations/team/paige_legacy_v1.jpg (byte-identical production paige.jpg before this change)"
-    ]
+    ],
+    "approved_by": "Ed Gojara",
+    "approval_note": "team/paige.jpg confirmed as the official portrait. Ed 2026-11-17: \"Use trustEd portraits\" (team-wide portrait standardization). Her existing videos and HeyGen avatar still show the production face (paige_legacy_v1.jpg); not changed."
   },
   "phoebe": {
     "name": "Phoebe Hart",
@@ -428,8 +431,8 @@
         ]
       },
       "microsoft_365": {
-        "photo": "unchanged",
-        "note": "PENDING Ed's go-ahead after merge"
+        "photo": "canonical_square",
+        "status": "set 2026-11-17 from the canonical file (Ed-authorized); see _canonical_index"
       },
       "portal_video_visit": {
         "photo": "unchanged",
@@ -498,8 +501,8 @@
         "photo": "claire_legacy_2026-10-22"
       },
       "microsoft_365": {
-        "photo": "unchanged",
-        "note": "pending Ed's separate approval"
+        "photo": "canonical_square",
+        "status": "set 2026-11-17 from the canonical file (Ed-authorized); see _canonical_index"
       },
       "heygen_avatar": {
         "photo": "unchanged",
@@ -571,8 +574,8 @@
         "photo": "annie_legacy_2026-10-22"
       },
       "microsoft_365": {
-        "photo": "unchanged",
-        "note": "pending Ed's separate approval"
+        "photo": "canonical_square",
+        "status": "set 2026-11-17 from the canonical file (Ed-authorized); see _canonical_index"
       },
       "heygen_avatar": {
         "photo": "unchanged",
@@ -644,8 +647,8 @@
         "photo": "miranda_legacy_2026-10-22"
       },
       "microsoft_365": {
-        "photo": "unchanged",
-        "note": "pending Ed's separate approval"
+        "photo": "canonical_square",
+        "status": "set 2026-11-17 from the canonical file (Ed-authorized); see _canonical_index"
       },
       "heygen_avatar": {
         "photo": "unchanged",
@@ -775,5 +778,286 @@
       ],
       "rule": "A photo is used only if it is visibly the same woman."
     }
+  },
+  "_canonical_index": {
+    "_about": "ONE official portrait per AI teammate (Ed 2026-11-17). trustEd screens and email signatures read the canonical file directly (lib/email/persona_signature.js: team/<persona>.jpg, or team-internal/<persona>.jpg for Bedrock-internal personas). Microsoft 365 holds a copy set from the same file via Graph PUT /users/{mailbox}/photo/$value; Exchange re-encodes it, so verify by ETag and visual comparison, not by hash. Desktop Outlook caches photos; Outlook on the web reflects a change first. Each entry names its Character Canon record (registry.character_slug + face_version); the registry is the authoritative identity system and this file must agree with it (Phase 1 identity sync, Ed 2026-11-22).",
+    "claire": {
+      "canonical": "public/assets/presentations/team/claire.jpg",
+      "microsoft_365": {
+        "mailbox": "claire@bedrocktx.com",
+        "status": "set_to_canonical",
+        "set_on": "2026-11-17",
+        "authorized_by": "Ed Gojara (\"standardize profile photos across the entire TrustEd AI team\")",
+        "verified": "2026-11-17"
+      },
+      "registry": {
+        "character_slug": "claire_bennett",
+        "face_version": 2,
+        "status": "proposed 2026-11-22; approval is Ed's in /admin/characters"
+      }
+    },
+    "isabella": {
+      "canonical": "public/assets/presentations/team/isabella.jpg",
+      "microsoft_365": {
+        "mailbox": "isabella@bedrocktx.com",
+        "status": "set_to_canonical",
+        "set_on": "2026-11-17",
+        "authorized_by": "Ed Gojara (\"standardize profile photos across the entire TrustEd AI team\")",
+        "verified": "2026-11-17"
+      },
+      "registry": {
+        "character_slug": "isabella_reyes",
+        "face_version": 1,
+        "status": "proposed 2026-11-22; approval is Ed's in /admin/characters"
+      }
+    },
+    "mei": {
+      "canonical": "public/assets/presentations/team/mei.jpg",
+      "microsoft_365": {
+        "mailbox": "mei@bedrocktx.com",
+        "status": "set_to_canonical",
+        "set_on": "2026-11-17",
+        "authorized_by": "Ed Gojara (\"standardize profile photos across the entire TrustEd AI team\")",
+        "verified": "2026-11-17",
+        "note": "canonical file is 320x320; a larger original of the same portrait would improve it"
+      },
+      "registry": {
+        "character_slug": "mei_chen",
+        "face_version": 1,
+        "status": "proposed 2026-11-22; approval is Ed's in /admin/characters"
+      }
+    },
+    "priya": {
+      "canonical": "public/assets/presentations/team/priya.jpg",
+      "microsoft_365": {
+        "mailbox": "priya@bedrocktx.com",
+        "status": "set_to_canonical",
+        "set_on": "2026-11-17",
+        "authorized_by": "Ed Gojara (\"standardize profile photos across the entire TrustEd AI team\")",
+        "verified": "2026-11-17",
+        "note": "canonical file is 320x320; a larger original of the same portrait would improve it"
+      },
+      "registry": {
+        "character_slug": "priya_sharma",
+        "face_version": 1,
+        "status": "proposed 2026-11-22; approval is Ed's in /admin/characters"
+      }
+    },
+    "emma": {
+      "canonical": "public/assets/presentations/team/emma.jpg",
+      "microsoft_365": {
+        "mailbox": "emma@bedrocktx.com",
+        "status": "matches_canonical",
+        "verified": "2026-11-17"
+      },
+      "registry": {
+        "character_slug": "emma_brooks",
+        "face_version": 1,
+        "status": "proposed 2026-11-22; approval is Ed's in /admin/characters"
+      }
+    },
+    "kat": {
+      "canonical": "public/assets/presentations/team/kat.jpg",
+      "microsoft_365": {
+        "mailbox": "kat@bedrocktx.com",
+        "status": "matches_canonical",
+        "verified": "2026-11-17"
+      },
+      "registry": {
+        "character_slug": "kat_reed",
+        "face_version": 1,
+        "status": "proposed 2026-11-22; approval is Ed's in /admin/characters"
+      }
+    },
+    "annie": {
+      "canonical": "public/assets/presentations/team/annie.jpg",
+      "microsoft_365": {
+        "mailbox": "annie@bedrocktx.com",
+        "status": "set_to_canonical",
+        "set_on": "2026-11-17",
+        "authorized_by": "Ed Gojara (\"standardize profile photos across the entire TrustEd AI team\")",
+        "verified": "2026-11-17"
+      },
+      "registry": {
+        "character_slug": "annie_reeves",
+        "face_version": 2,
+        "status": "proposed 2026-11-22; approval is Ed's in /admin/characters"
+      }
+    },
+    "miranda": {
+      "canonical": "public/assets/presentations/team/miranda.jpg",
+      "microsoft_365": {
+        "mailbox": "miranda@bedrocktx.com",
+        "status": "set_to_canonical",
+        "set_on": "2026-11-17",
+        "authorized_by": "Ed Gojara (\"standardize profile photos across the entire TrustEd AI team\")",
+        "verified": "2026-11-17"
+      },
+      "registry": {
+        "character_slug": "miranda_pierce",
+        "face_version": 2,
+        "status": "proposed 2026-11-22; approval is Ed's in /admin/characters"
+      }
+    },
+    "amanda": {
+      "canonical": "public/assets/presentations/team/amanda.jpg",
+      "microsoft_365": {
+        "mailbox": "amandaalbright@bedrocktx.com",
+        "status": "set_to_canonical",
+        "set_on": "2026-11-17",
+        "authorized_by": "Ed 2026-11-17: \"Use trustEd portraits\" (team-wide portrait standardization)",
+        "verified": "2026-11-17",
+        "note": "canonical file is 378x378; ask-amanda.html and board-portal.html now show the same portrait"
+      },
+      "registry": {
+        "character_slug": "amanda_albright",
+        "face_version": 4,
+        "status": "proposed 2026-11-22; approval is Ed's in /admin/characters"
+      }
+    },
+    "reese": {
+      "canonical": "public/assets/presentations/team/reese.jpg",
+      "microsoft_365": {
+        "mailbox": "reese@bedrocktx.com",
+        "status": "matches_canonical",
+        "verified": "2026-11-17"
+      },
+      "registry": {
+        "character_slug": "reese_calloway",
+        "face_version": 1,
+        "status": "proposed 2026-11-22; approval is Ed's in /admin/characters"
+      }
+    },
+    "darby": {
+      "canonical": "public/assets/presentations/team/darby.jpg",
+      "microsoft_365": {
+        "mailbox": "darby@bedrocktx.com",
+        "status": "matches_canonical",
+        "verified": "2026-11-17"
+      },
+      "registry": {
+        "character_slug": "darby_woods",
+        "face_version": 1,
+        "status": "proposed 2026-11-22; approval is Ed's in /admin/characters"
+      }
+    },
+    "paige": {
+      "canonical": "public/assets/presentations/team/paige.jpg",
+      "microsoft_365": {
+        "mailbox": "paige@bedrocktx.com",
+        "status": "set_to_canonical",
+        "set_on": "2026-11-17",
+        "authorized_by": "Ed 2026-11-17: \"Use trustEd portraits\" (team-wide portrait standardization)",
+        "verified": "2026-11-17",
+        "note": "videos and HeyGen avatar still show the production face (paige_legacy_v1.jpg)"
+      },
+      "registry": {
+        "character_slug": "paige_chandler",
+        "face_version": 2,
+        "status": "proposed 2026-11-22; approval is Ed's in /admin/characters"
+      }
+    },
+    "phoebe": {
+      "canonical": "public/assets/presentations/team/phoebe.jpg",
+      "microsoft_365": {
+        "mailbox": "phoebe@bedrocktx.com",
+        "status": "matches_canonical",
+        "verified": "2026-11-17"
+      },
+      "registry": {
+        "character_slug": "phoebe_hart",
+        "face_version": 3,
+        "status": "proposed 2026-11-22; approval is Ed's in /admin/characters"
+      }
+    },
+    "maggie": {
+      "canonical": "public/assets/presentations/team-internal/maggie.jpg",
+      "also": "public/assets/presentations/team/maggie.jpg (identical file)",
+      "microsoft_365": {
+        "mailbox": "maggie@bedrocktx.com",
+        "status": "set_to_canonical",
+        "set_on": "2026-11-17",
+        "authorized_by": "Ed Gojara (\"standardize profile photos across the entire TrustEd AI team\")",
+        "verified": "2026-11-17"
+      },
+      "registry": {
+        "character_slug": "maggie_sullivan",
+        "face_version": 2,
+        "status": "proposed 2026-11-22; approval is Ed's in /admin/characters"
+      }
+    },
+    "tessa": {
+      "canonical": "public/assets/presentations/team/tessa.jpg",
+      "microsoft_365": {
+        "mailbox": "tessa@bedrocktx.com",
+        "status": "matches_canonical",
+        "verified": "2026-11-17"
+      },
+      "registry": {
+        "character_slug": "tessa_mccall",
+        "face_version": 1,
+        "status": "proposed 2026-11-22; approval is Ed's in /admin/characters"
+      }
+    },
+    "vivian": {
+      "canonical": "public/assets/presentations/team-internal/vivian.jpg",
+      "microsoft_365": {
+        "mailbox": "vivian@bedrocktx.com",
+        "status": "set_to_canonical",
+        "set_on": "2026-11-17",
+        "authorized_by": "Ed Gojara (\"standardize profile photos across the entire TrustEd AI team\")",
+        "verified": "2026-11-17"
+      },
+      "registry": {
+        "character_slug": "vivian_hale",
+        "face_version": 1,
+        "status": "proposed 2026-11-22; approval is Ed's in /admin/characters"
+      }
+    }
+  },
+  "_websites": {
+    "_about": "Named teammate portraits on bedrocktx.com and bedrocktxai.com, as approved (audit 2026-11-22: each is a crop of that teammate's approved production face). scripts/check_identity_drift.js --websites fails if a served file changes. Unnamed illustrative group photos are not tracked.",
+    "amanda": [
+      {
+        "url": "https://bedrocktx.com/images/contributors/amanda-albright.webp",
+        "sha256": "46d93967d46443d9f513525c1c89d78bf8a7a336b2c9401fe9cd91d3d5630789"
+      }
+    ],
+    "annie": [
+      {
+        "url": "https://bedrocktx.com/images/contributors/annie-reeves.webp",
+        "sha256": "e5cdd95ad71207383f688ea38e6a670585ec7bf4e1434a35213975e1d7a1603c"
+      },
+      {
+        "url": "https://bedrocktxai.com/assets/team/annie-reeves.webp",
+        "sha256": "e5cdd95ad71207383f688ea38e6a670585ec7bf4e1434a35213975e1d7a1603c"
+      }
+    ],
+    "claire": [
+      {
+        "url": "https://bedrocktx.com/images/contributors/claire-bennett.webp",
+        "sha256": "642aee1b04693ffcf2abe4a130c5e1ea23fa1c5e0af27901237e9af5c8510b26"
+      },
+      {
+        "url": "https://bedrocktxai.com/assets/team/claire-bennett.webp",
+        "sha256": "642aee1b04693ffcf2abe4a130c5e1ea23fa1c5e0af27901237e9af5c8510b26"
+      }
+    ],
+    "miranda": [
+      {
+        "url": "https://bedrocktx.com/images/contributors/miranda-pierce.webp",
+        "sha256": "bf5b858417ebe1efea95bf333c7da149407edcdc3136b8fa753186cd7a6cf114"
+      },
+      {
+        "url": "https://bedrocktxai.com/assets/team/miranda-pierce.webp",
+        "sha256": "bf5b858417ebe1efea95bf333c7da149407edcdc3136b8fa753186cd7a6cf114"
+      }
+    ],
+    "paige": [
+      {
+        "url": "https://bedrocktx.com/images/contributors/paige-chandler.webp",
+        "sha256": "0ee4d2dd204663ebb13c333c28a6da0f232dccbf015d1583ca4e7dbc605cb927"
+      }
+    ]
   }
 }

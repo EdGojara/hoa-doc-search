@@ -741,9 +741,19 @@
     else if (opts.q)  url += '?q=' + encodeURIComponent(opts.q);
     window.location.href = url;
   };
-  var LB={ at_legal:{t:'At legal',bg:'#fee2e2',fg:'#991b1b'}, in_bankruptcy:{t:'Bankruptcy §362',bg:'#ede9fe',fg:'#5b21b6'}, lien_filed:{t:'Lien filed',bg:'#ffedd5',fg:'#9a3412'}, judgment:{t:'Judgment',bg:'#fecaca',fg:'#7f1d1d'}, in_collections:{t:'Collections',bg:'#fef3c7',fg:'#92400e'} };
+  var LB={ at_legal:{t:'At legal',bg:'#fee2e2',fg:'#991b1b'}, in_bankruptcy:{t:'Bankruptcy §362',bg:'#ede9fe',fg:'#5b21b6'}, lien_filed:{t:'Lien filed',bg:'#ffedd5',fg:'#9a3412'}, judgment:{t:'Judgment',bg:'#fecaca',fg:'#7f1d1d'}, in_collections:{t:'Collections',bg:'#fef3c7',fg:'#92400e'}, on_payment_plan:{t:'Payment plan',bg:'#dbeafe',fg:'#1e40af'} };
   var STAGE={ courtesy_1:'Courtesy 1', courtesy_2:'Courtesy 2', certified_209:'Certified §209', fine_assessed:'Fine' };
   var AMEN={ restricted:{t:'Amenity restricted',bg:'#fee2e2',fg:'#991b1b',ic:'🚫'}, allowed_payment_plan:{t:'Amenity OK — payment plan',bg:'#dbeafe',fg:'#1e40af',ic:'✓'}, allowed_bankruptcy:{t:'Amenity OK — bankruptcy',bg:'#ede9fe',fg:'#5b21b6',ic:'✓'} };
+  // Portal payment hold flags (Ed 2026-11-22): online payment is blocked for
+  // accounts with counsel; staff complete missing counsel contact details and
+  // review any autopay on file (Homeowner 360 > legal status).
+  function lhFlags(r){
+    var out='';
+    if(r.payments_blocked) out+='<div style="font-size:10.5px; color:#475569; margin-top:2px;">Portal payments blocked</div>';
+    if(r.counsel_contact_missing&&r.counsel_contact_missing.length) out+='<div style="font-size:10.5px; color:#b45309; font-weight:700; margin-top:2px;">Add counsel '+esc(r.counsel_contact_missing.join(', '))+'</div>';
+    if(r.autopay_review) out+='<div style="font-size:10.5px; color:#b91c1c; font-weight:700; margin-top:2px;">Autopay on file ('+esc(r.autopay_review)+'): review</div>';
+    return out;
+  }
   function render(results,note){
     var st=document.getElementById('lookupStatus'), box=document.getElementById('lookupResults');
     st.textContent = note || (results.length+' result'+(results.length===1?'':'s'));
@@ -757,7 +767,7 @@
         +'<td style="padding:8px 10px; border-top:1px solid #eef1f6; text-align:right; white-space:nowrap;">'+money(r.current_balance)+'</td>'
         +'<td style="padding:8px 10px; border-top:1px solid #eef1f6;">'+legalCell+'</td></tr>'; }
       var lb=r.legal_state&&LB[r.legal_state];
-      var legalCell=lb ? '<span style="background:'+lb.bg+'; color:'+lb.fg+'; padding:2px 9px; border-radius:99px; font-size:11px; font-weight:700;">⚖ '+lb.t+'</span>'+(r.attorney_name?'<div style="font-size:10.5px; color:#888; margin-top:2px;">'+esc(r.attorney_name)+'</div>':'')+(r.bankruptcy_case_number?'<div style="font-size:10.5px; color:#888;">Case '+esc(r.bankruptcy_case_number)+'</div>':'') : (r.on_payment_plan?'<span style="color:#2563eb; font-size:11.5px;">Payment plan</span>':'<span style="color:#16a34a; font-size:11.5px;">Good standing</span>');
+      var legalCell=lb ? '<span style="background:'+lb.bg+'; color:'+lb.fg+'; padding:2px 9px; border-radius:99px; font-size:11px; font-weight:700;">⚖ '+lb.t+'</span>'+(r.attorney_name?'<div style="font-size:10.5px; color:#888; margin-top:2px;">'+esc(r.attorney_name)+'</div>':'')+(r.bankruptcy_case_number?'<div style="font-size:10.5px; color:#888;">Case '+esc(r.bankruptcy_case_number)+'</div>':'')+lhFlags(r) : (r.on_payment_plan?'<span style="color:#2563eb; font-size:11.5px;">Payment plan</span>':'<span style="color:#16a34a; font-size:11.5px;">Good standing</span>');
       var viol=r.open_violations>0 ? '<span style="font-weight:600; color:#b45309;">'+r.open_violations+' open</span>'+(r.worst_open_stage?' · '+(STAGE[r.worst_open_stage]||r.worst_open_stage):'') : '<span style="color:#94a3b8;">none</span>';
       return '<tr>'
         +'<td style="padding:8px 10px; border-top:1px solid #eef1f6;"><div style="font-weight:600; color:#0B1D34;">'+esc(r.street_address||'')+(r.unit?' #'+esc(r.unit):'')+'</div><div style="font-size:11px; color:#94a3b8;">'+esc(r.community_name||'')+'</div></td>'
@@ -15362,6 +15372,10 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
       const j = await r.json();
       if (j.error) throw new Error(j.error);
       accCurrentList = j.decisions || [];
+      // ACC emails that arrived but are not in the queue, with the reason (Ed 2026-11-17).
+      accIntakeExceptions = [];
+      try { const xr = await fetch('/acc-review/intake-exceptions'); const xj = await xr.json(); if (!xj.error) accIntakeExceptions = xj.exceptions || []; }
+      catch (e) { console.warn('accIntakeExceptions', e); }
       // Saved drafts are a separate store (/api/drafts): work started on the
       // Review screen and never submitted. Shown here so the four kinds of
       // work sit on one screen (Ed 2026-10-29).
@@ -15384,6 +15398,26 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
     }
   }
   let accSavedDrafts = [];
+  let accIntakeExceptions = [];
+  // File a not-filed ACC email into the queue (same intake as Annie's), or mark it not an application.
+  async function accFileException(emailId, btn) {
+    if (btn) { btn.disabled = true; btn.textContent = 'Filing…'; }
+    try {
+      const r = await window._authFetch('/api/email-triage/' + encodeURIComponent(emailId) + '/to-acc', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) { alert(j.detail || j.error || 'Could not file it.'); if (btn) { btn.disabled = false; btn.textContent = '🏗️ File to ACC queue'; } return; }
+      accLoadList();
+    } catch (e) { alert('Could not file it: ' + e.message); if (btn) { btn.disabled = false; btn.textContent = '🏗️ File to ACC queue'; } }
+  }
+  async function accDismissException(emailId, btn) {
+    if (!confirm('Mark this email as not an ACC application? It leaves this list.')) return;
+    if (btn) btn.disabled = true;
+    try {
+      const r = await window._authFetch('/api/email-triage/' + encodeURIComponent(emailId) + '/dismiss', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ as: 'handled' }) });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      accLoadList();
+    } catch (e) { alert('Could not update it: ' + e.message); if (btn) btn.disabled = false; }
+  }
   // Section a case belongs in. The server computes it from the authority state
   // (lib/acc/decision_authority queueStage); the fallback covers an older server.
   function accStageOf(a) {
@@ -15411,6 +15445,7 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
       return `<span class="acc-stats-pill" style="background:${m.bg}; color:${m.fg};">${m.icon} ${bySource[k]}</span>`;
     }).join('');
     wrap.innerHTML = `
+      ${accIntakeExceptions.length > 0 ? `<span class="acc-stats-pill red">${accIntakeExceptions.length} received, not filed</span>` : ''}
       ${pendingEd > 0 ? `<span class="acc-stats-pill red">${pendingEd} pending Ed's approval</span>` : ''}
       <span class="acc-stats-pill amber">${queued.length} open</span>
       ${overdue > 0 ? `<span class="acc-stats-pill red">${overdue} over 24h</span>` : ''}
@@ -15422,7 +15457,7 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
   function accRenderList() {
     const wrap = document.getElementById('acc-list');
     const empty = document.getElementById('acc-empty');
-    if (accCurrentList.length === 0 && accSavedDrafts.length === 0) {
+    if (accCurrentList.length === 0 && accSavedDrafts.length === 0 && accIntakeExceptions.length === 0) {
       wrap.innerHTML = ''; empty.style.display = ''; return;
     }
     empty.style.display = 'none';
@@ -15490,7 +15525,24 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
           <div><button type="button" class="secondary-btn" style="font-size:12px; padding:6px 12px;" onclick="event.stopPropagation(); Drafts.load('acc_review', '${accEsc(d.id)}', this).catch(e => alert(e.message))">📂 Open</button></div>
         </div>`;
     }
+    function exceptionRowHtml(x) {
+      const when = x.received_at ? new Date(x.received_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '';
+      return `<div class="acc-row" style="border:1px solid #fecaca; background:#fff7f7; border-radius:8px; padding:10px 12px; margin-bottom:8px; cursor:default;">
+        <div style="display:flex; justify-content:space-between; gap:10px; flex-wrap:wrap;">
+          <div style="min-width:0;">
+            <div style="font-weight:600; font-size:13.5px;">${accEsc(x.subject || '(no subject)')}${x.messages > 1 ? ` <span style="color:#5a7390; font-weight:400;">(${x.messages} emails)</span>` : ''}</div>
+            <div style="font-size:12px; color:#5a7390;">${accEsc(when)} · ${accEsc(x.from || '')} → ${accEsc((x.mailbox || '').split('@')[0])}@ · ${accEsc(x.community_name || 'community unknown')}${x.property_address ? ' · ' + accEsc(x.property_address) : ' · property not identified'}${x.has_attachments ? ' · 📎' : ''}</div>
+            <div style="font-size:12px; color:#991b1b; margin-top:3px;">${accEsc(x.reason || '')}${(x.prior_records || []).length ? ' Earlier at this property: ' + accEsc(x.prior_records.join(', ')) + '.' : ''}</div>
+          </div>
+          <div style="display:flex; gap:6px; align-items:flex-start;">
+            <button type="button" class="secondary-btn" style="font-size:12px; padding:6px 10px;" onclick="event.stopPropagation(); accFileException('${accEsc(x.email_id)}', this)">🏗️ File to ACC queue</button>
+            <button type="button" class="secondary-btn" style="font-size:12px; padding:6px 10px;" onclick="event.stopPropagation(); accDismissException('${accEsc(x.email_id)}', this)">Not an application</button>
+          </div>
+        </div></div>`;
+    }
     const sections = [
+      { key: 'not_filed', title: '⚠ Received, not filed', color: '#991b1b', rows: accIntakeExceptions, render: exceptionRowHtml,
+        note: 'ACC emails that reached trustEd but are not in the queue, with the reason. File each one (it runs the same intake as Annie and joins an open application for the same homeowner instead of duplicating), or mark it not an application. Nothing is decided or sent to the homeowner.' },
       { key: 'pending_ed', title: "✋ Pending Ed's approval", color: '#991b1b', rows: pendingEd, render: rowHtml,
         note: 'Annie has recommended an approval or denial, or the case needs your judgment. Nothing is issued until an authorized decision is recorded.' },
       { key: 'submitted', title: '📥 Submitted applications', color: '#92400e', rows: submitted, render: rowHtml,
@@ -15725,11 +15777,11 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
           <button class="secondary-btn" style="font-size:12px;" onclick="accOwnerReview('${a.id}')">Ed: record my review only</button>
           <button class="acc-action-btn approve" style="font-size:12px;" onclick="accRecordDecision('${a.id}')">Record decision</button>
         </div>
-        <div style="font-size:11px; color:#5a7390; margin-top:6px;">Recording does not send anything. Staff never decide: record only a decision the Committee or Board actually made, with its evidence. Escalated cases and denials need Ed's review before they are issued; Ed's review never replaces a required committee or Board decision.</div>
+        <div style="font-size:11px; color:#5a7390; margin-top:6px;">Recording does not send anything. Staff never decide: record only a decision the Committee or Board actually made, with its evidence. Concrete additions and driveway modifications need Ed's approval before they are issued; Ed's approval never replaces a required committee or Board decision.</div>
       </details>` : '';
     return `<div class="acc-card" style="border-left:4px solid ${color};">
       <h3>⚖ Decision authority <span class="acc-pill" style="background:${bg}; color:${color}; margin-left:6px;">${accEsc(au.label)}</span></h3>
-      <div style="font-size:12.5px; color:#334155;">Approved or denied only by Ed, the Architectural Committee or Board, or (within delegated authority) Annie or Amanda. Staff can enter, document, request more information, record a committee or Board decision, and send a decision once it is recorded.${trig ? ' <b>Escalated to Ed:</b> ' + accEsc(trig) + '.' : ''}</div>
+      <div style="font-size:12.5px; color:#334155;">Routine applications: Annie decides under the community's written delegation and any staff member sends it. Ed approves only concrete additions and driveway modifications; what the governing documents reserve to the Architectural Committee or Board stays with them. Staff never decide.${trig ? ' <b>Routing:</b> ' + accEsc(trig) + '.' : ''}</div>
       ${(au.judgments || []).length ? `<div style="font-size:12.5px; margin-top:6px;"><b>Judgment needed:</b><ul style="margin:4px 0 0 18px;">${au.judgments.map((j) => `<li>${accEsc(j)}</li>`).join('')}</ul></div>` : ''}
       ${accEvaluationPanel(a, au)}
       ${recLine}${review}${errs}<div id="acc-authority-status" style="font-size:12px; margin-top:6px;"></div>${form}
@@ -15740,8 +15792,8 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
   // recommendation, plus the route the autonomy policy gives it.
   function accEvaluationPanel(a, au) {
     const ev = a.compliance_evaluation;
-    const routeLabel = { eligible_for_ai_approval: 'Eligible for AI approval', owner_review_required: 'Owner Review Required', owner_review_noncompliance: 'Owner review: noncompliant (no automatic denial)', request_more_info: 'Request more information', no_approval_required: 'No approval required', evaluation_required: 'Evaluation required' }[au.route] || au.route;
-    if (!ev) return `<div style="font-size:12px; color:#5a7390; margin-top:6px;">Route: ${accEsc(routeLabel)}. No structured evaluation yet, so Annie and Amanda cannot decide this case.</div>`;
+    const routeLabel = { annie_decides: 'Annie decides (routine)', owner_review_required: 'Ed approval required (concrete addition or driveway modification)', committee_or_board_required: 'Committee or Board decision required', request_more_info: 'Annie requests more information', no_approval_required: 'No approval required' }[au.route] || String(au.route || '').replace(/_/g, ' ');
+    if (!ev) return `<div style="font-size:12px; color:#5a7390; margin-top:6px;">Route: ${accEsc(routeLabel)}${au.route_detail ? ' (' + accEsc(au.route_detail) + ')' : ''}.${au.annie ? (au.annie.ok ? ` <b style="color:#166534;">Annie's decision: ${accEsc(String(au.annie.outcome).replace(/_/g, ' '))}</b>, under ${accEsc(au.annie.authority)}. Any staff member can send it.` : ` ${accEsc(au.annie.error)}`) : ''}</div>`;
     const rows = (ev.requirements || []).map((r) => `<tr><td style="padding:3px 6px;">${accEsc(r.requirement || '')}</td><td style="padding:3px 6px;">${accEsc([(r.citation || {}).document, (r.citation || {}).section, (r.citation || {}).page ? 'p. ' + r.citation.page : ''].filter(Boolean).join(', '))}${r.citation && r.citation.quote ? '<div style="color:#5a7390;">"' + accEsc(r.citation.quote) + '"</div>' : ''}</td><td style="padding:3px 6px;">${accEsc(r.proposed || '')}${(r.evidence || []).length ? '<div style="color:#5a7390;">' + accEsc(r.evidence.join('; ')) + '</div>' : ''}</td><td style="padding:3px 6px; font-weight:600;">${accEsc(String(r.finding || '').replace(/_/g, ' '))}</td></tr>`).join('');
     const list = (label, arr) => (arr || []).length ? `<div style="margin-top:4px;"><b>${label}:</b> ${accEsc(arr.map((x) => (typeof x === 'string' ? x : (x.what || x.item || JSON.stringify(x)))).join('; '))}</div>` : '';
     return `<div style="font-size:12px; margin-top:8px; padding:8px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:6px;">

@@ -73,7 +73,9 @@ function twoLevel(db) {
   check('header names the fund and the reporting month and fiscal year to date; notes are not repeated in the header',
     /Operating/.test(p) && /Month ended September 30, 2026 · Fiscal year to date, January 1 to September 30, 2026/.test(p) && !/class="notes"/.test(p));
   const doc = R.renderDocument([two, await build('RES')]);
-  check('the document gathers the notes once at the end: posted actuals only, variance convention, carry-forward by fund', /Notes to the statements/.test(doc) && /posted general-ledger entries only/.test(doc) && /favorable is positive/.test(doc) && /year to date includes activity carried from the prior accounting system through July 31, 2026/.test(doc) && (doc.match(/Prior-year comparison is hidden/g) || []).length === 1);
+  check('monthly statements print without a notes page by default (Ed 2026-11-17)', !/Notes to the statements/.test(doc));
+  const docN = R.renderDocument([two, await build('RES')], { notes: true });
+  check('with { notes: true } the document gathers the notes once at the end: posted actuals only, variance convention, carry-forward by fund', /Notes to the statements/.test(docN) && /posted general-ledger entries only/.test(docN) && /favorable is positive/.test(docN) && /year to date includes activity carried from the prior accounting system through July 31, 2026/.test(docN) && (docN.match(/Prior-year comparison is hidden/g) || []).length === 1);
   check('US Letter landscape with margins under half an inch at the sides', /@page\{size:Letter landscape;margin:0\.62in 0\.45in 0\.6in\}/.test(doc));
   check('a later fund in the package gets the compact header (the page header names the association)', (doc.match(/class="assoc"/g) || []).length === 1 && /th-head compact/.test(doc));
 

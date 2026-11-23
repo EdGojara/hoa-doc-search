@@ -1,0 +1,21 @@
+{
+  "migration": "572_portal_user_residencies_grants.sql",
+  "summary": "Grants the API's service role access to portal_user_residencies (created in 186 without grants), so the renter portal path stops failing with 'permission denied'. Privileges only: no schema or row changes.",
+  "requires": ["186_renter_portal_access.sql"],
+  "preflight": [
+    { "name": "portal_user_residencies exists", "sql": "SELECT count(*)::int FROM information_schema.tables WHERE table_name = 'portal_user_residencies'", "expect": 1 }
+  ],
+  "expected_changes": [
+    "GRANT SELECT, INSERT, UPDATE, DELETE on portal_user_residencies to service_role.",
+    "No rows added, changed or deleted; no schema change."
+  ],
+  "objects": { "added": [], "changed": [], "removed": [] },
+  "row_changes": { "portal_user_residencies": 0 },
+  "protected": [
+    { "table": "portal_user_properties", "order_by": "portal_user_id" }
+  ],
+  "verify": [
+    { "name": "service_role can read portal_user_residencies", "sql": "SELECT CASE WHEN has_table_privilege('service_role', 'portal_user_residencies', 'SELECT') THEN 1 ELSE 0 END", "expect": 1 },
+    { "name": "service_role can write portal_user_residencies", "sql": "SELECT CASE WHEN has_table_privilege('service_role', 'portal_user_residencies', 'INSERT') AND has_table_privilege('service_role', 'portal_user_residencies', 'UPDATE') AND has_table_privilege('service_role', 'portal_user_residencies', 'DELETE') THEN 1 ELSE 0 END", "expect": 1 }
+  ]
+}

@@ -88,6 +88,30 @@ router.get('/', async (req, res) => {
   }
 });
 
+// GET /api/characters/drift[?websites=1]  (owner) Does production use each
+// teammate's Character Canon identity? Read-only (lib/characters/identity_drift.js).
+router.get('/drift', async (req, res) => {
+  try {
+    const db = registry.db();
+    const [pv, pt] = await Promise.all([db.from('persona_voices').select('face, voice_id'), db.from('persona_tts_voices').select('face, voice_id')]);
+    if (pv.error) throw pv.error;
+    if (pt.error) throw pt.error;
+    let heygenVoiceIds = null;
+    try { heygenVoiceIds = new Set((await require('../lib/video/heygen').listVoices()).map((v) => v.voice_id)); } catch (_) { /* catalog unreachable: voice catalog check skipped */ }
+    const result = await require('../lib/characters/identity_drift').checkIdentityDrift({
+      registry, personaImages: require('../lib/team/persona_images.json'), repoRoot: require('path').join(__dirname, '..'),
+      faceOf: (p) => { const m = roster.get(p); return m && m.face ? m.face : null; },
+      voiceOverrides: Object.fromEntries((pv.data || []).map((x) => [x.face, x.voice_id])),
+      ttsOverrides: Object.fromEntries((pt.data || []).map((x) => [x.face, x.voice_id])),
+      heygenVoiceIds, checkWebsites: req.query.websites === '1',
+    });
+    res.json(result);
+  } catch (err) {
+    console.error('[characters] drift check failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
 router.get('/:id', async (req, res) => {
   try {
     if (!UUID.test(req.params.id)) return res.status(400).json({ error: 'bad_character_id' });

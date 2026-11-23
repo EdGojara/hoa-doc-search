@@ -85,6 +85,15 @@
         <input id="bankPrepMonth" type="month" style="padding:3px 6px;border:1px solid #dde3ea;border-radius:6px;">
         <button onclick="prepBank()" style="border:1px solid #dde3ea;background:#fff;border-radius:6px;padding:4px 12px;cursor:pointer;font-weight:600;">Have Kat prepare it</button>
       </div>
+      <div id="grantBox" style="display:none;padding:10px 18px;border-top:1px solid #f1f3f6;font-size:12.5px;color:var(--muted);">
+        <b style="color:var(--ink,#1A2233);">Let Claude execute my instructions</b> for
+        <select id="grantComm" style="padding:4px 6px;border:1px solid #dde3ea;border-radius:6px;max-width:260px;"></select>
+        for <select id="grantHours" style="padding:4px 6px;border:1px solid #dde3ea;border-radius:6px;"><option value="4">4 hours</option><option value="12" selected>12 hours</option><option value="24">24 hours</option></select>,
+        up to <input id="grantMax" type="number" min="1" value="50000" style="width:90px;padding:3px 6px;border:1px solid #dde3ea;border-radius:6px;"> dollars per run
+        <button onclick="issueGrant()" style="border:1px solid #dde3ea;background:#fff;border-radius:6px;padding:4px 12px;cursor:pointer;font-weight:600;">Issue grant</button>
+        <div style="margin-top:4px;">Covers Kat's journal entries, cutoff accruals, reclassifications and reconciliations only; never payments or vendor bank details. Each run is checked before it posts, and your exact instruction is recorded with it.</div>
+        <div id="grantList" style="margin-top:6px;"></div>
+      </div>
       <div id="cutPrep" style="display:none;padding:10px 18px;border-top:1px solid #f1f3f6;font-size:12.5px;color:var(--muted);">
         Cutoff corrections: <select id="cutPrepComm" style="padding:4px 6px;border:1px solid #dde3ea;border-radius:6px;max-width:320px;"></select>
         <input id="cutPrepMonth" type="month" style="padding:3px 6px;border:1px solid #dde3ea;border-radius:6px;">
@@ -133,7 +142,10 @@ async function boot(){
 }
 // ---- Kat's monthly accounting runs (migration 510): Kat prepares, Ed approves or holds ----
 const PROC = { recognition: 'Monthly recognition', interest: 'Late interest', bank_reconciliation: 'Bank reconciliation', cutoff_adjustment: 'Cutoff corrections', reclassification: 'Reclassifications', journal_entry: 'Journal entries', account_reconciliation: '2300 reconciliation' };
-const REC_STATUS = { reconciled: 'balanced, nothing open', in_progress: 'balances, exceptions open', unbalanced: 'does not balance', blocked: 'blocked' };
+// An approval is not a reconciliation (Ed 2026-11-21): only "reconciled" reads as Reconciled.
+const REC_STATUS = { reconciled: 'Reconciled: balances, nothing open', in_progress: 'Unreconciled: exceptions open', unbalanced: 'Unreconciled: does not balance', blocked: 'Unreconciled: blocked' };
+const STANDING_TXT = { reconciled: 'Reconciled', unreconciled: 'Unreconciled', stale: 'Stale' };
+function recStaysOpen(run){ const t=(run&&run.totals)||{}; return t.status!=='reconciled' || ((run&&run.exceptions)||[]).some(e=>e.severity!=='info'); }
 const monthLabel = (d) => new Date(String(d).slice(0,10)+'T00:00:00').toLocaleDateString('en-US',{month:'long',year:'numeric'});
 async function loadRuns(){
   try{
@@ -158,6 +170,30 @@ async function loadRuns(){
         + '<button onclick="openRun(\''+x.id+'\')" style="border:1px solid #dde3ea;background:#fff;border-radius:6px;padding:6px 14px;cursor:pointer;font-weight:600;">Review</button></div>';
     }).join('');
   }catch(_){ $('runsBody').innerHTML='<div class="empty">Could not load the runs.</div>'; }
+}
+async function loadGrants(){
+  try{
+    const j=await (await af('/api/accounting-runs/grants')).json();
+    const g=j.grants||[];
+    $('grantList').innerHTML = g.length ? g.map(x=>'<div>Active: '+esc(($('grantComm').querySelector('option[value="'+x.community_id+'"]')||{}).textContent||'community')+' until '+esc(new Date(x.expires_at).toLocaleString('en-US',{timeZone:'America/Chicago'}))+', up to '+money(x.max_run_cents)+' per run · <a href="#" onclick="revokeGrant(\''+esc(x.id)+'\');return false;">revoke</a></div>').join('') : '<div>No active grant.</div>';
+  }catch(e){ $('grantList').textContent='Grants unavailable: '+e.message; }
+}
+let _issuingGrant=false;
+async function issueGrant(){
+  if(_issuingGrant) return;
+  const c=$('grantComm').value, h=$('grantHours').value, m=Math.round(Number($('grantMax').value)*100);
+  if(!c||!(m>0)) return;
+  const btn=document.querySelector('#grantBox button'); _issuingGrant=true; if(btn){ btn.disabled=true; btn.textContent='Issuing…'; }
+  try{
+    const r=await af('/api/accounting-runs/grants',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({community_id:c,hours:Number(h),max_run_cents:m})});
+    const j=await r.json().catch(()=>({})); if(!r.ok){ alert(j.error||'Could not issue the grant'); return; }
+    if(j.existing) alert('A grant for this community is already active until '+new Date(j.grant.expires_at).toLocaleString('en-US',{timeZone:'America/Chicago'})+'. Revoke it to issue a different one.');
+    await loadGrants();
+  } finally { _issuingGrant=false; if(btn){ btn.disabled=false; btn.textContent='Issue grant'; } }
+}
+async function revokeGrant(id){
+  const r=await af('/api/accounting-runs/grants/'+encodeURIComponent(id)+'/revoke',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+  if(!r.ok){ alert('Could not revoke'); return; } loadGrants();
 }
 async function openRun(id){
   $('modal').innerHTML='<div class="mb"><div class="empty">Loading…</div></div>'; $('modalBg').classList.add('show');
@@ -237,8 +273,12 @@ async function openRun(id){
       +(e.event==='note'&&e.detail&&e.detail.text?'<div style="margin:3px 0 6px;padding:6px 8px;background:#FFF5DD;color:#7A5408;border-radius:5px;">'+esc(e.detail.text)+'</div>':'')).join('<br>');
     const can = run.status==='prepared';
     const btns = can ? '<button onclick="holdRun(\''+run.id+'\')" style="padding:8px 14px;border:1px solid #e3c98a;background:#fff;border-radius:6px;cursor:pointer;">Hold</button>'
-      + '<button id="approveBtn" onclick="approveRun(\''+run.id+'\',\''+run.process+'\')" style="padding:8px 16px;border:none;background:#0B1D34;color:#fff;border-radius:6px;cursor:pointer;font-weight:700;">'+(run.process==='bank_reconciliation'?'Approve &amp; store':run.process==='account_reconciliation'?'Mark reviewed':'Approve &amp; post')+'</button>' : '';
-    const res = run.result && run.result.report ? '<h4 style="margin:14px 0 6px;">Stored result</h4><pre style="white-space:pre-wrap;font:12.5px/1.5 inherit;background:#f7f9fb;padding:10px 12px;border-radius:6px;">'+esc(run.result.report)+'</pre>' : '';
+      + '<button id="approveBtn" onclick="approveRun(\''+run.id+'\',\''+run.process+'\')" style="padding:8px 16px;border:none;background:#0B1D34;color:#fff;border-radius:6px;cursor:pointer;font-weight:700;">'+(run.process==='bank_reconciliation'?(recStaysOpen(run)?'Post selected &amp; save as Unreconciled':'Approve &amp; store'):run.process==='account_reconciliation'?'Mark reviewed':'Approve &amp; post')+'</button>' : '';
+    const stTxt = run.process==='bank_reconciliation' && run.result && run.result.standing ? '<p style="margin:14px 0 0;font-weight:700;color:'+(run.result.standing==='reconciled'?'#1F5F43':run.result.standing==='stale'?'#9B2C2C':'#8a6d1a')+';">Saved as '+esc(STANDING_TXT[run.result.standing]||run.result.standing)+'</p>' : '';
+    const recId = run.process==='bank_reconciliation' && run.result && run.result.reconciliation && run.result.reconciliation.reconciliation_id;
+    const wpBase = run.process==='bank_reconciliation' ? '/api/bank-rec/runs/'+encodeURIComponent(run.id)+'/workpaper' : null;
+    const wpLink = wpBase ? '<p style="margin:10px 0 0;"><a href="'+wpBase+'.html" target="_blank" rel="noopener">'+(run.status==='posted'?'Open the approved workpaper':'Open the workpaper (what needs attention)')+'</a> · <a href="'+wpBase+'.pdf">Download PDF</a></p>' : '';
+    const res = stTxt + wpLink + (run.result && run.result.report ? '<h4 style="margin:14px 0 6px;">Stored result</h4><pre style="white-space:pre-wrap;font:12.5px/1.5 inherit;background:#f7f9fb;padding:10px 12px;border-radius:6px;">'+esc(run.result.report)+'</pre>' : '');
     $('modal').innerHTML = '<div class="mb" style="padding:20px 22px;max-width:760px;">'
       + '<h3 style="margin:0 0 6px;">'+(PROC[run.process]||run.process)+' · '+monthLabel(run.period_month)+'</h3>'
       + '<div style="color:var(--muted);font-size:12.5px;">Prepared by '+esc(run.prepared_by)+' · status '+esc(run.status)+(run.approved_by?' · approved by '+esc(run.approved_by):'')+'</div>'
@@ -248,6 +288,12 @@ async function openRun(id){
       + '<div id="runStatus" role="status" aria-live="polite" style="margin-top:12px;font-size:13px;"></div>'
       + '<div style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px;"><button onclick="closeModal()" style="padding:8px 14px;border:1px solid #dde3ea;background:#fff;border-radius:6px;cursor:pointer;">Close</button>'+btns+'</div></div>';
     document.querySelectorAll('[data-pdf]').forEach(a=>a.addEventListener('click',(ev)=>{ ev.preventDefault(); ev.stopPropagation(); viewInvoicePdf(a.dataset.pdf); }));
+    // Tick all (Ed 2026-11-17): a run of hundreds of entries could only be approved box by box. Nothing is
+    // ticked by default; this ticks or clears every entry at once, and the confirm still lists what posts.
+    const boxes=[...document.querySelectorAll('#modal .incl')];
+    if(boxes.length>1 && run.status==='prepared'){ const first=boxes[0].closest('label'); const all=document.createElement('label'); all.style.cssText='display:block;padding:8px 0;border-bottom:2px solid #dde3ea;font-size:13px;font-weight:700;';
+      all.innerHTML='<input type="checkbox" id="inclAll"> Tick all '+boxes.length+' entries'; if(first&&first.parentNode) first.parentNode.insertBefore(all,first);
+      const cb=all.querySelector('#inclAll'); cb.addEventListener('change',()=>{ boxes.forEach(b=>{ b.checked=cb.checked; }); }); }
   }catch(e){ $('modal').innerHTML='<div class="mb"><div class="empty" style="color:#9B2C2C;">'+esc(e.message)+'</div></div>'; }
 }
 async function dlCsv(id){ const r=await af('/api/accounting-runs/run/'+id+'/csv'); const b=await r.blob(); const a=document.createElement('a'); a.href=URL.createObjectURL(b); a.download='kat-run-'+id.slice(0,8)+'.csv'; a.click(); }
@@ -285,9 +331,12 @@ async function approveRun(id, proc){
   const run = window._openRun && window._openRun.id===id ? window._openRun : null;
   const items = runSelection(run, proc, include);
   const total = items.reduce((a,i)=>a+(Number(i.cents)||0),0);
-  const label = proc==='bank_reconciliation' ? 'Approve & store' : proc==='account_reconciliation' ? 'Mark reviewed' : 'Approve & post';
+  const stays = proc==='bank_reconciliation' && recStaysOpen(run);
+  const label = proc==='bank_reconciliation' ? (stays ? 'Post selected & save as Unreconciled' : 'Approve & store') : proc==='account_reconciliation' ? 'Mark reviewed' : 'Approve & post';
   const message = proc==='bank_reconciliation'
-    ? (include.length ? 'Post the '+include.length+' ticked entr'+(include.length===1?'y':'ies')+' below and store the reconciliation. Unticked proposals stay unposted. It is marked complete only if it balances and nothing is open.' : 'Nothing is ticked, so nothing posts. The reconciliation is stored as it stands.')
+    ? (include.length ? 'Post the '+include.length+' ticked entr'+(include.length===1?'y':'ies')+' below and save the reconciliation. Unticked proposals stay unposted. ' : 'Nothing is ticked, so nothing posts. The reconciliation is saved as it stands. ')
+      + 'Approving does not reconcile the account: it is Reconciled only if, after these entries post, it balances to $0.00, nothing is open and every bank item is in the GL. Otherwise it is saved as Unreconciled.'
+      + (stays ? ' Exceptions are still open on this run, so it will be saved as Unreconciled.' : '')
     : proc==='cutoff_adjustment'
     ? (include.length ? 'Post the '+include.length+' ticked correction(s) below, each exactly as shown; prepaid schedules are approved in your name.' : 'Nothing is ticked, so nothing will post.')
     : proc==='reclassification'
@@ -313,7 +362,7 @@ async function approveRun(id, proc){
     }
     const res = d.result||{}; const refs = (res.posted_entries||res.entries||[]).map(p=>p.reference||p.journal_reference||p.already_posted).filter(Boolean);
     const msg = proc==='bank_reconciliation'
-      ? 'Stored ('+(res.status||'done')+').'+(refs.length ? ' Posted: '+refs.join(', ')+'.' : ' No entries posted.')
+      ? 'Saved as '+(STANDING_TXT[res.standing]||(res.status==='reconciled'?'Reconciled':'Unreconciled'))+((res.open_exceptions||[]).length?' ('+res.open_exceptions.length+' open)':'')+'.'+(refs.length ? ' Posted: '+refs.join(', ')+'.' : ' No entries posted.')
       : proc==='account_reconciliation' ? 'Review recorded. Nothing was posted.'
       : 'Posted.'+(refs.length ? ' '+refs.join(', ')+'.' : '');
     if(st){ st.style.color='#1F5F43'; st.textContent = msg; }
@@ -333,6 +382,8 @@ async function loadBankAccts(){
     $('bankPrep').style.display='';
     const comms=[...new Map(a.map(x=>[x.community_id,x.community_name||''])).entries()].sort((p,q)=>p[1].localeCompare(q[1]));
     $('cutPrepComm').innerHTML=comms.map(([id,n])=>'<option value="'+esc(id)+'">'+esc(n)+'</option>').join('');
+    $('grantComm').innerHTML=comms.map(([id,n])=>'<option value="'+esc(id)+'">'+esc(n)+'</option>').join('');
+    $('grantBox').style.display=''; loadGrants();
     $('cutPrepMonth').value=d.toISOString().slice(0,7); $('cutPrep').style.display='';
   }catch(_){ }
 }

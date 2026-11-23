@@ -341,13 +341,16 @@ async function resolveScopedProperty(req, supabase, user) {
       property_id,
       properties:property_id (
         id, street_address, lot_number, vantaca_account_id, community_id,
-        communities:community_id (id, name, slug, hoa_legal_name)
+        communities:community_id (id, name, slug, hoa_legal_name, portal_active, is_demo, portal_module_config)
       )
     `)
     .eq('portal_user_id', user.id)
     .is('revoked_at', null);
-  const props = (scopes || []).map(s => s.properties).filter(Boolean);
-  if (!props.length) return { property: null, allProperties: [], isManager: false };
+  // Server-side portal gate: only lots whose association's portal is open.
+  const { isOpenCommunity } = require('../lib/portal/portal_open');
+  const linked = (scopes || []).map(s => s.properties).filter(Boolean);
+  const props = linked.filter((p) => isOpenCommunity(p.communities, user.id));
+  if (!props.length) return { property: null, allProperties: [], isManager: false, portalClosed: linked.length > 0 };
 
   const focus = (requestedPropertyId && props.find(p => String(p.id) === requestedPropertyId)) || props[0];
   return { property: focus, allProperties: props, isManager: false };
@@ -1461,6 +1464,15 @@ router.get('/me', async (req, res) => {
     }
 
     let props = (propScopes || []).map((s) => s.properties).filter(Boolean);
+    // Server-side portal gate (Ed 2026-11-21): a homeowner sees only lots whose
+    // association's portal is switched on. Manager view below is not gated.
+    let closedCommunityId = null;
+    if (props.length && !req._managerView?.synthetic_property) {
+      const open = await require('../lib/portal/portal_open').openPropertyIds(supabase, props.map((p) => p.id), user.id);
+      const closed = props.filter((p) => !open.has(p.id));
+      if (closed.length) closedCommunityId = closed[0].community_id;
+      props = props.filter((p) => open.has(p.id));
+    }
 
     // MANAGER MODE — inject the picked property as a synthetic scope.
     // (The manager has no portal_user_properties rows; they were granted
@@ -1492,7 +1504,12 @@ router.get('/me', async (req, res) => {
         },
         property: null,
         properties: [],
-        community: { name: 'Your Community', slug: '', portal_active: false },
+        community: await (async () => {
+          // An association that has not launched yet: say so by name.
+          if (!closedCommunityId) return { name: 'Your Community', slug: '', portal_active: false };
+          const { data: cc } = await supabase.from('communities').select('name, slug').eq('id', closedCommunityId).maybeSingle();
+          return { name: (cc && cc.name) || 'Your Community', slug: (cc && cc.slug) || '', portal_active: false, not_yet_open: true };
+        })(),
         balance: {},
         compliance: {},
         open_requests: { count: 0 },
@@ -1557,6 +1574,12 @@ router.get('/me', async (req, res) => {
     // Demo communities bypass the portal_active gate by design.
     if (isDemoCommunity) {
       community.portal_active = true;
+    } else if (community.portal_active !== true && !req._managerView?.synthetic_property
+      && require('../lib/portal/portal_open').isPilotUser(community, user.id)) {
+      // Pilot: this association is not launched, but the owner put this
+      // homeowner on its pilot list, so the portal opens for them only.
+      community.portal_active = true;
+      community.pilot = true;
     }
 
     // Balance — single resolver. Tries v_homeowner_current_balance
@@ -2090,7 +2113,7 @@ router.get('/compliance', async (req, res) => {
     const [obsResp, lettersResp, photosResp] = await Promise.all([
       observationIds.length
         ? supabase.from('property_observations')
-            .select('id, ai_description, reviewer_description, category_id, ai_confidence, reviewer_status, created_at')
+            .select('id, ai_description, category_id, ai_confidence, reviewer_status, created_at, inspection_photo_id')
             .in('id', observationIds)
         : Promise.resolve({ data: [] }),
       violationIds.length
@@ -2101,12 +2124,21 @@ router.get('/compliance', async (req, res) => {
             .eq('direction', 'outbound')
             .order('sent_at', { ascending: false })
         : Promise.resolve({ data: [] }),
-      observationIds.length
-        ? supabase.from('inspection_photos')
-            .select('id, observation_id, storage_path, captured_at')
-            .in('observation_id', observationIds)
-        : Promise.resolve({ data: [] }),
+      Promise.resolve({ data: [] }),   // photos load below, from each observation's photo
     ]);
+    if (obsResp.error) console.warn('[portal/compliance] observations lookup failed:', obsResp.error.message);
+    if (lettersResp.error) console.warn('[portal/compliance] letters lookup failed:', lettersResp.error.message);
+    // An observation points at its photo (property_observations.inspection_photo_id);
+    // inspection_photos has no observation_id, so the old query returned nothing
+    // and homeowners never saw the photo behind a notice (Ed 2026-11-21).
+    const photoIds = (obsResp.data || []).map((o) => o.inspection_photo_id).filter(Boolean);
+    if (photoIds.length) {
+      const { data: ph, error: phErr } = await supabase.from('inspection_photos')
+        .select('id, storage_path, captured_at').in('id', photoIds);
+      if (phErr) console.warn('[portal/compliance] photos lookup failed:', phErr.message);
+      const obsByPhoto = Object.fromEntries((obsResp.data || []).map((o) => [o.inspection_photo_id, o.id]));
+      photosResp.data = (ph || []).map((p) => ({ ...p, observation_id: obsByPhoto[p.id] }));
+    }
 
     const obsById = Object.fromEntries((obsResp.data || []).map((o) => [o.id, o]));
     const lettersByViolation = (lettersResp.data || []).reduce((m, l) => {
@@ -2179,7 +2211,7 @@ router.get('/compliance', async (req, res) => {
         resolved_at: v.resolved_at,
         cure_period_ends_at: v.cure_period_ends_at,
         days_until_cure: daysUntilCure,
-        observation_summary: (obs?.reviewer_description || obs?.ai_description || '').trim() || null,
+        observation_summary: (obs?.ai_description || '').trim() || null,
         letters: letterLinks,
         photos: photoLinks,
       };
@@ -2353,7 +2385,7 @@ router.get('/documents', async (req, res) => {
     // Pull homeowner-appropriate library_documents for this community
     const { data: docs, error } = await supabase
       .from('library_documents')
-      .select('id, category, title, period_label, effective_date, file_path, file_name_normalized, status, approval_status, created_at')
+      .select('id, category, title, period_label, effective_date, file_path, file_name_normalized, status, approval_status, uploaded_at')
       .eq('management_company_id', BEDROCK_MGMT_CO_ID)
       .eq('community_id', community.id)
       .eq('status', 'current')
@@ -2641,6 +2673,15 @@ router.get('/balance', async (req, res) => {
         name: community.name,
         slug: community.slug,
         hoa_legal_name: community.hoa_legal_name,
+        // Where to mail a check: the association's lockbox / PO Box if it has
+        // one, else c/o Bedrock's office (same source as the printed statement).
+        remit: await (async () => {
+          const { data: pc, error: pe } = await supabase.from('communities').select('name, legal_name, hoa_legal_name, letter_pay_to_name, letter_pay_to_address').eq('id', prop.community_id).maybeSingle();
+          if (pe) console.warn('[portal balance] pay-to lookup failed:', pe.message);
+          const src = pc || community;
+          const r = require('../lib/payments/remit_address').remitTo(src, src.hoa_legal_name || src.legal_name || src.name);
+          return { name: r.name, block: r.block };
+        })(),
       },
       status: statusKey,
       current: current ? {
@@ -2968,7 +3009,7 @@ router.get('/meetings', async (req, res) => {
     try {
       const { data: docs } = await supabase
         .from('library_documents')
-        .select('id, category, title, period_label, effective_date, file_path, file_name_normalized, created_at')
+        .select('id, category, title, period_label, effective_date, file_path, file_name_normalized, uploaded_at')
         .eq('management_company_id', BEDROCK_MGMT_CO_ID)
         .eq('community_id', community.id)
         .eq('status', 'current')
@@ -3131,11 +3172,49 @@ async function resolveHomeownerScope(req) {
     const { data: scopes } = await supabase
       .from('portal_user_properties')
       .select('property_id')
-      .eq('portal_user_id', portalUserId);
-    propertyIds = (scopes || []).map((s) => s.property_id).filter(Boolean);
+      .eq('portal_user_id', portalUserId)
+      .is('revoked_at', null);   // revoked access is no access (was missing)
+    const linked = (scopes || []).map((s) => s.property_id).filter(Boolean);
+    const open = await require('../lib/portal/portal_open').openPropertyIds(supabase, linked, portalUserId);
+    propertyIds = linked.filter((id) => open.has(id));
   }
 
   return { portal_user_id: portalUserId, contact_id: user.contact_id, full_name: user.full_name, email: user.email, role: user.role, property_ids: propertyIds };
+}
+
+// ----------------------------------------------------------------------------
+// Staff notification for portal messages (Ed 2026-11-21 portal testing).
+// The staff Messages inbox was retired 2026-07-13 (superseded by
+// Communications), so a portal message landed in homeowner_threads where no
+// staff screen could read or answer it. Each homeowner message now also goes
+// to Bedrock's catch-all inbox with Reply-To set to the homeowner, so staff
+// see it where they already work and answer by email. Demo communities skip.
+// ----------------------------------------------------------------------------
+async function notifyStaffOfPortalMessage({ threadId, propertyId, scope, subject, body, isReply }) {
+  try {
+    const { data: p, error } = await supabase.from('properties')
+      .select('street_address, communities:community_id(name, is_demo)').eq('id', propertyId).maybeSingle();
+    if (error) throw new Error(error.message);
+    if (!p || (p.communities && p.communities.is_demo)) return { skipped: true };
+    const community = (p.communities && p.communities.name) || 'Community';
+    const who = scope.full_name || scope.email || 'Homeowner';
+    const to = process.env.PORTAL_MESSAGES_TO || 'info@bedrocktx.com';
+    const send = await sendEmail({
+      to,
+      replyTo: scope.email || undefined,
+      subject: `[Portal ${isReply ? 'reply' : 'message'}] ${community}, ${p.street_address || ''}: ${subject || ''}`.slice(0, 250),
+      html: `<p><b>${escapeHtml(who)}</b> (${escapeHtml(scope.email || 'no email')}) sent a ${isReply ? 'reply' : 'message'} from the homeowner portal.</p>
+        <p><b>Community:</b> ${escapeHtml(community)}<br><b>Property:</b> ${escapeHtml(p.street_address || '')}<br><b>Subject:</b> ${escapeHtml(subject || '')}</p>
+        <div style="white-space:pre-wrap; border-left:3px solid #D4AF37; padding:6px 12px; margin:12px 0;">${escapeHtml(body)}</div>
+        <p style="color:#666; font-size:12px;">Reply to this email to answer the homeowner directly. Thread ${escapeHtml(threadId)}.</p>`,
+      tags: [{ name: 'module', value: 'portal_messages' }],
+    });
+    if (!(send && send.ok)) console.error(`[portal/messages] staff notification NOT sent for thread ${threadId}:`, send && send.error);
+    return send;
+  } catch (e) {
+    console.error(`[portal/messages] staff notification failed for thread ${threadId}:`, e.message);
+    return { ok: false, error: e.message };
+  }
 }
 
 // ----------------------------------------------------------------------------
@@ -3272,30 +3351,61 @@ router.post('/messages', express.json({ limit: '256kb' }), async (req, res) => {
     const { computeFirstResponseDueAt } = require('../lib/messaging/sla_engine');
     const dueAt = computeFirstResponseDueAt(new Date()).toISOString();
 
+    // A thread needs a contact. A portal user invited with an email that does
+    // not match their contact record has none, and every message they sent
+    // failed with a bare create_failed (Ed 2026-11-21 portal testing). Fall
+    // back to the lot's current owner of record (same source as payments).
+    let contactId = scope.contact_id;
+    if (!contactId) {
+      const { data: ten, error: tenErr } = await supabase.from('ownership_tenures')
+        .select('id').eq('property_id', propertyId).eq('kind', 'owner').is('end_date', null).limit(1).maybeSingle();
+      if (tenErr) console.warn('[portal/messages] owner tenure lookup failed:', tenErr.message);
+      if (ten) {
+        const { data: own, error: ownErr } = await supabase.from('property_ownerships')
+          .select('contact_id').eq('tenure_id', ten.id).order('is_primary', { ascending: false }).limit(1).maybeSingle();
+        if (ownErr) console.warn('[portal/messages] owner contact lookup failed:', ownErr.message);
+        contactId = own ? own.contact_id : null;
+      }
+    }
+    if (!contactId) {
+      console.warn(`[portal/messages] no contact for portal user ${scope.portal_user_id} on property ${propertyId}`);
+      return res.status(409).json({ error: 'no_contact_on_file', message: 'We could not match your account to this home. Please call (832) 588-2485 or email info@bedrocktx.com and we will fix it.' });
+    }
+
     const { data: thread, error: thErr } = await supabase
       .from('homeowner_threads')
       .insert({
         community_id: prop.community_id,
         property_id: propertyId,
-        primary_contact_id: scope.contact_id,
+        primary_contact_id: contactId,
         subject,
         next_action_status: 'awaiting_staff_first_response',
         first_response_due_at: dueAt,
       })
       .select()
       .single();
-    if (thErr) return res.status(500).json({ error: 'create_failed' });
+    if (thErr) {
+      console.error('[portal/messages] thread insert failed:', thErr.message);
+      return res.status(500).json({ error: 'create_failed' });
+    }
 
     // First message — the body the homeowner just typed.
-    await supabase.from('messages').insert({
+    const { error: msgErr } = await supabase.from('messages').insert({
       thread_id: thread.id,
       direction: 'inbound',
       sender_type: 'homeowner',
-      sender_id: scope.contact_id,
+      sender_id: contactId,
       sender_display_name: scope.full_name || scope.email,
       channel: 'portal',
       body_text: body,
     });
+    if (msgErr) {
+      // Never leave a thread with no message: the homeowner would think it sent.
+      console.error('[portal/messages] first message insert failed:', msgErr.message);
+      await supabase.from('homeowner_threads').delete().eq('id', thread.id);
+      return res.status(500).json({ error: 'create_failed' });
+    }
+    await notifyStaffOfPortalMessage({ threadId: thread.id, propertyId, scope, subject, body, isReply: false });
 
     res.status(201).json({ thread });
   } catch (err) {
@@ -3318,7 +3428,7 @@ router.post('/messages/:threadId/reply', express.json({ limit: '256kb' }), async
     // Verify ownership of the thread
     const { data: thread } = await supabase
       .from('homeowner_threads')
-      .select('id, property_id')
+      .select('id, property_id, subject')
       .eq('id', req.params.threadId)
       .maybeSingle();
     if (!thread) return res.status(404).json({ error: 'not_found' });
@@ -3338,6 +3448,7 @@ router.post('/messages/:threadId/reply', express.json({ limit: '256kb' }), async
       .select()
       .single();
     if (error) return res.status(500).json({ error: 'reply_failed' });
+    await notifyStaffOfPortalMessage({ threadId: thread.id, propertyId: thread.property_id, scope, subject: thread.subject, body, isReply: true });
 
     // Status auto-flips via the thread-activity-sync trigger:
     // homeowner reply during closure_pending -> cancels close offer
@@ -3406,13 +3517,20 @@ router.post('/arc/submit', portalArcUpload.any(), async (req, res) => {
     // Schema uses community_services to scope ARC vs fob vs clubhouse per
     // community; for ARC we expect type='arc' (or arc_application — depends
     // on community).
-    const { data: service } = await supabase
+    // `name` is not a column on community_services: selecting it failed the
+    // whole query, so EVERY portal ARC submission returned
+    // arc_not_configured_for_community (Ed 2026-11-21 portal testing).
+    const { data: service, error: svcErr } = await supabase
       .from('community_services')
-      .select('id, service_type, name')
+      .select('id, service_type, display_name_override')
       .eq('community_id', community.id)
       .in('service_type', ['arc', 'arc_application'])
       .limit(1)
       .maybeSingle();
+    if (svcErr) {
+      console.error('[portal/arc/submit] service lookup failed:', svcErr.message);
+      return res.status(500).json({ error: 'arc_lookup_failed' });
+    }
     if (!service) {
       return res.status(400).json({ error: 'arc_not_configured_for_community' });
     }
@@ -4254,7 +4372,32 @@ router.get('/autopay', async (req, res) => {
     const scoped = await resolveScopedProperty(req, supabase, roleCheck.user);
     if (!scoped.property) return res.json({ autopay: null });
     const { statusForProperty } = require('../lib/payments/autopay');
-    res.json({ ok: true, autopay: await statusForProperty(scoped.property.id) });
+    const AI = require('../lib/payments/assessment_intent');
+    const autopay = await statusForProperty(scoped.property.id);
+    // Account at legal (Ed 2026-11-22): no enrollment, and an existing
+    // arrangement is shown as on hold; the homeowner is sent to counsel.
+    const LH = require('../lib/payments/legal_hold');
+    const lh = await LH.legalHoldFor(supabase, scoped.property.id);
+    if (!lh.ok) return res.status(503).json({ error: 'legal_status_unavailable', hint: 'Automatic payments are temporarily unavailable. Please try again later.' });
+    if (lh.hold) {
+      const refusal = LH.legalHoldRefusal(lh.hold);
+      return res.json({ ok: true, autopay, legal_hold: refusal.legal_hold,
+        enrollment: { available: false, reason: lh.hold.message, legal_hold: true } });
+    }
+    // What the enrollment screen shows BEFORE the homeowner authorises: the fee
+    // schedule and the recurring-payment disclosure, decided by the server.
+    let enrollment = { available: false, reason: 'Automatic payments are not available yet. Please use Pay now.' };
+    if (!autopay || autopay.status === 'pending_setup') {
+      const t = await AI.autopayEnrollmentTerms(intentDeps(), { propertyId: scoped.property.id });
+      if (t.ok && AI.autopayAllowedFor(t.pr.community)) {
+        enrollment = { available: true, terms: t.terms, association_name: t.pr.community.hoa_legal_name || t.pr.community.name };
+      } else if (!t.ok && AI.autopayChargesEnabled()) {
+        enrollment = { available: false, reason: t.hint || 'Automatic payments are not available for this account.' };
+      }
+    } else if (autopay && autopay.status !== 'pending_setup') {
+      enrollment = { available: false, reason: 'Automatic payments are already set up.' };
+    }
+    res.json({ ok: true, autopay, enrollment });
   } catch (err) {
     console.error('[portal] autopay status failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
@@ -4295,7 +4438,7 @@ router.post('/pay/checkout', express.json({ limit: '4kb' }), async (req, res) =>
       payer: { email: resolved.user.email, name: resolved.user.full_name },
       portal_user_id: resolved.user.id,
     });
-    if (!r.ok) return res.status(r.status || 500).json({ error: r.error, hint: r.hint });
+    if (!r.ok) return res.status(r.status || 500).json({ error: r.error, hint: r.hint, legal_hold: r.legal_hold });
     res.json({ ok: true, checkout_url: r.checkout_url, amount_cents: r.amount_cents, convenience_fee_cents: r.convenience_fee_cents, method: r.method });
   } catch (err) {
     console.error('[portal] pay checkout failed:', err.message);
@@ -4303,47 +4446,124 @@ router.post('/pay/checkout', express.json({ limit: '4kb' }), async (req, res) =>
   }
 });
 
+// ============================================================================
+// Funding-aware assessment payment (Ed 2026-11-21): public/portal-pay.html at /portal/pay.
+//   POST /pay/setup    { property_id? }                         -> Payment Element options + fee schedule
+//   POST /pay/quote    { property_id?, payment_method_id }       -> assessment / fee / disclosure / total + quote_token
+//   POST /pay/confirm  { property_id?, payment_method_id, quote_token } -> creates + confirms the PaymentIntent
+// Same homeowner gates as /pay/checkout above (session scope, portal open via
+// resolveScopedProperty, paying role, lifecycle canDo('payments')); the
+// payment gates (mode, financial_access, connected account, balance, fee
+// config) live in lib/payments/assessment_intent.js. The fee and total are
+// decided ONLY on the server (lib/payments/fee_quote.js); confirm recomputes
+// them and never reads a client total.
+// ============================================================================
+async function authorizeIntentPayment(req, res) {
+  const resolved = await resolveUserWithRole(req, res);
+  if (!resolved) return null;
+  const scoped = await resolveScopedProperty({ query: {} }, supabase, resolved.user);
+  const { authorizeHomeownerPayment } = require('../lib/payments/homeowner_checkout');
+  const auth = authorizeHomeownerPayment({
+    user: resolved.user, mimic: resolved.mimic, scoped,
+    requestedPropertyId: (req.body && req.body.property_id) || null,
+  });
+  if (!auth.ok) { res.status(auth.status).json({ error: auth.error, detail: auth.detail }); return null; }
+  const { data: prop, error: pErr } = await supabase.from('properties').select('community_id').eq('id', auth.propertyId).maybeSingle();
+  if (pErr) throw pErr;
+  if (!prop) { res.status(404).json({ error: 'no_property' }); return null; }
+  const { canDo } = require('../lib/community/lifecycle');
+  const gate = await canDo('payments', prop.community_id);
+  if (!gate.allowed) { res.status(409).json({ error: 'community_not_taking_payments', detail: gate.reason }); return null; }
+  return { user: resolved.user, propertyId: auth.propertyId };
+}
+const intentDeps = () => ({ supabase, stripeLib: require('../lib/payments/stripe') });
+const sendIntentResult = (res, r) => (r.ok ? res.json(r) : res.status(r.status || 500).json({ error: r.error, hint: r.hint, quote: r.quote, legal_hold: r.legal_hold }));
+
+router.post('/pay/setup', express.json({ limit: '4kb' }), async (req, res) => {
+  try {
+    const a = await authorizeIntentPayment(req, res);
+    if (!a) return;
+    const { setupAssessmentPayment } = require('../lib/payments/assessment_intent');
+    const r = await setupAssessmentPayment(intentDeps(), { propertyId: a.propertyId, initiatedBy: 'homeowner_portal' });
+    sendIntentResult(res, r.ok ? { ...r, property_id: a.propertyId } : r);
+  } catch (err) {
+    console.error('[portal] pay setup failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+router.post('/pay/quote', express.json({ limit: '4kb' }), async (req, res) => {
+  try {
+    const a = await authorizeIntentPayment(req, res);
+    if (!a) return;
+    const { quoteAssessmentPayment } = require('../lib/payments/assessment_intent');
+    const r = await quoteAssessmentPayment(intentDeps(), { propertyId: a.propertyId, initiatedBy: 'homeowner_portal',
+      paymentMethodId: String((req.body && req.body.payment_method_id) || '') });
+    sendIntentResult(res, r);
+  } catch (err) {
+    console.error('[portal] pay quote failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+router.post('/pay/confirm', express.json({ limit: '8kb' }), async (req, res) => {
+  try {
+    const a = await authorizeIntentPayment(req, res);
+    if (!a) return;
+    const b = req.body || {};
+    const origin = process.env.APP_BASE_URL || `${req.protocol}://${req.get('host')}`;
+    const { confirmAssessmentPayment } = require('../lib/payments/assessment_intent');
+    const r = await confirmAssessmentPayment(intentDeps(), {
+      propertyId: a.propertyId, initiatedBy: 'homeowner_portal',
+      paymentMethodId: String(b.payment_method_id || ''), quoteToken: String(b.quote_token || ''),
+      payer: { email: a.user.email, name: a.user.full_name }, portalUserId: a.user.id,
+      returnUrl: `${origin}/portal/pay?returned=1`,
+      mandate: { ip: String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0].trim(), userAgent: String(req.headers['user-agent'] || '').slice(0, 500) },
+    });
+    sendIntentResult(res, r);
+  } catch (err) {
+    console.error('[portal] pay confirm failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
 router.post('/autopay/begin', express.json({ limit: '16kb' }), async (req, res) => {
-  // PAUSED (Ed 2026-09-27): autopay charges do not yet run through the payment
-  // webhook / tenure posting pipeline, so enrolling would promise payments that
-  // never credit the owner. Re-enabled only with the reviewed autopay design.
-  return res.status(503).json({ error: 'autopay_unavailable', detail: 'Automatic payments are not available yet. Please use Pay now.' });
-  // eslint-disable-next-line no-unreachable
+  // Enrollment (Ed 2026-11-21): the homeowner has read the terms from GET /autopay
+  // and accepted that exact version. Same paying-homeowner gates as Pay now; the
+  // payment gates, fee rules and the platform Customer + on_behalf_of setup
+  // session live in lib/payments/autopay.js + assessment_intent.js. Refused unless
+  // AUTOPAY_CHARGES_ENABLED=true.
   try {
     const roleCheck = await assertOwnerLikeRole(req, res);
     if (!roleCheck) return;
     const scoped = await resolveScopedProperty(req, supabase, roleCheck.user);
     if (!scoped.property) return res.status(404).json({ error: 'no_property' });
-
-    // resolveScopedProperty joins communities(id, name, slug, hoa_legal_name)
-    // and deliberately not the Stripe account — a dozen endpoints share it and
-    // widening that select to suit this one is how a shared helper turns into
-    // everyone's grab bag. Read what this path needs, here.
-    const { data: community, error: cErr } = await supabase.from('communities')
-      .select('id, name, hoa_legal_name, stripe_connected_account_id')
-      .eq('id', scoped.property.community_id).maybeSingle();
-    if (cErr) throw cErr;
-    if (!community) return res.status(404).json({ error: 'community_not_found' });
+    // A staff "view as" session, a manager, or a non-paying role cannot authorise debits.
+    const { authorizeHomeownerPayment } = require('../lib/payments/homeowner_checkout');
+    const auth = authorizeHomeownerPayment({ user: roleCheck.user, mimic: roleCheck.mimic, scoped, requestedPropertyId: scoped.property.id });
+    if (!auth.ok) return res.status(auth.status).json({ error: auth.error, detail: auth.detail });
 
     const { canDo } = require('../lib/community/lifecycle');
-    const gate = await canDo('payments', community.id);
+    const gate = await canDo('payments', scoped.property.community_id);
     if (!gate.allowed) return res.status(409).json({ error: 'community_not_taking_payments', detail: gate.reason });
 
     const b = req.body || {};
+    const origin = process.env.APP_BASE_URL || `${req.protocol}://${req.get('host')}`;
     const { beginEnrollment } = require('../lib/payments/autopay');
     const r = await beginEnrollment({
-      community,
-      property: { id: scoped.property.id },
+      propertyId: scoped.property.id,
       payer: { name: roleCheck.user.full_name, email: roleCheck.user.email },
-      amountMode: b.amount_mode === 'fixed' ? 'fixed' : 'full_balance',
       maxAmountCents: Number(b.max_amount_cents) > 0 ? Math.round(Number(b.max_amount_cents)) : null,
-      frequency: b.frequency || 'on_due_date',
-      methodKind: b.method_kind === 'card' ? 'card' : 'us_bank_account',
-      successUrl: b.success_url, cancelUrl: b.cancel_url,
+      frequency: ['on_due_date', 'monthly', 'quarterly', 'annually'].includes(b.frequency) ? b.frequency : 'on_due_date',
+      acceptedTermsVersion: String(b.accepted_terms_version || ''),
+      // Never from the client: where Stripe sends the homeowner back.
+      successUrl: `${origin}/portal?autopay=1&session_id={CHECKOUT_SESSION_ID}`,
+      cancelUrl: `${origin}/portal/autopay?cancelled=1`,
       portalUserId: roleCheck.user.id,
-    });
-    if (!r.ok) return res.status(r.status || 500).json({ error: r.error, hint: r.hint });
-    res.json(r);
+      authorizedIp: String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0].trim() || null,
+    }, intentDeps());
+    if (!r.ok) return res.status(r.status || 500).json({ error: r.error, hint: r.hint, terms: r.terms, legal_hold: r.legal_hold });
+    res.json({ ok: true, setup_url: r.setup_url });
   } catch (err) {
     console.error('[portal] autopay begin failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
@@ -4360,13 +4580,19 @@ router.post('/autopay/complete', express.json({ limit: '8kb' }), async (req, res
     const { session_id } = req.body || {};
     if (!session_id) return res.status(400).json({ error: 'session_id_required' });
 
+    // An enrollment begun before the account went to counsel is not activated.
+    const LH = require('../lib/payments/legal_hold');
+    const lh = await LH.legalHoldFor(supabase, scoped.property.id);
+    if (!lh.ok) return res.status(503).json({ error: 'legal_status_unavailable' });
+    if (lh.hold) { const rf = LH.legalHoldRefusal(lh.hold); return res.status(rf.status).json({ error: rf.error, hint: rf.hint, legal_hold: rf.legal_hold }); }
+
     // The enrolment must be the one on THIS caller's property — never an id
     // handed in by the client.
     const { statusForProperty, completeEnrollment } = require('../lib/payments/autopay');
     const existing = await statusForProperty(scoped.property.id);
     if (!existing) return res.status(404).json({ error: 'no_enrollment_in_progress' });
 
-    const r = await completeEnrollment({ autopayId: existing.id, sessionId: session_id });
+    const r = await completeEnrollment({ autopayId: existing.id, sessionId: String(session_id) }, intentDeps());
     if (!r.ok) return res.status(400).json({ error: r.error });
     res.json({ ok: true, autopay: await statusForProperty(scoped.property.id) });
   } catch (err) {

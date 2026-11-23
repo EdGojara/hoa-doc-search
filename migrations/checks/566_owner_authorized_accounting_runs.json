@@ -1,0 +1,57 @@
+{
+  "migration": "566_owner_authorized_accounting_runs.sql",
+  "summary": "Owner-authorized, agent-executed accounting runs (Ed 2026-11-17). Extends the 554-556 owner authorization (authenticated email reply, fingerprints, expiry, permanent evidence) to Kat's accounting runs with batch requests: owner_authorizations scope 'accounting_runs', accounting_run_fingerprint, owner_authorization_request_runs, accounting_run_approve_delegated. No rows change; the in-app approval path is unchanged.",
+  "requires": [
+    "565_check_print_status.sql"
+  ],
+  "preflight": [
+    {
+      "name": "owner_authorizations exists (554)",
+      "sql": "SELECT count(*)::int FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'owner_authorizations'",
+      "expect": 1
+    },
+    {
+      "name": "the delegated run approval does not exist yet",
+      "sql": "SELECT count(*)::int FROM pg_proc WHERE proname = 'accounting_run_approve_delegated'",
+      "expect": 0
+    }
+  ],
+  "expected_changes": [
+    "owner_authorizations: the scope check also allows 'accounting_runs'.",
+    "New functions accounting_run_fingerprint, owner_authorization_request_runs and accounting_run_approve_delegated (service_role only).",
+    "No row changes: no run, journal entry or authorization is touched."
+  ],
+  "objects": {
+    "added": [
+      "function:accounting_run_approve_delegated",
+      "function:accounting_run_fingerprint",
+      "function:owner_authorization_request_runs"
+    ],
+    "changed": [
+      "constraint:owner_authorizations.owner_authorizations_scope_check"
+    ],
+    "removed": []
+  },
+  "row_changes": {
+    "owner_authorizations": 0,
+    "accounting_runs": 0,
+    "journal_entries": 0
+  },
+  "protected": [
+    { "table": "owner_authorizations", "order_by": "id" },
+    { "table": "accounting_runs", "order_by": "id" },
+    { "table": "journal_entries", "order_by": "id" }
+  ],
+  "verify": [
+    {
+      "name": "the scope check allows accounting runs",
+      "sql": "SELECT count(*)::int FROM pg_constraint WHERE conname = 'owner_authorizations_scope_check' AND pg_get_constraintdef(oid) LIKE '%accounting_runs%'",
+      "expect": 1
+    },
+    {
+      "name": "the three functions exist",
+      "sql": "SELECT count(*)::int FROM pg_proc WHERE proname IN ('accounting_run_fingerprint', 'owner_authorization_request_runs', 'accounting_run_approve_delegated')",
+      "expect": 3
+    }
+  ]
+}

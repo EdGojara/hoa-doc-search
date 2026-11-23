@@ -1,0 +1,24 @@
+{
+  "migration": "571_acc_developer_authorization.sql",
+  "summary": "Still Creek Ranch and August Meadows: records each developer's existing authorization for Bedrock to handle ACC applications (reported by Ed 2026-11-18), replacing 570's needs_clarification flags, so Annie processes their routine applications. Decisions the documents reserve to the Declarant route to the developer. Written confirmation flagged for follow-up. Data only.",
+  "requires": ["570_acc_bedrock_acts_as_committee.sql"],
+  "preflight": [
+    { "name": "570 applied: both communities flagged", "sql": "SELECT count(*)::int FROM communities WHERE id IN ('a0000000-0000-4000-8000-000000000006', 'a0000000-0000-4000-8000-000000000007') AND acc_delegation->>'status' = 'needs_clarification'", "expect": 2 },
+    { "name": "both Declarations on file for their communities", "sql": "SELECT count(*)::int FROM library_documents WHERE (id = '887a9352-bff5-4148-80be-28b1d36ce112' AND community_id = 'a0000000-0000-4000-8000-000000000006') OR (id = '8e31062b-a590-413c-bc5d-1979848d23ad' AND community_id = 'a0000000-0000-4000-8000-000000000007')", "expect": 2 }
+  ],
+  "expected_changes": [
+    "communities.acc_delegation for Still Creek Ranch and August Meadows: developer authorization (acts_as committee, reserved_to developer, follow_up written confirmation) replaces the needs_clarification flag.",
+    "No rows added or deleted; no schema change; no acc_decisions change."
+  ],
+  "objects": { "added": [], "changed": [], "removed": [] },
+  "row_changes": { "communities": 0, "acc_decisions": 0 },
+  "protected": [
+    { "table": "acc_decisions", "order_by": "id" },
+    { "table": "acc_finalizations", "order_by": "id" }
+  ],
+  "verify": [
+    { "name": "all six associations: Bedrock acts as the Committee", "sql": "SELECT count(*)::int FROM communities WHERE acc_delegation->>'acts_as' = 'committee' AND acc_delegation->>'library_document_id' IS NOT NULL", "expect": 6 },
+    { "name": "no association left flagged", "sql": "SELECT count(*)::int FROM communities WHERE acc_delegation->>'status' = 'needs_clarification'", "expect": 0 },
+    { "name": "both developer communities reserve Declarant decisions to the developer, with follow-up recorded", "sql": "SELECT count(*)::int FROM communities WHERE acc_delegation->>'reserved_to' = 'developer' AND acc_delegation->>'follow_up' IS NOT NULL", "expect": 2 }
+  ]
+}

@@ -194,7 +194,7 @@
     $('body').innerHTML = `<div class="card">
       <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:14px;">
         <h2 class="sec">Balance Sheet</h2>
-        <div style="display:flex; gap:8px; align-items:center;"><span class="muted" style="font-size:12px;">As of</span>${dateInput('bs-asof',dToday())}${goBtn('bs-go')}${printStmtBtn('bs')}</div>
+        <div style="display:flex; gap:8px; align-items:center;"><span class="muted" style="font-size:12px;">As of</span>${dateInput('bs-asof',dToday())}${goBtn('bs-go')}${printStmtBtn('bs')}${acctBarBtn('acctDownloadStatementPdf(\'bs\')','⬇ Download PDF','Download the balance sheet as a PDF')}</div>
       </div><div id="bs-out" class="muted">Loading…</div></div>`;
     const run = async () => {
       const asOf = $('bs-asof').value; if (!asOf) { $('bs-out').innerHTML='Pick a date.'; return; }
@@ -380,6 +380,15 @@
     // transfers. The old browser-built table (_budgetISBody) is no longer used for print.
     window.open(`/api/financial-statements/${CID}/render?format=print&statements=income_budget&funds=active,all&period_end=${encodeURIComponent(end)}`, '_blank');
   }
+  // Download PDF (Ed 2026-11-17): the generated statements PDF (server renderer, the same one the
+  // board package uses), saved as a file. kind 'bs' = balance sheet as of the chosen date; 'bva' =
+  // income statement vs budget, each active fund then all funds, for the period ending the chosen date.
+  function acctDownloadStatementPdf(kind){
+    const d = kind === 'bs' ? ($('bs-asof') && $('bs-asof').value) : ($('is-end') && $('is-end').value);
+    if (!d) { alert('Pick the date first, then download.'); return; }
+    const q = kind === 'bs' ? `statements=balance_sheet&as_of=${encodeURIComponent(d)}&period_end=${encodeURIComponent(d)}` : `statements=income_budget&funds=active,all&period_end=${encodeURIComponent(d)}`;
+    window.location.href = `/api/financial-statements/${CID}/render?format=pdf&download=1&${q}`;
+  }
 
   // Toolbar button (non-print actions) — same look as the print buttons.
   function acctBarBtn(onclick, label, title){
@@ -433,7 +442,7 @@
     $('body').innerHTML = `<div class="card">
       <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:14px;">
         <h2 class="sec">Income Statement</h2>
-        <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;"><span class="muted" style="font-size:12px;">From</span>${dateInput('is-start',dMonthStart())}<span class="muted" style="font-size:12px;">to</span>${dateInput('is-end',dToday())}${goBtn('is-go')}${acctBarBtn('acctSetPriorMonth()','◀ Prior Month','Set the range to the previous full calendar month')}${acctBarBtn('acctOpenRolling12()','📅 Rolling 12-Month','Open the 12-month monthly-columns income statement')}${printBtnHTML('acctPrintStatement(\'is\')','Income Statement')}${printBtnHTML('acctPrintBudgetIS()','Income Statement vs Budget')}</div>
+        <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;"><span class="muted" style="font-size:12px;">From</span>${dateInput('is-start',dMonthStart())}<span class="muted" style="font-size:12px;">to</span>${dateInput('is-end',dToday())}${goBtn('is-go')}${acctBarBtn('acctSetPriorMonth()','◀ Prior Month','Set the range to the previous full calendar month')}${acctBarBtn('acctOpenRolling12()','📅 Rolling 12-Month','Open the 12-month monthly-columns income statement')}${printBtnHTML('acctPrintStatement(\'is\')','Income Statement')}${printBtnHTML('acctPrintBudgetIS()','Income Statement vs Budget')}${acctBarBtn('acctDownloadStatementPdf(\'bva\')','⬇ Download PDF','Download the income statement vs budget as a PDF')}</div>
       </div><div id="is-out" class="muted">Loading…</div></div>`;
     const run = async () => {
       const s=$('is-start').value, e=$('is-end').value; if (!s||!e) { $('is-out').innerHTML='Pick a period.'; return; }
@@ -2449,43 +2458,54 @@
   // online settlements explained from the payout key and the rest flagged.
   // EVERY account for the community, each with its month-by-month rec (book vs
   // bank). Driven by the uploads above — "do all the accounts from the system."
+  // Reconciled / Unreconciled / Stale (lib/banking/rec_standing.js). An approval is not a reconciliation.
+  function standingBadge(st){
+    const m = { reconciled:['✓ Reconciled','#047857'], unreconciled:['Unreconciled','#b45309'], stale:['Stale','#9b2c2c'], before_conversion:['Before conversion','#64748b'] }[st] || ['Unreconciled','#b45309'];
+    return `<span style="color:${m[1]};font-weight:700;font-size:12px;">${m[0]}</span>`;
+  }
   async function boundarySummaryCard() {
     let accts = [];
     try { accts = (await (await fetch(`/api/bank-rec/accounts?community_id=${CID}`)).json()).accounts || []; }
     catch(e){ return ''; }
     if (!accts.length) return '';
     const summaries = await Promise.all(accts.map(async (a) => {
-      if (!a.account_last4) return { acct: a, months: [] };
-      try { const d = await (await fetch(`/api/bank-rec/boundary-summary?community_id=${CID}&account_last4=${a.account_last4}`)).json(); return { acct: a, months: (d && d.months) || [] }; }
+      // Keyed by the unique account id: two accounts can share last four digits
+      // (an operating account and its ICS sweep can).
+      try { const d = await (await fetch(`/api/bank-rec/boundary-summary?community_id=${CID}&bank_account_id=${encodeURIComponent(a.id)}`)).json(); return { acct: a, months: (d && d.months) || [] }; }
       catch(e){ return { acct: a, months: [] }; }
     }));
     const withStmts = summaries.filter((s)=>s.months.length).length;
-    const allTied = summaries.filter((s)=>s.months.length && s.months.every((m)=>m.reconciled)).length;
+    // Standing, not the live worksheet: Reconciled / Unreconciled / Stale (Ed 2026-11-21).
+    // Months before the GL cutover are before conversion and are not counted.
+    const liveMonths = (ms)=>ms.filter((m)=>m.standing!=='before_conversion');
+    const allTied = summaries.filter((s)=>liveMonths(s.months).length && liveMonths(s.months).every((m)=>m.standing==='reconciled')).length;
     const header = `<div class="card" style="margin-bottom:12px;">
       <h2 class="sec" style="margin:0 0 4px;">All accounts — reconciliation status</h2>
       <div class="sub muted" style="font-size:12.5px;"><strong>${withStmts}</strong> of <strong>${accts.length}</strong> accounts have statements uploaded · <strong>${allTied}</strong> fully reconciled. Drop statements above to reconcile the rest; click any month to open its worksheet.</div></div>`;
     const cards = summaries.map(({ acct, months }) => {
-      const nm = esc(acct.account_nickname || acct.bank_name || 'Account') + (acct.account_last4 ? (' ····' + acct.account_last4) : '');
+      const nm = esc(acct.account_nickname || acct.bank_name || 'Account') + (acct.account_last4 ? (' ····' + acct.account_last4) : '') + (acct.gl_account_number ? ` <span class="muted" style="font-weight:400;font-size:12px;">GL ${esc(acct.gl_account_number)}</span>` : '');
       if (!months.length) {
         return `<div class="card" style="margin-bottom:10px; opacity:.72;"><div style="display:flex; justify-content:space-between; align-items:center;">
           <strong style="font-size:13.5px;">${nm}</strong>
           <span class="muted" style="font-size:12px;">${acct.account_last4 ? 'awaiting statements' : 'no account # yet — upload a statement'}</span></div></div>`;
       }
-      const tied = months.every((m)=>m.reconciled);
+      const lm = liveMonths(months);
+      const tied = lm.length>0 && lm.every((m)=>m.standing==='reconciled');
+      const nStale = lm.filter((m)=>m.standing==='stale').length, nOpen = lm.filter((m)=>m.standing==='unreconciled').length;
       const rows = months.slice().sort((a,b)=>(b.period_end||'').localeCompare(a.period_end||'')).map((m)=>{
-        const t = m.reconciled;
+        const t = m.standing==='reconciled';
         const rc = Math.abs(m.residual_cents)<=100 ? '#047857' : (m.residual_cents<0?'#b91c1c':'#b45309');
-        return `<tr style="cursor:pointer; ${t?'':'background:#fff7ed;'}" onclick="wsOpen('${m.period_end}','${acct.account_last4}')" title="Open reconciliation worksheet">
+        return `<tr style="cursor:pointer; ${t?'':'background:#fff7ed;'}" onclick="wsOpen('${m.period_end}','${acct.id}')" title="Open reconciliation worksheet">
           <td>${esc(fmtDate(m.period_end))}</td><td class="num">${fmt(m.book_cents)}</td><td class="num">${fmt(m.bank_cents)}</td>
           <td class="num" style="color:#047857;">${m.deposits_in_transit_cents?'+'+fmt(m.deposits_in_transit_cents):'—'}</td>
           <td class="num" style="color:#b91c1c;">${m.outstanding_checks_cents?fmt(m.outstanding_checks_cents):'—'}</td>
           <td class="num" style="font-weight:700; color:${rc};">${m.residual_cents?fmt(m.residual_cents):'$0.00'}</td>
-          <td>${t?'<span style="color:#047857;font-weight:700;font-size:12px;">✓ tied</span>':'<span style="color:#b45309;font-weight:700;font-size:12px;">review</span>'}</td></tr>`;
+          <td title="${esc((m.standing_reasons||[]).join('; '))}">${standingBadge(m.standing)}${(m.reconciliation_id||m.run_id)?` <a href="${m.reconciliation_id?`/api/bank-rec/reconciliations/${encodeURIComponent(m.reconciliation_id)}`:`/api/bank-rec/runs/${encodeURIComponent(m.run_id)}`}/workpaper.html" target="_blank" rel="noopener" onclick="event.stopPropagation()" style="font-size:11px;margin-left:6px;">Workpaper</a>`:''}</td></tr>`;
       }).join('');
       return `<div class="card" style="margin-bottom:10px;"><div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
           <strong style="font-size:13.5px;">${nm}</strong>
-          <span style="font-size:12px; font-weight:700; color:${tied?'#047857':'#b45309'};">${tied?'✓ all months tied':'needs review'}</span></div>
-        <table><thead><tr><th>Month-end</th><th class="num">Book (GL)</th><th class="num">Bank</th><th class="num">+ In transit</th><th class="num">− Outstanding</th><th class="num">Difference</th><th>Status</th></tr></thead>
+          <span style="font-size:12px; font-weight:700; color:${tied?'#047857':(nStale?'#9b2c2c':'#b45309')};">${tied?'✓ every month reconciled':[nStale?nStale+' stale':'',nOpen?nOpen+' unreconciled':''].filter(Boolean).join(' · ')||'needs review'}</span></div>
+        <table><thead><tr><th>Month-end</th><th class="num">Book (GL)</th><th class="num">Bank</th><th class="num">+ In transit</th><th class="num">− Outstanding</th><th class="num" title="Today's worksheet difference">Difference</th><th title="Reconciled: balances, nothing open, every bank item in the GL. Stale: was reconciled or approved, then the GL changed.">Standing</th></tr></thead>
         <tbody>${rows}</tbody></table></div>`;
     }).join('');
     return header + cards;
@@ -2493,15 +2513,15 @@
 
   // Traditional clearing worksheet: GL | Bank columns, matches pre-checked,
   // Accept/Reopen per line, uncleared GL items carry forward.
-  window.wsOpen = async function(periodEnd, accountLast4){
+  window.wsOpen = async function(periodEnd, bankAccountId){
     const d = $('drill'); if(!d) return;
     d.innerHTML = '<div class="card muted" style="padding:14px;">Loading worksheet…</div>';
     d.scrollIntoView({behavior:'smooth', block:'start'});
-    const acctQ = accountLast4 ? `&account_last4=${accountLast4}` : '';
+    const acctQ = bankAccountId ? `&bank_account_id=${encodeURIComponent(bankAccountId)}` : '';
     let j; try { j = await (await fetch(`/api/bank-rec/worksheet?community_id=${CID}&period_end=${periodEnd}${acctQ}`)).json(); }
     catch(e){ d.innerHTML='<div class="card" style="padding:14px;color:#b91c1c">Could not load worksheet.</div>'; return; }
     if (!j || j.error){ d.innerHTML='<div class="card" style="padding:14px;color:#b91c1c">'+esc((j&&j.error)||'error')+'</div>'; return; }
-    const w = j.worksheet; window._wsCtx = { periodEnd, baId: j.bank_account_id, acct: accountLast4||'' }; window._wsSel = {};
+    const w = j.worksheet; window._wsCtx = { periodEnd, baId: j.bank_account_id, acct: j.bank_account_id||bankAccountId||'' }; window._wsSel = {};
     const amt = (c)=>`<span style="color:${c<0?'#b91c1c':'#111'}">${fmt(c)}</span>`;
     const hdr = (t)=>`<tr><td colspan="7" style="background:#f1f5f9;font-weight:700;font-size:12px;padding:6px 8px;">${t}</td></tr>`;
     // one row per matched group (bank line(s) ↔ GL line(s)); action = accept|reopen
@@ -2544,9 +2564,11 @@
     const bb=(c)=>c==null?'—':fmt(c);
     d.innerHTML = `<div class="card">
       <div style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:8px;">
-        <h2 class="sec" style="margin:0;">Reconciliation — ${esc(j.account_last4?('···'+j.account_last4):'')} · ${esc(fmtDate(periodEnd))}</h2>
-        <span style="font-weight:700;font-size:15px;color:${tied?'#047857':'#b45309'};">${tied?'✓ Reconciled':'Out of balance · '+fmt(w.difference_cents)}</span>
+        <h2 class="sec" style="margin:0;">Reconciliation — ${esc(j.account_nickname||'')}${esc(j.account_last4?(' ···'+j.account_last4):'')}${j.gl_account_number?' · GL '+esc(j.gl_account_number):''} · ${esc(fmtDate(periodEnd))}</h2>
+        <span style="font-size:15px;" title="${esc((j.standing_reasons||[]).join('; '))}">${standingBadge(j.standing)} <span style="font-weight:600;font-size:13px;color:${tied?'#047857':'#b45309'};">· worksheet ${tied?'balances':'off by '+fmt(w.difference_cents)}</span></span>
       </div>
+      ${(j.reconciliation_id||j.run_id) ? (()=>{ const base = j.reconciliation_id ? `/api/bank-rec/reconciliations/${encodeURIComponent(j.reconciliation_id)}` : `/api/bank-rec/runs/${encodeURIComponent(j.run_id)}`; return `<div style="margin-top:6px;font-size:12.5px;"><a href="${base}/workpaper.html" target="_blank" rel="noopener">Open the reconciliation workpaper</a> · <a href="${base}/workpaper.pdf">Download PDF</a></div>`; })() : ''}
+      ${j.standing && j.standing!=='reconciled' && (j.standing_reasons||[]).length ? `<div style="margin-top:6px;font-size:12.5px;color:${j.standing==='stale'?'#9b2c2c':'#92400e'};">${esc(j.standing_label||'')}: ${esc(j.standing_reasons.join('; '))}.</div>` : ''}
       <div style="display:flex;gap:24px;flex-wrap:wrap;margin:10px 0 4px;font-size:13px;">
         <div><table style="border:none;"><tbody>
           <tr><td style="padding:1px 14px 1px 0;color:#64748b;"></td><td class="num" style="font-weight:600;">Bank</td><td class="num" style="font-weight:600;padding-left:18px;">Book (GL)</td></tr>
@@ -2633,10 +2655,19 @@
     $('body').innerHTML = importCard + (summaryHtml || '<div class="card muted" style="padding:24px;">No bank statements imported yet — drop one above to start.</div>') + '<div id="drill"></div>';
   }
 
+  // Auto-route a file only when exactly ONE account has its last four digits.
+  // An operating account and its ICS sweep can share last four digits: a shared last4
+  // leaves the choice to the person instead of guessing.
+  function brLast4Hits(name) {
+    const m = (String(name || '').match(/(\d{3,5})\D*\.(pdf|xls|xlsx|png|jpe?g)$/i) || [])[1];
+    if (!m) return { m: null, hits: [] };
+    return { m, hits: (window._brAccts || []).filter((a) => a.account_last4 && m.slice(-4) === a.account_last4) };
+  }
   function brAcctOptions(selectedFor) {
-    const m = (String(selectedFor || '').match(/(\d{3,5})\D*\.(pdf|xls|xlsx|png|jpe?g)$/i) || [])[1];
-    return (window._brAccts || []).map((a) =>
-      `<option value="${a.id}" ${a.account_last4 && m && m.slice(-4) === a.account_last4 ? 'selected' : ''}>${esc(a.account_nickname || a.bank_name || 'Account')}${a.account_last4 ? (' ····' + a.account_last4) : ''}</option>`
+    const { hits } = brLast4Hits(selectedFor);
+    const pick = hits.length === 1 ? hits[0].id : null;
+    return (hits.length === 1 ? '' : '<option value="">Choose account…</option>') + (window._brAccts || []).map((a) =>
+      `<option value="${a.id}" ${a.id === pick ? 'selected' : ''}>${esc(a.account_nickname || a.bank_name || 'Account')}${a.account_last4 ? (' ····' + a.account_last4) : ''}</option>`
     ).join('');
   }
   window.brFilesChosen = function(input) {
@@ -2644,11 +2675,11 @@
     const el = $('brFileList'); if (!el) return;
     if (!window._brFiles.length) { el.innerHTML = ''; return; }
     const rows = window._brFiles.map((f, i) => {
-      const m = (f.name.match(/(\d{3,5})\D*\.(pdf|xls|xlsx|png|jpe?g)$/i) || [])[1];
+      const { m, hits } = brLast4Hits(f.name);
       return `<tr>
         <td style="padding:6px 8px; font-size:12.5px;">${esc(f.name)}</td>
         <td style="padding:6px 8px;"><select id="brsel-${i}" style="min-width:230px; font-size:12.5px;">${brAcctOptions(f.name)}</select></td>
-        <td id="brstat-${i}" style="padding:6px 8px; font-size:12px;" class="muted">${m ? 'matched ····' + m.slice(-4) : 'pick account'}</td>
+        <td id="brstat-${i}" style="padding:6px 8px; font-size:12px;" class="muted">${hits.length === 1 ? 'matched ····' + m.slice(-4) : (hits.length > 1 ? `<span style="color:#b45309;">${hits.length} accounts end ····${m.slice(-4)}: choose one</span>` : 'pick account')}</td>
       </tr>`;
     }).join('');
     el.innerHTML = `<table style="width:100%; border-collapse:collapse;">
@@ -2965,40 +2996,41 @@
     // payment reversed. Counting only voids here would overstate outstanding checks.
     const isDead=(c)=> c.status==='voided' || c.status==='stop_payment';
     const liveTotal=checks.filter((c)=>!isDead(c)).reduce((s,c)=>s+Number(c.amount_cents||0),0);
-    // A check can be reprinted ONLY on the day it was printed (created_at, Central)
-    // — after that the reprint is locked so an already-mailed check isn't re-cut.
-    const today=new Date().toLocaleDateString('en-CA',{timeZone:'America/Chicago'});
-    const printedDate=(c)=> c.created_at ? new Date(c.created_at).toLocaleDateString('en-CA',{timeZone:'America/Chicago'}) : null;
-    const override = !!(window._isAdmin && window._chkOverride);
-    // Reprintable: issued + printed today. Admin override also unlocks prior-day
-    // issued checks (never voided/cleared — the server blocks those regardless).
-    const reprintable=(c)=> c.status==='issued' && (printedDate(c)===today || override);
+    // Print / reprint (Ed 2026-11-17): any issue date, original check number; nothing posts.
+    // Voided, stop-paid and cleared checks cannot be reprinted. A check staff CONFIRMED printed
+    // may already be with the payee: admin only, with a reason (the server enforces all of this).
+    // A generated PDF is not a printed check: staff confirm the print with Printed OK / Failed.
+    const tracking = j.print_tracking !== false;
+    const live=(c)=> !isDead(c) && c.status!=='cleared';
+    const confirmed=(c)=> c.print_status==='printed';
+    const selectable=(c)=> live(c) && (!confirmed(c) || window._isAdmin);
+    const pBadge=(c)=>{ if(!tracking) return ''; const l=c.print_label||''; const col=/failed/i.test(l)?'var(--err)':(/not confirmed/i.test(l)?'#92400e':'var(--ok, #1F5F43)'); return `<span style="font-size:12px; color:${col};">${esc(l)}</span>`; };
     const rows=checks.map((c)=>{
-      const priorDay = c.status==='issued' && printedDate(c)!==today;
-      const box = reprintable(c)
-        ? `<input type="checkbox" class="chk-reprint" value="${c.id}" onchange="chkReprintBar()">`
-        : `<span title="Reprint locked — this check was printed ${printedDate(c)?fmtDate(printedDate(c)):'on a prior day'}. To re-cut it, void it and issue a new one." style="color:var(--ink-faint); cursor:help;">🔒</span>`;
-      return `<tr${isDead(c)?' style="opacity:.55;"':(override&&priorDay?' style="background:#fffbeb;"':'')}>
+      const box = selectable(c)
+        ? `<input type="checkbox" class="chk-reprint" value="${c.id}" data-num="${esc(String(c.check_number||''))}" data-confirmed="${confirmed(c)?1:0}" onchange="chkReprintBar()">`
+        : `<span title="${live(c)?'Confirmed printed: only an admin can reprint it.':'Voided, stop-paid or cleared checks cannot be reprinted.'}" style="color:var(--ink-faint); cursor:help;">🔒</span>`;
+      const acts=[];
+      if (tracking && live(c) && !confirmed(c)) acts.push(`<a class="link" style="cursor:pointer;" onclick="chkMarkPrint(['${c.id}'],'printed')">printed OK</a>`, `<a class="link" style="cursor:pointer; color:#92400e;" onclick="chkMarkPrint(['${c.id}'],'failed')">failed</a>`);
+      if (tracking) acts.push(`<a class="link" style="cursor:pointer;" onclick="chkPrintHistory('${c.id}','${esc(String(c.check_number||''))}')">history</a>`);
+      if (window._isAdmin && c.status!=='voided' && c.status!=='stop_payment' && c.status!=='cleared') acts.push(`<a class="link" style="color:var(--err); cursor:pointer;" onclick="chkVoid('${c.id}','${esc(String(c.check_number||''))}',${Number(c.amount_cents)||0},'${esc((c.payee_name||'').replace(/'/g,''))}')">void</a>`);
+      return `<tr${isDead(c)?' style="opacity:.55;"':''}>
       <td style="text-align:center;">${box}</td>
       <td style="font-family:ui-monospace,monospace;">${esc(c.check_number)}</td>
       <td>${esc(fmtDate(c.issue_date))}</td><td>${esc(c.payee_name)}</td>
-      <td class="num">${fmt(c.amount_cents)}</td><td>${badge(c.status)}</td>
-      <td>${(window._isAdmin && c.status!=='voided' && c.status!=='stop_payment' && c.status!=='cleared')?`<a class="link" style="color:var(--err); cursor:pointer;" onclick="chkVoid('${c.id}','${esc(String(c.check_number||''))}',${Number(c.amount_cents)||0},'${esc((c.payee_name||'').replace(/'/g,''))}')">void</a>`:''}</td></tr>`;
+      <td class="num">${fmt(c.amount_cents)}</td><td>${badge(c.status)}</td><td>${pBadge(c)}</td>
+      <td style="white-space:nowrap;">${acts.join(' · ')}</td></tr>`;
     }).join('');
-    const overrideToggle = window._isAdmin
-      ? `<label style="font-size:12px; color:#92400e; display:flex; align-items:center; gap:5px; cursor:pointer;" title="Admin only. Reprint checks from a prior day — use ONLY if the originals were destroyed and NOT mailed. Reprinting an already-mailed check double-pays the vendor."><input type="checkbox" ${override?'checked':''} onchange="window._chkOverride=this.checked; chkLoadRegister();"> 🔓 override lock</label>`
-      : '';
     $('chkRegister').innerHTML=`<div class="card"><div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px; margin-bottom:8px;">
         <h2 class="sec" style="margin:0;">Check register</h2>
-        <div style="display:flex; gap:12px; align-items:center;">
+        <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
           <span class="muted" style="font-size:12.5px;">${checks.length} check${checks.length===1?'':'s'} · ${fmt(liveTotal)} outstanding</span>
-          ${overrideToggle}
           <span id="chkReprintBar" class="muted" style="font-size:12.5px;"></span>
-          <button id="chkReprintBtn" onclick="chkReprintSelected()" disabled style="${CHK_GHOST}">🖨 Reprint selected</button>
+          <button id="chkReprintBtn" onclick="chkReprintSelected()" disabled style="${CHK_GHOST}">🖨 Print / reprint selected</button>
+          ${tracking?`<button id="chkOkBtn" onclick="chkMarkSelected('printed')" disabled style="${CHK_GHOST}">✓ Printed OK</button><button id="chkFailBtn" onclick="chkMarkSelected('failed')" disabled style="${CHK_GHOST}">✗ Print failed</button>`:''}
         </div></div>
-      <table><thead><tr><th style="width:28px;"></th><th>Check #</th><th>Date</th><th>Payee</th><th class="num">Amount</th><th>Status</th><th></th></tr></thead>
+      <table><thead><tr><th style="width:28px;"></th><th>Check #</th><th>Date</th><th>Payee</th><th class="num">Amount</th><th>Status</th><th>Print</th><th></th></tr></thead>
       <tbody>${rows}</tbody></table>
-      <div class="muted" style="font-size:11.5px; margin-top:8px;">Tick the checks to reprint and hit <b>Reprint selected</b> for one combined PDF. Only checks printed <b>today</b> can be reprinted — 🔒 marks ones locked from an earlier day so an already-mailed check can’t be double-issued.${window._isAdmin?' Admins can lift the lock with 🔓 override for a destroyed-but-not-mailed original.':''}</div></div>`;
+      <div class="muted" style="font-size:11.5px; margin-top:8px;">Tick checks and use <b>Print / reprint selected</b> for one PDF with the <b>original</b> check numbers. Nothing is paid or posted again. Print at <b>Actual size (100%)</b>, not "Fit to page". Downloading the PDF does not mark a check printed: after it comes out of the printer, mark it <b>Printed OK</b> or <b>Print failed</b>. ${tracking?'':'<b>Print tracking turns on once migration 565 is applied.</b> '}Voided, stop-paid and cleared checks cannot be reprinted${window._isAdmin?'; a check already confirmed printed needs your reason and confirmation that the original was destroyed and not released':'; a check already confirmed printed can only be reprinted by an admin'}.</div></div>`;
     chkReprintBar();
   }
   // Voiding a check reverses posted money — the AP payment, its GL entry, and
@@ -3065,28 +3097,59 @@
   window.chkReprintBar = function(){
     const n=document.querySelectorAll('.chk-reprint:checked').length;
     const bar=$('chkReprintBar'); if(bar) bar.textContent = n?`${n} selected`:'';
-    const btn=$('chkReprintBtn'); if(btn){ btn.disabled=!n; btn.textContent = n>1?`🖨 Reprint ${n} checks`:'🖨 Reprint selected'; }
+    const btn=$('chkReprintBtn'); if(btn){ btn.disabled=!n; btn.textContent = n>1?`🖨 Print / reprint ${n} checks`:'🖨 Print / reprint selected'; }
+    for (const id of ['chkOkBtn','chkFailBtn']) { const b=$(id); if(b) b.disabled=!n; }
   };
   window.chkReprintSelected = async function(){
-    const ids=[...document.querySelectorAll('.chk-reprint:checked')].map((c)=>c.value);
+    const sel=[...document.querySelectorAll('.chk-reprint:checked')];
+    const ids=sel.map((c)=>c.value);
     if(!ids.length) return;
-    const useOverride = !!(window._isAdmin && window._chkOverride);
-    if(useOverride && !(await txConfirm('You are overriding the reprint lock as admin.\n\nOnly do this if the original checks were DESTROYED and NOT mailed — reprinting a check that already went out double-pays the vendor.\n\nContinue?'))) return;
+    const conf=sel.filter((c)=>c.dataset.confirmed==='1').map((c)=>'#'+c.dataset.num);
+    let reason=null, acknowledged=false;
+    if(conf.length){
+      if(!(await txConfirm({ title:'Reprint a check already confirmed printed', danger:true, confirmLabel:'The original was destroyed', message:`${conf.join(', ')} ${conf.length>1?'were':'was'} already confirmed printed.\n\nReprint only if the original was DESTROYED and never left the office. If it was mailed or handed over, a second copy can be cashed twice: void and re-issue instead.` }))) return;
+      reason = await txPrompt('Why is this check being reprinted?', { placeholder:'e.g. printed misaligned, original shredded', confirmLabel:'Reprint' });
+      if(!reason) return;
+      acknowledged=true;
+    }
     const btn=$('chkReprintBtn'); const orig=btn.textContent; btn.disabled=true; btn.textContent='Building…';
     // Reserve the tab on the click (before the async build) so it isn't pop-up-blocked.
     const rwin = window.open('', '_blank');
     try{
-      const headers={'Content-Type':'application/json'};
-      if(useOverride) Object.assign(headers, await chkAuthHeader());
-      const r=await fetch('/api/checks/reprint',{method:'POST',headers,body:JSON.stringify({community_id:CID, check_register_ids:ids, override:useOverride})});
+      const headers=Object.assign({'Content-Type':'application/json'}, await chkAuthHeader());
+      const r=await fetch('/api/checks/reprint',{method:'POST',headers,body:JSON.stringify({community_id:CID, check_register_ids:ids, reason, acknowledged})});
       if(!r.ok){ if(rwin) rwin.close(); let m='Reprint failed'; try{ m=(await r.json()).error||m; }catch(_){}; alert(m); btn.disabled=false; btn.textContent=orig; return; }
       const url=URL.createObjectURL(await r.blob());
       if(rwin){ rwin.location=url; }
       else { const a=document.createElement('a'); a.href=url; a.target='_blank'; a.rel='noopener'; document.body.appendChild(a); a.click(); a.remove(); }
       setTimeout(()=>URL.revokeObjectURL(url), 60000);
-      document.querySelectorAll('.chk-reprint:checked').forEach((c)=>{c.checked=false;});
+      chkLoadRegister();
     }catch(e){ if(rwin) rwin.close(); alert('Reprint failed: '+(e.message||e)); }
     finally{ btn.disabled=false; chkReprintBar(); }
+  };
+  window.chkMarkSelected = function(outcome){
+    const ids=[...document.querySelectorAll('.chk-reprint:checked')].map((c)=>c.value);
+    if(ids.length) chkMarkPrint(ids, outcome);
+  };
+  window.chkMarkPrint = async function(ids, outcome){
+    let reason=null;
+    if(outcome==='failed'){ reason = await txPrompt('What went wrong with the print?', { placeholder:'e.g. ran onto the next check, jammed, misaligned', confirmLabel:'Record failed print' }); if(!reason) return; }
+    else if(!(await txConfirm({ title:'Confirm the check printed correctly', confirmLabel:'Printed OK', message:`Confirm ${ids.length>1?ids.length+' checks':'this check'} came out of the printer correctly: every field inside its check area, nothing on the next check.\n\nAfter this, only an admin can reprint ${ids.length>1?'them':'it'}.` }))) return;
+    try{
+      const headers=Object.assign({'Content-Type':'application/json'}, await chkAuthHeader());
+      const r=await fetch('/api/checks/print-status',{method:'POST',headers,body:JSON.stringify({community_id:CID, check_register_ids:ids, outcome, reason})});
+      const j=await r.json().catch(()=>({}));
+      if(!r.ok){ alert(j.error||'Could not record the print'); return; }
+      chkLoadRegister();
+    }catch(e){ alert('Could not record the print: '+(e.message||e)); }
+  };
+  window.chkPrintHistory = async function(id, num){
+    try{
+      const j=await fetch(`/api/checks/register/${id}/print-history`,{headers:await chkAuthHeader()}).then((r)=>r.json());
+      const ev=j.events||[];
+      const L={pdf_generated:'PDF generated',reprint_generated:'Reprint generated',print_confirmed:'Confirmed printed',print_failed:'Print failed'};
+      await txConfirm({ title:`Check #${num}: print history`, confirmLabel:'Close', message: ev.length ? ev.map((e)=>`${new Date(e.created_at).toLocaleString('en-US',{timeZone:'America/Chicago'})} · ${L[e.event]||e.event} · ${e.actor_name||'unknown'}${e.reason?' · '+e.reason:''}`).join('\n') : 'No print activity recorded yet.' });
+    }catch(e){ alert('Could not load the history: '+(e.message||e)); }
   };
 
   // ── Online Payments (Stripe Connect) ───────────────────────────────────────
@@ -3145,6 +3208,7 @@
         ${kv('Status', badge)}
         ${j.account_id ? kv('Connected account', `<span style="font-family:ui-monospace,monospace; font-size:12px;">${esc(j.account_id)}</span>`) : ''}
         ${j.has_account && !j.onboarded ? kv('Details submitted', j.details_submitted?'yes':'no') : ''}
+        ${j.has_account && !j.onboarded && ((j.currently_due||[]).length || (j.past_due||[]).length || j.disabled_reason) ? kv('Stripe still needs', esc([...(j.past_due||[]), ...(j.currently_due||[]).filter((x)=>!(j.past_due||[]).includes(x))].join(', ') || j.disabled_reason)) : ''}
         <div style="margin-top:14px; display:flex; gap:8px; flex-wrap:wrap;">
           <button style="${BTN}" onclick="opConnect()">${j.has_account ? (j.onboarded?'Manage / re-onboard':'Finish onboarding') : 'Set up online payments'}</button>
           ${!j.onboarded ? `<button style="${GHOST}" onclick="opTestOnboard()" title="Sandbox only: fill Stripe's test KYC via the API so you skip the onboarding form.">⚡ Complete test onboarding</button>` : ''}

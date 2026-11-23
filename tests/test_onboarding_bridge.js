@@ -117,8 +117,41 @@ check('structural problems on preserved events are REPORTED (never repaired): in
   assert.ok(ev(b, 'je:je13').structural_issues.some((s) => /AP invoice total \(30000\) != journal entry \(40000\)/.test(s)));
   assert.ok(ev(b, 'je:je14').structural_issues.some((s) => /lines do not balance/.test(s)));
   assert.ok(ev(b, 'loose:ar_payments:arp1').structural_issues.some((s) => /no journal entry/.test(s)));
+  // Ed 2026-11-16: all three are dated after the cutoff with no entry on/before it. The conversion never
+  // writes that activity and its post-proof tests the cutoff, so each is CARRIED as a recorded exception.
+  for (const k of ['je:je13', 'je:je14', 'loose:ar_payments:arp1']) assert.strictEqual(ev(b, k).evidence.post_cutover_exception.kind, 'structural', k);
   const c = b.controls.find((x) => x.code === 'bridge.preserved_events_structurally_complete');
-  assert.strictEqual(c.status, 'FAIL'); assert.ok(c.failures.length >= 3);
+  assert.strictEqual(c.status, 'PASS');
+});
+check('a structural problem on or before the cutoff still BLOCKS the conversion (it is what the conversion writes)', () => {
+  const t = trusted();
+  t.journal_entries.push(je('jeV', '2026-03-20', 'payment_intake', 3000, { status: 'voided', void_reversal_je_id: null, description: 'AP payment check #77' }));
+  t.journal_entry_lines.push(ln('jeV', 'a2000', 3000, 0), ln('jeV', 'a1000', 0, 3000));
+  const b = run(t);
+  assert.ok(!ev(b, 'je:jeV').evidence.post_cutover_exception);
+  const c = b.controls.find((x) => x.code === 'bridge.preserved_events_structurally_complete');
+  assert.strictEqual(c.status, 'FAIL'); assert.ok(c.failures.some((f) => f.event === 'je:jeV'));
+});
+check('homeowner provenance: a Trusted-native batch is Trusted activity; its row joins the entry that posted it; a post-cutover repeat of a source charge (same account, cents, document reference) is a carried duplicate, never auto-reversed', () => {
+  const t = trusted();
+  const hoSrc = parsed.homeowner_transactions.rows.find((r) => r.domain === 'homeowner_txn' && Number(r.charge_cents) > 0 && r.date <= '2026-03-31');
+  assert.ok(hoSrc, 'fixture has a source homeowner charge');
+  const ref = (String(hoSrc.description).match(/[A-Za-z0-9][A-Za-z0-9-]*\d{4,}[A-Za-z0-9-]*/) || [])[0];
+  const desc = ref ? `Bill-back / ${ref}` : null;
+  t.journal_entries.push(je('jeB', '2026-04-20', 'ap_billback', Number(hoSrc.charge_cents), { description: `bill-back ${ref || ''}` }));
+  t.journal_entry_lines.push(ln('jeB', 'a1300', Number(hoSrc.charge_cents), 0), ln('jeB', 'a5200', 0, Number(hoSrc.charge_cents)));
+  t.homeowner_transactions.push({ id: 'htB', source_batch_id: 'nb1', vantaca_account_id: hoSrc.source_account_key, property_id: 'P1', transaction_date: '2026-04-20', txn_type: 'charge', amount_cents: Number(hoSrc.charge_cents), description: desc, je_link: 'jeB' });
+  t.homeowner_transactions.push({ id: 'htR', source_batch_id: 'nb2', vantaca_account_id: hoSrc.source_account_key, property_id: 'P1', transaction_date: '2026-04-21', txn_type: 'adjustment', amount_cents: -500, description: 'correction' });
+  const b = buildBridge(parsed, t, { batch_code: 'B', cutoff_date: '2026-03-31', roles: { ar_account: '1300', ap_account: '2000' }, snapshot: { completion_id: 's1' }, accountOfProperty: () => hoSrc.source_account_key, accountNumber: (id) => ACC[id] || null, nativeHomeownerBatches: ['nb1', 'nb2'] });
+  const bill = ev(b, 'je:jeB');
+  assert.ok(bill.records.includes('homeowner_transactions:htB'), 'the homeowner row joins its entry');
+  assert.ok(!bill.structural_issues.some((s) => /no homeowner AR record/.test(s)), 'GL AR = the linked homeowner charge');
+  if (ref) { assert.strictEqual(bill.classification, 'ALREADY_IN_SOURCE'); assert.strictEqual(bill.evidence.post_cutover_exception.kind, 'duplicate_of_source'); }
+  const r = ev(b, 'loose:homeowner_transactions:batch:nb2');
+  assert.notStrictEqual(r.classification, 'AMBIGUOUS', 'a Trusted-native correction is not asked about as if Vantaca wrote it');
+  // without the native flag the same batch reads as legacy-derived (the conservative default)
+  const b2 = buildBridge(parsed, t, { batch_code: 'B', cutoff_date: '2026-03-31', roles: { ar_account: '1300', ap_account: '2000' }, snapshot: { completion_id: 's1' }, accountOfProperty: () => hoSrc.source_account_key, accountNumber: (id) => ACC[id] || null });
+  assert.strictEqual(ev(b2, 'loose:homeowner_transactions:batch:nb2').classification, 'AMBIGUOUS');
 });
 check('exactly once: every candidate record (not JE lines) is in exactly one event; totals reconcile; ambiguous items BLOCK the stage', () => {
   const t = trusted(); const b = run(t);

@@ -437,13 +437,48 @@ router.post('/test/assessment-checkout', express.json({ limit: '8kb' }), async (
     const origin = process.env.APP_BASE_URL || `${req.protocol}://${req.get('host')}`;
     const r = await createAssessmentCheckout({
       property_id: String(b.property_id), payment_method: b.payment_method, initiated_by: 'staff_test',
-      success_url: `${origin}/accounting?test_payment=success`, cancel_url: `${origin}/accounting?test_payment=cancelled`,
+      success_url: `${origin}/admin/accounting?test_payment=success`, cancel_url: `${origin}/admin/accounting?test_payment=cancelled`,
       test_amount_cents: 100,
     });
     if (!r.ok) return res.status(r.status || 500).json({ error: r.error, hint: r.hint });
     res.json(r);
   } catch (err) {
     console.error('[payments] test checkout failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// POST /api/payments/test/assessment-intent/(setup|quote|confirm)  (staff, TEST MODE ONLY)
+// The staff equivalent of /api/portal/pay/* for verifying the funding-aware flow
+// end to end with Stripe test cards: a $1.00 assessment on a chosen lot (the mode
+// gate still allows only the payment-sandbox lot under a test key). Same module,
+// same fee rules, same gates. Open /portal/pay?staff_test=1&property_id=<lot>.
+router.post('/test/assessment-intent/:step', express.json({ limit: '8kb' }), async (req, res) => {
+  const { requireTestMode } = require('../lib/payments/stripe_mode');
+  if (!requireTestMode(res)) return;
+  try {
+    const b = req.body || {};
+    if (!b.property_id) return res.status(400).json({ error: 'property_id_required' });
+    const AI = require('../lib/payments/assessment_intent');
+    const deps = { supabase, stripeLib };
+    // Optional test amount so staff can exercise fee tiers (e.g. the ACH threshold);
+    // test mode only (requireTestMode above), whole cents between $0.50 and $5,000.
+    const amt = b.test_amount_cents == null ? 100 : Number(b.test_amount_cents);
+    if (!Number.isInteger(amt) || amt < 50 || amt > 500000) return res.status(400).json({ error: 'test_amount_cents_invalid' });
+    const common = { propertyId: String(b.property_id), initiatedBy: 'staff_test', testAmountCents: amt };
+    const origin = process.env.APP_BASE_URL || `${req.protocol}://${req.get('host')}`;
+    let r;
+    if (req.params.step === 'setup') r = await AI.setupAssessmentPayment(deps, common);
+    else if (req.params.step === 'quote') r = await AI.quoteAssessmentPayment(deps, { ...common, paymentMethodId: String(b.payment_method_id || '') });
+    else if (req.params.step === 'confirm') {
+      r = await AI.confirmAssessmentPayment(deps, { ...common, paymentMethodId: String(b.payment_method_id || ''), quoteToken: String(b.quote_token || ''),
+        returnUrl: `${origin}/portal/pay?staff_test=1&returned=1&property_id=${encodeURIComponent(String(b.property_id))}${b.test_amount_cents ? `&amount=${amt}` : ''}`,
+        mandate: { ip: String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0].trim(), userAgent: String(req.headers['user-agent'] || '').slice(0, 500) } });
+    } else return res.status(404).json({ error: 'unknown_step' });
+    if (!r.ok) return res.status(r.status || 500).json({ error: r.error, hint: r.hint, quote: r.quote });
+    res.json(r);
+  } catch (err) {
+    console.error('[payments] test assessment-intent failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
   }
 });
@@ -475,6 +510,67 @@ router.post('/test/payment-sandbox', express.json({ limit: '4kb' }), async (req,
     res.status(/^refused/.test(err.message) ? 409 : 500).json({ error: /^refused|migration 469/.test(err.message) ? err.message : safeErrorMessage(err) });
   } finally {
     if (client) client.end().catch(() => {});
+  }
+});
+
+// POST /api/payments/recover-events  { payment_intent_id }   (admin)
+// Recovers Stripe events that were never delivered to our webhook (e.g. the
+// endpoint was not yet subscribed to payment_intent.*). Fetches Stripe's OWN
+// events for that PaymentIntent and runs each through the exact webhook path
+// (processWebhookEvent). Each event id is claimed once in stripe_events, so a
+// repeat or a later real delivery is a no-op: nothing can post twice. Creates
+// no charge. (Ed 2026-11-22.)
+router.post('/recover-events', express.json({ limit: '4kb' }), async (req, res) => {
+  try {
+    const { resolveUserRole } = require('./users');
+    const ctx = await resolveUserRole(req);
+    if (!ctx.supabaseUserId || ctx.role !== 'admin') return res.status(403).json({ error: 'admin role required' });
+    const pi = String((req.body || {}).payment_intent_id || '').trim();
+    if (!/^pi_[A-Za-z0-9]+$/.test(pi)) return res.status(400).json({ error: 'payment_intent_id_required' });
+    const list = await stripeLib.listEventsForObject(pi, ['payment_intent.processing', 'payment_intent.succeeded', 'payment_intent.payment_failed', 'payment_intent.canceled']);
+    if (!list.ok) return res.status(502).json({ error: 'stripe_events_unavailable' });
+    const { processWebhookEvent } = require('../lib/payments/payment_lifecycle');
+    const { createPaymentStore } = require('../lib/payments/payment_store');
+    const { stripeMode } = require('../lib/payments/stripe_mode');
+    const results = [];
+    for (const event of list.events.slice().sort((a, b) => a.created - b.created)) {
+      const store = createPaymentStore({ supabase, stripeLib, legacy: {
+        checkoutCompleted: handleCheckoutCompleted, paymentFailed: handlePaymentFailed,
+        chargeRefunded: handleChargeRefunded, accountUpdated: (acct) => handleAccountUpdated(acct, event.id) } });
+      const out = await processWebhookEvent(event, { store, mode: stripeMode() });
+      results.push({ event_id: event.id, type: event.type, http: out.http, duplicate: !!(out.body && out.body.duplicate) });
+    }
+    console.log('[payments] recover-events', pi, 'by', ctx.user && ctx.user.email, JSON.stringify(results));
+    res.json({ ok: true, payment_intent_id: pi, found: list.events.length, results });
+  } catch (err) {
+    console.error('[payments] recover-events failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// POST /api/payments/test/autopay-run  { step: 'notice'|'charge', today: 'YYYY-MM-DD' }  (admin, TEST mode)
+// Runs the autopay notice or charge job as of a chosen day, so the 10-day notice
+// and the off-session charge can be verified without waiting. Under a test key
+// only demo communities are acted on (autopayAllowedFor). Ed 2026-11-22.
+router.post('/test/autopay-run', express.json({ limit: '4kb' }), async (req, res) => {
+  const { requireTestMode } = require('../lib/payments/stripe_mode');
+  if (!requireTestMode(res)) return;
+  try {
+    const { resolveUserRole } = require('./users');
+    const ctx = await resolveUserRole(req);
+    if (!ctx.supabaseUserId || ctx.role !== 'admin') return res.status(403).json({ error: 'admin role required' });
+    const b = req.body || {};
+    const today = /^\d{4}-\d{2}-\d{2}$/.test(String(b.today || '')) ? String(b.today) : undefined;
+    const AP = require('../lib/payments/autopay');
+    const { sendNotice } = require('../lib/payments/autopay_jobs');
+    let r;
+    if (b.step === 'notice') r = await AP.sendDueNotices({ today, sendEmail: sendNotice });
+    else if (b.step === 'charge') r = await AP.chargeDue({ today });
+    else return res.status(400).json({ error: 'step must be notice or charge' });
+    res.json({ ok: true, step: b.step, today: today || null, result: r });
+  } catch (err) {
+    console.error('[payments] test autopay-run failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
   }
 });
 
@@ -606,7 +702,10 @@ router.get('/connect/status', async (req, res) => {
     if (!community.stripe_connected_account_id) return res.json({ ok: true, has_account: false, onboarded: false });
     if (!stripeLib.isConfigured()) return res.json({ ok: true, has_account: true, account_id: community.stripe_connected_account_id, onboarded: community.stripe_onboarding_status === 'enabled' });
 
-    const st = await stripeLib.retrieveAccount(community.stripe_connected_account_id);
+    // Requirements too, so a restricted account says WHAT Stripe still needs
+    // instead of a bare "restricted" (Ed 2026-11-21, Drama Creek sandbox).
+    const st = await stripeLib.retrieveAccountRequirements(community.stripe_connected_account_id);
+    if (!st.ok) return res.status(502).json({ error: 'stripe_status_unavailable' });
     const onboarded = !!(st.ok && st.details_submitted && st.charges_enabled);
     const newStatus = onboarded ? 'enabled' : (st.details_submitted ? 'restricted' : 'in_progress');
     if (community.stripe_onboarding_status !== newStatus) {
@@ -615,7 +714,8 @@ router.get('/connect/status', async (req, res) => {
         ...(onboarded ? { stripe_onboarded_at: new Date().toISOString() } : {}),
       }).eq('id', community.id);
     }
-    res.json({ ok: true, has_account: true, account_id: community.stripe_connected_account_id, onboarded, details_submitted: st.details_submitted, charges_enabled: st.charges_enabled, payouts_enabled: st.payouts_enabled });
+    res.json({ ok: true, has_account: true, account_id: community.stripe_connected_account_id, onboarded, status: newStatus, details_submitted: st.details_submitted, charges_enabled: st.charges_enabled, payouts_enabled: st.payouts_enabled,
+      currently_due: st.currently_due, past_due: st.past_due, disabled_reason: st.disabled_reason || null });
   } catch (err) {
     console.error('[payments] connect status failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
@@ -752,10 +852,12 @@ router.post('/connect/test-onboard', express.json(), async (req, res) => {
 
 // ============================================================================
 // POST /api/payments/webhook  (raw body required for signature verification)
-// Stripe sends events here. We handle:
-//   checkout.session.completed       → mark payments succeeded, confirm rental
-//   payment_intent.payment_failed    → mark payments failed
-//   charge.refunded                  → mark payments refunded
+// Stripe sends events here; lib/payments/payment_lifecycle.js decides what each
+// does. Platform endpoint must subscribe to (scripts/stripe_preflight.js checks):
+//   checkout.session.completed / async_payment_succeeded / async_payment_failed / expired
+//   payment_intent.succeeded / processing / payment_failed / canceled
+//   charge.refunded, charge.dispute.created, charge.dispute.closed
+// Connected-accounts endpoint: account.updated.
 //
 // Stripe Connect: webhook events include `account` (the connected account id)
 // when the event originated from a connected account. We log it but use
@@ -794,6 +896,7 @@ router.post('/webhook',
       const { stripeMode } = require('../lib/payments/stripe_mode');
       const store = createPaymentStore({
         supabase,
+        stripeLib,
         legacy: {
           checkoutCompleted: handleCheckoutCompleted,
           paymentFailed: handlePaymentFailed,
@@ -979,7 +1082,12 @@ router.post('/:id/refund', express.json({ limit: '32kb' }), async (req, res) => 
       connectedAccountId: payment.connected_account_id || undefined,
       reason: reason || 'requested_by_customer',
       reverseTransfer: !!reverse_transfer,
-      refundApplicationFee: req.body.refund_application_fee === true,
+      // Assessments: the convenience fee is Bedrock's, collected as the
+      // application fee. Refunding the charge reverses the WHOLE transfer from
+      // the association, so unless the application fee comes back too, the
+      // association's own funds pay for refunding Bedrock's fee (Ed 2026-11-21:
+      // fees stay separate from association funds). Always refund it here.
+      refundApplicationFee: payment.product_type === 'assessment_payment' || req.body.refund_application_fee === true,
     });
 
     if (!refund.ok) {

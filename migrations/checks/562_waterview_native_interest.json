@@ -1,0 +1,53 @@
+{
+  "migration": "562_waterview_native_interest.sql",
+  "summary": "Waterview Estates: native late interest (Declaration 6.11: 10% per annum, 30-day grace, assessment principal only, GL 4030, prior-month-end calculation cutoff) and Kat bank reconciliation for Operating Checking and Savings (the interest run's verified-payment-history prerequisite). Enabled, auto_post false. Changes no journal entry, ledger row or balance.",
+  "requires": [
+    "510_accounting_runs.sql",
+    "559_kat_account_reconciliation.sql"
+  ],
+  "preflight": [
+    {
+      "name": "Waterview has no interest or bank reconciliation automation yet",
+      "sql": "SELECT count(*)::int FROM community_accounting_automation WHERE community_id = 'a0000000-0000-4000-8000-000000000001' AND process IN ('interest', 'bank_reconciliation')",
+      "expect": 0
+    },
+    {
+      "name": "both Waterview bank accounts exist",
+      "sql": "SELECT count(*)::int FROM bank_accounts WHERE community_id = 'a0000000-0000-4000-8000-000000000001' AND id IN ('829b287e-3d9f-4a4e-9eab-4ba437a329be', '238efceb-02de-4f8c-b5f5-dd078258c0f1')",
+      "expect": 2
+    }
+  ],
+  "expected_changes": [
+    "Two community_accounting_automation rows for Waterview (interest, bank_reconciliation), enabled, auto_post false.",
+    "No journal entry, ledger row or balance changes."
+  ],
+  "objects": {
+    "added": [],
+    "changed": [],
+    "removed": []
+  },
+  "row_changes": {
+    "community_accounting_automation": 2,
+    "accounting_runs": 0,
+    "journal_entries": 0,
+    "homeowner_transactions": 0
+  },
+  "protected": [
+    {
+      "table": "accounting_runs",
+      "order_by": "id"
+    }
+  ],
+  "verify": [
+    {
+      "name": "Waterview interest: 10%, 30 days, 4030, prior-month-end cutoff, never auto-posting",
+      "sql": "SELECT count(*)::int FROM community_accounting_automation WHERE community_id = 'a0000000-0000-4000-8000-000000000001' AND process = 'interest' AND enabled AND NOT auto_post AND settings->>'rate_bps' = '1000' AND settings->>'grace_days' = '30' AND settings->>'income_account_number' = '4030' AND settings->>'calc_cutoff' = 'prior_month_end'",
+      "expect": 1
+    },
+    {
+      "name": "Waterview bank reconciliation covers Operating and Savings, never auto-posting",
+      "sql": "SELECT count(*)::int FROM community_accounting_automation WHERE community_id = 'a0000000-0000-4000-8000-000000000001' AND process = 'bank_reconciliation' AND enabled AND NOT auto_post AND jsonb_array_length(settings->'bank_account_ids') = 2",
+      "expect": 1
+    }
+  ]
+}

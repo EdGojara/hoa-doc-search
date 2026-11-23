@@ -18,9 +18,10 @@ const { safeErrorMessage } = require('./_safe_error');
 const {
   listPayableInvoices, createCheckRun, getRunForRender, getChecksForReprint, voidCheck,
   getBankCheckConfig, updateBankCheckConfig,
+  recordPrintEvents, confirmPrint, printHistory, printLabel,
 } = require('../lib/accounting/check_run');
 const { renderChecksPDF, micrFontInstalled } = require('../lib/accounting/check_renderer');
-const { requireAdmin, requireStaff } = require('./_require_admin');
+const { requireAdmin, requireStaff, getAuthedUser } = require('./_require_admin');
 const { encryptField, last4 } = require('../lib/crypto_field');
 const multer = require('multer');
 const crypto = require('crypto');
@@ -541,6 +542,11 @@ router.get('/run/:printRunId/pdf', async (req, res) => {
     const data = await getRunForRender(req.params.printRunId);
     if (!data || !data.checks.length) return res.status(404).json({ error: 'run_not_found_or_empty' });
     const pdf = await renderChecksPDF(data.checks, data.bankConfig);
+    // Generating the PDF is logged; it never marks a check printed (staff confirm that).
+    try {
+      const u = await getAuthedUser(req);
+      await recordPrintEvents(data.rows, { event: 'pdf_generated', actor: u ? { user_id: u.user.id, name: u.full_name || u.email } : { name: 'check run' } });
+    } catch (e) { console.warn('[checks] run-pdf print log not written:', e.code || '', e.message); }
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `inline; filename="checks-${req.params.printRunId.slice(0, 8)}.pdf"`);
     res.send(pdf);
@@ -641,16 +647,21 @@ router.get('/register', async (req, res) => {
   try {
     const { community_id, bank_account_id, limit = '500' } = req.query;
     if (!community_id) return res.status(400).json({ error: 'community_id_required' });
-    let q = supabase.from('check_register')
-      .select('id, bank_account_id, check_number, issue_date, payee_name, amount_cents, status, memo, voided_reason, cleared_date, print_run_id, created_at')
-      .eq('community_id', community_id)
-      .order('issue_date', { ascending: false })
-      .order('check_number', { ascending: false })
-      .limit(Math.min(parseInt(limit, 10) || 500, 2000));
-    if (bank_account_id) q = q.eq('bank_account_id', bank_account_id);
-    const { data, error } = await q;
+    const BASE = 'id, bank_account_id, check_number, issue_date, payee_name, amount_cents, status, memo, voided_reason, cleared_date, print_run_id, created_at, reprinted_count, printed_at';
+    const build = (cols) => {
+      let q = supabase.from('check_register').select(cols)
+        .eq('community_id', community_id)
+        .order('issue_date', { ascending: false })
+        .order('check_number', { ascending: false })
+        .limit(Math.min(parseInt(limit, 10) || 500, 2000));
+      if (bank_account_id) q = q.eq('bank_account_id', bank_account_id);
+      return q;
+    };
+    let { data, error } = await build(BASE + ', print_status, print_confirmed_at, last_pdf_generated_at');
+    let print_tracking = true;
+    if (error && /print_status|print_confirmed_at|last_pdf_generated_at/.test(error.message || '')) { print_tracking = false; ({ data, error } = await build(BASE)); }
     if (error) throw error;
-    res.json({ checks: data || [] });
+    res.json({ checks: (data || []).map((c) => ({ ...c, print_label: print_tracking ? printLabel(c) : null })), print_tracking });
   } catch (err) { handleErr(res, 'register', err); }
 });
 
@@ -658,31 +669,54 @@ router.get('/register', async (req, res) => {
 // untracked) is retired: NewFirst could not route it, and nothing recorded it.
 router.get('/positive-pay-file', (req, res) => res.status(410).json(RETIRED_PP));
 
-// Reprint a hand-picked set of checks into ONE combined PDF. Same-day locked
-// (see getChecksForReprint) so an already-mailed check can't be re-cut.
+// Print / reprint a hand-picked set of checks into ONE combined PDF (Ed 2026-11-17). Any issue
+// date; the ORIGINAL check number, payee, amount, date, payment and GL entry. Never posts or
+// creates anything. Voided, stop-paid and cleared checks are refused; a check confirmed printed
+// needs an admin, a reason and an acknowledgement that the original was destroyed and not
+// released. The reprint is logged (who, when, why) BEFORE the PDF is sent.
 router.post('/reprint', express.json(), async (req, res) => {
   try {
+    const u = await requireStaff(req, res); if (!u) return;
     const b = req.body || {};
     if (!b.community_id) return res.status(400).json({ error: 'community_id_required' });
-    // The same-day lock can ONLY be waived by an admin (Ed is the sole admin).
-    // Non-admins never get the override even if they send override:true.
-    let allowLockedOverride = false;
-    if (b.override === true) {
-      const admin = await requireAdmin(req, res); // sends 403 if not admin
-      if (!admin) return;
-      allowLockedOverride = true;
-    }
-    const data = await getChecksForReprint({ community_id: b.community_id, check_register_ids: b.check_register_ids, allowLockedOverride });
+    const data = await getChecksForReprint({ community_id: b.community_id, check_register_ids: b.check_register_ids,
+      isAdmin: u.role === 'admin', reason: b.reason || '', acknowledged: b.acknowledged === true });
     if (!data || !data.checks.length) return res.status(404).json({ error: 'no_reprintable_checks' });
     const pdf = await renderChecksPDF(data.checks, data.bankConfig);
+    await recordPrintEvents(data.rows, { event: 'reprint_generated', actor: { user_id: u.user.id, name: u.full_name || u.email }, reason: b.reason || null });
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', 'inline; filename="checks-reprint.pdf"');
     res.send(pdf);
   } catch (err) {
     if (err && err.code === 'reprint_locked') return res.status(409).json({ error: err.message });
+    if (err && err.code === 'migration_pending') return res.status(409).json({ error: err.message });
     if (err && err.code === 'invalid_state') return res.status(400).json({ error: err.message });
     handleErr(res, 'reprint', err);
   }
+});
+
+// Record the physical result of a print: { outcome: 'printed' | 'failed', reason }. A PDF is
+// never treated as a printed check until staff say so here.
+router.post('/print-status', express.json(), async (req, res) => {
+  try {
+    const u = await requireStaff(req, res); if (!u) return;
+    const b = req.body || {};
+    if (!b.community_id) return res.status(400).json({ error: 'community_id_required' });
+    res.json(await confirmPrint({ community_id: b.community_id, check_register_ids: b.check_register_ids, outcome: b.outcome, reason: b.reason || null,
+      actor: { user_id: u.user.id, name: u.full_name || u.email } }));
+  } catch (err) {
+    if (err && (err.code === 'invalid_input')) return res.status(400).json({ error: err.message });
+    if (err && (err.code === 'invalid_state' || err.code === 'migration_pending')) return res.status(409).json({ error: err.message });
+    handleErr(res, 'print-status', err);
+  }
+});
+
+// Print history of one check (who generated, reprinted, confirmed or failed it, and when).
+router.get('/register/:id/print-history', async (req, res) => {
+  try {
+    const u = await requireStaff(req, res); if (!u) return;
+    res.json({ events: await printHistory(req.params.id) });
+  } catch (err) { handleErr(res, 'print-history', err); }
 });
 
 // Void a check — ADMIN ONLY. This reverses posted money: it unwinds the AP
