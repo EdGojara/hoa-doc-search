@@ -112,24 +112,30 @@ check('final: announcement placeholders and missing fees refuse', g.blockers.som
   check('counsel hold: empty inputs are safe', applyCounselHolds([], null).mail.length === 0);
 }
 
-// Itemized assessment lines and deferred accounts.
+// Full statements: activity since a date, deferrals, counsel notices.
 {
-  const { parseComponents, parseDefer, applyDefer } = require('../scripts/build_annual_statements');
-  const { billingLines } = require('../lib/statements/assessment_statement');
-  const c = parseComponents('HOA Assessment=124687;CLMA Dues=25313');
-  const L = billingLines({ year: 2027, assessment_cents: 150000, components: c });
-  check('components: itemize to the same total', L.length === 2 && L[0].cents + L[1].cents === 150000 && L[1].label === '2027 CLMA Dues');
-  check('components: none = one line, unchanged label', billingLines({ year: 2027, assessment_cents: 150000 })[0].label === '2027 Annual Assessment');
-  let threw = false; try { billingLines({ year: 2027, assessment_cents: 150000, components: [{ label: 'x', cents: 149999 }] }); } catch (_) { threw = true; }
-  check('components: a total that differs from the rate refuses', threw);
-  const gg = billingGates({ opts: { ...base, components: 'A=1;B=2' }, community: comm(), budget: { status: 'approved' }, lockbox: lb });
-  check('components: gate blocks a total that differs from the rate', gg.blockers.some((b) => /components total/.test(b)));
-  let bad = false; try { parseComponents('HOA 1500'); } catch (_) { bad = true; }
-  check('components: malformed part refuses', bad);
-  const df = parseDefer('# note\n100,receipt pending\n\n200\n999,typo');
+  const { parseAccountList, applyDefer, counselNotices } = require('../scripts/build_annual_statements');
+  const S = require('../lib/statements/assessment_statement');
+  const L = (date, amount_cents, txn_type = 'charge', description = 'x') => ({ transaction_date: date, amount_cents, txn_type, description });
+  const led = [L('2026-07-31', 142500), L('2026-09-05', -20000, 'payment'), L('2026-10-27', -26700, 'payment', 'Payment: Vantaca Pay eCheck VPAY payout 2026-11-02 (deposited 2026-11-02)')];
+  const w = S.activityWindow(led, 95800, '2026-10-01');
+  check('activity: opening is the balance before the window and the lines foot to the balance', w.opening === 122500 && w.rows.length === 1 && w.opening + w.rows[0].amount_cents === 95800);
+  let threw = false; try { S.activityWindow(led, 95801, '2026-10-01'); } catch (_) { threw = true; }
+  check('activity: a ledger that does not tie to the balance refuses', threw);
+  const many = Array.from({ length: 20 }, (_, i) => L(`2026-10-${String(i + 1).padStart(2, '0')}`, 100));
+  const w2 = S.activityWindow(many, 2000, '2026-10-01');
+  check('activity: extra lines fold into the balance forward, never drop', w2.rows.length === 9 && w2.opening === 1100);
+  check('activity: payment label is plain, with no payout reference', S.activityLabel(led[2]) === 'Payment received (eCheck)' && S.activityLabel(L('x', -1, 'payment', 'Chk #2163 - Payment')) === 'Payment received (check #2163)');
+  check('activity: a returned payment keeps its own words', /Returned payment/.test(S.activityLabel(L('x', 20000, 'charge', 'Returned payment: insufficient funds (settled 2026-10-15)'))));
+  const df = parseAccountList('# note\n100,receipt pending\n\n200\n999,typo');
   const r = applyDefer([{ account_number: '100' }, { account_number: '200' }, { account_number: '300' }], df);
-  check('defer: listed accounts leave the batch with their reason', r.mail.map((d) => d.account_number).join() === '300' && r.deferred[0].reason === 'receipt pending' && r.deferred[1].reason === 'deferred');
-  check('defer: an account that matches nothing is reported', r.unmatched.join() === '999');
+  check('defer: listed accounts leave the batch with their reason; unmatched reported', r.mail.map((d) => d.account_number).join() === '300' && r.deferred[0].reason === 'receipt pending' && r.unmatched.join() === '999');
+  const D = (n, why = []) => ({ account_number: n, _why: why, association: { name: 'A' }, mgmt: { name: 'M', line1: '1', city: 'C' }, addressee: { name: 'N', street: 'S', cityline: 'C' }, property_address: 'P', asOf: new Date('2026-11-23'), disclosure: 'note' });
+  const cn = counselNotices([{ d: D('1'), state: 'at_legal', firm: 'F' }, { d: D('2'), state: 'in_bankruptcy', firm: 'F' }, { d: D('3'), state: 'at_legal', firm: 'Unknown' }, { d: D('4', ['no complete mailing address']), state: 'at_legal', firm: 'F' }], { F: { name: 'F', lines: ['123 Main', '555'] } });
+  check('counsel notice: never a bankruptcy, an unknown firm or an incomplete address', cn.send.map((x) => x.d.account_number).join() === '1' && cn.none.length === 3);
+  const html = S.renderCounselNoticesHTML(cn.send, { year: 2027, assessment_cents: 150000, due_date: '2027-01-01' });
+  const body = html.split('<body>')[1];
+  check('counsel notice: assessment and firm, no coupon or pay instruction', /1,500\.00/.test(body) && /123 Main/.test(body) && !/PAY THIS AMOUNT|Mail Checks|class="coupon"/.test(body) && body.includes(S.COUNSEL_MESSAGE));
 }
 
 console.log(failures ? `\n\x1b[31m${failures} failed\x1b[0m` : '\n\x1b[32mall annual statement run checks passed\x1b[0m');
