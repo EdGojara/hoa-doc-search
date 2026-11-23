@@ -133,6 +133,7 @@ const CHECKS = [
   'tests/test_bs_one_row_one_page.js',
   'tests/test_monthly_interest.js',
   'tests/test_interest_cutoff_period_guard.js',
+  'tests/test_interest_effective_dates.js',
   'tests/test_autopay_open_payable.js',
   'tests/test_shared_inbox_and_accounting_bills.js',
   'tests/test_ap_accrual_at_intake.js',
