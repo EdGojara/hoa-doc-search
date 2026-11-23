@@ -236,7 +236,9 @@
   async function propSearch(q, ctx) {
     if (!q || q.trim().length < 2) { $(ctx+'-results').innerHTML = ''; return; }
     const r = await fetch(`/api/home-sales/properties/search?community_id=${CID}&q=${encodeURIComponent(q)}`);
-    const j = await r.json(); const props = j.properties || [];
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok || !Array.isArray(j.properties)) { $(ctx+'-results').innerHTML = '<div class="result-warn" style="padding:8px 12px;">Search failed. Try again.</div>'; return; }
+    const props = j.properties;
     $(ctx+'-results').innerHTML = props.length ? props.map((p)=>
       `<div class="row" style="padding:8px 0; border-bottom:1px solid #f1efe8;">
         <a class="link" onclick="pickProperty('${p.property_id}','${ctx}')">${esc(p.street_address)}${p.unit?(' '+esc(p.unit)):''}</a>
@@ -248,7 +250,7 @@
     if (ctx === 'rq') {
       $('rq-results').innerHTML = '';
       const snap = await fetchSnapshot(property_id);
-      if (!snap) { $('rq-snapshot').innerHTML = '<div class="muted">Couldn\'t load that property.</div>'; return; }
+      if (!snap) { $('rq-snapshot').innerHTML = LOOKUP_FAILED; return; }
       $('rq-snapshot').innerHTML = snapshotCard(snap) + `
         <div class="grid2" style="margin-top:14px;">
           <div class="field"><label>Requested by</label><input type="text" id="rq-by" placeholder="HomeWise / title company / agent"></div>
@@ -258,11 +260,11 @@
         <button class="btn gold" onclick="submitRequest('${property_id}')">Log request</button>`;
     } else if (ctx === 'sc') {
       // scan flow manual property pick
-      window._scanProp = property_id;
       $('sc-results').innerHTML = '';
-      const snap = await fetchSnapshot(property_id);
-      $('sc-prop-chosen').innerHTML = snap ? ('Matched: <b>'+esc(snap.property.street_address)+'</b> — seller of record <b>'+esc(snap.owner?snap.owner.owner_name:'unknown')+'</b>') : '';
-      renderSellerCheck(snap);
+      const sel = $('sc-prop');
+      if (sel) sel.value = [...sel.options].some((o) => o.value === property_id) ? property_id : '';
+      const snap = await selectScanProperty(property_id);
+      if (snap) $('sc-prop-chosen').innerHTML = 'Selected: <b>'+esc(snap.property.street_address)+'</b> — seller of record <b>'+esc(snap.owner?snap.owner.owner_name:'unknown')+'</b>';
     } else if (ctx === 'wp') {
       $('wp-results').innerHTML = '';
       renderWelcomePanel(property_id, {});
@@ -271,15 +273,36 @@
       window._prProp = property_id;
       $('pr-results').innerHTML = '';
       const snap = await fetchSnapshot(property_id);
-      $('pr-prop-chosen').innerHTML = snap ? ('Selected: <b>'+esc(snap.property.street_address)+'</b> — current owner <b>'+esc(snap.owner?snap.owner.owner_name:'unknown')+'</b>') : '';
+      $('pr-prop-chosen').innerHTML = snap ? ('Selected: <b>'+esc(snap.property.street_address)+'</b> — current owner <b>'+esc(snap.owner?snap.owner.owner_name:'unknown')+'</b>') : LOOKUP_FAILED;
       prPreview();
     }
   };
 
+  // null = the lookup failed. Callers must say so on screen (LOOKUP_FAILED); a failed
+  // lookup never shows as a blank or a zero balance.
+  const LOOKUP_FAILED = '<div class="result-warn" style="padding:10px 12px;"><b>Could not load this property\'s account.</b> The balance is not known. Select the property again; do not quote or record a balance until it loads.</div>';
   async function fetchSnapshot(property_id) {
-    const r = await fetch(`/api/home-sales/property/${property_id}/snapshot?community_id=${CID}`);
-    if (!r.ok) return null;
-    return r.json();
+    try {
+      const r = await fetch(`/api/home-sales/property/${property_id}/snapshot?community_id=${CID}`);
+      if (!r.ok) return null;
+      const j = await r.json();
+      return j && j.property && j.balance_status ? j : null;
+    } catch (_) { return null; }
+  }
+
+  // The scan form's one way to set the property. Only the newest choice may render,
+  // so a slow answer for an earlier choice never shows another home's balance.
+  async function selectScanProperty(property_id) {
+    window._scanProp = property_id || null;
+    window._scanSnap = null; window._payoffPreviewKey = null;
+    const chosen = $('sc-prop-chosen'); if (chosen) chosen.innerHTML = '';
+    if (!property_id) { renderSellerCheck(null, 'none'); return null; }
+    renderSellerCheck(null, 'loading');
+    const snap = await fetchSnapshot(property_id);
+    if (window._scanProp !== property_id) return null;
+    if (!snap) { renderSellerCheck(null, 'failed'); return null; }
+    renderSellerCheck(snap);
+    return snap;
   }
 
   function snapshotCard(snap) {
@@ -324,21 +347,32 @@
       const j = await r.json();
       if (j.error) { $('sc-out').innerHTML = '<div class="result-warn">Couldn\'t read it: '+esc(j.error)+(j.raw_extracted?'<pre style="white-space:pre-wrap; font-size:11px;">'+esc(String(j.raw_extracted))+'</pre>':'')+'</div>'; return; }
       window._scanRaw = j.raw_extracted || null;
-      renderScanForm(j.extracted || {}, j.property_matches || []);
+      renderScanForm(j.extracted || {}, j.property_matches || [], j.property_match || { status: 'none', reason: 'not_found' });
     } catch (e) { $('sc-out').innerHTML = '<div class="result-warn">'+esc(e.message)+'</div>'; }
     finally { $('sc-go').disabled = false; }
   }
 
-  function renderScanForm(ex, matches) {
-    window._scanProp = matches.length === 1 ? matches[0].property_id : null;
-    const matchOpts = matches.map((m)=>`<option value="${m.property_id}">${esc(m.street_address)}${m.unit?(' '+esc(m.unit)):''} — ${esc(m.owner_name||'')}</option>`).join('');
+  const MATCH_REASON = {
+    no_address: 'No property address could be read from this document.',
+    no_house_number: 'The address on the document has no house number.',
+    no_properties_loaded: 'No properties are on file for this association.',
+    several_properties: 'More than one property fits the address on the document.',
+    similar_address: 'The address on the document is similar to, but not the same as, a property on file.',
+    unit_differs: 'The unit on the document does not match the property on file.',
+    not_found: 'The address on the document does not match any property on file. Check that the correct association is selected.',
+  };
+  function renderScanForm(ex, matches, match) {
+    const sure = match.status === 'matched' && matches.length === 1;
+    window._scanProp = null; window._scanSnap = null;
+    const matchOpts = (sure ? '' : '<option value="">Select the property…</option>') + matches.map((m)=>`<option value="${m.property_id}">${esc(m.street_address)}${m.unit?(' '+esc(m.unit)):''} — ${esc(m.owner_name||'')}</option>`).join('');
     $('sc-out').innerHTML = `
       <div class="card" style="background:#fbfaf6;">
         <div class="row" style="justify-content:space-between;"><b>What we read</b>
           <span class="badge ${ex.confidence==='high'?'ok':(ex.confidence==='low'?'err':'req')}">${esc(ex.confidence||'?')} confidence</span></div>
         ${ex.notes?('<div class="muted" style="margin:6px 0; font-size:12.5px;">Note: '+esc(ex.notes)+'</div>'):''}
         <div class="field" style="margin-top:10px;"><label>Property (confirm the match)</label>
-          ${matches.length?('<select id="sc-prop">'+matchOpts+'</select>'):'<div class="result-warn" style="padding:10px 12px;">No property match found in <b>' + esc(currentCommunityName()) + '</b>. Check that the correct association is selected, or search below.</div>'}
+          ${sure ? '' : '<div class="result-warn" id="sc-prop-error" style="padding:10px 12px; margin-bottom:6px;"><b>Property not identified in ' + esc(currentCommunityName()) + '. Select the property to continue.</b> ' + esc(MATCH_REASON[match.reason] || MATCH_REASON.not_found) + (ex.property_address ? ' Document says: <b>' + esc(ex.property_address) + '</b>.' : '') + '</div>'}
+          ${matches.length?('<select id="sc-prop">'+matchOpts+'</select>'):''}
           <input type="text" id="sc-search" placeholder="Search by address/owner if the match is wrong…" autocomplete="off" style="margin-top:6px;">
           <div id="sc-results"></div><div id="sc-prop-chosen" class="muted" style="font-size:12px; margin-top:4px;"></div>
         </div>
@@ -367,16 +401,22 @@
     renderChecks();
     let t; $('sc-search').addEventListener('input', (e)=>{ clearTimeout(t); t=setTimeout(()=>propSearch(e.target.value,'sc'), 250); });
     const sel = $('sc-prop');
-    if (sel) { sel.addEventListener('change', async ()=>{ window._scanProp = sel.value; renderSellerCheck(await fetchSnapshot(sel.value)); });
-               window._scanProp = sel.value; fetchSnapshot(sel.value).then(renderSellerCheck); }
+    if (sel) sel.addEventListener('change', ()=>selectScanProperty(sel.value));
+    selectScanProperty(sure ? matches[0].property_id : null);
     $('sc-record').addEventListener('click', recordClosing);
   }
 
-  function renderSellerCheck(snap) {
+  function renderSellerCheck(snap, state) {
     const el = $('sc-seller-check'); if (!el) return;
     window._scanSnap = snap || null; window._payoffPreviewKey = null;
     if ($('sc-checks')) renderChecks();
-    if (!snap) { el.innerHTML = ''; return; }
+    const warn = $('sc-prop-error'); if (warn) warn.style.display = window._scanProp ? 'none' : '';
+    if (!snap) {
+      el.innerHTML = state === 'loading' ? '<div class="muted">Loading the seller\'s account…</div>'
+        : state === 'failed' ? LOOKUP_FAILED
+        : '<div class="result-warn" style="padding:10px 12px;"><b>Seller balance not available.</b> Select the property first.</div>';
+      return;
+    }
     const o = snap.owner || {};
     el.innerHTML = `<div class="kv"><span class="k">Seller of record</span><span class="v">${esc(o.owner_name||'—')}</span></div>
       <div class="kv"><span class="k">Seller balance at closing</span><span class="v">${balBadge(snap.balance_status==='KNOWN'?snap.balance_cents:null, '$0.00 — cleared', ' still owed')}</span></div>
@@ -460,6 +500,8 @@
   }
   function recordBlockers() {
     const list = window._scanChecks || []; const why = [];
+    if (!window._scanProp) why.push('select the property');
+    else if (!window._scanSnap || window._scanSnap.property.id !== window._scanProp) why.push('wait for the seller\'s account to load (select the property again if it failed)');
     if (list.some((c) => c.classification === 'NEEDS_CLASSIFICATION')) why.push('classify every check by who it is payable to');
     if (list.some((c) => c.classification === 'ASSOCIATION_PAYMENT' && !c.purpose)) why.push('say what each Association check is for');
     if (list.some((c) => !(Number(c.amount_cents) > 0))) why.push('enter every check amount');
@@ -510,7 +552,7 @@
 
   async function recordClosing() {
     const property_id = window._scanProp;
-    if (!property_id) { alert('Confirm the property first.'); return; }
+    if (!property_id) { alert('Property not identified. Select the property first.'); return; }
     const seller = $('sc-seller').value.trim();
     const buyer = $('sc-buyer').value.trim();
     const closing = $('sc-closing').value;
