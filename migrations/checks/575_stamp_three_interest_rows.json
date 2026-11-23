@@ -1,0 +1,49 @@
+{
+  "migration": "575_stamp_three_interest_rows.sql",
+  "summary": "Records the owner tenure on three posted interest charges (Kat run 810c6af4) so the closing payoff can see them. No amounts, dates, categories or balances change.",
+  "requires": [
+    "456_ownership_tenures.sql"
+  ],
+  "preflight": [
+    {
+      "name": "three unstamped interest rows",
+      "sql": "SELECT count(*)::int FROM homeowner_transactions WHERE id IN ('688b825f-d013-4c14-8516-f37aeaf2020e', 'd58a6682-ce4d-466e-a517-72ee12aef173', '977cca97-45ce-4918-a425-e845ee5cc5a9') AND tenure_id IS NULL AND amount_cents = 1144",
+      "expect": 3
+    },
+    {
+      "name": "current balance is 161774",
+      "sql": "SELECT balance_cents::int FROM v_current_owner_balance WHERE property_id = '9d13a0a3-3116-4559-9a48-a4f6a93aa7f1'",
+      "expect": 161774
+    }
+  ],
+  "expected_changes": [
+    "homeowner_transactions: tenure_id set on 3 rows.",
+    "No rows added or removed; no other column changes."
+  ],
+  "objects": {
+    "added": [],
+    "changed": [],
+    "removed": []
+  },
+  "row_changes": {
+    "homeowner_transactions": 0
+  },
+  "protected": [
+    {
+      "table": "journal_entries",
+      "order_by": "id"
+    }
+  ],
+  "verify": [
+    {
+      "name": "three rows stamped",
+      "sql": "SELECT count(*)::int FROM homeowner_transactions WHERE id IN ('688b825f-d013-4c14-8516-f37aeaf2020e', 'd58a6682-ce4d-466e-a517-72ee12aef173', '977cca97-45ce-4918-a425-e845ee5cc5a9') AND tenure_id = '359f7476-e6e7-4239-abbe-7534dff15a7a'",
+      "expect": 3
+    },
+    {
+      "name": "balance unchanged",
+      "sql": "SELECT balance_cents::int FROM v_current_owner_balance WHERE property_id = '9d13a0a3-3116-4559-9a48-a4f6a93aa7f1'",
+      "expect": 161774
+    }
+  ]
+}
