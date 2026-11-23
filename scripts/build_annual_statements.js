@@ -10,6 +10,10 @@
 //        --year 2027 --due 2027-01-01 --rate-cents 64000 --out <dir> \
 //        [--announce <announcement.json>] [--notice-text "..."] [--office-remit]
 //   node scripts/build_annual_statements.js ... --preview       (review copy)
+//        [--components "HOA Assessment=124687;CLMA Dues=25313"]  itemize the rate (must total it)
+//        [--assessment-only <file> --assessment-only-notice "..."]  these accounts get the
+//              year's assessment without prior balance/credits (same file format)
+//        [--defer <file>]   leave these accounts for a later batch; one "account,reason" per line
 //   node scripts/build_annual_statements.js --community "Waterview Estates" \
 //        --sample 20 --out <dir>          (bank scanline read-test proofs)
 //
@@ -76,6 +80,36 @@ async function pool(items, n, fn) {
   return out;
 }
 
+// "Label=cents;Label=cents" -> [{label, cents}]; throws on a malformed part.
+function parseComponents(v) {
+  if (!v) return [];
+  return String(v).split(';').filter((x) => x.trim()).map((x) => {
+    const m = /^(.+)=(\d+)$/.exec(x.trim());
+    if (!m) throw new Error(`--components part not "Label=cents": ${x}`);
+    return { label: m[1].trim(), cents: Number(m[2]) };
+  });
+}
+// Deferred accounts: "account,reason" per line (# comments and blanks ignored).
+function parseDefer(text) {
+  const out = new Map();
+  for (const l of String(text || '').split(/\r?\n/)) {
+    if (!l.trim() || l.trim().startsWith('#')) continue;
+    const i = l.indexOf(','); const acct = (i < 0 ? l : l.slice(0, i)).trim().replace(/"/g, '');
+    if (acct) out.set(acct, i < 0 ? 'deferred' : l.slice(i + 1).trim().replace(/^"|"$/g, '') || 'deferred');
+  }
+  return out;
+}
+// Split printable statements into this batch and the deferred ones. An account
+// on the list that matches nothing is reported (a typo must not mail someone).
+function applyDefer(good, defer) {
+  const mail = []; const deferred = []; const hit = new Set();
+  for (const d of good) {
+    const a = String(d.account_number || '');
+    if (defer.has(a)) { hit.add(a); deferred.push({ d, reason: defer.get(a) }); } else mail.push(d);
+  }
+  return { mail, deferred, unmatched: [...defer.keys()].filter((a) => !hit.has(a)) };
+}
+
 // The billing gates, pure (tested in tests/test_annual_statement_run.js).
 // -> { blockers: [], warnings: [], billing, announcement, noticeText }
 function billingGates({ opts, community, budget, lockbox, announcementRaw = null }) {
@@ -90,6 +124,12 @@ function billingGates({ opts, community, budget, lockbox, announcementRaw = null
   }
   const rate = Math.round(Number(opts['rate-cents']));
   if (!(rate > 0)) blockers.push('--rate-cents (the approved per-lot annual assessment) was not given');
+  let components = [];
+  try {
+    components = parseComponents(opts.components);
+    const sum = components.reduce((a, c) => a + c.cents, 0);
+    if (components.length && sum !== rate) blockers.push(`--components total ${sum} cents, not the --rate-cents ${rate}`);
+  } catch (e) { blockers.push(e.message); }
   if (!/^\d{4}-\d{2}-\d{2}$/.test(String(opts.due || ''))) blockers.push('--due YYYY-MM-DD (the assessment due date) was not given');
   if (!lockbox && !opts['office-remit']) blockers.push('no verified lockbox for this association; pass --office-remit to have checks mailed c/o Bedrock office');
 
@@ -102,7 +142,7 @@ function billingGates({ opts, community, budget, lockbox, announcementRaw = null
   }
   const noticeText = (opts['notice-text'] && String(opts['notice-text']).trim()) || (announcement && announcement.notice_text) || null;
   if (!noticeText) blockers.push('the statement notice (delinquency wording per the collection policy) was not given: --notice-text or notice_text in --announce');
-  return { blockers, warnings, billing: { year, assessment_cents: rate, due_date: opts.due }, announcement, noticeText };
+  return { blockers, warnings, billing: { year, assessment_cents: rate, due_date: opts.due, components }, announcement, noticeText };
 }
 
 function validate(d, { lockbox, sample }) {
@@ -195,13 +235,21 @@ async function main() {
   }
 
   const owners = await fetchAllQuery(() => s.from('v_current_property_owners')
-    .select('property_id, street_address').eq('community_id', comm.id), { orderBy: 'property_id' });
+    .select('property_id, street_address, vantaca_account_id, trusted_account_number').eq('community_id', comm.id), { orderBy: 'property_id' });
   owners.sort((a, b) => String(a.street_address || '').localeCompare(String(b.street_address || ''), 'en', { numeric: true }));
   const pick = sample ? owners.slice(0, sample) : owners;
 
+  const aoList = !sample && o['assessment-only'] ? parseDefer(fs.readFileSync(path.resolve(o['assessment-only']), 'utf8')) : new Map();
+  const aoNotice = String(o['assessment-only-notice'] || '').trim();
+  if (aoList.size && !aoNotice) throw new Error('--assessment-only needs --assessment-only-notice (it must say balances, payments and credits are not shown)');
+  const acctOf = (r) => String(r.vantaca_account_id || r.trusted_account_number || '');
+  const aoMissing = [...aoList.keys()].filter((a) => !owners.some((r) => acctOf(r) === a));
+  if (aoMissing.length) throw new Error(`--assessment-only lists accounts not in this association: ${aoMissing.join(', ')}`);
+
   const built = await pool(pick, 8, async (row) => {
     try {
-      const d = await buildStatementData(s, row.property_id, { billing: sample ? null : billing, noticeText: gates.noticeText });
+      const ao = aoList.has(acctOf(row));
+      const d = await buildStatementData(s, row.property_id, { billing: sample ? null : (ao ? { ...billing, assessment_only: true } : billing), noticeText: ao ? aoNotice : gates.noticeText });
       return { d, row, why: validate(d, { lockbox, sample }) };
     } catch (e) { return { d: null, row, why: [e.message] }; }
   });
@@ -222,7 +270,13 @@ async function main() {
   const ch = sample ? { mail: withD, held: [], unflagged: [] } : applyCounselHolds(withD, states, legalFees);
   for (const h of ch.held) if (h.d._why && h.d._why.length) h.reason += `; also: ${h.d._why.join('; ')}`;
   const heldIds = new Set(ch.held.map((h) => h.d.property_id));
-  const good = ch.mail.filter((d) => !d._why.length);
+  const defer = !sample && o.defer ? parseDefer(fs.readFileSync(path.resolve(o.defer), 'utf8')) : new Map();
+  const df = applyDefer(ch.mail.filter((d) => !d._why.length), defer);
+  const good = df.mail;
+  const heldAccts = new Set(ch.held.map((h) => String(h.d.account_number)));
+  const badAccts = new Set(withD.filter((d) => d._why.length).map((d) => String(d.account_number)));
+  const deferUnmatched = df.unmatched.filter((a) => !heldAccts.has(a) && !badAccts.has(a));
+  if (deferUnmatched.length) throw new Error(`--defer lists accounts not in this association: ${deferUnmatched.join(', ')}`);
   ch.unflagged = ch.unflagged.filter((u) => !u.d._why.length);
   const bad = built.filter((b) => !b.d || (b.why.length && !heldIds.has(b.d.property_id)));
   if (preview && gates.announcement && gates.announcement.preview_note) for (const d of good) d.sample_note = gates.announcement.preview_note;
@@ -247,9 +301,9 @@ async function main() {
 
   // Manifest: one row per printed statement (total_due is prior + assessment
   // before the credit floor; pay_this_amount is what the coupon asks for).
-  const head = ['account_number', 'owner', 'property', 'mail_street', 'mail_cityline', 'mailing_address_source', 'prior_balance', 'assessment', 'total_due', 'pay_this_amount', 'due_date', 'scanline'];
+  const head = ['account_number', 'owner', 'property', 'mail_street', 'mail_cityline', 'mailing_address_source', 'prior_balance', 'assessment', 'total_due', 'pay_this_amount', 'due_date', 'scanline', 'presentation'];
   const lines = [head.join(',')].concat(good.map((d) => [d.account_number, d.addressee.name, d.property_address, d.addressee.street, d.addressee.cityline, d.addressee_source || '',
-    dollars(d.prior_balance_cents), billing ? dollars(billing.assessment_cents) : '', billing ? dollars(d.prior_balance_cents + billing.assessment_cents) : '', dollars(d.balance_cents), d.due_date, d.scanline || ''].map(csv).join(',')));
+    dollars(d.prior_balance_cents), billing ? dollars(billing.assessment_cents) : '', billing ? dollars(d.prior_balance_cents + billing.assessment_cents) : '', dollars(d.balance_cents), d.due_date, d.scanline || '', d.assessment_only ? 'assessment_only' : 'balance_and_assessment'].map(csv).join(',')));
   fs.writeFileSync(path.join(out, `${stem}_manifest.csv`), lines.join('\n'));
   const exc = bad.map((b) => ({ account: b.d && b.d.account_number, owner: b.d && b.d.addressee && b.d.addressee.name, property: (b.d && b.d.property_address) || (b.row && b.row.street_address),
     prior_balance: b.d ? dollars(b.d.prior_balance_cents) : '', pay_this_amount: b.d ? dollars(b.d.balance_cents) : '', reasons: b.why }));
@@ -259,12 +313,15 @@ async function main() {
     .concat(ch.unflagged.map((u) => [u.d.account_number, u.d.addressee && u.d.addressee.name, u.d.property_address, dollars(u.d.prior_balance_cents), `legal fees billed ${dollars(u.legal_fees_cents)}; no state recorded`].map(csv).join(','))).join('\n'));
   fs.writeFileSync(path.join(out, `${stem}_exceptions.csv`), [['account_number', 'owner', 'property', 'prior_balance', 'pay_this_amount', 'reasons'].join(',')]
     .concat(exc.map((e) => [e.account, e.owner, e.property, e.prior_balance, e.pay_this_amount, e.reasons.join('; ')].map(csv).join(','))).join('\n'));
+  if (defer.size) fs.writeFileSync(path.join(out, `${stem}_deferred.csv`), [['account_number', 'owner', 'property', 'prior_balance', 'reason'].join(',')]
+    .concat(df.deferred.map((x) => [x.d.account_number, x.d.addressee && x.d.addressee.name, x.d.property_address, dollars(x.d.prior_balance_cents), x.reason].map(csv).join(','))).join('\n'));
   const summary = {
     community: comm.name, mode: sample ? 'sample' : preview ? 'preview' : 'billing', year: billing ? billing.year : null,
     assessment_per_lot: billing ? dollars(billing.assessment_cents) : null, due_date: billing ? billing.due_date : null,
     statements: good.length, exceptions: exc.length, owners_on_file: owners.length,
     counsel_hold: ch.held.length, counsel_unflagged_warnings: ch.unflagged.length,
-    reconciles: good.length + ch.held.length + exc.length === owners.length,
+    deferred: df.deferred.length, assessment_only: good.filter((d) => d.assessment_only).length,
+    reconciles: good.length + df.deferred.length + ch.held.length + exc.length === owners.length,
     pages: good.length * (gates.announcement ? 2 : 1), announcement_page: !!gates.announcement,
     total_prior_balance: dollars(good.reduce((t, d) => t + d.prior_balance_cents, 0)),
     total_pay_this_amount: dollars(good.reduce((t, d) => t + d.balance_cents, 0)),
@@ -282,4 +339,4 @@ async function main() {
 
 if (require.main === module) main().catch((e) => { console.error('STOPPED:', e.message); process.exit(1); });
 
-module.exports = { billingGates, validate, args, PREVIEW_LABEL, applyCounselHolds, counselHoldReason, COUNSEL_HOLD };
+module.exports = { billingGates, validate, args, PREVIEW_LABEL, applyCounselHolds, counselHoldReason, COUNSEL_HOLD, parseComponents, parseDefer, applyDefer };

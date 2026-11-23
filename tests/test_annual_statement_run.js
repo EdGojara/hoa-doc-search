@@ -112,5 +112,25 @@ check('final: announcement placeholders and missing fees refuse', g.blockers.som
   check('counsel hold: empty inputs are safe', applyCounselHolds([], null).mail.length === 0);
 }
 
+// Itemized assessment lines and deferred accounts.
+{
+  const { parseComponents, parseDefer, applyDefer } = require('../scripts/build_annual_statements');
+  const { billingLines } = require('../lib/statements/assessment_statement');
+  const c = parseComponents('HOA Assessment=124687;CLMA Dues=25313');
+  const L = billingLines({ year: 2027, assessment_cents: 150000, components: c });
+  check('components: itemize to the same total', L.length === 2 && L[0].cents + L[1].cents === 150000 && L[1].label === '2027 CLMA Dues');
+  check('components: none = one line, unchanged label', billingLines({ year: 2027, assessment_cents: 150000 })[0].label === '2027 Annual Assessment');
+  let threw = false; try { billingLines({ year: 2027, assessment_cents: 150000, components: [{ label: 'x', cents: 149999 }] }); } catch (_) { threw = true; }
+  check('components: a total that differs from the rate refuses', threw);
+  const gg = billingGates({ opts: { ...base, components: 'A=1;B=2' }, community: comm(), budget: { status: 'approved' }, lockbox: lb });
+  check('components: gate blocks a total that differs from the rate', gg.blockers.some((b) => /components total/.test(b)));
+  let bad = false; try { parseComponents('HOA 1500'); } catch (_) { bad = true; }
+  check('components: malformed part refuses', bad);
+  const df = parseDefer('# note\n100,receipt pending\n\n200\n999,typo');
+  const r = applyDefer([{ account_number: '100' }, { account_number: '200' }, { account_number: '300' }], df);
+  check('defer: listed accounts leave the batch with their reason', r.mail.map((d) => d.account_number).join() === '300' && r.deferred[0].reason === 'receipt pending' && r.deferred[1].reason === 'deferred');
+  check('defer: an account that matches nothing is reported', r.unmatched.join() === '999');
+}
+
 console.log(failures ? `\n\x1b[31m${failures} failed\x1b[0m` : '\n\x1b[32mall annual statement run checks passed\x1b[0m');
 process.exit(failures ? 1 : 0);
