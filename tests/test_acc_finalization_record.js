@@ -114,7 +114,7 @@ check('a finalized / closed case rejects redraft, re-review, attachments, staff-
 });
 check('Packet / Letter on a finalized case serve the SEALED copies; a hash mismatch is refused, never served', async () => {
   const s = src('server.js');
-  assert.ok(/sealedArtifact\(supabase, dec, 'packet'\)/.test(s) && /sealedArtifact\(supabase, dec, 'letter'\)/.test(s));
+  assert.ok(/sealedArtifact\(supabase, dec, 'packet'/.test(s) && /sealedArtifact\(supabase, dec, 'letter'/.test(s));
   const { sealedArtifact } = require('../lib/acc/finalized');
   const good = Buffer.from('%PDF sealed letter'); const sha = crypto.createHash('sha256').update(good).digest('hex');
   const mk = (bytes) => ({

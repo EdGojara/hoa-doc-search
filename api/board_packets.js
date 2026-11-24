@@ -3539,7 +3539,9 @@ async function autoFillSection(packetId, sectionKey) {
       input_data = { as_of: cutoff, open_total: (vios || []).length, by_stage: byStage, items: (vios || []).slice(0, 100).map((v) => ({ stage: v.current_stage, category: v.enforcement_categories && v.enforcement_categories.label, opened_at: v.opened_at })), source: 'trusted_enforcement' };
       pulled = { open_total: (vios || []).length };
     } else if (sectionKey === 'arc_decisions') {
-      const { data: accs } = await supabase.from('acc_decisions').select('decision_type, status, homeowner_address, project_summary, created_at').eq('community_id', cid).gte('created_at', periodStart).order('created_at', { ascending: false }).limit(200);
+      const { data: accRows, error: accErr } = await supabase.from('acc_decisions').select('id, decision_type, status, homeowner_address, project_summary, created_at').eq('community_id', cid).not('status', 'in', '("withdrawn","archived")').gte('created_at', periodStart).order('created_at', { ascending: false }).limit(200);
+      if (accErr) throw new Error(`ACC decisions could not be read: ${accErr.message}`);
+      const accs = await require('../lib/acc/effective').withEffective(supabase, accRows || []);
       input_data = { period_start: periodStart, period_end: cutoff, count: (accs || []).length, items: (accs || []).map((a) => ({ type: a.decision_type, status: a.status, address: a.homeowner_address, summary: a.project_summary, date: a.created_at })), source: 'trusted_acc' };
       pulled = { count: (accs || []).length };
     } else if (sectionKey === 'legal_referral') {

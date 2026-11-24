@@ -15484,7 +15484,7 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
         ? '<span class="acc-pill acc-pill-pending">📎 Awaiting documents</span>'
         : isQueue
         ? ((a.current_ai_recommendation || a.ai_recommendation) ? accDecisionBadge(a.current_ai_recommendation || a.ai_recommendation, '🤖') + (a.current_ai_recommendation ? '<div style="font-size:10.5px; color:#5a7390; margin-top:2px;">updated on current documents</div>' : '') : '<span class="acc-pill acc-pill-pending">⏳ Drafted</span>')
-        : accDecisionBadge(a.decision_type) || '<span class="acc-pill acc-pill-approved">✓ Done</span>';
+        : (accDecisionBadge(a.decision_type) || '<span class="acc-pill acc-pill-approved">✓ Done</span>') + (a.effective ? `<div style="font-size:10.5px; color:#5a7390; margin-top:2px;">revised; originally ${accEsc(String(a.original_decision_type || '').replace(/_/g, ' '))}</div>` : '') + (a.reconsideration ? '<div style="font-size:10.5px; color:#92400e; margin-top:2px;">being reconsidered</div>' : '') + (a.effective_error ? `<div style="font-size:10.5px; color:#b91c1c; margin-top:2px;">${accEsc(a.effective_error)}</div>` : '');
       return `
         <div class="acc-row ${urgent ? 'urgent' : ''}" onclick="accOpenDetail('${a.id}')">
           <div>
@@ -15574,6 +15574,7 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
       window.accCurrentAuthority = j.authority || null;
       accRenderDetail();
       accRenderStaleBanner();
+      if (accCurrent.status === 'decided') accReconLoad(id);
     } catch (err) { alert('Load failed: ' + err.message); }
   }
 
@@ -15604,7 +15605,7 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
     // old "more info needed" draft.)
     // Staff working draft first, then the CURRENT review's draft (re-run on the
     // documents now on the case), then the original intake draft (Issue #14).
-    const letterBody = (a.letter_body || a.current_letter_body || a.ai_letter_body) || '';
+    const letterBody = ((a.effective && a.effective.letter_text) || a.letter_body || a.current_letter_body || a.ai_letter_body) || '';
     const recip = a.submitter_email || '';
     const rec = a.current_ai_recommendation || a.ai_recommendation || a.decision_type || '';
 
@@ -15651,7 +15652,10 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
           <div style="text-align:right;">
             ${isQueue
               ? (rec ? '<div style="font-size:11px; color:#5a7390; margin-bottom:4px;">System recommends' + (a.current_ai_recommendation ? ' (current documents)' : '') + '</div>' + accDecisionBadge(rec, '🤖') : '')
-              : '<div style="font-size:11px; color:#5a7390; margin-bottom:4px;">Decision</div>' + accDecisionBadge(a.decision_type)}
+              : '<div style="font-size:11px; color:#5a7390; margin-bottom:4px;">Decision' + (a.effective ? ' in effect' : '') + '</div>' + accDecisionBadge(a.decision_type)
+                + (a.effective ? `<div style="font-size:11px; color:#5a7390; margin-top:3px;">revised ${accEsc(String(a.effective.finalized_at || '').slice(0, 10))}; originally ${accEsc(String(a.original_decision_type || '').replace(/_/g, ' '))} ${accEsc(String(a.decided_at || '').slice(0, 10))}</div>` : '')
+                + (a.effective_error ? `<div style="font-size:11px; color:#b91c1c; margin-top:3px;">${accEsc(a.effective_error)}</div>` : '')
+                + (a.status === 'withdrawn' && a.duplicate_of_id ? `<div style="font-size:11.5px; margin-top:3px;">Withdrawn duplicate. <a href="#" onclick="accOpenDetail('${accEsc(a.duplicate_of_id)}'); return false;">Open the original</a></div>` : '')}
           </div>
         </div>
       </div>
@@ -15663,6 +15667,8 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
         </div>` : ''}
 
       ${accDocumentsCard(a)}
+
+      <div id="acc-recon"></div>
 
       ${accAuthorityCard(a)}
 
@@ -15722,6 +15728,7 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
             : `<button class="acc-action-btn" disabled style="opacity:0.55; cursor:not-allowed;" title="A decision is recorded on this application; it is not sent again.">✓ Decision recorded${a.decided_at ? ' ' + accEsc(String(a.decided_at).slice(0, 10)) : ''}${a.acknowledged_to ? ' · emailed ' + accEsc(a.acknowledged_to) : ''}</button>`}
           <button class="secondary-btn" onclick="accDownloadCurrent()" style="align-self:center;">⬇ Download letter PDF</button>
           <a class="secondary-btn" href="/acc-review/decisions/${a.id}/packet" target="_blank" rel="noopener" style="align-self:center; text-decoration:none;">⬇ Packet</a>
+          ${isQueue || a.status === 'awaiting_info' ? '<button class="secondary-btn" style="align-self:center;" onclick="accWithdrawDuplicate()">Withdraw as a duplicate</button>' : ''}
         </div>
         <p id="acc-action-status" style="margin-top:10px; font-size:12px; text-align:right;"></p>
       </div>
@@ -15890,9 +15897,132 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
     return `<div style="margin:0 0 10px; padding:10px 12px; background:#f0fdf4; border:1px solid #bbf7d0; border-radius:8px; font-size:12.5px; color:#14532d;">
       <b>🔒 Finalized record (cannot be changed)</b> · ${accEsc(String(f.finalized_at || '').slice(0, 16).replace('T', ' '))} · ${accEsc(String(f.decision_type || '').replace(/_/g, ' '))}
       <div style="margin-top:4px;">${e ? 'Emailed to ' + accEsc(e.to) + ' from ' + accEsc(e.from) + ' · "' + accEsc(e.subject) + '"' : 'Marked done without emailing'}</div>
-      <div style="margin-top:2px; color:#166534;">Letter sha256 ${short(f.letter_sha256)} · Complete record sha256 ${short(f.packet_sha256)} · ${(f.documents || []).length} source document(s)${window.accCurrentFinalization.versions.length > 1 ? ' · ' + (window.accCurrentFinalization.versions.length - 1) + ' correction(s) on file' : ''}</div>
+      <div style="margin-top:2px; color:#166534;">Letter sha256 ${short(f.letter_sha256)} · Complete record sha256 ${short(f.packet_sha256)} · ${(f.documents || []).length} source document(s)${window.accCurrentFinalization.versions.length > 1 ? ' · ' + (window.accCurrentFinalization.versions.length - 1) + ' revised decision(s) on file' : ''}</div>
     </div>`;
   }
+
+  // ---- After the decision (Ed 2026-11-24, migration 576) -----------------------
+  // Supplemental evidence, reconsideration and decision versions on a decided case.
+  // Annie recommends; only Ed issues a revised decision (the server enforces it).
+  // The original decision and its letter are never changed.
+  let accRecon = null;
+  async function accReconLoad(id) {
+    const el = document.getElementById('acc-recon'); if (!el) return;
+    try {
+      const r = await fetch('/acc-review/decisions/' + id + '/reconsideration');
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
+      accRecon = j;
+      if (!accCurrent || accCurrent.id !== id) return;
+      el.innerHTML = j.available ? accReconCard(accCurrent, j) : (j.reason ? `<div class="acc-card"><h3>📂 After the decision</h3><div style="font-size:12.5px; color:#92400e;">${accEsc(j.reason)}</div></div>` : '');
+    } catch (e) { el.innerHTML = `<div class="acc-card"><h3>📂 After the decision</h3><div style="font-size:12.5px; color:#b91c1c;">Could not load the evidence and decision history: ${accEsc(e.message)} <button class="secondary-btn" style="font-size:12px;" onclick="accReconLoad('${id}')">Try again</button></div></div>`; }
+  }
+  const accDay = (x) => accEsc(String(x || '').slice(0, 10));
+  const accWords = (x) => accEsc(String(x || '').replace(/_/g, ' '));
+  function accReconCard(a, j) {
+    const act = j.active; const sup = j.supplements || [];
+    const versions = (j.versions || []).slice().reverse().map((v, i) => `<li style="margin-bottom:4px;"><b>Version ${v.version}${v.version === 1 ? ' (original)' : ' (revised)'}: ${accWords(v.decision_type)}</b>${i === 0 ? ' <span class="acc-pill acc-pill-approved">in effect</span>' : ''} · ${accDay(v.finalized_at)}${v.correction_reason ? `<div style="color:#5a7390;">${accEsc(v.correction_reason)}</div>` : ''}
+      <a href="/acc-review/decisions/${a.id}/letter?version=${v.version}" target="_blank" rel="noopener" style="font-size:12px;">⬇ Letter</a>${v.unsealed ? ' <span style="font-size:11px; color:#5a7390;">decided before sealed records</span>' : ` · <a href="/acc-review/decisions/${a.id}/packet?version=${v.version}" target="_blank" rel="noopener" style="font-size:12px;">⬇ Complete record</a>`}</li>`).join('');
+    const evidence = sup.map((s) => `<div style="border-top:1px solid #eef2f7; padding:7px 0; font-size:12.5px;">
+      <b>${accDay(s.received_at)}</b> · ${s.kind === 'email' ? 'Email from ' + accEsc(s.from_email || '') + (s.subject ? ': ' + accEsc(s.subject) : '') : 'Added by ' + accEsc(s.added_by)}
+      ${s.possible_new_request ? `<div style="color:#991b1b;"><b>It came with an application form.</b> It may be a different request. <button class="secondary-btn" style="font-size:11.5px;" onclick="accReconAct('supplements/${s.id}/new-application', 'POST', {}, 'File this email as its own new application?')">File as a new application</button></div>` : ''}
+      ${s.note ? `<div>${accEsc(s.note)}</div>` : ''}${s.body_text ? `<details><summary style="cursor:pointer; color:#5a7390;">Message</summary><div style="white-space:pre-wrap; color:#334155;">${accEsc(String(s.body_text).slice(0, 4000))}</div></details>` : ''}
+      ${(s.documents || []).map((d, i) => d.path ? `<a href="/acc-review/decisions/${a.id}/supplements/${s.id}/files/${i}" target="_blank" rel="noopener">📎 ${accEsc(d.filename)}</a>` : `<span style="color:#5a7390;">📎 ${accEsc(d.filename)} (already on the case)</span>`).join(' &nbsp; ')}
+    </div>`).join('');
+    const cand = (j.candidates || []).length ? `<select id="acc-sup-email" style="max-width:420px; font-size:12px;"><option value="">Attach an email from this property…</option>${j.candidates.map((m) => `<option value="${accEsc(m.id)}">${accDay(m.received_at)} · ${accEsc(m.sender_email || '')} · ${accEsc(String(m.subject || '').slice(0, 60))}${m.has_attachments ? ' 📎' : ''}</option>`).join('')}</select><button class="secondary-btn" style="font-size:12px;" onclick="accSupEmail()">Attach</button>` : '';
+    const past = (j.reconsiderations || []).filter((r) => r.status === 'closed').map((r) => `<div style="font-size:12px; color:#5a7390;">Reconsideration opened ${accDay(r.opened_at)}, closed ${accDay(r.closed_at)}: ${accEsc(r.closed_reason)}</div>`).join('');
+    let work = '';
+    if (!act) {
+      work = `<div style="margin-top:10px; display:flex; gap:8px; flex-wrap:wrap; align-items:center;"><input id="acc-recon-reason" placeholder="Why reconsider (what the new evidence shows)" style="flex:1; min-width:240px; padding:7px 10px; border:1px solid #c0d0e0; border-radius:6px; font:inherit; font-size:12.5px;"><button class="acc-action-btn modify" onclick="accReconOpen()">Start reconsideration</button></div><div style="font-size:11px; color:#5a7390; margin-top:4px;">Same application number, no new application and no new fee. Nothing is sent.</div>`;
+    } else if (act.status === 'issuing') {
+      work = '<div style="margin-top:10px; padding:10px 12px; background:#fef3c7; border:1px solid #fcd34d; border-radius:8px; font-size:12.5px; color:#92400e;"><b>The revised decision is being issued.</b> If this stays for more than a few minutes the send was interrupted: check Annie\'s Sent box before doing anything, and tell Ed. It is never re-sent automatically.</div>';
+    } else {
+      const opt = (v, l) => `<option value="${v}" ${(act.outcome || act.recommendation) === v ? 'selected' : ''}>${l}</option>`;
+      work = `<div style="margin-top:12px; padding:12px; background:#f8fafc; border:1px solid #dce6f2; border-radius:8px;">
+        <div style="font-weight:700; color:#0B1D34;">Reconsideration opened ${accDay(act.opened_at)} by ${accEsc(act.opened_by)}</div><div style="font-size:12.5px; margin:3px 0 8px;">${accEsc(act.opened_reason)}</div>
+        ${(j.stale || []).map((x) => `<div style="font-size:12.5px; color:#9a3412;">⚠ ${accEsc(x)}</div>`).join('')}
+        <div style="margin:8px 0;"><button class="secondary-btn" style="font-size:12px;" onclick="accReconAct('reconsideration/${act.id}/review', 'POST', {}, null, 'Annie is reviewing… (about a minute)')">🤖 ${act.review_at ? 'Have Annie review again' : 'Have Annie review the evidence'}</button> ${act.review_at ? `<span style="font-size:12px;">Annie recommends <b>${accWords(act.recommendation)}</b> (${accDay(act.review_at)})</span>` : ''}</div>
+        ${act.review_text ? `<details><summary style="cursor:pointer; font-size:12.5px; font-weight:700;">Annie's review (internal, not sent)</summary><div style="font-size:12.5px; white-space:pre-wrap;">${accEsc(act.review_text)}</div></details>` : ''}
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:10px;">
+          <label style="font-size:11px; font-weight:600; color:#5a7390;">REVISED DECISION<select id="acc-recon-outcome" class="draft-type-select" style="width:100%;">${opt('approved', 'Approve')}${opt('approved_with_conditions', 'Approve with conditions')}${opt('denied', 'Deny')}</select></label>
+          <label style="font-size:11px; font-weight:600; color:#5a7390;">SEND TO<input id="acc-recon-to" type="email" value="${accEsc(a.submitter_email || '')}" style="width:100%; padding:8px 10px; border:1px solid #c0d0e0; border-radius:6px; font:inherit; font-size:13px;"></label>
+        </div>
+        <label style="display:block; margin-top:8px; font-size:11px; font-weight:600; color:#5a7390;">NAME ON THE LETTER<input id="acc-recon-name" value="${accEsc(a.homeowner_name || '')}" style="width:100%; padding:8px 10px; border:1px solid #c0d0e0; border-radius:6px; font:inherit; font-size:13px;"></label>
+        <label style="display:block; margin-top:8px; font-size:11px; font-weight:600; color:#5a7390;">WHAT THE EVIDENCE SHOWS (kept with the decision version; not in the letter)<textarea id="acc-recon-why" rows="2" style="width:100%; padding:8px 10px; border:1px solid #c0d0e0; border-radius:6px; font:inherit; font-size:12.5px;">${accEsc(act.reason || '')}</textarea></label>
+        <label style="display:block; margin-top:8px; font-size:11px; font-weight:600; color:#5a7390;">LETTER<textarea id="acc-recon-letter" rows="14" style="width:100%; padding:12px; border:1px solid #c0d0e0; border-radius:6px; font:inherit; font-size:13px; line-height:1.55;">${accEsc(act.letter_body || act.reviewed_letter_body || '')}</textarea></label>
+        <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:8px; align-items:center;"><button class="secondary-btn" style="font-size:12px;" onclick="accReconSave()">💾 Save draft</button><button class="secondary-btn" style="font-size:12px;" onclick="accReconPreview()">👁 Preview letter (Ed)</button></div>
+        <div style="margin-top:12px; padding-top:10px; border-top:1px solid #dce6f2;">
+          <div style="font-size:12.5px; font-weight:700; color:#0B1D34;">Ed's approval</div>
+          ${j.delegation ? `<label style="display:block; font-size:12.5px; margin-top:4px;"><input type="checkbox" id="acc-recon-ok"> The application, with this evidence, clearly meets the requirements (${accEsc(j.delegation.document || 'the written delegation on file')})</label>` : '<div style="font-size:12.5px; color:#92400e;">No written ACC delegation is on file for this association, so a committee or Board decision must be documented before a revised approval can be issued.</div>'}
+          ${(j.stale || []).length ? '<label style="display:block; font-size:12.5px; margin-top:4px;"><input type="checkbox" id="acc-recon-stale"> I reviewed the evidence and the letter above</label>' : ''}
+          <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:8px;"><button class="acc-action-btn approve" onclick="accReconIssue(true)">✅ Approve and send (as Annie)</button><button class="acc-action-btn modify" onclick="accReconIssue(false)">Approve and record without emailing</button><button class="secondary-btn" style="font-size:12px;" onclick="accReconClose()">Close: the earlier decision stands</button></div>
+          <div style="font-size:11px; color:#5a7390; margin-top:6px;">Issues decision version ${((j.versions || [])[(j.versions || []).length - 1] || { version: 1 }).version + 1} on this application. No fee is charged, and no violation is changed: approval of proposed work does not show that the work was done.</div>
+        </div></div>`;
+    }
+    return `<div class="acc-card"><h3>📂 After the decision</h3>
+      <div style="font-size:12px; font-weight:700; color:#5a7390;">DECISION VERSIONS</div><ul style="margin:4px 0 10px 18px; font-size:13px;">${versions}</ul>
+      ${(j.duplicates || []).length ? `<div style="font-size:12.5px; margin-bottom:8px;">Withdrawn as duplicates of this application: ${j.duplicates.map((d) => `<a href="#" onclick="accOpenDetail('${accEsc(d.id)}'); return false;">${accEsc(d.reference_number || d.id)}</a>`).join(', ')}</div>` : ''}
+      <div style="font-size:12px; font-weight:700; color:#5a7390;">SUPPLEMENTAL EVIDENCE (${sup.length})</div>${evidence || '<div style="font-size:12.5px; color:#5a7390;">Nothing received since the decision.</div>'}
+      <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-top:8px; padding-top:8px; border-top:1px solid #eef2f7;">
+        <input type="file" id="acc-sup-files" multiple accept="image/jpeg,image/png,application/pdf" style="font-size:12px;"><input id="acc-sup-note" placeholder="Note (optional)" style="padding:6px 8px; border:1px solid #c0d0e0; border-radius:6px; font-size:12px;"><button class="secondary-btn" style="font-size:12px;" onclick="accSupUpload()">Add files</button>${cand}
+      </div>
+      ${past}${work}<div id="acc-recon-status" style="font-size:12.5px; margin-top:8px;"></div></div>`;
+  }
+  function accReconSay(msg, bad) { const st = document.getElementById('acc-recon-status'); if (st) { st.textContent = msg; st.style.color = bad ? '#b91c1c' : '#15803d'; } }
+  async function accReconCall(path, method, body) {
+    const isForm = body instanceof FormData;
+    const r = await fetch('/acc-review/decisions/' + accCurrent.id + '/' + path, { method, headers: await accBearerHeaders(isForm ? {} : { 'Content-Type': 'application/json' }), body: isForm ? body : JSON.stringify(body || {}) });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
+    return j;
+  }
+  async function accReconAct(path, method, body, confirmText, busyText) {
+    if (confirmText && !confirm(confirmText)) return null;
+    if (busyText) accReconSay(busyText);
+    const id = accCurrent.id;
+    try { const j = await accReconCall(path, method, body); await accReconLoad(id); accReconSay(j.warnings && j.warnings.length ? 'Done. ' + j.warnings.join(' ') : '✓ Done.'); return j; }
+    catch (e) { accReconSay('✗ ' + e.message, true); return null; }
+  }
+  function accSupUpload() {
+    const f = document.getElementById('acc-sup-files'); const note = document.getElementById('acc-sup-note').value.trim();
+    if (!f.files.length && !note) { accReconSay('Choose a file or write a note.', true); return; }
+    const fd = new FormData(); Array.from(f.files).forEach((x) => fd.append('files', x)); fd.append('note', note);
+    accReconAct('supplements', 'POST', fd, null, 'Filing…');
+  }
+  function accSupEmail() { const v = document.getElementById('acc-sup-email').value; if (!v) { accReconSay('Choose an email.', true); return; } accReconAct('supplements/email', 'POST', { email_message_id: v }, null, 'Filing…'); }
+  function accReconOpen() { accReconAct('reconsideration', 'POST', { reason: document.getElementById('acc-recon-reason').value.trim() }, null, 'Opening…'); }
+  function accReconDraft() { const v = (x) => (document.getElementById(x) || {}).value || ''; return { letter_body: v('acc-recon-letter'), outcome: v('acc-recon-outcome'), reason: v('acc-recon-why').trim(), homeowner_name: v('acc-recon-name').trim(), to_email: v('acc-recon-to').trim() }; }
+  function accReconSave() { accReconAct('reconsideration/' + accRecon.active.id, 'PATCH', accReconDraft(), null, 'Saving…'); }
+  async function accReconPreview() {
+    const w = window.open('', '_blank');
+    try {
+      const r = await fetch('/acc-review/decisions/' + accCurrent.id + '/reconsideration/' + accRecon.active.id + '/preview', { method: 'POST', headers: await accBearerHeaders({ 'Content-Type': 'application/json' }), body: JSON.stringify(accReconDraft()) });
+      if (!r.ok) { const j = await r.json().catch(() => ({})); throw new Error(j.error || ('HTTP ' + r.status)); }
+      const url = URL.createObjectURL(await r.blob()); if (w) w.location = url; else window.open(url, '_blank');
+    } catch (e) { if (w) w.close(); accReconSay('✗ ' + e.message, true); }
+  }
+  async function accReconIssue(send) {
+    const d = accReconDraft();
+    const label = d.outcome.replace(/_/g, ' ');
+    if (!confirm(send ? `Approve and send this revised decision (${label}) to ${d.to_email}?` : `Approve and record this revised decision (${label}) without emailing it?`)) return;
+    const id = accCurrent.id; accReconSay(send ? 'Sealing and sending…' : 'Sealing and recording…');
+    document.querySelectorAll('#acc-recon button').forEach((x) => { x.disabled = true; });
+    try {
+      const j = await accReconCall('reconsideration/' + accRecon.active.id + '/issue', 'POST', { ...d, send, confirm_compliant: !!(document.getElementById('acc-recon-ok') || {}).checked, acknowledge_stale: !!(document.getElementById('acc-recon-stale') || {}).checked });
+      await accOpenDetail(id);
+      setTimeout(() => accReconSay(`✓ Version ${j.version} recorded${j.email && j.email.sent ? ' and emailed' : ''}.` + (j.warnings && j.warnings.length ? ' ' + j.warnings.join(' ') : '')), 800);
+    } catch (e) { document.querySelectorAll('#acc-recon button').forEach((x) => { x.disabled = false; }); accReconSay('✗ ' + e.message, true); }
+  }
+  function accReconClose() { const why = prompt('Why does the earlier decision stand? (kept on the record)'); if (why) accReconAct('reconsideration/' + accRecon.active.id + '/close', 'POST', { reason: why }); }
+  // Retire an open application that duplicates another one (kept on file, linked).
+  async function accWithdrawDuplicate() {
+    const orig = prompt('Which application does this duplicate? Enter its reference number.'); if (!orig) return;
+    const reason = prompt('Why is it a duplicate? (kept on the record)'); if (!reason) return;
+    const st = document.getElementById('acc-action-status');
+    try { const j = await accReconCall('withdraw-duplicate', 'POST', { duplicate_of: orig.trim(), reason: reason.trim() }); alert('Withdrawn as a duplicate of ' + j.duplicate_of + '. ' + (j.warning || (j.acknowledgments_cancelled ? j.acknowledgments_cancelled + ' unsent acknowledgment(s) cancelled.' : ''))); accBackToList(); }
+    catch (e) { if (st) { st.textContent = '✗ ' + e.message; st.style.color = '#b91c1c'; } }
+  }
+  Object.assign(window, { accReconLoad, accReconAct, accSupUpload, accSupEmail, accReconOpen, accReconSave, accReconPreview, accReconIssue, accReconClose, accWithdrawDuplicate });
 
   async function accReassess(id) {
     const st = document.getElementById('acc-reassess-status');

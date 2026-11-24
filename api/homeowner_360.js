@@ -378,15 +378,19 @@ async function assemble(contactId) {
     const accRows = await safe(() => supabase.from('acc_decisions')
       .select('id, reference_number, project_summary, decision_type, status, letter_body, homeowner_address, created_at, decided_at')
       .in('community_id', _arcCommIds).order('created_at', { ascending: false }).limit(60));
-    accRows.filter((d) => _propKeys.has(_arcAddrKey(d.homeowner_address))).forEach((d) => {
+    // A withdrawn duplicate or an archived record is not a pending application; the
+    // decision shown is the one in effect (a revised decision, when there is one).
+    const accMine = await require('../lib/acc/effective').withEffective(supabase, accRows.filter((d) => _propKeys.has(_arcAddrKey(d.homeowner_address)) && !['withdrawn', 'archived'].includes(d.status)));
+    accMine.forEach((d) => {
       const decided = d.status === 'decided';
       arc.push({
         source: 'acc', id: d.id, reference: d.reference_number, project: d.project_summary || null,
         status: decided ? 'decided' : 'pending', decision: d.decision_type || null,
-        submitted_at: d.created_at, decided_at: d.decided_at || (decided ? d.created_at : null),
+        submitted_at: d.created_at, decided_at: (d.effective && d.effective.finalized_at) || d.decided_at || (decided ? d.created_at : null),
+        original_decision: d.original_decision_type || null, original_decided_at: d.effective ? d.decided_at : null,
         // For a conditional approval the conditions live in the sent letter body —
         // carry it so enforcement can see exactly what was approved.
-        conditions: (decided && /condition/i.test(String(d.decision_type || ''))) ? (d.letter_body || null) : null,
+        conditions: (decided && /condition/i.test(String(d.decision_type || ''))) ? ((d.effective ? d.effective.letter_text : d.letter_body) || null) : null,
       });
     });
   }
