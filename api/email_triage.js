@@ -97,7 +97,8 @@ async function pendingAccForEmail({ community_id, address, senderEmail } = {}) {
   const em = String(senderEmail || '').toLowerCase();
   if (!target && !em) return null;
   const { data, error } = await supabase.from('acc_decisions')
-    .select('reference_number, status, decision_type, project_summary, homeowner_name, homeowner_address, submitter_email, created_at')
+    .select('id, reference_number, status, decision_type, project_summary, homeowner_name, homeowner_address, submitter_email, created_at')
+    .not('status', 'in', '("withdrawn","archived")')
     .eq('community_id', community_id)
     .order('created_at', { ascending: false }).limit(80);
   if (error || !data) return null;
@@ -107,7 +108,14 @@ async function pendingAccForEmail({ community_id, address, senderEmail } = {}) {
     const byEmail = em && d.submitter_email && String(d.submitter_email).toLowerCase() === em;
     return byAddr || byEmail;
   });
-  return mine.length ? mine.slice(0, 5) : null;
+  if (!mine.length) return null;
+  // The decision in effect, and whether it is being reconsidered, so Annie never
+  // tells someone to apply again for something already filed on their case.
+  const top = await require('../lib/acc/effective').withEffective(supabase, mine.slice(0, 5));
+  const rc = await supabase.from('acc_reconsiderations').select('acc_decision_id, status').in('acc_decision_id', top.map((d) => d.id)).in('status', ['open', 'ready', 'issuing']);
+  if (rc.error && !/does not exist|schema cache|could not find/i.test(rc.error.message || '')) console.warn('[email_triage] reconsiderations not read:', rc.error.message);
+  const active = new Set(((rc && rc.data) || []).map((r) => r.acc_decision_id));
+  return top.map((d) => ({ ...d, reconsideration: active.has(d.id) }));
 }
 
 // Kat's grounding: the homeowner's live balance + collections/bankruptcy status
@@ -2038,9 +2046,9 @@ router.post('/:id/to-acc', express.json(), async (req, res) => {
     const out = await intakeApplicationFromEmail({ email: m, extracted: m.extracted || {}, communityId: m.community_id || null, allowBodyOnly: true });
     await require('../lib/acc/intake_exceptions').recordIntakeOutcome(supabase, m.id, out);
     const st = out && out.status;
-    if (st === 'created' || st === 'attached' || out.queued) {
+    if (st === 'created' || st === 'attached' || st === 'supplement' || out.queued) {
       await supabase.from('email_messages').update({ triage_status: 'handled', reviewed_by: (req.body || {}).reviewed_by || 'staff', reviewed_at: new Date().toISOString() }).eq('id', m.id);
-      return res.json({ ok: true, status: st || 'created', id: out.id || null, detail: st === 'attached' ? 'Added to the existing open application for this homeowner.' : 'Filed to the ACC review queue as pending review.' });
+      return res.json({ ok: true, status: st || 'created', id: out.id || null, detail: st === 'supplement' ? `Filed as supplemental evidence on ${out.reference || 'the decided application'}.` : st === 'attached' ? 'Added to the existing open application for this homeowner.' : 'Filed to the ACC review queue as pending review.' });
     }
     // Self-diagnosing failure — say exactly why it couldn't file, so staff can fix it.
     const why = {
@@ -2048,6 +2056,7 @@ router.post('/:id/to-acc', express.json(), async (req, res) => {
       no_address: 'Could not determine the property address from the form, body, or sender. Confirm the homeowner, then retry.',
       no_community: 'Could not resolve which community this belongs to.',
       no_arc_service: 'This community has no ACC/ARC service configured, so applications can’t be queued for it.',
+      decided_case: (out && out.detail) || 'It is about an application that was already decided and could not be filed on it.',
       no_graph_id: 'The original email is no longer fetchable (it was filed and rotated). Ask the homeowner (or the forwarder) to resend it.',
       engine_not_ready: 'The ACC decision engine is not available right now — try again shortly.',
     };

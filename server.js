@@ -2923,6 +2923,15 @@ app.get('/acc-review/decisions', async (req, res) => {
   // (Pending Ed's approval / Submitted / Completed). Without them the tag was
   // computed from the request text alone and never cleared.
   const WITH_AUTHORITY = `${WITH_CURRENT}, decision_record, owner_review, approval_gate, approval_gate_reason, community_id, current_letter_body`;
+  // Decided cases being reconsidered (migration 576) are open work again.
+  let recons = [];
+  {
+    const r = await supabase.from('acc_reconsiderations').select('id, acc_decision_id, status, recommendation, outcome, opened_at, review_at').in('status', ['open', 'ready', 'issuing']).order('opened_at', { ascending: true }).limit(200);
+    if (r.error && !/does not exist|schema cache|could not find/i.test(r.error.message || '')) console.error('[acc-review/decisions] reconsiderations not read:', r.error.message);
+    recons = r.error ? [] : (r.data || []);
+  }
+  const reconIds = recons.map((r) => r.acc_decision_id);
+  const reconByCase = new Map(recons.map((r) => [r.acc_decision_id, r]));
   const run = async (cols) => {
     const { address, community, q, status, source } = req.query;
     let query = supabase
@@ -2934,7 +2943,8 @@ app.get('/acc-review/decisions', async (req, res) => {
     // 'archived' (a duplicate we retired) and 'withdrawn' rows are kept for the
     // record but don't belong in the working queue or the answered history —
     // exclude them unless the caller explicitly asks for that status. (Ed 2026-09-03)
-    if (status === 'open') query = query.in('status', ['pending_review', 'awaiting_info', 'finalizing']);
+    if (status === 'open' && reconIds.length) query = query.or(`status.in.(pending_review,awaiting_info,finalizing),id.in.(${reconIds.join(',')})`);
+    else if (status === 'open') query = query.in('status', ['pending_review', 'awaiting_info', 'finalizing']);
     else if (status) query = query.eq('status', status);
     else query = query.not('status', 'in', '("archived","withdrawn")');
     if (source) query = query.eq('source', source);
@@ -2960,10 +2970,14 @@ app.get('/acc-review/decisions', async (req, res) => {
     // Each community's written ACC delegation (migration 569): where one is on
     // file, Annie's routine decision is ready to send without Ed (Ed 2026-11-18).
     const delegations = await _accDelegations([...new Set((data || []).map((r) => r.community_id).filter(Boolean))]);
-    const decisions = (data || []).map(({ decision_record, owner_review, approval_gate, approval_gate_reason, current_letter_body, ...r }) => {
+    // The decision shown is the one in effect (a revised decision, when there is one).
+    const shown = await require('./lib/acc/effective').withEffective(supabase, data || []);
+    const decisions = shown.map(({ decision_record, owner_review, approval_gate, approval_gate_reason, current_letter_body, ...r }) => {
       const row = { ...r, decision_record, owner_review, approval_gate, approval_gate_reason, current_letter_body, acc_delegation: delegations.get(r.community_id) || null };
       const a = DA.authorityFor(row);
-      const out = { ...r, queue_stage: DA.queueStage(row, a) };
+      const rc = reconByCase.get(r.id);
+      const out = { ...r, queue_stage: DA.queueStage(row, a), ...(rc ? { reconsideration: rc, queue_stage: require('./lib/acc/reconsideration').queueStage(rc) } : {}) };
+      if (out.effective) out.effective = { ...out.effective, letter_text: undefined };
       return a.escalated && a.open ? { ...out, authority: { label: a.label, triggers: a.triggers } } : out;
     });
     res.json({ decisions });
@@ -3129,7 +3143,8 @@ app.get('/acc-review/decisions/:id/full', async (req, res) => {
       const ab = last && last[0] && last[0].decision_record && last[0].decision_record.authority_basis;
       authority.default_basis = ab ? { kind: ab.kind, reference: ab.reference, library_document_id: ab.library_document_id || null } : null;
     } catch (_) { authority.default_basis = null; }
-    res.json({ decision: data, finalization, authority });
+    const [shown] = await require('./lib/acc/effective').withEffective(supabase, [data]);
+    res.json({ decision: shown, finalization, authority });
   } catch (err) {
     console.error('[acc-review/decisions/:id/full] failed:', err.message);
     res.status(500).json({ error: err.message });
@@ -3209,7 +3224,9 @@ app.get('/acc-review/decisions/:id/letter', async (req, res) => {
 
     // A finalized case serves the SEALED letter that was sent (hash-checked),
     // never a regeneration (Issue #14).
-    let pdfBuffer = await require('./lib/acc/finalized').sealedArtifact(supabase, dec, 'letter');
+    // ?version=1 is the original decision; the default is the decision in effect.
+    const letterVersion = /^\d+$/.test(String(req.query.version || '')) ? Number(req.query.version) : null;
+    let pdfBuffer = await require('./lib/acc/finalized').sealedArtifact(supabase, dec, 'letter', { version: letterVersion });
     if (!pdfBuffer && dec.letter_pdf_storage_path) {
       const { data: blob, error: dErr } = await supabase.storage
         .from('documents')
@@ -3267,7 +3284,8 @@ app.get('/acc-review/decisions/:id/packet', async (req, res) => {
     const download = async (p) => { const { data, error } = await supabase.storage.from('documents').download(p); if (error || !data) return null; return Buffer.from(await data.arrayBuffer()); };
     let bytes = null;
     // A finalized case serves the SEALED packet from the write-once archive.
-    const sealed = await require('./lib/acc/finalized').sealedArtifact(supabase, dec, 'packet');
+    const packetVersion = /^\d+$/.test(String(req.query.version || '')) ? Number(req.query.version) : null;
+    const sealed = await require('./lib/acc/finalized').sealedArtifact(supabase, dec, 'packet', { version: packetVersion });
     if (sealed) bytes = sealed;
     if (!bytes && dec.status === 'decided' && dec.packet_pdf_storage_path) bytes = await download(dec.packet_pdf_storage_path);
     if (!bytes) {
@@ -3731,6 +3749,13 @@ async function _accFinalizeHandler(req, res) {
   }
 }
 app.post('/acc-review/decisions/:id/finalize', _accFinalizeHandler);
+
+// Supplemental evidence, reconsideration and revised decisions on a decided case,
+// and retiring duplicates (Ed 2026-11-24, api/acc_reconsideration, migration 576).
+app.use('/acc-review/decisions', require('./api/acc_reconsideration')({
+  supabase, BEDROCK_MGMT_CO_ID, renderLetterPdfBuffer, screenForLeaks,
+  withAppealNotice: (t) => _accWithAppealNotice(t), delegationFor: (id) => _accDelegation(id), resolveAuthorityDocument: (dec, rec) => _accResolveAuthorityDocument(dec, rec),
+}));
 
 // The required appeal notice for an ACC denial letter: the §209.00505 hearing
 // notice (GLOBAL_RULES) only, placed before the closing. Letters stay in the

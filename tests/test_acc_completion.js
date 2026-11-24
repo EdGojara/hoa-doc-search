@@ -67,7 +67,7 @@ check('homeowner email is letter-only (Ed 2026-10-02): the packet is NOT attache
 });
 check('a decided case\'s filed record is never rebuilt or overwritten by the Packet button; follow-up documents are included', () => {
   const s = src('server.js'); const g = s.slice(s.indexOf("app.get('/acc-review/decisions/:id/packet'"), s.indexOf("app.post('/acc-review/decisions/:id/finalize'"));
-  assert.ok(/sealedArtifact\(supabase, dec, 'packet'\)/.test(g), 'a finalized case serves the SEALED packet');
+  assert.ok(/sealedArtifact\(supabase, dec, 'packet'/.test(g), 'a finalized case serves the SEALED packet');
   assert.ok(/if \(!bytes && dec\.status === 'decided' && dec\.packet_pdf_storage_path\) bytes = await download\(dec\.packet_pdf_storage_path\);/.test(g));
   assert.ok(/if \(dec\.status !== 'decided'\) \{/.test(g));
   assert.ok(/require\('\.\/lib\/acc\/packet'\)\.buildAccPacket/.test(g));

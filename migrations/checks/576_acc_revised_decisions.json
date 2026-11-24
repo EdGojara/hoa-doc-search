@@ -1,0 +1,166 @@
+{
+  "migration": "576_acc_revised_decisions.sql",
+  "summary": "ACC supplemental evidence, reconsideration and revised decisions on finalized applications, for every association. Adds acc_case_supplements (append-only evidence received after a decision), acc_reconsiderations (Annie's review and recommendation, the working letter, the owner's approval), acc_finalizations.reconsideration_id with a trigger that accepts a revised decision (version 2+) only as the owner-approved outcome and letter of a reconsideration of the same case, and acc_decisions.duplicate_of_id. No decision, letter, date, fee or billing field changes.",
+  "requires": [
+    "480_acc_finalization_record.sql",
+    "575_stamp_three_interest_rows.sql"
+  ],
+  "preflight": [
+    {
+      "name": "new tables do not exist yet",
+      "sql": "SELECT count(*)::int FROM information_schema.tables WHERE table_schema = 'public' AND table_name IN ('acc_case_supplements', 'acc_reconsiderations')",
+      "expect": 0
+    },
+    {
+      "name": "no revised decision versions exist yet",
+      "sql": "SELECT count(*)::int FROM acc_finalizations WHERE version > 1",
+      "expect": 0
+    },
+    {
+      "name": "both duplicates are withdrawn",
+      "sql": "SELECT count(*)::int FROM acc_decisions WHERE id IN ('7988422a-b406-4b83-b8e7-1c5f63ee9390', '72bdea21-a787-4312-8053-1cb0bb8bcea4') AND status = 'withdrawn'",
+      "expect": 2
+    },
+    {
+      "name": "the original application is decided and finalized",
+      "sql": "SELECT count(*)::int FROM acc_decisions WHERE id = 'b7ab635e-4ed9-4c62-ba83-0ec794e14a06' AND status = 'decided' AND finalization_id IS NOT NULL",
+      "expect": 1
+    }
+  ],
+  "expected_changes": [
+    "acc_decisions gains duplicate_of_id (nullable); the two withdrawn duplicates are linked to the original (2 rows).",
+    "Creates acc_case_supplements (append-only) and acc_reconsiderations (one active per case), both with RLS on and server-only grants.",
+    "acc_finalizations gains reconsideration_id (nullable), a replaced version-chain CHECK and a BEFORE INSERT guard for versions after 1. Existing rows are unchanged.",
+    "No acc_finalizations, violation, journal or billing row changes."
+  ],
+  "objects": {
+    "added": [
+      "column:acc_case_supplements.acc_decision_id",
+      "column:acc_case_supplements.added_by",
+      "column:acc_case_supplements.added_by_user_id",
+      "column:acc_case_supplements.body_text",
+      "column:acc_case_supplements.community_id",
+      "column:acc_case_supplements.created_at",
+      "column:acc_case_supplements.documents",
+      "column:acc_case_supplements.email_message_id",
+      "column:acc_case_supplements.from_email",
+      "column:acc_case_supplements.from_name",
+      "column:acc_case_supplements.id",
+      "column:acc_case_supplements.kind",
+      "column:acc_case_supplements.matched_by",
+      "column:acc_case_supplements.note",
+      "column:acc_case_supplements.possible_new_request",
+      "column:acc_case_supplements.received_at",
+      "column:acc_case_supplements.record_ownership",
+      "column:acc_case_supplements.source_ref",
+      "column:acc_case_supplements.subject",
+      "column:acc_decisions.duplicate_of_id",
+      "column:acc_finalizations.reconsideration_id",
+      "column:acc_reconsiderations.acc_decision_id",
+      "column:acc_reconsiderations.closed_at",
+      "column:acc_reconsiderations.closed_by_user_id",
+      "column:acc_reconsiderations.closed_reason",
+      "column:acc_reconsiderations.community_id",
+      "column:acc_reconsiderations.created_at",
+      "column:acc_reconsiderations.decision_record",
+      "column:acc_reconsiderations.finalization_id",
+      "column:acc_reconsiderations.id",
+      "column:acc_reconsiderations.issued_at",
+      "column:acc_reconsiderations.letter_body",
+      "column:acc_reconsiderations.letter_saved_at",
+      "column:acc_reconsiderations.letter_saved_by",
+      "column:acc_reconsiderations.opened_at",
+      "column:acc_reconsiderations.opened_by",
+      "column:acc_reconsiderations.opened_by_user_id",
+      "column:acc_reconsiderations.opened_reason",
+      "column:acc_reconsiderations.outcome",
+      "column:acc_reconsiderations.owner_approval",
+      "column:acc_reconsiderations.prior_finalization_id",
+      "column:acc_reconsiderations.prior_snapshot",
+      "column:acc_reconsiderations.reason",
+      "column:acc_reconsiderations.recommendation",
+      "column:acc_reconsiderations.record_ownership",
+      "column:acc_reconsiderations.review_at",
+      "column:acc_reconsiderations.review_basis",
+      "column:acc_reconsiderations.review_text",
+      "column:acc_reconsiderations.reviewed_letter_body",
+      "column:acc_reconsiderations.status",
+      "column:acc_reconsiderations.updated_at",
+      "constraint:acc_case_supplements.acc_case_supplements_acc_decision_id_fkey",
+      "constraint:acc_case_supplements.acc_case_supplements_added_by_check",
+      "constraint:acc_case_supplements.acc_case_supplements_documents_check",
+      "constraint:acc_case_supplements.acc_case_supplements_kind_check",
+      "constraint:acc_case_supplements.acc_case_supplements_pkey",
+      "constraint:acc_decisions.acc_decisions_duplicate_not_self",
+      "constraint:acc_decisions.acc_decisions_duplicate_of_id_fkey",
+      "constraint:acc_finalizations.acc_finalizations_reconsideration_id_fkey",
+      "constraint:acc_reconsiderations.acc_reconsiderations_acc_decision_id_fkey",
+      "constraint:acc_reconsiderations.acc_reconsiderations_closed_reason_given",
+      "constraint:acc_reconsiderations.acc_reconsiderations_finalization_id_fkey",
+      "constraint:acc_reconsiderations.acc_reconsiderations_issued_complete",
+      "constraint:acc_reconsiderations.acc_reconsiderations_issuing_approved",
+      "constraint:acc_reconsiderations.acc_reconsiderations_opened_reason_check",
+      "constraint:acc_reconsiderations.acc_reconsiderations_pkey",
+      "constraint:acc_reconsiderations.acc_reconsiderations_prior_finalization_id_fkey",
+      "constraint:acc_reconsiderations.acc_reconsiderations_status_check",
+      "function:acc_case_supplements_append_only",
+      "function:acc_finalizations_revision_guard",
+      "function:acc_reconsiderations_guard",
+      "index:acc_case_supplements_pkey",
+      "index:acc_reconsiderations_pkey",
+      "index:idx_acc_case_supplements_case",
+      "index:idx_acc_decisions_duplicate_of",
+      "index:idx_acc_reconsiderations_case",
+      "index:uq_acc_case_supplements_source",
+      "index:uq_acc_finalizations_reconsideration",
+      "index:uq_acc_reconsiderations_active",
+      "table:acc_case_supplements",
+      "table:acc_reconsiderations",
+      "trigger:acc_case_supplements.trg_acc_case_supplements_append_only",
+      "trigger:acc_finalizations.trg_acc_finalizations_revision_guard",
+      "trigger:acc_reconsiderations.trg_acc_reconsiderations_guard",
+      "trigger:acc_reconsiderations.trg_acc_reconsiderations_updated_at"
+    ],
+    "changed": [
+      "constraint:acc_finalizations.acc_finalizations_version_chain"
+    ],
+    "removed": []
+  },
+  "row_changes": {
+    "acc_decisions": 0,
+    "acc_finalizations": 0
+  },
+  "protected": [
+    {
+      "table": "acc_finalizations",
+      "order_by": "id"
+    },
+    {
+      "table": "journal_entries",
+      "order_by": "id"
+    },
+    {
+      "table": "violations",
+      "order_by": "id"
+    }
+  ],
+  "verify": [
+    {
+      "name": "both duplicates are linked to the original",
+      "sql": "SELECT count(*)::int FROM acc_decisions WHERE duplicate_of_id = 'b7ab635e-4ed9-4c62-ba83-0ec794e14a06'",
+      "expect": 2
+    },
+    {
+      "name": "no reconsiderations or evidence yet",
+      "sql": "SELECT (SELECT count(*) FROM acc_reconsiderations)::int + (SELECT count(*) FROM acc_case_supplements)::int",
+      "expect": 0
+    },
+    {
+      "name": "revision guard present",
+      "sql": "SELECT count(*)::int FROM pg_trigger WHERE tgname = 'trg_acc_finalizations_revision_guard'",
+      "expect": 1
+    }
+  ],
+  "api_checks": [],
+  "reload_schema": true
+}
