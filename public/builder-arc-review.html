@@ -284,6 +284,24 @@
   .finalize-form .actions button.selected .label { color: var(--gold); }
 
   /* ---- AI recommendation block ---- */
+  .annie-block { border: 1px solid #e2e8f0; border-radius: 10px; padding: 14px 16px; background: #fbfdff; }
+  .annie-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
+  .annie-rec { font-weight: 700; padding: 3px 10px; border-radius: 999px; font-size: 12.5px; display: inline-block; }
+  .annie-rec.approve { background: #dcfce7; color: #166534; }
+  .annie-rec.request_more_info { background: #fef3c7; color: #92400e; }
+  .annie-rec.manual_review { background: #e0e7ff; color: #3730a3; }
+  .annie-rec.none { background: #f1f5f9; color: #475569; }
+  .annie-summary { font-size: 13px; color: #1e293b; margin: 4px 0 10px; line-height: 1.5; }
+  .annie-f { border-left: 3px solid #cbd5e1; padding: 6px 10px; margin: 6px 0; font-size: 12.5px; background: #fff; border-radius: 0 6px 6px 0; }
+  .annie-f .t { font-weight: 700; color: #0f172a; }
+  .annie-f .d { color: #334155; margin-top: 2px; line-height: 1.45; }
+  .annie-f .r { color: #64748b; font-size: 11.5px; margin-top: 3px; }
+  .annie-f.blocker { border-left-color: #dc2626; } .annie-f.needs_info { border-left-color: #d97706; }
+  .annie-f.guideline { border-left-color: #4f46e5; } .annie-f.note { border-left-color: #94a3b8; } .annie-f.ok { border-left-color: #16a34a; }
+  .annie-draft { white-space: pre-wrap; font-size: 12.5px; background: #fff; border: 1px dashed #cbd5e1; border-radius: 6px; padding: 10px; margin-top: 6px; }
+  .due-chip { display: inline-block; font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 999px; margin-top: 3px; }
+  .due-chip.on_track { background: #f1f5f9; color: #475569; } .due-chip.target_missed { background: #fef3c7; color: #92400e; }
+  .due-chip.limit_near { background: #fee2e2; color: #991b1b; } .due-chip.limit_passed { background: #7f1d1d; color: #fff; }
   .ai-rec-block {
     border: 1px solid var(--rule-strong);
     border-left: 3px solid var(--gold);
@@ -1110,6 +1128,14 @@ async function loadCommunities() {
 // ----------------------------------------------------------------------------
 // Queue
 // ----------------------------------------------------------------------------
+const ANNIE_LABEL = { approve: 'Ready to approve', request_more_info: 'Needs info from builder', manual_review: 'Your decision', approve_with_conditions: 'Approve with conditions', deny: 'Deny' };
+const DUE_LABEL = { on_track: 'On track', target_missed: 'Past target', limit_near: 'Period ends soon', limit_passed: 'Period passed' };
+function dueChip(d) {
+  if (!d) return '';
+  const lim = d.limit_at ? (d.days_to_limit < 0 ? `ended ${fmtDate(d.limit_at)}` : `ends ${fmtDate(d.limit_at)} (${d.days_to_limit}d)`) : `target ${fmtDate(d.target_due_at)}`;
+  return `<span class="due-chip ${escapeHtml(d.state)}" title="Bedrock target ${escapeHtml(fmtDate(d.target_due_at))}${d.limit_at ? ' / review period ' + escapeHtml(fmtDate(d.limit_at)) : ''}">${escapeHtml(DUE_LABEL[d.state] || d.state)}: ${escapeHtml(lim)}</span>`;
+}
+
 function rowHtml(item) {
   const fastTrack = item.fast_track
     ? `<span class="badge fast-track">⚡ Fast-track</span>` : '';
@@ -1122,7 +1148,9 @@ function rowHtml(item) {
               style="background: var(--navy, #0B1D34); color: #fff; border: none; padding: 6px 12px; border-radius: 6px; font-size: 11px; font-weight: 700; cursor: pointer; white-space: nowrap; letter-spacing: 0.02em;">Review &amp; decide →</button>`
     : `<button class="row-action-btn" data-id="${item.application_id}" title="View the decision letter + history"
               style="background: #fff; color: #475569; border: 1px solid #cbd5e1; padding: 6px 12px; border-radius: 6px; font-size: 11px; font-weight: 600; cursor: pointer; white-space: nowrap;">View</button>`;
-  const canBatch = needsAction && item.master_plan_status === 'approved';
+  // Batch approval only for lots Annie found ready (Ed decides the rest one by one).
+  const canBatch = needsAction && item.master_plan_status === 'approved' && item.assessment_recommended_action === 'approve';
+  const annie = item.assessment_recommended_action;
   return `
     <tr data-id="${item.application_id}" class="${state.selectedId === item.application_id ? 'active' : ''}">
       <td style="width:34px;text-align:center;">${canBatch ? `<input type="checkbox" class="batch-cb" data-id="${item.application_id}" data-age="${item.age_days != null ? item.age_days : ''}" onchange="updateBatchCount()" style="width:16px;height:16px;cursor:pointer;">` : ''}</td>
@@ -1139,6 +1167,7 @@ function rowHtml(item) {
         Plan ${escapeHtml(item.plan_number || '—')} / ${escapeHtml(item.elevation || '—')}
         ${item.master_plan_status === 'approved' ? '<span class="sub" style="color: var(--gold);">Master-matched</span>' : ''}
       </td>
+      <td>${needsAction ? `<span class="annie-rec ${escapeHtml(annie || 'none')}" style="font-size:11px;">${escapeHtml(annie ? (ANNIE_LABEL[annie] || annie) : 'Not reviewed')}</span><br>${dueChip(item.deadlines)}${item.owner ? `<span class="sub">Owner: ${escapeHtml(item.owner)}</span>` : ''}` : `<span class="sub">${escapeHtml(item.decided_by || '')}</span>`}</td>
       <td>${fmtAge(item.age_days)}</td>
       <td>
         <span class="badge ${item.status}">${escapeHtml((item.status || '').replace(/_/g, ' '))}</span>
@@ -1159,6 +1188,10 @@ function updateBatchCount() {
   const btn = document.getElementById('batchApproveSend');
   if (btn) { btn.disabled = n === 0; btn.style.opacity = n === 0 ? '.5' : '1'; }
 }
+function batchSelectAnnieReady() {
+  document.querySelectorAll('.batch-cb').forEach((cb) => { cb.checked = true; });
+  updateBatchCount();
+}
 function batchSelectAged() {
   document.querySelectorAll('.batch-cb').forEach((cb) => {
     const age = parseInt(cb.dataset.age, 10);
@@ -1173,9 +1206,8 @@ function batchClearSel() {
 async function batchApproveSend() {
   const ids = [...document.querySelectorAll('.batch-cb:checked')].map((cb) => cb.dataset.id);
   if (!ids.length) return;
-  const who = (window._currentUser && (window._currentUser.full_name || window._currentUser.email)) || '';
-  const decided_by = prompt('Name to sign these approval letters (prints on the letter that goes to the builder and the city):', who);
-  if (!decided_by || !decided_by.trim()) return;
+  // The letters are signed with the signed-in owner's name (server side); only
+  // Ed can approve builder applications.
   const btn = document.getElementById('batchApproveSend'); if (btn) { btn.disabled = true; btn.textContent = 'Checking…'; }
   try {
     // 1) Dry run — validate + group, no decisions and no email yet.
@@ -1187,7 +1219,7 @@ async function batchApproveSend() {
     if (!confirm(`Approve ${ready.length} lot${ready.length === 1 ? '' : 's'} and send:\n\n${groupLines}${skipLines}\n\nProceed?`)) return;
     // 2) Real run.
     if (btn) btn.textContent = 'Approving + sending…';
-    const out = await api('POST', '/api/builder-applications/batch-approve-send', { application_ids: ids, decided_by: decided_by.trim() });
+    const out = await api('POST', '/api/builder-applications/batch-approve-send', { application_ids: ids });
     const sent = (out.emails_sent || []).map((e) => `• ${e.to}: ${e.count} letter${e.count === 1 ? '' : 's'} ${e.ok ? 'sent ✓' : 'FAILED — ' + (e.error || '')}`).join('\n');
     const skip2 = (out.skipped || []).length ? `\n\nSkipped ${out.skipped.length}:\n` + out.skipped.map((s) => `• ${s.reference_number}: ${s.reason}`).join('\n') : '';
     alert(`Approved ${out.approved} lot${out.approved === 1 ? '' : 's'}.\n\n${sent || '(no email sent)'}${skip2}`);
@@ -1246,6 +1278,7 @@ async function loadQueue() {
           <th>Property</th>
           <th>Builder · Submitter</th>
           <th>Plan / Elevation</th>
+          <th>Annie / Deadline</th>
           <th>Age</th>
           <th>Status</th>
           <th style="width:42px;"></th>
@@ -1262,7 +1295,7 @@ async function loadQueue() {
           <div style="font-size: 28px; line-height: 1;">📥</div>
           <div>
             <div style="font-family: var(--font-serif, Georgia); font-size: 16px; font-weight: 600; color: #78350f; line-height: 1.3;">Got a submission via email?</div>
-            <div style="font-size: 12.5px; color: #92400e; margin-top: 2px;">Drag the PDF here (or click) — page 1 gets read, the application lands in the queue ready to approve.</div>
+            <div style="font-size: 12.5px; color: #92400e; margin-top: 2px;">Drag the PDF here (or click). The application lands in the queue and Annie reads every page and reviews it.</div>
           </div>
         </div>
         <button id="ctaUploadSubmissionBtn" style="background: var(--navy, #0B1D34); color: #fff; border: none; padding: 10px 20px; border-radius: 8px; font-size: 13px; font-weight: 700; cursor: pointer; white-space: nowrap; flex-shrink: 0;">📥 Upload submission PDF</button>
@@ -1271,12 +1304,12 @@ async function loadQueue() {
     const batchToolbar = `
       <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:2px 4px 10px;padding:9px 12px;background:#f0f6ff;border:1px solid #cfe0f5;border-radius:8px;">
         <span style="font-size:12px;color:#334155;font-weight:700;">Batch approve</span>
-        <button onclick="batchSelectAged()" style="background:#fff;color:#0B1D34;border:1px solid #cbd5e1;padding:5px 11px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;">☑ Select 2+ weeks old</button>
+        <button onclick="batchSelectAnnieReady()" style="background:#fff;color:#0B1D34;border:1px solid #cbd5e1;padding:5px 11px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;">☑ Select all Annie found ready</button>
         <button onclick="batchClearSel()" style="background:#fff;color:#64748b;border:1px solid #e2e8f0;padding:5px 11px;border-radius:6px;font-size:12px;cursor:pointer;">Clear</button>
         <span id="batchCount" style="font-size:12px;color:#64748b;">0 selected</span>
         <button id="batchApproveSend" onclick="batchApproveSend()" disabled style="margin-left:auto;background:#15803d;color:#fff;border:none;padding:7px 15px;border-radius:7px;font-size:12.5px;font-weight:700;cursor:pointer;opacity:.5;">Approve selected &amp; send one email</button>
       </div>
-      <div style="font-size:11.5px;color:#94a3b8;margin:0 4px 8px;">Only master-matched lots can be batch-approved. Each still gets its own validated letter; the builder gets one email with all of them attached.</div>`;
+      <div style="font-size:11.5px;color:#94a3b8;margin:0 4px 8px;">Only lots Annie found ready (every check passed, master-matched) can be batch-approved; decide the others one by one. Each gets its own validated letter, signed by you; the builder gets one email with all of them attached.</div>`;
     const needsHtml = needs.length === 0
       ? `<div style="background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; padding: 14px; text-align: center; color: #15803d; font-size: 13px;">✓ Nothing waiting on you right now.</div>`
       : batchToolbar + tableFor(needs);
@@ -1378,6 +1411,8 @@ function renderMaterialsRows(materials) {
 
   push('Brick', m.brick_color);
   push('Stone', m.stone_color || m.stone_type);
+  push('Paint', m.paint_color);
+  push('Shingles', m.shingle_color);
   if (m.masonry_percentage_front != null || m.masonry_percentage_sides != null || m.masonry_percentage_rear != null) {
     const parts = [];
     if (m.masonry_percentage_front != null) parts.push(`${m.masonry_percentage_front}% F`);
@@ -1498,6 +1533,8 @@ function renderDetail(data) {
     <h2>${escapeHtml(a.street_address || '—')}</h2>
     <div class="ref">${escapeHtml(a.reference_number || '—')} ${a.fast_track ? ' · ⚡ Fast-track' : ''}</div>
 
+    ${renderAnnie(data)}
+
     <section>
       <h3>Submission</h3>
       <dl>
@@ -1514,7 +1551,7 @@ function renderDetail(data) {
 
     <section>
       <h3>Materials</h3>
-      ${renderMaterialsRows(a.application_data)}
+      ${renderMaterialsRows(a.materials_normalized || a.application_data)}
     </section>
 
     <section>
@@ -1576,6 +1613,63 @@ function renderDetail(data) {
   });
 }
 window.__closeDetail = closeDetail;  // expose for inline onclick
+
+// Annie's review: her latest recorded assessment (append-only history in
+// builder_application_assessments), the deadlines, the owner and every
+// submission on this lot (revisions keep the earlier decision on file).
+function renderAnnie(data) {
+  const a = data.application || {};
+  const latest = (data.assessments || [])[0] || null;
+  const d = data.deadlines; const wi = data.work_item; const hist = data.lot_history || [];
+  const open = ['received', 'under_review', 'info_requested'].includes(a.status);
+  const findings = latest && Array.isArray(latest.ai_compliance_findings) ? latest.ai_compliance_findings.slice() : [];
+  const order = ['blocker', 'needs_info', 'guideline', 'note', 'ok'];
+  const sevLabel = { blocker: 'Must fix first', needs_info: 'Needs info', guideline: 'Your decision', note: 'Note', ok: 'Checked' };
+  findings.sort((x, y) => order.indexOf(x.severity) - order.indexOf(y.severity));
+  const fHtml = findings.map((f) => `<div class="annie-f ${escapeHtml(f.severity)}"><div class="t">${escapeHtml(sevLabel[f.severity] || f.severity)}: ${escapeHtml(f.finding || '')}</div>${f.detail ? `<div class="d">${escapeHtml(f.detail)}</div>` : ''}${f.section_ref ? `<div class="r">Source: ${escapeHtml(f.section_ref)}</div>` : ''}</div>`).join('');
+  const histHtml = hist.length ? `<div style="margin-top:10px;font-size:12.5px;"><strong>Other submissions for this lot</strong><ul style="margin:4px 0 0 16px;padding:0;">${hist.map((h) => `<li><a href="#" data-lot-history="${escapeHtml(h.id)}">${escapeHtml(h.reference_number)}</a>: Plan ${escapeHtml(h.plan_number || '')} ${escapeHtml(h.elevation || '')}, ${escapeHtml(String(h.status || '').replace(/_/g, ' '))}${h.decided_at ? ` ${escapeHtml(fmtDate(h.decided_at))}` : ''}${h.decided_by ? ` by ${escapeHtml(h.decided_by)}` : ''}</li>`).join('')}</ul></div>` : '';
+  return `
+    <section>
+      <h3>Annie's review</h3>
+      <div class="annie-block">
+        <div class="annie-head">
+          <span class="annie-rec ${escapeHtml(latest ? latest.recommended_action : 'none')}">${escapeHtml(latest ? (ANNIE_LABEL[latest.recommended_action] || latest.recommended_action) : 'Not reviewed yet')}</span>
+          ${open ? dueChip(d) : ''}
+          ${wi && open ? `<span style="font-size:12px;color:#475569;">Owner: <strong>${escapeHtml(wi.assigned_to || '')}</strong></span>` : ''}
+          ${latest ? `<span style="font-size:11px;color:#94a3b8;margin-left:auto;">${escapeHtml(fmtDate(latest.run_at))}</span>` : ''}
+        </div>
+        ${latest ? `<div class="annie-summary">${escapeHtml(latest.assessment_text || '')}</div>` : `<div class="annie-summary">Annie reviews every packet when it arrives. Run her review now to see her findings.</div>`}
+        ${fHtml}
+        ${latest && latest.draft_response ? `<div style="margin-top:10px;font-size:12.5px;"><strong>Drafted request to the builder</strong> (not sent)<div class="annie-draft" id="annieDraft">${escapeHtml(latest.draft_response)}</div><button class="secondary-btn" style="margin-top:6px;" id="annieCopyBtn">Copy request</button></div>` : ''}
+        ${histHtml}
+        ${open ? `<div class="button-row" style="margin-top:10px;"><button class="secondary-btn" id="annieRerunBtn" data-app="${escapeHtml(a.id)}">Re-run Annie's review</button></div>` : ''}
+      </div>
+    </section>`;
+}
+
+// Delegated clicks for Annie's panel (rendered by innerHTML).
+document.addEventListener('click', (e) => {
+  const h = e.target.closest && e.target.closest('[data-lot-history]');
+  if (h) { e.preventDefault(); loadDetail(h.getAttribute('data-lot-history')); return; }
+  if (e.target.id === 'annieRerunBtn') { rerunAnnie(e.target.getAttribute('data-app')); return; }
+  if (e.target.id === 'annieCopyBtn') {
+    const t = (document.getElementById('annieDraft') || {}).innerText || '';
+    Promise.resolve(navigator.clipboard && navigator.clipboard.writeText(t)).then(() => toast('Copied', 'success')).catch(() => toast('Copy failed; select the text instead.', 'error'));
+  }
+});
+
+async function rerunAnnie(id) {
+  const b = $('annieRerunBtn'); if (b) { b.disabled = true; b.innerHTML = '<span class="loader"></span> Annie is reading the packet…'; }
+  try {
+    const r = await api('POST', `/api/builder-applications/${id}/annie-review`, {});
+    toast(`Annie: ${ANNIE_LABEL[r.recommended_action] || r.recommended_action}`, 'success');
+    await loadQueue();
+    await loadDetail(id);
+  } catch (e) {
+    toast(`Annie's review failed: ${e.message}`, 'error');
+    if (b) { b.disabled = false; b.textContent = "Re-run Annie's review"; }
+  }
+}
 
 function signalsToChips(signals) {
   if (!signals || typeof signals !== 'object') return [];
@@ -1840,8 +1934,7 @@ function selectAction(action, panel) {
   const requiresInfo       = action === 'request_more_info';
 
   fields.innerHTML = `
-    <label for="decidedBy">Decided by</label>
-    <input type="text" id="decidedBy" placeholder="Your name (appears on letter signature)">
+    <div style="font-size:12px;color:#475569;margin-bottom:8px;">${requiresInfo ? 'Records the request under your name.' : 'Signed with your name. Only Ed can approve or deny a builder application.'}</div>
     ${requiresConditions ? `
       <label for="conditions">Conditions (one per line)</label>
       <textarea id="conditions" placeholder="e.g.&#10;Front door color to be approved separately&#10;Fence material limited to cedar per Design Guidelines §4.2"></textarea>
@@ -1867,11 +1960,6 @@ async function doFinalize(applicationId) {
   const action = state.selectedAction;
   if (!action) return;
 
-  const decidedBy = ($('decidedBy') || {}).value || '';
-  if (!decidedBy.trim()) {
-    toast('Decided-by name is required.', 'error');
-    return;
-  }
   const conditionsRaw     = ($('conditions') || {}).value || '';
   const denialReasonsRaw  = ($('denialReasons') || {}).value || '';
   const messageToBuilder  = ($('messageToBuilder') || {}).value || '';
@@ -1898,7 +1986,6 @@ async function doFinalize(applicationId) {
       conditions: conditions.length ? conditions : undefined,
       denial_reasons: denial_reasons.length ? denial_reasons : undefined,
       message_to_builder: messageToBuilder.trim() || undefined,
-      decided_by: decidedBy.trim(),
     });
     toast(`Decision recorded · ${res.application.status.replace(/_/g, ' ')}.`, 'success');
     await loadQueue();

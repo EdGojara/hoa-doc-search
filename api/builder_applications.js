@@ -979,6 +979,18 @@ router.post('/', express.json({ limit: '2mb' }), async (req, res) => {
       }
     }
 
+    // Ownership from the moment it arrives: open the application's work item
+    // (owner, Bedrock target, review-period deadline). Annie's review runs when
+    // the packet lands (POST /:id/attachments). Best-effort, never blocks.
+    (async () => {
+      try {
+        const { loadStandards } = require('../lib/builder_arc/standards');
+        const { upsertWorkItem } = require('../lib/builder_arc/tracking');
+        const { community: cm, standards } = await loadStandards(supabase, community.id);
+        await upsertWorkItem(supabase, { app: { ...app, master_plan_id: matchedMasterPlanId || app.master_plan_id, fast_track: !!matchedMasterPlanId || app.fast_track }, community: cm, standards, result: null });
+      } catch (e) { console.warn('[builder_applications] intake work item failed:', e.message); }
+    })();
+
     // Fire-and-forget RECEIPT to the builder so they know it landed without
     // emailing to ask (Ed 2026-06-18 — same gap as master-plan submissions).
     // Sent at create time: the application is on file; the PDF uploads in the
@@ -1085,6 +1097,11 @@ router.post('/:id/attachments', publicAttachmentsUpload.array('files', 12), asyn
       if (row) inserted.push(row);
     }
 
+    // The packet is here: Annie reviews it (event-driven, never blocks the
+    // builder's upload).
+    if (inserted.some((r) => /\.pdf$/i.test(r.original_filename || ''))) {
+      require('../lib/builder_arc/review').reviewSoon(supabase, app.id, 'packet uploaded');
+    }
     res.json({ ok: true, uploaded: inserted });
   } catch (err) {
     console.error('[builder_applications] attachment upload failed:', err.message);
@@ -1120,7 +1137,27 @@ router.get('/', async (req, res) => {
 
     const { data, count, error } = await q;
     if (error) throw error;
-    res.json({ items: data || [], total: count || 0, limit, offset });
+    // Deadlines (computed, never stored) and owner for every row.
+    const items = data || [];
+    try {
+      const { readStandards } = require('../lib/builder_arc/standards');
+      const { computeDeadlines } = require('../lib/builder_arc/deadlines');
+      const cids = [...new Set(items.map((i) => i.community_id))];
+      const { data: comms, error: ce } = cids.length ? await supabase.from('communities').select('id, builder_arc_standards, builder_arc_sla_business_days, builder_arc_fast_track_business_days').in('id', cids) : { data: [], error: null };
+      if (ce) throw ce;
+      const byId = new Map((comms || []).map((c) => [c.id, c]));
+      const refs = items.filter((i) => ['received', 'under_review', 'info_requested'].includes(i.status)).map((i) => `builder_arc:${i.application_id}`);
+      const { data: wis, error: we } = refs.length ? await supabase.from('work_items').select('source_ref, assigned_to, urgency').in('source_ref', refs).in('status', ['new', 'in_progress', 'waiting']) : { data: [], error: null };
+      if (we) throw we;
+      const wiBy = new Map((wis || []).map((w) => [w.source_ref, w]));
+      for (const it of items) {
+        const c = byId.get(it.community_id) || {};
+        if (['received', 'under_review', 'info_requested'].includes(it.status)) it.deadlines = computeDeadlines({ submitted_at: it.submitted_at, fast_track: it.fast_track }, c, readStandards(c) || {});
+        const w = wiBy.get(`builder_arc:${it.application_id}`);
+        if (w) { it.owner = w.assigned_to; it.urgency = w.urgency; }
+      }
+    } catch (e) { console.warn('[builder_applications] queue deadline enrichment failed:', e.message); }
+    res.json({ items, total: count || 0, limit, offset });
   } catch (err) {
     console.error('[builder_applications] queue list failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
@@ -1146,6 +1183,26 @@ router.get('/', async (req, res) => {
 // routes instead of erroring with "invalid input syntax for type uuid".
 // Hit this scar twice already — guarding the /:id handlers permanently.
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// ----------------------------------------------------------------------------
+// Builder decisions are Ed's (Ed 2026-11-25: "Retain my final approval
+// authority for builder applications"). Approve, approve with conditions and
+// deny require the signed-in owner; the name printed on the letter is the
+// authenticated owner's, never a typed-in value. Requesting more information
+// is not a decision: any signed-in staff member can record it.
+// ----------------------------------------------------------------------------
+const DECISION_ACTIONS = ['approve', 'approve_with_conditions', 'deny'];
+async function builderActor(req, res, action) {
+  const { getActingUser } = require('./_acting_user');
+  const DA = require('../lib/acc/decision_authority');
+  const a = await getActingUser(req);
+  if (!DA.isHumanActor(a)) { res.status(401).json({ error: 'Sign in to do this.' }); return null; }
+  if (DECISION_ACTIONS.includes(action) && !DA.isOwnerActor(a)) {
+    res.status(403).json({ code: 'owner_only', error: "Only Ed can approve or deny a builder application. Annie's review and the drafted request are ready for him." });
+    return null;
+  }
+  return { ...a, decided_by: a.full_name || a.email };
+}
 
 router.delete('/:id', async (req, res, next) => {
   if (!UUID_RE.test(req.params.id)) return next();
@@ -1247,6 +1304,8 @@ router.get('/:id', async (req, res, next) => {
 
     if (appResp.error) throw appResp.error;
     if (!appResp.data) return res.status(404).json({ error: 'application not found' });
+    // One materials vocabulary for the screen too (portal flat keys included).
+    appResp.data.materials_normalized = require('../lib/builder_arc/materials').normalizeMaterials(appResp.data.application_data || {});
 
     // Ed 2026-06-16: stamp a short-lived signed URL on each attachment so
     // the detail panel can embed the submission packet PDF inline. Before
@@ -1264,7 +1323,28 @@ router.get('/:id', async (req, res, next) => {
       }
     }));
 
+    // Deadlines, the work item (owner) and the lot's other submissions
+    // (revisions keep the earlier decision and its letter on file).
+    let deadlines = null; let work_item = null; let lot_history = [];
+    try {
+      const a = appResp.data;
+      const { loadStandards } = require('../lib/builder_arc/standards');
+      const { computeDeadlines } = require('../lib/builder_arc/deadlines');
+      const { community: cm, standards } = await loadStandards(supabase, a.community_id);
+      if (['received', 'under_review', 'info_requested'].includes(a.status)) deadlines = computeDeadlines(a, cm || {}, standards || {});
+      const { data: wi } = await supabase.from('work_items').select('id, assigned_to, status, urgency, sla_due_at, next_step').eq('source_ref', `builder_arc:${a.id}`).order('created_at', { ascending: false }).limit(1);
+      work_item = (wi && wi[0]) || null;
+      const { parseAddress } = require('../lib/builder_arc/rules');
+      const key = (x) => { const p = parseAddress(x); return `${p.number}|${p.street}`; };
+      const { data: same, error: se } = await supabase.from('builder_applications')
+        .select('id, reference_number, status, plan_number, plan_name, elevation, submitted_at, decided_at, decided_by, street_address')
+        .eq('community_id', a.community_id).neq('id', a.id).ilike('street_address', `${String(a.street_address || '').split(' ')[0]}%`).limit(20);
+      if (se) throw se;
+      lot_history = (same || []).filter((o) => key(o.street_address) === key(a.street_address)).sort((x, y) => new Date(x.submitted_at) - new Date(y.submitted_at));
+    } catch (e) { console.warn('[builder_applications] detail enrichment failed:', e.message); }
+
     res.json({
+      deadlines, work_item, lot_history,
       application: appResp.data,
       assessments: assessResp.data || [],
       responses: respResp.data || [],
@@ -1304,10 +1384,10 @@ router.get('/:id', async (req, res, next) => {
 function computeBuilderRecommendation(app) {
   const data = (app && app.application_data) || {};
   const compliance = data.compliance || {};
-  const materials = data.materials || {};
-  const flatHasMaterials = !!(data.brick_color || data.stone_color || data.siding_color || data.trim_color || data.roof_color);
-  const nestedHasMaterials = !!(materials.brick || materials.rock || materials.siding || materials.trim_paint || materials.shingles);
-  const anyMaterials = flatHasMaterials || nestedHasMaterials;
+  // One reader for every stored materials shape (lib/builder_arc/materials.js).
+  // Portal submissions store flat brick/paint/trim keys and read as "no
+  // materials" here before 2026-11-25.
+  const anyMaterials = require('../lib/builder_arc/materials').hasMaterials(data);
   const fastTrack = !!app.fast_track;
   const masterMatched = !!app.master_plan_id;
   const masonryOk = compliance.met_front_masonry_minimum;       // true | false | null
@@ -1666,6 +1746,27 @@ router.post('/:applicationId/master-plan/bulk-approve-builder-at-community', exp
   }
 });
 
+// ============================================================================
+// POST /api/builder-applications/:id/annie-review
+// Run (or re-run) Annie's review now: reads the whole packet, applies only
+// verified corrections, records findings + recommendation, refreshes the work
+// item. Staff can run it; it never decides. Body: { dry_run? }.
+// ============================================================================
+router.post('/:id/annie-review', express.json({ limit: '8kb' }), async (req, res, next) => {
+  if (!UUID_RE.test(req.params.id)) return next();
+  try {
+    const actor = await builderActor(req, res, 'request_more_info');
+    if (!actor) return;
+    const { runReview } = require('../lib/builder_arc/review');
+    const out = await runReview(supabase, req.params.id, { apply: !(req.body && req.body.dry_run) });
+    res.json({ ok: true, recommended_action: out.result.recommended_action, summary: out.result.summary, findings: out.result.findings, corrections: out.corrections, deadlines: out.deadlines, assessment_id: out.assessment_id || null, work_item: out.work_item || null, packet: out.packet });
+  } catch (err) {
+    if (err.statusCode) return res.status(err.statusCode).json({ error: err.message });
+    console.error('[builder_applications] annie review failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
 router.get('/:id/recommendation', async (req, res, next) => {
   if (!UUID_RE.test(req.params.id)) return next();
   try {
@@ -1848,6 +1949,26 @@ router.get('/:id/recommendation', async (req, res, next) => {
 // builder decision letter — the per-application POST /:id/finalize route and the
 // batch approve-and-send-one-email both call this. (Ed 2026-07-23.) Throws
 // Object.assign(Error, {statusCode, problems, warnings}) on validation failure.
+// An earlier decision at the same address (a revised submission). The earlier
+// approval and its letter stay on file; the new letter names it.
+async function priorDecisionAtAddress(app) {
+  try {
+    const { parseAddress } = require('../lib/builder_arc/rules');
+    const key = (a) => { const p = parseAddress(a); return `${p.number}|${p.street}`; };
+    const { data, error } = await supabase.from('builder_applications')
+      .select('id, reference_number, street_address, plan_number, plan_name, elevation, decided_at, status, submitted_at')
+      .eq('community_id', app.community_id).not('decided_at', 'is', null).neq('id', app.id).limit(500);
+    if (error) throw error;
+    const prior = (data || []).filter((o) => key(o.street_address) === key(app.street_address) && String(o.status || '').startsWith('approved') && new Date(o.submitted_at) < new Date(app.submitted_at))
+      .sort((a, b) => new Date(b.decided_at) - new Date(a.decided_at))[0];
+    if (!prior) return null;
+    return { reference_number: prior.reference_number, date_str: letterDateStr(prior.decided_at), plan_label: `Plan ${prior.plan_number}${prior.plan_name ? ' ' + prior.plan_name : ''}, Elevation ${prior.elevation}` };
+  } catch (e) {
+    console.warn('[builder_applications] prior decision lookup failed:', e.message);
+    return null;
+  }
+}
+
 async function finalizeApplicationCore({ applicationId, action, conditions = null, denial_reasons = null, message_to_builder = null, decided_by, promote_to_precedent }) {
     if (!action) throw Object.assign(new Error('action is required'), { statusCode: 400 });
     const validActions = ['approve', 'approve_with_conditions', 'deny', 'request_more_info'];
@@ -1929,6 +2050,7 @@ async function finalizeApplicationCore({ applicationId, action, conditions = nul
         // against the Bedrock invoice.
         review_fee_cents: app.community?.builder_arc_fee_cents ?? null,
         date_str: letterDateStr(decidedAt),
+        replaces: await priorDecisionAtAddress(app),
       };
 
       const pdfBuffer = await renderBuilderLetterPdfBuffer(letterArgs);
@@ -1978,6 +2100,13 @@ async function finalizeApplicationCore({ applicationId, action, conditions = nul
         decided_by,
       })
       .eq('id', app.id);
+
+    // The decision closes the application's work item (approve / conditions /
+    // deny). An info request leaves it open, waiting on the builder.
+    if (appStatus !== 'info_requested') {
+      try { await require('../lib/builder_arc/tracking').closeWorkItem(supabase, app.id, { status_label: appStatus.replace(/_/g, ' '), decided_by }); }
+      catch (e) { console.warn('[builder_applications] work item close failed:', e.message); }
+    }
 
     // Promote to precedent (best-effort; do not fail finalize on promotion error)
     let precedentId = null;
@@ -2069,7 +2198,10 @@ async function finalizeApplicationCore({ applicationId, action, conditions = nul
 // Thin route wrapper — POST /:id/finalize. Batch approve reuses finalizeApplicationCore.
 router.post('/:id/finalize', express.json({ limit: '1mb' }), async (req, res) => {
   try {
-    const { action, conditions, denial_reasons, message_to_builder, decided_by, promote_to_precedent } = req.body || {};
+    const { action, conditions, denial_reasons, message_to_builder, promote_to_precedent } = req.body || {};
+    const actor = await builderActor(req, res, action);
+    if (!actor) return;
+    const decided_by = actor.decided_by;
     const out = await finalizeApplicationCore({ applicationId: req.params.id, action, conditions, denial_reasons, message_to_builder, decided_by, promote_to_precedent });
     res.json({ ok: true, application: out.application, response: out.response, letter_signed_url: out.letter_signed_url, precedent_id: out.precedent_id });
   } catch (err) {
@@ -2113,15 +2245,20 @@ const _ageDays = (a) => {
 router.post('/batch-approve-send', express.json({ limit: '1mb' }), async (req, res) => {
   try {
     const ids = Array.isArray(req.body.application_ids) ? [...new Set(req.body.application_ids.filter(Boolean))] : [];
-    const decided_by = req.body.decided_by;
     const message_to_builder = req.body.message_to_builder || null;
     const dryRun = !!req.body.dry_run;
+    // Lots Annie did not recommend for approval are left out unless Ed
+    // includes them on purpose (he has read her findings).
+    const includeFlagged = !!req.body.include_flagged;
     if (!ids.length) return res.status(400).json({ error: 'application_ids is required' });
     if (ids.length > 200) return res.status(400).json({ error: 'too many at once (max 200)' });
-    if (!dryRun && !decided_by) return res.status(400).json({ error: 'decided_by is required' });
+    // Approving is Ed's alone; the dry run (a readiness check) is open to staff.
+    const actor = await builderActor(req, res, dryRun ? 'request_more_info' : 'approve');
+    if (!actor) return;
+    const decided_by = actor.decided_by;
 
     const { data: apps, error: laErr } = await supabase.from('builder_applications')
-      .select('id, reference_number, status, street_address, lot_number, submitter_name, submitter_email, submitted_at, created_at, builder_company:builder_companies(id, company_name, primary_contact_email, primary_contact_name), community:communities(name)')
+      .select('id, reference_number, status, street_address, lot_number, submitter_name, submitter_email, submitted_at, created_at, assessment_recommended_action, builder_company:builder_companies(id, company_name, primary_contact_email, primary_contact_name), community:communities(name)')
       .in('id', ids).limit(200);
     if (laErr) throw laErr;
     const byId = new Map((apps || []).map((a) => [a.id, a]));
@@ -2136,6 +2273,11 @@ router.post('/batch-approve-send', express.json({ limit: '1mb' }), async (req, r
       if (!a) { skipped.push({ id, reference_number: id, reason: 'not found' }); continue; }
       if (String(a.status || '').startsWith('approved') || a.status === 'denied') { skipped.push({ id, reference_number: a.reference_number, address: a.street_address, reason: `already ${a.status}` }); continue; }
       if (!builderEmailOf(a)) { skipped.push({ id, reference_number: a.reference_number, address: a.street_address, reason: 'no builder email on file' }); continue; }
+      if (!includeFlagged && a.assessment_recommended_action !== 'approve') {
+        skipped.push({ id, reference_number: a.reference_number, address: a.street_address, annie: a.assessment_recommended_action || null,
+          reason: a.assessment_recommended_action ? `Annie recommends ${a.assessment_recommended_action.replace(/_/g, ' ')}; open it to decide` : 'Annie has not reviewed it yet' });
+        continue;
+      }
       const v = await validateApplicationForLetterById(supabase, id);
       if (!v.ok) { skipped.push({ id, reference_number: a.reference_number, address: a.street_address, reason: (v.errors || []).join('; ') || 'not ready for an approval letter', problems: v.errors }); continue; }
       ready.push(a);
@@ -4728,6 +4870,7 @@ router.post('/upload-on-behalf', upload.single('submission_pdf'), async (req, re
           size_bytes: file.size,
           uploaded_by: ctx.user?.email || 'staff_upload_on_behalf',
         });
+        require('../lib/builder_arc/review').reviewSoon(supabase, app.id, 'packet uploaded on behalf');
       } else {
         console.warn('[builder_applications.upload-on-behalf] storage upload failed (non-fatal):', upErr.message);
       }
