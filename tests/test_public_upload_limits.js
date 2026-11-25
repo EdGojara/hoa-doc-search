@@ -234,7 +234,7 @@ function publicMulterRoutes() {
   const allowSrc = server.slice(start, server.indexOf('\n];', start));
   const allow = [...allowSrc.matchAll(/^\s*(\/\^.*?\/)\s*,/gm)].map((m) => new Function(`return ${m[1]}`)());
   const lineOf = (src, idx) => src.slice(0, idx).split('\n').length;
-  const gateLine = lineOf(server, server.indexOf('if (_gateIsPublicPath(req.path)) return next();'));
+  const gateLine = lineOf(server, server.indexOf('if (_gateIsPublicPath(req.path'));
   const routerFile = {};
   for (const m of server.matchAll(/const\s+(?:\{\s*router:\s*)?(\w+)\s*\}?\s*=\s*require\('\.\/api\/([\w_]+)'\)/g)) routerFile[m[1]] = m[2] + '.js';
   for (const m of server.matchAll(/const\s+\{[^}]*router:\s*(\w+)[^}]*\}\s*=\s*require\('\.\/api\/([\w_]+)'\)/g)) routerFile[m[1]] = m[2] + '.js';

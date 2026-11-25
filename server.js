@@ -615,7 +615,13 @@ const _STAFF_GATE_PUBLIC = [
 // even on public surfaces (we surface community names in homeowner-facing
 // pages already via portal-map and clubhouse forms).
 
-function _gateIsPublicPath(p) { return _STAFF_GATE_PUBLIC.some((re) => re.test(p)); }
+// Paths that are public only for a builder's POST (intake and its file upload).
+// The same path read with GET is staff data (the review queue), so it stays gated.
+const _STAFF_GATE_POST_ONLY = [/^\/api\/builder-applications$/, /^\/api\/builder-applications\/[0-9a-f-]+\/attachments$/];
+function _gateIsPublicPath(p, method) {
+  if (_STAFF_GATE_POST_ONLY.some((re) => re.test(p))) return String(method || '').toUpperCase() === 'POST';
+  return _STAFF_GATE_PUBLIC.some((re) => re.test(p));
+}
 function _gateSign(secret) {
   const ts = String(Date.now());
   const sig = _crypto.createHmac('sha256', secret).update(ts).digest('hex');
@@ -644,7 +650,7 @@ function _gateExtractCookie(req) {
 app.use((req, res, next) => {
   const password = process.env.STAFF_PASSWORD;
   if (!password) return next(); // kill switch — gate disabled
-  if (_gateIsPublicPath(req.path)) return next();
+  if (_gateIsPublicPath(req.path, req.method)) return next();
   const secret = process.env.STAFF_GATE_SECRET || password;
   if (_gateVerify(secret, _gateExtractCookie(req))) return next();
   // Browser HTML GET → friendly redirect; API or non-GET → 401 JSON.
