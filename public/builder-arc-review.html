@@ -1167,7 +1167,7 @@ function rowHtml(item) {
         Plan ${escapeHtml(item.plan_number || '—')} / ${escapeHtml(item.elevation || '—')}
         ${item.master_plan_status === 'approved' ? '<span class="sub" style="color: var(--gold);">Master-matched</span>' : ''}
       </td>
-      <td>${needsAction ? `<span class="annie-rec ${escapeHtml(annie || 'none')}" style="font-size:11px;">${escapeHtml(annie ? (ANNIE_LABEL[annie] || annie) : 'Not reviewed')}</span><br>${dueChip(item.deadlines)}${item.owner ? `<span class="sub">Owner: ${escapeHtml(item.owner)}</span>` : ''}` : `<span class="sub">${escapeHtml(item.decided_by || '')}</span>`}</td>
+      <td>${needsAction ? `<span class="annie-rec ${escapeHtml(annie || 'none')}" style="font-size:11px;">${escapeHtml(annie ? (ANNIE_LABEL[annie] || annie) : 'Not reviewed')}</span><br>${dueChip(item.deadlines)}${item.owner ? `<span class="sub">Owner: ${escapeHtml(item.owner)}${item.deadlines && item.deadlines.state !== 'on_track' ? ' · Amanda overseeing' : ''}</span>` : ''}` : `<span class="sub">${escapeHtml(item.decided_by || '')}</span>`}</td>
       <td>${fmtAge(item.age_days)}</td>
       <td>
         <span class="badge ${item.status}">${escapeHtml((item.status || '').replace(/_/g, ' '))}</span>
@@ -1635,7 +1635,7 @@ function renderAnnie(data) {
         <div class="annie-head">
           <span class="annie-rec ${escapeHtml(latest ? latest.recommended_action : 'none')}">${escapeHtml(latest ? (ANNIE_LABEL[latest.recommended_action] || latest.recommended_action) : 'Not reviewed yet')}</span>
           ${open ? dueChip(d) : ''}
-          ${wi && open ? `<span style="font-size:12px;color:#475569;">Owner: <strong>${escapeHtml(wi.assigned_to || '')}</strong></span>` : ''}
+          ${wi && open ? `<span style="font-size:12px;color:#475569;">Owner: <strong>${escapeHtml(wi.assigned_to || '')}</strong>${d && d.state !== 'on_track' ? ' · Amanda overseeing the deadline' : ''}</span>` : ''}
           ${latest ? `<span style="font-size:11px;color:#94a3b8;margin-left:auto;">${escapeHtml(fmtDate(latest.run_at))}</span>` : ''}
         </div>
         ${latest ? `<div class="annie-summary">${escapeHtml(latest.assessment_text || '')}</div>` : `<div class="annie-summary">Annie reviews every packet when it arrives. Run her review now to see her findings.</div>`}
@@ -1713,8 +1713,9 @@ function renderRecommendation(block, rec, masterPlanDiagnostic) {
     approve_with_conditions: '⚠ Approve with conditions',
     deny: '✗ Deny',
     request_more_info: '? Request more info',
+    manual_review: 'Your decision (Annie flagged items for your judgment)',
   };
-  const headline = actionLabels[rec.recommended_action] || 'Review needed';
+  const headline = (rec.source === 'annie' ? "Annie: " : '') + (actionLabels[rec.recommended_action] || 'Review needed');
   const confidence = rec.confidence ? `${rec.confidence} confidence` : '';
   const signals = signalsToChips(rec.signals);
   const conds = Array.isArray(rec.conditions) ? rec.conditions : [];
@@ -1801,6 +1802,12 @@ function renderRecommendation(block, rec, masterPlanDiagnostic) {
     </div>
     <div class="ai-rec-headline">${escapeHtml(headline)}</div>
     <div class="ai-rec-body">${escapeHtml(rec.reasoning || '')}</div>
+    ${Array.isArray(rec.judgment_items) && rec.judgment_items.length ? `
+      <ul style="margin:6px 0 4px 16px;padding:0;font-size:12.5px;">
+        ${rec.judgment_items.map((j) => `<li>${escapeHtml(j.severity === 'guideline' ? 'Your decision' : j.severity === 'needs_info' ? 'Needs info' : 'Must fix first')}: ${escapeHtml(j.finding || '')}</li>`).join('')}
+      </ul>
+      ${rec.recommended_action === 'manual_review' ? `<div style="font-size:12px;color:#475569;">You can still approve: choose an action below. Annie's findings are shown above.</div>` : ''}
+    ` : ''}
     ${signals.length ? `
       <div class="ai-rec-signals">
         ${signals.map((s) => `<span class="sig ${sigClass(s.tone)}">${escapeHtml(s.label || '')}</span>`).join('')}
@@ -1916,9 +1923,9 @@ function autoSelectFromRecommendation(rec, panel) {
     const ta = $('denialReasons');
     if (ta && !ta.value.trim()) ta.value = rec.denial_reasons.join('\n');
   }
-  if (action === 'request_more_info' && rec.reasoning) {
+  if (action === 'request_more_info' && (rec.draft_to_builder || rec.reasoning)) {
     const ta = $('messageToBuilder');
-    if (ta && !ta.value.trim()) ta.value = rec.reasoning;
+    if (ta && !ta.value.trim()) ta.value = rec.draft_to_builder || rec.reasoning;
   }
 }
 

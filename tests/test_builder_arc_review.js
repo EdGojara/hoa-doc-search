@@ -242,12 +242,32 @@ t('deadlines: 9/23 submission, 30-day period, passed on 11/25', () => {
   assert.strictEqual(d3.limit_at, null, 'no review period without a stated standard');
   assert.strictEqual(d3.state, 'on_track');
 });
-t('ownership: Ed decides, Annie chases info, Amanda gets escalations', () => {
-  assert.strictEqual(T.ownerFor('approve', { state: 'on_track' }), 'Ed');
-  assert.strictEqual(T.ownerFor('manual_review', { state: 'on_track' }), 'Ed');
-  assert.strictEqual(T.ownerFor('request_more_info', { state: 'on_track' }), 'Annie');
-  assert.strictEqual(T.ownerFor('approve', { state: 'target_missed' }), 'Amanda');
+t('ownership: Annie owns every open application; Amanda oversees late deadlines', () => {
+  for (const rec of ['approve', 'manual_review', 'request_more_info']) assert.strictEqual(T.ownerFor(rec, { state: 'limit_passed' }), 'Annie');
+  assert.strictEqual(T.overseerFor({ state: 'on_track' }), null);
+  for (const st of ['target_missed', 'limit_near', 'limit_passed']) assert.strictEqual(T.overseerFor({ state: st }), 'Amanda');
   assert.strictEqual(T.urgencyFor({ state: 'limit_near' }), 'critical');
+  const src = fs.readFileSync(path.join(__dirname, '..', 'lib', 'builder_arc', 'tracking.js'), 'utf8');
+  assert.ok(!/assigned_to: 'Amanda'/.test(src), 'escalation must not take ownership from Annie');
+});
+t('immaterial extraction differences are suppressed; real ones are kept', () => {
+  const { immaterial } = P;
+  assert.ok(immaterial('Lot area in title block (6802.9 SQ.FT.) differs from Lot Quantities table (LOT AREA = 6803 SQ FT)'));
+  assert.ok(immaterial("Title block lists elevation as 'C4-R' while drawing house label states 'C4 RIGHT'"));
+  assert.ok(immaterial("Title block lists plan as '4501_F-R' while drawing shows 'PLAN No. 4501' ELEV. F RIGHT - consistent but formatted differently"));
+  assert.ok(!immaterial("Title block lists plan as '4505_C-R' while the drawing's house label shows 'PLAN No. 4504'"));
+  assert.ok(immaterial("Restricted Reserve 'A' label references 'STILL CREEK RANCH SECTION FOUR, PLAT NO. 20230129' while title block references SECTION 5"));
+  assert.ok(!immaterial('Total fence length is listed as 127.6 LIN FT but no fence material or height is printed'));
+  const m = P.mergeReads(null, { conflicts_on_document: ['Lot area 6945.5 SQ.FT. vs LOT AREA = 6946 SQ FT', "Plan '4505_C-R' vs 'PLAN No. 4504'"] });
+  assert.deepStrictEqual(m.model_flags, ["Plan '4505_C-R' vs 'PLAN No. 4504'"]);
+});
+t('Finalize recommendation comes from Annie\'s completed review, not the legacy rules', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'api', 'builder_applications.js'), 'utf8');
+  const rec = src.slice(src.indexOf("router.get('/:id/recommendation'"), src.indexOf("router.post('/:id/finalize'"));
+  assert.ok(rec.includes("from('builder_application_assessments')") && rec.includes('annieRecommendation(latest[0], app)'), 'recommendation endpoint must use Annie\'s latest review');
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'builder-arc-review.html'), 'utf8');
+  assert.ok(/manual_review: 'Your decision/.test(html), 'Finalize box must label Annie\'s judgment items');
+  assert.ok(/item.assessment_recommended_action === 'approve'/.test(html), 'batch eligibility follows Annie');
 });
 
 // ------------------------------------------------- decision authority (static)

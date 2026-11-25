@@ -1493,6 +1493,31 @@ function computeBuilderRecommendation(app) {
   };
 }
 
+// Annie's recorded review in the shape the Finalize box renders.
+function annieRecommendation(a, app) {
+  const f = Array.isArray(a.ai_compliance_findings) ? a.ai_compliance_findings : [];
+  const has = (re, sev) => f.some((x) => re.test(x.code || '') && (!sev || x.severity === sev));
+  const conf = Number(a.ai_confidence);
+  return {
+    source: 'annie',
+    recommended_action: a.recommended_action,
+    confidence: !Number.isFinite(conf) ? null : conf >= 0.85 ? 'high' : conf >= 0.6 ? 'medium' : 'low',
+    reasoning: a.assessment_text || '',
+    draft_to_builder: a.draft_response || null,
+    judgment_items: f.filter((x) => x.severity === 'guideline' || x.severity === 'blocker' || x.severity === 'needs_info').map((x) => ({ severity: x.severity, finding: x.finding, detail: x.detail })),
+    conditions: [],
+    denial_reasons: [],
+    run_at: a.run_at,
+    signals: {
+      fast_track: !!app.fast_track,
+      master_plan_matched: !!app.master_plan_id,
+      masonry_minimum_met: null,
+      repetition_rule_met: has(/^(repeat_|adjacent_|brick_repeat)/, 'guideline') ? false : (has(/^repetition_ok$/) ? true : null),
+      materials_captured: has(/^materials_missing$/) ? false : true,
+    },
+  };
+}
+
 // ============================================================================
 // Master plan inline-fix endpoints — operator clicks a button on the AI rec
 // diagnostic to resolve a specific mismatch reason. Each is conservative,
@@ -1912,6 +1937,17 @@ router.get('/:id/recommendation', async (req, res, next) => {
     // settled. If we updated master_plan_id above, app already reflects the
     // new state so the recommendation will render as fast-track.
     recommendation = computeBuilderRecommendation(app);
+
+    // Annie's latest completed review is the single source of truth for the
+    // recommendation, its confidence and batch eligibility (Ed 2026-11-25: the
+    // Finalize box showed the legacy rule engine's "clean approval" while Annie
+    // had flagged a repetition question). The legacy engine answers only when
+    // Annie has not reviewed the application yet.
+    const { data: latest, error: le } = await supabase.from('builder_application_assessments')
+      .select('recommended_action, assessment_text, draft_response, ai_confidence, ai_compliance_findings, run_at')
+      .eq('application_id', app.id).order('run_at', { ascending: false }).limit(1);
+    if (le) throw le;
+    if (latest && latest[0]) recommendation = annieRecommendation(latest[0], app);
 
     res.json({ application_id: app.id, recommendation, master_plan_diagnostic: masterPlanDiagnostic });
   } catch (err) {
