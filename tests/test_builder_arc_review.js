@@ -164,6 +164,12 @@ t('Rustic Pine: UNKNOWN lot / plan / elevation are filled from the packet; real 
   assert.deepStrictEqual(r2.corrections, {});
   assert.ok(r2.findings.some((f) => f.code === 'mismatch_lot_number' && f.severity === 'needs_info'));
 });
+t('a packet label like "Still Creek Ranch Section Five" matches section 5 (8203)', () => {
+  const a = app('SCR-BLD-2026-0020', '8203 Rustic Pine Trail', 8, '4700', 'C4', { brick: 'Steel Manor', paint: 'Light French Gray' }, { block_number: '2', section_number: '5' });
+  const r = R.evaluate({ app: a, packet: packetFor(a, { section: 'Still Creek Ranch Section Five', lot: 'Lot 8', block: 'Block 2' }), standards: STD, neighbors: [], letterCheck: letterOk });
+  assert.ok(!r.findings.some((f) => /^mismatch_/.test(f.code)), JSON.stringify(r.findings.filter((f) => /^mismatch_/.test(f.code))));
+  assert.strictEqual(r.recommended_action, 'approve');
+});
 t('a packet that contradicts itself (8118) asks for a corrected plot plan', () => {
   const a = app('SCR-BLD-2026-0080', '8118 Misty Maple Lane', 23, '4504', 'F', { brick: 'Claymex - Alpine', paint: 'Foothills', trim: 'Loggia', shingles: 'Weathered Wood' });
   const r = R.evaluate({ app: a, packet: packetFor(a, { document_conflicts: ['Title block says plan 4505 C; the drawing says plan 4504 F.'] }), standards: STD, neighbors: [], letterCheck: letterOk });
