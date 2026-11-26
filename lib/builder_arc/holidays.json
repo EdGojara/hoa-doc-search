@@ -1,0 +1,8 @@
+{
+  "_about": "Bedrock's designated office holidays. Excluded from business-day counts for the builder ARC two-business-day standard (lib/builder_arc/deadlines.js). Dates are America/Chicago calendar days. Add each year's holidays here; a change ships with a PR.",
+  "_sources": {
+    "2026-11-26": "Office closed (Thanksgiving notice to residents, 11/25/2026)",
+    "2026-11-27": "Office closed (Thanksgiving notice to residents, 11/25/2026)"
+  },
+  "dates": ["2026-11-26", "2026-11-27"]
+}
