@@ -69,8 +69,10 @@ check('packet next action: checks with void dates, lot, Kat reconciliation, esca
   assert.ok(a.next_action.includes('Kat reconciles'));
   assert.ok(a.next_action.includes('settlement date 2031-09-22'));
   assert.strictEqual(a.first_void, '2031-12-15');
-  assert.strictEqual(a.next_action_due, '2031-12-08T14:00:00Z');
+  assert.strictEqual(a.next_action_due, '2031-11-27T23:00:00Z');   // the next business day after filing
   assert.strictEqual(a.priority, 'high');
+  // Filed on a Friday: due Monday.
+  assert.strictEqual(CP.packetNextAction(n, { filedAt: '2031-11-28T16:00:00Z' }).next_action_due, '2031-12-01T23:00:00Z');
   assert.ok(CP.packetNextAction({ ...n, property_id: null }, { today: '2031-11-26' }).next_action.includes('match the packet to its lot'));
   assert.strictEqual(CP.packetNextAction(n, { recorded: true }).done, true);
 });
