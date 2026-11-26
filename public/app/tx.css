@@ -250,3 +250,11 @@
 .tx-goto a:hover { border-color: var(--gold); }
 .tx-goto a.is-legacy { font-weight: 500; color: var(--tx-text-2); background: transparent; }
 .tx-goto small { font-weight: 500; color: var(--tx-muted); font-size: 11px; }
+
+/* Talk to Amanda (Ed 2026-11-26): owner-only entry, sidebar + floating button on phones. */
+.tx-amanda { display: flex; align-items: center; gap: 10px; margin: 6px 10px 12px; padding: 11px 14px; border-radius: 12px; background: var(--gold); color: var(--navy); font: 600 14px var(--font-sans); text-decoration: none; box-shadow: 0 1px 2px rgba(11, 29, 52, .18); }
+.tx-amanda:hover { filter: brightness(1.05); }
+.tx-amanda-fab { display: none; }
+@media (max-width: 760px) {
+  .tx-amanda-fab { display: inline-flex; align-items: center; gap: 8px; position: fixed; right: 16px; bottom: calc(18px + env(safe-area-inset-bottom)); z-index: 60; padding: 14px 18px; border-radius: 999px; background: var(--gold); color: var(--navy); font: 700 15px var(--font-sans); text-decoration: none; box-shadow: 0 6px 20px rgba(11, 29, 52, .28); }
+}

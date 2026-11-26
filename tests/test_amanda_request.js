@@ -59,7 +59,7 @@ const ask = (d, m, input) => handleRequest({ channel: 'app', actor: ACTOR, ...in
 
 check('invalid input is refused deterministically: no model call, no writes', async () => {
   const d = db(); const m = model(WORK_REPLY);
-  for (const [input, err] of [[{ actor: null, text: 'hi' }, 'actor_required'], [{ text: '   ' }, 'empty'], [{ text: 'x'.repeat(2001) }, 'too_long'], [{ text: 'hi', channel: 'voice' }, 'channel_not_enabled']]) {
+  for (const [input, err] of [[{ actor: null, text: 'hi' }, 'actor_required'], [{ text: '   ' }, 'empty'], [{ text: 'x'.repeat(2001) }, 'too_long'], [{ text: 'hi', channel: 'sms' }, 'channel_not_enabled']]) {
     const r = await handleRequest({ channel: 'app', actor: ACTOR, ...input }, { supabase: d, anthropic: m, now: NOW });
     assert.strictEqual(r.ok, false); assert.strictEqual(r.error, err); assert.strictEqual(r.model_calls, 0);
   }

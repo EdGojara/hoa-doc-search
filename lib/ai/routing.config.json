@@ -433,6 +433,20 @@
       "consequence": "standard",
       "prior": null
     },
+    "team.amanda_conversation": {
+      "model": "tier:standard",
+      "fallback": "sonnet-4-6",
+      "consequence": "standard",
+      "prior": null,
+      "note": "Talk to Amanda (2026-11-26): every spoken or typed turn of the owner's conversation with Amanda, with tool use. Latency-sensitive; measure before changing."
+    },
+    "team.amanda_memory_extract": {
+      "model": "haiku-4-5",
+      "fallback": "sonnet-4-6",
+      "consequence": "standard",
+      "prior": null,
+      "note": "Talk to Amanda: one call per finished conversation, summary plus what to remember."
+    },
     "team.attachment_vision": {
       "model": "tier:standard",
       "fallback": "sonnet-4-6",
