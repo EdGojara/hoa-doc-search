@@ -109,6 +109,18 @@ const item = (l, d) => l.bridge.find((b) => b.driver === d);
   check('no inflation, normalization or other driver applies to a transfer (even with a 3% policy)', t4010.bridge.every((b) => b.status === 'not_applicable' && b.amount_cents === 0) && t4010.recommendation_cents === -16400000);
   check('the $164,000 is carried as a provisional 2027 assumption marked Needs board decision', t4010.transfer.model_cents === 16400000 && t4010.transfer.status === 'needs_board_decision' && t4010.evidence_status === 'needs_board_decision' && t4010.flags.some((f) => f.code === 'transfer_provisional' && /Needs board decision/.test(f.text)));
   check('a budgeted transfer is never assumed made: base-year projection = actual transferred ($0), 2027 recommendation keeps the $164,000', t4010.base_year.current_forecast_cents === 0 && t4010.base_year.current_forecast_basis === 'actual_only' && t4010.recommendation_cents === -16400000);
+  // A RECORDED transfer keeps the budget's sign on the line, so the shared classification reads it as money
+  // LEAVING the paying fund (Ed 2026-11-25: a posted Operating -> Reserve contribution read as money into Operating).
+  const BF = require('../lib/accounting/budget_fund_summary');
+  const recT = WF.buildLine({ ...cgLines()[2], ytd_actual: 2500000 }, ctx, {});
+  check('a recorded transfer keeps the budget sign on the line (negative budget -> negative actual)', recT.base_year.ytd_actual_cents === -2500000 && recT.base_year.current_forecast_cents === -2500000);
+  const recNoBudget = WF.buildLine({ ...cgLines()[2], budget_months: null, fund_id: 'f', ytd_actual: 2500000 }, ctx, {});
+  check('with no budget, a recorded transfer on the paying fund revenue line is negative', recNoBudget.base_year.ytd_actual_cents === -2500000);
+  const cls = BF.classifyByFund({ rows: [{ account_id: 'r4010', fund_id: 'f', prop: -16400000, ytd: recT.base_year.ytd_actual_cents, proj: recT.base_year.current_forecast_cents }],
+    accounts: [{ id: 'r4010', account_number: '4010', account_name: 'Reserve Contribution', account_type: 'revenue', account_subtype: 'interfund_transfer', fund_id: 'f', interfund_from_fund_id: 'f', interfund_to_fund_id: 'r' }],
+    funds: [{ id: 'f', fund_code: 'OPR', fund_type: 'operating' }, { id: 'r', fund_code: 'RES', fund_type: 'reserve' }], measures: ['prop', 'ytd', 'proj'] });
+  const cOp = cls.funds.find((x) => x.fund_code === 'OPR').totals, cRes = cls.funds.find((x) => x.fund_code === 'RES').totals;
+  check('...and the classification shows it as $25,000 OUT of Operating and INTO Reserve (actual and projection)', cOp.ytd.transfers_out === 2500000 && cOp.proj.transfers_out === 2500000 && cOp.ytd.net_after_transfers === -2500000 && cRes.ytd.transfers_in === 2500000 && cRes.proj.net_after_transfers === 2500000);
   const tAdj = WF.buildLine(cgLines()[2], ctx, { one_time: { amount_cents: -5000000, base_cents: -16400000, base_as_of: '2026-09-30', assumption: 'should never apply to a transfer', confidence: 'low', actor: 'x', created_at: 'x' }, rate: { amount_cents: 99, assumption: 'should never apply to a transfer', actor: 'x', created_at: 'x' } });
   check('a stray adjustment on a transfer line is never applied', tAdj.bridge.every((b) => b.status === 'not_applicable') && tAdj.recommendation_cents === -16400000);
   const op = tm.summary;
