@@ -348,3 +348,26 @@ t('the review never writes a decision', () => {
 });
 
 console.log(`test_builder_arc_review: ${n} passed`);
+
+// ------------------------------------------- consolidated info request (Ed 2026-11-25)
+(async () => {
+  // Minimal stand-in for the Supabase query builder: every chain resolves to the table's rows.
+  const fake = (tables) => ({ from: (t) => { const q = { select: () => q, in: () => q, eq: () => q, limit: () => q, order: () => q, then: (ok) => ok({ data: tables[t] || [], error: null }) }; return q; } });
+  const sb = fake({
+    builder_application_responses: [], outbound_email_drafts: [], builder_application_attachments: [],
+    work_items: [{ id: 'w1', source_ref: 'builder_arc:a1' }],
+    work_item_events: [{ work_item_id: 'w1', detail: { info_request_sent_at: '2026-11-30T17:05:00Z', via: 'consolidated reply' } }],
+  });
+  const f = (await T.clockFacts(sb, [{ id: 'a1' }])).get('a1');
+  assert.strictEqual(f.info_requested_at, '2026-11-30T17:05:00Z');
+  const d = DL.computeDeadlines({ submitted_at: '2026-09-23T20:50:59Z' }, {}, { legal_review_days: 30 }, new Date('2026-11-30T18:00:00Z'), { ...f, recommended_action: 'request_more_info' });
+  assert.strictEqual(d.standard.state, 'waiting_on_builder', 'a request sent in a consolidated reply moves the clock to waiting on the builder');
+  n += 1; console.log('  ok - an info request sent in a consolidated reply is recorded with its send time');
+  const src = fs.readFileSync(path.join(__dirname, '..', 'api', 'email_triage.js'), 'utf8');
+  assert.ok(/if \(!suppressed && m\.extracted && Array\.isArray\(m\.extracted\.builder_info_requests\)/.test(src), 'only a real send records it');
+  assert.ok(/recordInfoRequestSent\(supabase, m\.extracted\.builder_info_requests, \{ sent_at: sentAtIso/.test(src), 'the actual send time is recorded');
+  const tr = fs.readFileSync(path.join(__dirname, '..', 'lib', 'builder_arc', 'tracking.js'), 'utf8');
+  assert.ok(/status: 'discarded'/.test(tr.slice(tr.indexOf('async function recordInfoRequestSent'))), 'redundant per-lot drafts are discarded');
+  n += 1; console.log('  ok - only a real send records it, and the per-lot drafts are discarded');
+  console.log(`test_builder_arc_review (async): ${n} passed`);
+})().catch((e) => { console.error(e); process.exit(1); });
