@@ -1,5 +1,9 @@
 # AI-Team Demo Video — Script & Storyboard (DRAFT for lock)
 
+> **Channel first (2026-11-26):** hand-directed creative videos like this one
+> render on the HeyGen subscription (MCP or Studio), not the API. See
+> `templates/heygen-production-channels.md`.
+
 > Ed 2026-08-24. Lock this BEFORE rendering. HeyGen renders cost money; the
 > discipline is script → storyboard → one test render → batch. Do not render by
 > trial and error.
