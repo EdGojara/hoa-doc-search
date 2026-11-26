@@ -299,7 +299,7 @@ async function sendDraft(){
     let r = await send(); let j = await r.json();
     if(r.status===409 && j.needs_confirmation && confirm((j.message||'The last attempt may have gone out.')+'\n\nYou checked Sent Items and it did NOT go out. Send now?')){ r = await send({confirm_after_uncertain:true}); j = await r.json(); }
     if(!r.ok) throw new Error(j.message||j.error||'send failed');
-    toast('Sent ✓'); current=null; await loadList();
+    toast(j.scheduled ? (j.message || 'Approved; it goes out shortly') : 'Sent ✓'); current=null; await loadList();
   }catch(e){ toast(e.message,true); const b=$('sendBtn'); if(b) b.disabled=false; }
 }
 async function redraftDraft(){

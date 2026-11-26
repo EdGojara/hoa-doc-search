@@ -11949,4 +11949,7 @@ httpServer.listen(3000, () => {
   // Issue #29: finish or escalate any Amanda automatic-reply receipt left open by a crash/deploy.
   try { require('./lib/amanda/auto_reply').startAutoReplyRecovery(); }
   catch (e) { console.error('[amanda_auto_reply] boot sweep failed to start:', e.message); }
+  // Ed 2026-11-26: re-arm teammate emails approved but still inside their delivery
+  // window (lib/email/delivery_window) so a deploy never loses or skips one.
+  require('./api/email_drafts').rearmScheduled().catch((e) => console.error('[delivery_window] re-arm failed:', e.message));
 });
