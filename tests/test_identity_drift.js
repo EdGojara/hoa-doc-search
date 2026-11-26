@@ -69,11 +69,14 @@ const base = (reg, root, extra = {}) => checkIdentityDrift({
     const r = await base(fakeRegistry({ v2Assets: [{ sha256: sha('B'), role: 'canonical' }, { sha256: sha('A'), role: 'derived' }], mappings: [prodLook('f1')] }), root);
     assert.ok(!r.findings.some((f) => f.area === 'avatar'), JSON.stringify(r.findings));
   });
-  await t('video voice missing from the provider catalog is an error', async () => {
+  await t('no approved canonical voice is a warning (not an avatar error); HeyGen library voices are no longer checked', async () => {
     const root = repo({ 'public/assets/presentations/team/x.jpg': 'B' });
     const r = await base(fakeRegistry({ v2Assets: [{ sha256: sha('B'), role: 'canonical' }], mappings: [prodLook('f2')] }), root,
       { env: { X_VOICE_ID: 'v-gone' }, heygenVoiceIds: new Set(['v-ok']) });
-    assert.ok(r.findings.some((f) => f.area === 'voice' && f.severity === 'error' && /catalog/.test(f.message)));
+    assert.ok(r.findings.some((f) => f.area === 'voice' && f.severity === 'warn' && /no approved canonical voice/.test(f.message)));
+    assert.ok(!r.findings.some((f) => /catalog/.test(f.message)));
+    assert.ok(!r.findings.some((f) => f.area === 'avatar'), 'a missing voice is not reported as an avatar problem');
+    assert.ok(r.ok);
   });
   await t('a changed website portrait is an error', async () => {
     const root = repo({ 'public/assets/presentations/team/x.jpg': 'B' });

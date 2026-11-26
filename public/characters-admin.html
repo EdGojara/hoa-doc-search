@@ -82,7 +82,7 @@
 <div class="wrap">
   <div class="crumbs"><a href="/admin/systems">Systems Admin</a><span class="sep">/</span><span class="here">Character Canon</span></div>
   <h1>Character Canon</h1>
-  <p class="sub">The canonical identity of each AI teammate, owned by Trusted and versioned forever. Providers such as HeyGen and ElevenLabs are recorded as mappings, never as the character. Nothing here changes what production renders yet.</p>
+  <p class="sub">The canonical identity of each AI teammate, owned by Trusted and versioned forever. Providers such as HeyGen and ElevenLabs are recorded as mappings, never as the character. Production follows this page: new videos use only each teammate's current approved face, look and voice, and stop when one is missing.</p>
   <div id="err" class="banner bad"></div>
   <div id="roster" class="roster"></div>
   <div id="detail"></div>
@@ -255,7 +255,7 @@ function render(d){
         <div style="margin-top:10px"><button class="btn ghost" id="verifyBtn">Verify stored files</button> <span id="verifyOut" class="small"></span></div>
       </div></div></div>
     ${pend}
-    ${drift.length?`<div class="banner warn"><b>Production differs from canon.</b> ${drift.length} runtime setting${drift.length===1?'':'s'} below still point at an older version or at nothing in the registry. Expected in Phase A: production is not switched to the registry yet.</div>`:''}
+    ${drift.length?`<div class="banner warn"><b>Production differs from canon.</b> ${drift.length} runtime setting${drift.length===1?'':'s'} below still point at an older version or at nothing in the registry. Renders ignore these old settings and use the current release; they are listed so they can be cleaned up.</div>`:''}
     <h2>Releases</h2>
     <div class="card scroll"><table><thead><tr><th>#</th><th>Status</th>${COMPONENTS.map((k)=>`<th>${k}</th>`).join('')}<th>Notes</th><th></th></tr></thead><tbody>${relRows}</tbody></table>
       <div class="small muted" style="margin-top:6px">Highlighted cells changed from the parent release. Making an earlier release current is the rollback; nothing is deleted.</div></div>
