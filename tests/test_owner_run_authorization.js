@@ -82,7 +82,10 @@ check('wiring: delegated approval only via the database check; in-app path uncha
   const api = read('api/accounting_runs.js');
   assert.ok(/approval: \{ channel: 'in_app', user_id: u\.user && u\.user\.id, email: u\.email \}/.test(api) && !/owner_authorization/.test(api), 'the HTTP route builds an in-app approval only');
   const t = read('lib/ea/tessa_inbox.js');
-  assert.ok(t.includes("if (auth.scope === 'accounting_runs')") && t.includes('ORA.executePackage'), 'Tessa executes an authorized run package');
+  // Tessa executes an authorized run package through the shared dispatcher (lib/authorization, Ed 2026-11-25),
+  // whose accounting-run adapter calls ORA.executePackage exactly as before.
+  assert.ok(t.includes("AZ.executeAuthorized(ctx, auth, { channel: 'email' })") && t.includes("if (auth.scope === 'accounting_runs')") && t.includes('ORA.renderCompletion(auth, out.raw)'), 'Tessa executes an authorized package through the dispatcher and reports once');
+  assert.ok(read('lib/authorization/actions.js').includes('ORA.executePackage({ supabase: ctx.supabase, rpc: ctx.rpc, authorization'), 'the accounting-run adapter posts through executePackage');
   const mig = read('migrations/566_owner_authorized_accounting_runs.sql');
   for (const s of ["scope IN ('conversion_objects', 'accounting_runs')", 'changed after the owner authorized it', "a.status <> 'authorized'", 'now() > a.expires_at', "'executed_by', p_agent_id"]) assert.ok(mig.includes(s), s);
 });

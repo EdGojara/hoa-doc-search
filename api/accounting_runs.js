@@ -227,14 +227,20 @@ router.post('/grants', express.json(), async (req, res) => {
     const { data, error } = await supabase.from('owner_execution_grants').insert({ owner_user_id: u.user && u.user.id, owner_email: u.email, community_id: b.community_id, processes,
       max_run_cents: max, note: b.note ? String(b.note).slice(0, 500) : null, expires_at: new Date(Date.now() + hours * 3600e3).toISOString() }).select('*').single();
     if (error) throw error;
+    // The shared authorization ledger (lib/authorization): the grant itself, authorized in the owner's session.
+    await require('../lib/authorization').recordEvents(supabase, { community_id: data.community_id, authority_kind: data.kind === 'standing' ? 'standing' : 'grant', grant_id: data.id,
+      action_type: 'execution_grant', target_id: data.id, event: 'authorized', channel: 'in_app', requested_by: null, authorized_by_user_id: data.owner_user_id, authorized_by_email: data.owner_email,
+      evidence: { processes: data.processes, max_run_cents: data.max_run_cents, expires_at: data.expires_at, note: data.note || null } });
     res.json({ grant: data });
   } catch (err) { fail(res, 'grant-issue', err); }
 });
 router.post('/grants/:id/revoke', express.json(), async (req, res) => {
   try {
     const u = await requireOwner(req, res); if (!u) return;
-    const { data, error } = await supabase.from('owner_execution_grants').update({ revoked_at: new Date().toISOString(), revoked_by: u.email }).eq('id', req.params.id).is('revoked_at', null).select('id').maybeSingle();
+    const { data, error } = await supabase.from('owner_execution_grants').update({ revoked_at: new Date().toISOString(), revoked_by: u.email }).eq('id', req.params.id).is('revoked_at', null).select('id, community_id, owner_user_id, owner_email').maybeSingle();
     if (error) throw error;
+    if (data) await require('../lib/authorization').recordEvents(supabase, { community_id: data.community_id, authority_kind: 'grant', grant_id: data.id, action_type: 'execution_grant', target_id: data.id,
+      event: 'revoked', channel: 'in_app', authorized_by_user_id: data.owner_user_id, authorized_by_email: u.email });
     res.json({ revoked: !!data });
   } catch (err) { fail(res, 'grant-revoke', err); }
 });

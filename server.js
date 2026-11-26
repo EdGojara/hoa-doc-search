@@ -1171,6 +1171,7 @@ app.use('/api/gl', glRouter);
 // PDF, XLSX, CSV and board packets; drill-down; balance-sheet mapping.
 app.use('/api/financial-statements', require('./api/financial_statements'));
 app.use('/api/accounting-runs', require('./api/accounting_runs'));
+app.use('/api/authorization', require('./api/authorization'));
 // Homeowner check scanning -> recording -> deposit -> reconciliation (mig 514).
 app.use('/api/check-receipts', require('./api/check_receipts'));
 // Certified collections notices: prepare, verify, approve, print, mail, fee (mig 515).
