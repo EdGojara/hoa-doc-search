@@ -33,6 +33,12 @@ check('spoken prompt: canon identity, never approves, honest AI, no dashes', () 
   assert.ok(!/personality_v2|humor/i.test(p), 'the pending (unapproved) personality v2 is not used');
 });
 
+check('persona copy matches the approved Character Bible seed (persona.v1), field for field', () => {
+  const seed = JSON.parse(fs.readFileSync(path.join(ROOT, 'scripts/character_seed/amanda_albright.json'), 'utf8'));
+  const spec = seed.components.find((c) => c.key === 'persona.v1').spec;
+  for (const k of Object.keys(C.PERSONA_V1)) assert.deepStrictEqual(C.PERSONA_V1[k], spec[k], `persona.v1.${k} drifted from the seed`);
+});
+
 check('history: OpenAI format to Anthropic, merges roles, starts and ends with the user', () => {
   const out = C.toAnthropicMessages([{ role: 'system', content: 'x' }, { role: 'assistant', content: 'Hi Ed' }, { role: 'user', content: 'hello' }, { role: 'user', content: [{ type: 'text', text: 'are you there' }] }]);
   assert.strictEqual(out[0].role, 'user');
@@ -164,8 +170,10 @@ check('measurements: provider record, brain timings and the browser roll up', ()
 
 check('wiring: owner-only routes, the brain is the only staff-gate exemption, shell entry is owner-only', () => {
   const server = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
-  assert.ok(server.includes("app.use('/api/amanda/voice', require('./api/amanda_voice'))"));
-  assert.ok(server.indexOf("app.use('/api/amanda/voice'") < server.indexOf("app.use('/api/amanda', require('./api/amanda'))"));
+  const mountVoice = server.indexOf("app.use('/api/amanda/voice', ");
+  const mountAmanda = server.indexOf("app.use('/api/amanda', ");
+  assert.ok(mountVoice > 0 && /amanda_voice/.test(server.slice(mountVoice, mountVoice + 80)), 'voice router mounted');
+  assert.ok(mountVoice < mountAmanda, 'mounted before the general Amanda router');
   assert.ok(server.includes('/^\\/api\\/amanda\\/voice\\/llm(?:\\/chat\\/completions)?$/,'));
   const api = fs.readFileSync(path.join(ROOT, 'api/amanda_voice.js'), 'utf8');
   const owner = (api.match(/router\.(get|post)\('\/(status|session|metrics)[^']*'/g) || []).length;
