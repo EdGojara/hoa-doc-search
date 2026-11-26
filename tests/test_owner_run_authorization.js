@@ -73,6 +73,13 @@ check('execution: each run through the owner_authorization channel; closed only 
   assert.strictEqual(out2.failed, 0); assert.strictEqual(rpcCalls[0][0], 'owner_authorization_mark_executed');
 });
 
+check('the completion note counts a journal-entry run’s posted entries (result.posted) and a bank run’s (result.posted_entries)', async () => {
+  const res = { r1: { posted: [{ reference: 'JE-1' }] }, r2: { posted_entries: [1, 2] } };
+  const supabase = { from: () => ({ select: () => ({ eq: (_c, id) => ({ single: async () => ({ data: { status: 'posted', result: res[id] }, error: null }) }) }) }) };
+  const out = await O.executePackage({ supabase, rpc: async () => {}, authorization: { id: 'a1', subject: 's', items: [{ run_id: 'r1', process: 'journal_entry' }, { run_id: 'r2', process: 'bank_reconciliation' }] }, approveAndPost: async () => ({}) });
+  assert.deepStrictEqual(out.results.map((r) => r.posted_entries), [1, 2]);
+});
+
 check('wiring: delegated approval only via the database check; in-app path unchanged; HTTP cannot pass the delegated channel; Tessa executes', () => {
   const read = (f) => fs.readFileSync(path.join(__dirname, '..', f), 'utf8');
   const mr = read('lib/accounting/monthly_runs.js');
