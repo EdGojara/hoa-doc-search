@@ -104,7 +104,7 @@ check('fees with no amount are dropped; payee defaults to the Association', () =
   assert.strictEqual(st.payable_to_association_cents, 7562 + 15123 + 60000 + 5000);
 });
 
-check('loadCapitalization degrades before migration 579 (columns missing) to not configured', async () => {
+check('loadCapitalization degrades before migration 581 (columns missing) to not configured', async () => {
   let n = 0;
   const db = { from: () => { n++; const q = { select: () => q, eq: () => q, maybeSingle: async () => (n === 1
     ? { data: null, error: { message: 'column community_assessment_rates.capitalization_fee_pct does not exist' } }
@@ -126,7 +126,7 @@ check('wiring: the closing confirmation and the preview carry the statement; the
   const ui = fs.readFileSync(path.join(__dirname, '..', 'public', 'transfer-proration.js'), 'utf8');
   assert.ok(/breakdown\(p\) \+ statementHtml\(body\.closing_statement\)/.test(ui), 'confirm panel renders the statement');
   for (const label of ['Due from seller', 'Due from buyer', 'Capitalization fee', 'Other fees', 'Total due at closing']) assert.ok(ui.includes(label), label);
-  const mig = fs.readFileSync(path.join(__dirname, '..', 'migrations', '579_capitalization_fee.sql'), 'utf8');
+  const mig = fs.readFileSync(path.join(__dirname, '..', 'migrations', '581_capitalization_fee.sql'), 'utf8');
   assert.ok(/ADD COLUMN IF NOT EXISTS capitalization_fee_pct/.test(mig));
 });
 

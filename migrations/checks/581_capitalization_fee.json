@@ -1,5 +1,5 @@
 {
-  "migration": "579_capitalization_fee.sql",
+  "migration": "581_capitalization_fee.sql",
   "summary": "Closing statement: the capitalization fee (capital contribution) becomes configuration on the community's homeowner rate row (community_assessment_rates.capitalization_fee_pct + capitalization_fee_evidence). Seeds the community already configured for builder transfers (migration 500) at 100% of the annual assessment, from its declaration's Capitalization Fee section. No ledger, GL, tenure, ownership or sale row changes.",
   "requires": [
     "360_assessment_proration.sql",
@@ -19,7 +19,7 @@
   ],
   "expected_changes": [
     "community_assessment_rates: adds nullable capitalization_fee_pct numeric(6,2) (CHECK 0..1000) and capitalization_fee_evidence text.",
-    "One row updated: the configured community's homeowner rate row gets capitalization_fee_pct = 100 and its evidence.",
+    "One existing row updated (net row count unchanged): the configured community's homeowner rate row gets capitalization_fee_pct = 100 and its evidence.",
     "No other row is changed."
   ],
   "objects": {
@@ -39,7 +39,7 @@
     }
   ],
   "row_changes": {
-    "community_assessment_rates": 1
+    "community_assessment_rates": 0
   },
   "protected": []
 }
