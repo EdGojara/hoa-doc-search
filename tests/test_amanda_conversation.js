@@ -84,6 +84,18 @@ check('turn: streams clean text, records the transcript and timings', async () =
   assert.strictEqual(rows[1].persona, 'amanda'); assert.deepStrictEqual(rows.map((r) => r.seq), [1, 2]);
 });
 
+check('turn (expressive audition): cues reach the voice stream, never the transcript', async () => {
+  const log = []; const said = []; const st = state(); let sys = '';
+  const anthropic = { messages: { create: async (p) => { sys = p.system[0].text; return streamOf(textTurn('[chuckles] He built an AI to reduce his workload. [sighs] Now we both work weekends.')); } } };
+  await C.runTurn({ supabase: fakeSupabase(log), anthropic, sessionId: 's1', state: st, messages: [{ role: 'user', content: 'tell me about the boss' }], onText: (t) => said.push(t), expressive: true });
+  await st.chain;
+  assert.ok(sys.includes('EXPRESSIVE DELIVERY'), 'expressive guidance in the prompt');
+  assert.ok(said.join('').includes('[chuckles]') && said.join('').includes('[sighs]'), 'voice gets the cues: ' + JSON.stringify(said));
+  const amandaRow = log.find((l) => l.t === 'claire_session_turns').rows.find((r) => r.speaker === 'teammate');
+  assert.ok(!/\[/.test(amandaRow.text), 'transcript has no cues: ' + amandaRow.text);
+  assert.ok(/Now we both work weekends/.test(amandaRow.text));
+});
+
 check('turn: a tool call runs through the loop and its result reaches the second model call', async () => {
   const st = state(); const calls = [];
   const saved = C.TOOLS.get_status;
@@ -149,6 +161,57 @@ check('voice shell config: custom LLM is ours, auth required, header secret set,
   assert.strictEqual(cfg.platform_settings.overrides.conversation_config_override.agent.prompt.prompt, false, 'the browser cannot replace the prompt');
   assert.strictEqual(cfg.conversation_config.tts.voice_id, 'v1');
   assert.ok(!DASH.test(JSON.stringify(cfg)));
+});
+
+check('voice audition: default is the canonical voice on Flash; auditions are a closed allowlist', () => {
+  const plain = V.agentConfig({ brainUrl: 'https://x/llm', voiceId: 'canon', headerSecret: V.brainHeaderSecret() });
+  assert.strictEqual(plain.conversation_config.tts.model_id, 'eleven_flash_v2_5', 'normal sessions stay on Flash v2.5');
+  const exp = V.agentConfig({ brainUrl: 'https://x/llm', voiceId: 'h', headerSecret: V.brainHeaderSecret(), ttsModel: 'eleven_v3_conversational' });
+  assert.strictEqual(exp.conversation_config.tts.model_id, 'eleven_v3_conversational');
+  // no audition -> the Canon voice, unchanged
+  assert.deepStrictEqual(API.sessionVoice(undefined, 'canonVoice'), { voiceId: 'canonVoice', ttsModel: 'eleven_flash_v2_5', audition: null });
+  assert.deepStrictEqual(API.sessionVoice('', null), { error: 'voice_not_approved' });
+  // harper -> her voice on Eleven v4 Turbo (expressive mode), labelled as an audition
+  const h = API.sessionVoice(' Harper ', 'canonVoice');
+  assert.strictEqual(h.voiceId, API.AUDITION_VOICES.harper.voice_id);
+  assert.strictEqual(h.ttsModel, 'eleven_v4_turbo');
+  assert.strictEqual(h.audition.key, 'harper');
+  assert.strictEqual(h.audition.expressive, true);
+  // anything else is refused, including prototype keys
+  for (const bad of ['hazel', 'toString', '__proto__', 'constructor', 'c1uwEpPUcC16tq1udqxk']) assert.deepStrictEqual(API.sessionVoice(bad, 'canonVoice'), { error: 'unknown_audition' }, bad);
+});
+
+check('voice audition: its own ElevenLabs agent; the shared agent is never touched or given a non-canon model', async () => {
+  const calls = []; const realFetch = global.fetch; const realKey = process.env.ELEVENLABS_API_KEY;
+  process.env.ELEVENLABS_API_KEY = 'test-key';
+  global.fetch = async (url, opts = {}) => {
+    calls.push({ method: opts.method || 'GET', url: String(url), body: opts.body ? JSON.parse(opts.body) : null });
+    const json = /agents\?search=/.test(String(url)) ? { agents: [] } : /agents\/create/.test(String(url)) ? { agent_id: 'new-audition-agent' } : {};
+    return { ok: true, status: 200, text: async () => JSON.stringify(json) };
+  };
+  try {
+    V._resetForTests();
+    const a = await V.ensureAgent({ brainUrl: 'https://x/llm', voiceId: 'harper', ttsModel: 'eleven_v4_turbo', audition: true });
+    assert.strictEqual(a.agent_id, 'new-audition-agent');
+    assert.ok(calls.every((c) => !c.url.includes(encodeURIComponent(V.AGENT_NAME))), 'never looks up or patches the shared agent');
+    const created = calls.find((c) => c.method === 'POST');
+    assert.strictEqual(created.body.name, V.AUDITION_AGENT_NAME);
+    assert.strictEqual(created.body.conversation_config.tts.model_id, 'eleven_v4_turbo');
+    await assert.rejects(V.ensureAgent({ brainUrl: 'https://x/llm', voiceId: 'harper', ttsModel: 'eleven_v4_turbo' }), /only runs the canonical voice/);
+  } finally { global.fetch = realFetch; if (realKey === undefined) delete process.env.ELEVENLABS_API_KEY; else process.env.ELEVENLABS_API_KEY = realKey; V._resetForTests(); }
+});
+
+check('expressive cues: the voice gets allowed cues only; the transcript and normal sessions get none', async () => {
+  assert.strictEqual(C.voiceCues('[Laughs] Well, that went well. [whispers seductively] fine'), '[laughs] Well, that went well. fine');
+  assert.strictEqual(C.stripCues('[chuckles] He works seven days a week. [sighs] Now we both do.').trim(), 'He works seven days a week. Now we both do.');
+  assert.ok(C.systemPrompt({ channel: 'voice', expressive: true }).includes('[chuckles]'));
+  assert.ok(!C.systemPrompt({ channel: 'voice' }).includes('EXPRESSIVE DELIVERY'), 'normal sessions are unchanged');
+  assert.ok(!C.systemPrompt({ channel: 'chat', expressive: true }).includes('EXPRESSIVE DELIVERY'), 'typed chat never gets cues');
+  assert.ok(!DASH.test(C.systemPrompt({ channel: 'voice', expressive: true })), 'no dashes in the prompt');
+  // the session token carries the flag, signed
+  const t = API.signToken({ sid: '00000000-0000-4000-8000-000000000001', uid: 'u1', ex: true });
+  assert.strictEqual(API.verifyToken(t).ex, 1);
+  assert.strictEqual(API.verifyToken(API.signToken({ sid: '00000000-0000-4000-8000-000000000001', uid: 'u1' })).ex, undefined);
 });
 
 check('POLICY INVARIANT: the voice channel can authorize nothing; tier 3 is in-app only', () => {
