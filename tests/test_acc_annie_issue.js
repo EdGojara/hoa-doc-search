@@ -158,7 +158,7 @@ A.registerIssuer(async (id, body) => { calls.push({ id, body }); return { status
   check('a new case is issued as usual (no delay, no new approval)', r.issued === true, JSON.stringify(r));
   check('a case with no creation date is treated as backlog (fail closed)', H.isBacklogHeld({ id: 'x' }));
   check('the cutoff is fixed in code (deploys, migrations and restarts never release it)', H.BACKLOG_CUTOFF === '2026-11-19T03:04:33Z' && !/process\.env/.test(fs.readFileSync(path.join(__dirname, '..', 'lib', 'acc', 'backlog_hold.js'), 'utf8')));
-  check('nothing is released yet', H.RELEASED.size === 0);
+  check('only cases Ed specifically released (dated, referenced) are out of the hold', [...H.RELEASED.values()].every((v) => v && v.released && v.ref) && H.RELEASED.size === 3 && !H.isBacklogHeld({ id: '5a9a393b-6388-4f15-b0e9-6eced39afc9d', created_at: '2026-11-17T15:05:00Z' }) && H.isBacklogHeld({ id: 'other', created_at: '2026-11-17T15:05:00Z' }));
   {
     const sv = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
     const f = sv.slice(sv.indexOf('async function _accFinalizeHandler'), sv.indexOf("app.post('/acc-review/decisions/:id/finalize', _accFinalizeHandler)"));
