@@ -173,6 +173,29 @@
   }
   window.loadProrationQueue = loadProrationQueue;
 
+  // Closing packets scanned and filed but not yet recorded as a closing.
+  async function loadPacketQueue() {
+    const host = $('cp-queue'); if (!host || !CID) return;
+    try {
+      const r = await fetch('/api/home-sales/closing-packets?community_id=' + encodeURIComponent(CID));
+      const j = await r.json(); if (!r.ok || j.error) throw new Error(j.error || ('HTTP ' + r.status));
+      const ps = j.packets || [];
+      if (!ps.length) { host.innerHTML = ''; return; }
+      const m = (c) => c == null ? '' : '$' + (Number(c) / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      host.innerHTML = '<div class="card"><h2 class="sec">Closing packets not yet recorded (' + ps.length + ')</h2>'
+        + '<div class="muted" style="font-size:12.5px; margin-bottom:8px;">Scanned and on file, but no closing has been recorded from them, so ownership and the seller&#39;s account have not changed. Open the packet, then Scan closing packet and Record closing.</div>'
+        + '<div style="overflow-x:auto;"><table style="min-width:640px;"><thead><tr><th>Property</th><th>Settled</th><th>Seller → Buyer</th><th>Checks</th><th>Scanned</th><th></th></tr></thead><tbody>'
+        + ps.map((p) => '<tr><td>' + esc(p.property_address || '(address not read)') + (p.property_id ? '' : ' <span class="badge err">lot not matched</span>') + '</td><td>' + esc(p.closing_date ? fmtDate(p.closing_date) : '?') + '</td><td>' + esc(p.seller_name || '?') + ' → ' + esc(p.buyer_name || '?') + '</td><td>'
+          + (p.checks || []).map((c) => esc(c.payee || '?') + ' ' + m(c.amount_cents)).join('<br>') + '</td><td>' + esc(fmtDate(String(p.uploaded_at || '').slice(0, 10))) + '</td><td><a class="link" data-cp="' + esc(p.id) + '">Open packet</a></td></tr>').join('')
+        + '</tbody></table></div></div>';
+      host.querySelectorAll('[data-cp]').forEach((a) => a.addEventListener('click', async (ev) => {
+        ev.preventDefault();
+        try { const r = await fetch('/api/mail-scan/file/' + encodeURIComponent(a.getAttribute('data-cp'))); const jj = await r.json(); if (!r.ok || !jj.url) throw new Error(jj.error || ('HTTP ' + r.status)); window.open(jj.url, '_blank'); }
+        catch (er) { alert('Could not open the packet: ' + er.message); }
+      }));
+    } catch (e) { host.innerHTML = '<div class="card" style="color:var(--err)">Could not load scanned closing packets: ' + esc(e.message) + '</div>'; }
+  }
+
   async function loadList() {
     $('list').innerHTML = '<div class="muted" style="padding:30px; text-align:center;">Loading…</div>';
     try {
@@ -181,8 +204,8 @@
       const j = await r.json(); if (j.error) throw new Error(j.error);
       const sales = j.sales || [];
       if (!sales.length) {
-        $('list').innerHTML = '<div id="tp-queue"></div><div class="card muted" style="padding:24px;">No home sales tracked yet. Log a resale request when HomeWise emails, or scan a closing packet when the title mail arrives.</div>';
-        loadProrationQueue();
+        $('list').innerHTML = '<div id="cp-queue"></div><div id="tp-queue"></div><div class="card muted" style="padding:24px;">No home sales tracked yet. Log a resale request when HomeWise emails, or scan a closing packet when the title mail arrives.</div>';
+        loadProrationQueue(); loadPacketQueue();
         return;
       }
       const rows = sales.map((s)=>{
@@ -210,12 +233,12 @@
           <td>${packet}</td>
         </tr>`;
       }).join('');
-      $('list').innerHTML = `<div id="tp-queue"></div><div class="card">
+      $('list').innerHTML = `<div id="cp-queue"></div><div id="tp-queue"></div><div class="card">
         <h2 class="sec">Sales &amp; resale requests</h2>
         <div class="muted" style="margin-bottom:10px; font-size:12.5px;">Click a property for its full ownership history.</div>
         <table><thead><tr><th>Property</th><th>Stage</th><th>Seller → Buyer</th><th>Closing / Request</th><th>DRV</th><th class="num">Balance</th><th class="num">Transfer fee</th><th>Welcome</th></tr></thead>
         <tbody>${rows}</tbody></table></div>`;
-      loadProrationQueue();
+      loadProrationQueue(); loadPacketQueue();
     } catch (e) { $('list').innerHTML = '<div class="card" style="color:var(--err)">Couldn\'t load: '+esc(e.message)+'</div>'; }
   }
 
@@ -347,7 +370,9 @@
       const j = await r.json();
       if (j.error) { $('sc-out').innerHTML = '<div class="result-warn">Couldn\'t read it: '+esc(j.error)+(j.raw_extracted?'<pre style="white-space:pre-wrap; font-size:11px;">'+esc(String(j.raw_extracted))+'</pre>':'')+'</div>'; return; }
       window._scanRaw = j.raw_extracted || null;
+      window._scanDocId = j.source_document_id || null;
       renderScanForm(j.extracted || {}, j.property_matches || [], j.property_match || { status: 'none', reason: 'not_found' });
+      if (j.packet_error) $('sc-out').insertAdjacentHTML('afterbegin', '<div class="result-warn">The packet was read but could not be filed: ' + esc(j.packet_error) + '. Keep the paper copy until this is fixed.</div>');
     } catch (e) { $('sc-out').innerHTML = '<div class="result-warn">'+esc(e.message)+'</div>'; }
     finally { $('sc-go').disabled = false; }
   }
@@ -577,6 +602,7 @@
       source_document_name: window._scanFileName || null,
       title_company_name: window._scanTitle || null,
       raw_extraction: window._scanRaw || null,
+      source_document_id: window._scanDocId || null,
     };
     window._tpConfirm = false; window._tpAck = false;   // one click, one request
     try {
