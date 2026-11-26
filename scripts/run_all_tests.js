@@ -275,6 +275,7 @@ const CHECKS = [
   'tests/test_transfer_proration.js',
   'tests/test_closing_statement.js',
   'tests/test_closing_packets.js',
+  'tests/test_builder_ownership.js',
   'tests/test_builder_positions.js',
   'tests/test_builder_accrual.js',
   'tests/test_tessa_request.js',

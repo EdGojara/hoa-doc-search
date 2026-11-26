@@ -1,0 +1,67 @@
+{
+  "migration": "580_assessment_rate_history.sql",
+  "summary": "Per-year annual assessment rates (community_assessment_rate_history) so a builder ownership period spanning calendar years is charged each year at that year's rate. Seeds the community configured for builder transfers: 2025 and 2026 at $495.00 with evidence. No ledger, GL, tenure, ownership or sale row changes.",
+  "requires": [
+    "360_assessment_proration.sql",
+    "500_transfer_assessment_proration.sql"
+  ],
+  "preflight": [
+    {
+      "name": "community_assessment_rate_history does not exist yet",
+      "sql": "SELECT count(*)::int FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'community_assessment_rate_history'",
+      "expect": 0
+    }
+  ],
+  "expected_changes": [
+    "Creates community_assessment_rate_history (unique per community, owner class, fiscal year; service_role SELECT/INSERT/UPDATE, authenticated SELECT).",
+    "Inserts 2 rows for the configured community (2025, 2026 at 49500 cents).",
+    "No existing row is changed."
+  ],
+  "objects": {
+    "added": [
+      "table:community_assessment_rate_history",
+      "column:community_assessment_rate_history.annual_amount_cents",
+      "column:community_assessment_rate_history.community_id",
+      "column:community_assessment_rate_history.created_at",
+      "column:community_assessment_rate_history.created_by",
+      "column:community_assessment_rate_history.evidence",
+      "column:community_assessment_rate_history.fiscal_year",
+      "column:community_assessment_rate_history.id",
+      "column:community_assessment_rate_history.owner_class",
+      "constraint:community_assessment_rate_history.community_assessment_rate_history_annual_amount_cents_check",
+      "constraint:community_assessment_rate_history.community_assessment_rate_history_community_id_fkey",
+      "constraint:community_assessment_rate_history.community_assessment_rate_history_fiscal_year_check",
+      "constraint:community_assessment_rate_history.community_assessment_rate_history_owner_class_check",
+      "constraint:community_assessment_rate_history.community_assessment_rate_history_pkey",
+      "constraint:community_assessment_rate_history.community_assessment_rate_history_one_per_year",
+      "index:community_assessment_rate_history_one_per_year",
+      "index:community_assessment_rate_history_pkey"
+    ],
+    "changed": [],
+    "removed": []
+  },
+  "verify": [
+    {
+      "name": "two seeded years",
+      "sql": "SELECT count(*)::int FROM community_assessment_rate_history WHERE community_id = 'a0000000-0000-4000-8000-000000000006' AND annual_amount_cents = 49500 AND fiscal_year IN (2025, 2026)",
+      "expect": 2
+    }
+  ],
+  "row_changes": {
+    "community_assessment_rate_history": 2
+  },
+  "protected": [
+    {
+      "table": "journal_entries",
+      "order_by": "id"
+    },
+    {
+      "table": "homeowner_transactions",
+      "order_by": "id"
+    },
+    {
+      "table": "ownership_tenures",
+      "order_by": "id"
+    }
+  ]
+}

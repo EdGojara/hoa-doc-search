@@ -448,6 +448,7 @@ router.post('/scan', upload.single('file'), async (req, res) => {
       if (cmErr) throw new Error(cmErr.message);
       packet = await CP.fileClosingPacket(supabase, { communityId: community_id, managementCompanyId: (cm && cm.management_company_id) || null,
         buffer: req.file.buffer, fileName: req.file.originalname || null, mime: req.file.mimetype || null, extracted, match, propertyId: only });
+      await CP.trackPacket(supabase, packet.id, 'closing_packet_filed');
     } catch (e) {
       console.error('[home-sales] closing packet could not be filed:', e.message);
       packet = { error: 'closing_packet_not_filed: ' + safeErrorMessage(e) };
@@ -657,6 +658,8 @@ router.post('/record-closing', express.json({ limit: '256kb' }), async (req, res
     // charge on the buyer tenure, GL entry, all keyed to this transfer. A failure
     // does not undo the transfer; it is pending and retried (POST /proration-retry).
     const proration = await TP.afterTransfer(supabase, prorationGate, { proposalId: prop.id, postedBy: b.reviewed_by || 'home_sales' });
+    // The packet this closing came from is now recorded: Amanda's open item for it resolves.
+    if (saleFields.source_document_id) await CP.trackPacket(supabase, saleFields.source_document_id, 'closing_recorded');
 
     // The transfer records the sum of the seller's ledger rows, which is 0 when there
     // are none. No balance on file is UNKNOWN: clear it so history never reads "cleared".
