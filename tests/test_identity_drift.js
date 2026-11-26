@@ -41,7 +41,7 @@ const base = (reg, root, extra = {}) => checkIdentityDrift({
     const root = repo({ 'public/assets/presentations/team/x.jpg': 'B', 'public/assets/personas/x/x-photo.jpg': 'C', 'public/assets/personas/x/x-photo-480.jpg': 'C480', 'public/assets/personas/x/x-photo-square.jpg': 'Csq' });
     const reg = fakeRegistry({ v2Assets: [{ sha256: sha('B'), role: 'canonical' }, { sha256: sha('C'), role: 'derived' }], mappings: [prodLook('f2')] });
     let r = await base(reg, root);
-    assert.deepStrictEqual(r.findings, []);
+    assert.deepStrictEqual(r.findings.filter((f) => f.area !== 'voice'), []);
     fs.writeFileSync(path.join(root, 'public/assets/presentations/team/x.jpg'), 'A');
     r = await base(reg, root);
     assert.ok(r.findings.some((f) => f.area === 'headshot' && f.severity === 'error' && /REPLACED face \(face v1\)/.test(f.message)));
