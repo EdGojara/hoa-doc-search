@@ -159,19 +159,27 @@ check('every listed colleague has a real bedrocktx.com address', () => {
 // ---------------------------------------------------------------------------
 console.log('\nFaces and introductions');
 
-check('avatar and voice resolve per teammate, independently', () => {
-  process.env.ANNIE_AVATAR_ID = 'avatar_annie_test';
-  process.env.CLAIRE_AVATAR_ID = 'avatar_claire_test';
-  assert.strictEqual(roster.avatarIdFor('annie'), 'avatar_annie_test');
+check('avatars come from the Character Canon per teammate, independently; env avatar ids are ignored (Ed 2026-11-26)', () => {
+  const production = require('../lib/characters/production');
+  production.setState({
+    annie: { primary_look: 'avatar_annie_test', variant_looks: [], voice: null },
+    claire: { primary_look: 'avatar_claire_test', variant_looks: [], voice: { elevenlabs_voice_id: 'el_claire' } },
+  });
+  process.env.ANNIE_AVATAR_ID = 'stale_env_avatar';
+  assert.strictEqual(roster.avatarIdFor('annie'), 'avatar_annie_test', 'the Canon wins; the env value is never read');
   assert.strictEqual(roster.avatarIdFor('claire'), 'avatar_claire_test');
   assert.notStrictEqual(roster.avatarIdFor('annie'), roster.avatarIdFor('claire'), 'two teammates share one face');
-  delete process.env.ANNIE_AVATAR_ID; delete process.env.CLAIRE_AVATAR_ID;
+  assert.strictEqual(roster.ttsVoiceIdFor('claire'), 'el_claire', 'an approved canonical voice wins for spoken audio');
+  delete process.env.ANNIE_AVATAR_ID;
 });
 
-check('an unconfigured face reports null rather than borrowing another', () => {
-  delete process.env.REESE_AVATAR_ID;
+check('an unconfigured face reports null rather than borrowing another, and an unloaded Canon gives no avatar (no env fallback)', () => {
+  process.env.REESE_AVATAR_ID = 'legacy_env_avatar';
   assert.strictEqual(roster.avatarIdFor('reese'), null);
   assert.strictEqual(roster.avatarIdFor('nobody'), null);
+  require('../lib/characters/production').setState(null);
+  assert.strictEqual(roster.avatarIdFor('annie'), null);
+  delete process.env.REESE_AVATAR_ID;
 });
 
 check('every opener identifies the speaker as AI and names the community', () => {

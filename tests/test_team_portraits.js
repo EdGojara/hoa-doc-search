@@ -98,12 +98,12 @@ check('registry seed: v2 owns amanda.jpg as a derived asset; v1 points at the le
   assert.ok(v1.assets.some((a) => a.repo === 'public/assets/presentations/team/amanda_legacy_v1.jpg' && a.role === 'derived'));
 });
 
-check('old-face video posters use the legacy portrait (poster matches the video)', () => {
+check("Amanda's old-face videos are archived (2026-11-26): her CLMA screen shows her approved portrait as a still, and no poster uses her old face", () => {
   const story = fs.readFileSync(path.join(ROOT, 'lib', 'presentations', 'story.js'), 'utf8');
-  assert.match(story, /poster: '\/assets\/presentations\/team\/amanda_legacy_v1\.jpg', video_topic: 'clma_amanda_management'/);
-  assert.ok(!/team\/amanda\.jpg', video_topic/.test(story), 'no old-face video poster on amanda.jpg');
+  assert.ok(!/amanda_legacy_v1\.jpg/.test(story), 'no screen shows the old face');
+  assert.match(story, /poster: '\/assets\/presentations\/team\/amanda\.jpg', still: '\/assets\/presentations\/team\/amanda\.jpg',/);
   const resolve = fs.readFileSync(path.join(ROOT, 'lib', 'presentations', 'resolve.js'), 'utf8');
-  assert.match(resolve, /LEGACY_VIDEO_POSTER = \{ amanda: 'amanda_legacy_v1', paige: 'paige_legacy_v1', claire: 'claire_legacy_2026-10-22' \}/);
+  assert.match(resolve, /LEGACY_VIDEO_POSTER = \{ paige: 'paige_legacy_v1' \}/);
   assert.match(resolve, /LEGACY_VIDEO_POSTER\[seg\.persona\] \|\| seg\.persona/);
 });
 
@@ -120,10 +120,10 @@ check('Paige video posters show her production face (the face the videos show)',
   assert.ok(!/team\/paige\.jpg/.test(story), 'no Paige video poster on paige.jpg');
   assert.strictEqual((story.match(/team\/paige_legacy_v1\.jpg/g) || []).length, 3);
 });
-check('Paige: nothing upscaled; identity reference is the 11/17 official portrait; HeyGen unchanged; M365 is the canonical portrait (Ed 2026-11-17)', () => {
+check('Paige: nothing upscaled; identity reference is the 11/17 official portrait; HeyGen look switched to her approved face (Ed 2026-11-26); M365 is the canonical portrait (Ed 2026-11-17)', () => {
   const map = JSON.parse(fs.readFileSync(path.join(ROOT, 'lib', 'team', 'persona_images.json'), 'utf8')).paige;
   assert.match(map.identity_reference.authority, /8866d23f/);
-  assert.strictEqual(map.placements.heygen_avatar.photo, 'unchanged');
+  assert.match(map.placements.heygen_avatar.photo, /^face v2/);
   assert.strictEqual(map.placements.microsoft_365.photo, 'canonical_square');
   const dir = path.join(ROOT, map.dir);
   const names = Object.keys(map.photos).sort((x, y) => y.length - x.length);
@@ -181,11 +181,11 @@ check('maggie.jpg is the 2026-10-22 portrait (640x640); the previous portrait is
 check('Maggie: her email signature reads team-internal/maggie.jpg, which is byte-identical to team/maggie.jpg', () => {
   assert.strictEqual(sha(path.join(ROOT, 'public', 'assets', 'presentations', 'team-internal', 'maggie.jpg')), MAGGIE_CURRENT_SHA);
 });
-check('Maggie: nothing upscaled; M365 is the canonical portrait (Ed 2026-11-17); the portal video portrait unchanged', () => {
+check('Maggie: nothing upscaled; M365 is the canonical portrait (Ed 2026-11-17); the portal video portrait is her canonical headshot (2026-11-26)', () => {
   const map = JSON.parse(fs.readFileSync(path.join(ROOT, 'lib', 'team', 'persona_images.json'), 'utf8')).maggie;
   assert.strictEqual(map.canonical_square.out, 'public/assets/presentations/team/maggie.jpg');
   assert.strictEqual(map.placements.microsoft_365.photo, 'canonical_square');
-  assert.strictEqual(map.placements.portal_video_visit.photo, 'unchanged');
+  assert.strictEqual(map.placements.portal_video_visit.photo, 'canonical headshot');
   const dir = path.join(ROOT, map.dir);
   const names = Object.keys(map.photos).sort((x, y) => y.length - x.length);
   for (const f of fs.readdirSync(dir).filter((x) => x.endsWith('.jpg'))) {
@@ -207,10 +207,11 @@ for (const [k, s] of Object.entries(CAM)) {
     assert.deepStrictEqual(jpegSize(path.join(TEAM, k + '.jpg')), { w: 640, h: 640 });
     assert.strictEqual(sha(path.join(TEAM, k + '_legacy_2026-10-22.jpg')), s.previous);
   });
-  check(`${k}: only the cropped square is stored (no AI-drawn sign or screen); nothing upscaled; M365 is the canonical portrait (Ed 2026-11-17); HeyGen and portal face unchanged`, () => {
+  check(`${k}: only the cropped square is stored (no AI-drawn sign or screen); nothing upscaled; M365 is the canonical portrait (Ed 2026-11-17); HeyGen look and portal face are the approved face (Ed 2026-11-26)`, () => {
     const map = JSON.parse(fs.readFileSync(path.join(ROOT, 'lib', 'team', 'persona_images.json'), 'utf8'))[k];
     assert.strictEqual(map.placements.microsoft_365.photo, 'canonical_square');
-    for (const pl of ['heygen_avatar', 'portal_video_visit']) assert.strictEqual(map.placements[pl].photo, 'unchanged', pl);
+    assert.match(map.placements.heygen_avatar.photo, /^face v2/);
+    assert.notStrictEqual(map.placements.portal_video_visit.photo, 'unchanged');
     const dir = path.join(ROOT, map.dir);
     const [name, ph] = Object.entries(map.photos)[0];
     assert.ok(ph.crop && ph.crop.w === ph.crop.h, 'stored photo is the square crop');
@@ -221,9 +222,9 @@ for (const [k, s] of Object.entries(CAM)) {
     }
   });
 }
-check("Claire's team videos keep a poster that matches the face they show", () => {
+check("Claire's old-face team videos are archived (2026-11-26): no poster uses her old face; the old portrait file is kept as history", () => {
   const resolve = fs.readFileSync(path.join(ROOT, 'lib', 'presentations', 'resolve.js'), 'utf8');
-  assert.match(resolve, /claire: 'claire_legacy_2026-10-22'/);
+  assert.ok(!/claire: 'claire_legacy_2026-10-22'/.test(resolve));
   assert.ok(fs.existsSync(path.join(TEAM, 'claire_legacy_2026-10-22.jpg')));
 });
 

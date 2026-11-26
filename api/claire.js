@@ -757,10 +757,20 @@ router.post('/explainers', async (req, res) => {
       ? asked
       : (language === 'es' ? 'isabella' : 'claire');
 
+    // The Character Canon decides the face and voice. Check BEFORE creating a
+    // row, so a teammate without an approved identity stops cleanly with the
+    // reason, and nothing is sent to HeyGen.
+    let ident;
+    try { ident = await require('../lib/characters/production').resolveForRender(require('../lib/characters/registry'), presenter); }
+    catch (e) {
+      if (e.code === 'IDENTITY_NOT_APPROVED') return res.status(409).json({ error: 'identity_not_approved', detail: e.message, needs: e.needs });
+      throw e;
+    }
+
     const { data: row, error } = await supabase.from('claire_explainers').insert({
       topic, title, script, language,
       community_id: b.community_id || null,
-      avatar_id: heygen.avatarIdFor(presenter),
+      avatar_id: ident.avatar_id,
       status: 'rendering',
     }).select('*').single();
     if (error) throw error;

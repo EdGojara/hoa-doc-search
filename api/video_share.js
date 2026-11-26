@@ -196,7 +196,13 @@ router.post('/generate', async (req, res) => {
     const who = String(persona || '').trim();
     const m = roster.get(who);
     if (!who || !m) return res.status(400).json({ error: 'persona_required', detail: 'Pick which teammate is speaking.' });
-    if (!heygen.avatarIdFor(who)) return res.status(400).json({ error: 'no_avatar', detail: `${m.name || who} has no video avatar configured yet.` });
+    // The Character Canon decides the face and voice; stop with the reason if
+    // anything is unapproved or missing (nothing is sent to HeyGen).
+    try { await require('../lib/characters/production').resolveForRender(require('../lib/characters/registry'), who); }
+    catch (e) {
+      if (e.code === 'IDENTITY_NOT_APPROVED') return res.status(409).json({ error: 'identity_not_approved', detail: e.message, needs: e.needs });
+      throw e;
+    }
 
     // The teammate's own language (Priya = Hindi), so the script and the render
     // can never disagree. Falls back to English for the general front office.

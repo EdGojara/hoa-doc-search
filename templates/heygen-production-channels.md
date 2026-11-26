@@ -39,6 +39,7 @@ API wallet.
 - **Before every render, state:**
   - the channel
   - the engine (Avatar IV is HeyGen's default when `engine` is omitted, and it is what `renderExplainer` gets today; Avatar V or 6 only on purpose)
+  - the teammate's approved identity (`node scripts/character_identity.js <persona>`)
   - the estimated credits or dollars, using HeyGen's published rates
 
   On the subscription channel, check remaining and rollover credits first (MCP `get_current_user`).
@@ -47,11 +48,28 @@ API wallet.
 - **Needs Ed's OK:** buying credits, changing plans, or paid test renders.
 - **Track separately:** subscription credits and API wallet spend are separate usage lines. Never combine them in reporting.
 
-## Character consistency
+## Character identity (Ed 2026-11-26, permanent)
 
-- Character Canon (`lib/characters/registry.js`, `lib/team/persona_images.json`) is the single source of truth. Use only approved avatar looks and HeyGen voices on either channel.
-- API renders pass the identity gate in `lib/video/heygen.js`. **MCP and Studio renders do not**, so confirm the avatar ID is the approved look before rendering.
-- HeyGen voices (the `*_VOICE_ID` env vars) are separate from the ElevenLabs phone voices.
+**One character. One identity. One voice. One personality. Multiple approved appearance variations.**
+
+The Character Canon (`lib/characters/registry.js`, admin page `/admin/characters`) is the only source of a teammate's current approved face, look, voice and personality. `lib/characters/production.js` resolves it from the character's **current release**:
+
+- **Face:** the approved face version in the current release.
+- **Production look:** exactly one active HeyGen look on channel `video`, built from that face. Other approved looks of the same face are on channel `video_variant` and are used only when named on purpose.
+- **Voice:** the approved voice version in the current release, spoken by its **ElevenLabs** voice (the canonical voice provider). HeyGen library voices are never canonical.
+- **Personality:** the approved persona version in the current release.
+
+**Automated renders (API)** resolve all of this in code (`renderExplainer`). The script is spoken in the canonical ElevenLabs voice, the audio is uploaded, and HeyGen lip-syncs the production look to it. `<FACE>_AVATAR_ID` and `<FACE>_VOICE_ID` env values are no longer read for renders. If the face, look or voice is unapproved or missing, the render **stops** with the reason (HTTP 409 `identity_not_approved`) and nothing is sent to HeyGen.
+
+**Hand productions (MCP or Studio)** must follow the same rule. Before rendering, run:
+
+```
+node scripts/character_identity.js <persona>
+```
+
+Use only the look IDs it prints. Speak in the teammate's canonical voice by generating the audio with her ElevenLabs voice and passing it to HeyGen as audio (MCP `audioUrl` / `audioAssetId`, or Studio's audio upload). If the script reports a missing or unapproved piece, stop and ask Ed.
+
+**Never** fall back to a superseded face, an older look, an unapproved candidate, a stock voice, another teammate's voice, or an outdated personality. Superseded faces and looks are kept in the Canon as history (rejected or retired) and are ineligible for new work. Old videos are archived, never deleted (`claire_explainers.status = 'retired'`).
 
 ## Getting subscription videos into the library
 

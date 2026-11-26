@@ -315,7 +315,9 @@
     } else if (s.type === 'video') {
       const player = s.video_ready
         ? `<video src="${esc(s.video_url)}" controls preload="none" playsinline></video>${s.poster ? `<img class="vposter" src="${esc(s.poster)}" alt=""><button class="vplay" aria-label="Play video">▶</button>` : ''}`
-        : `<div class="ph"><div class="pht">Video coming</div><div class="phs">This screen is built for the “${esc(s.label||'')}” explainer.<br>It plays here as soon as the video is rendered.</div></div>`;
+        : s.still
+          ? `<img class="vposter" src="${esc(s.still)}" alt="${esc(s.headline||'')}" style="cursor:default">`
+          : `<div class="ph"><div class="pht">Video coming</div><div class="phs">This screen is built for the “${esc(s.label||'')}” explainer.<br>It plays here as soon as the video is rendered.</div></div>`;
       inner = `${label(s)}
         <div class="videowrap">
           <div class="videocopy"><h2 style="font-size:44px;">${esc(s.headline||'')}</h2><div class="body">${esc(s.body||'')}</div>${chain(s)}</div>
