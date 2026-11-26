@@ -30,6 +30,7 @@ const { fetchAllQuery } = require('../lib/db/fetch_all');
 const { planTenurePayment, postTenurePayment } = require('../lib/accounting/homeowner_payment');
 const TP = require('../lib/accounting/transfer_proration');
 const CS = require('../lib/accounting/closing_statement');
+const CP = require('../lib/home_sales/closing_packets');
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -438,9 +439,39 @@ router.post('/scan', upload.single('file'), async (req, res) => {
     }
     if (match.status !== 'matched') console.warn('[home-sales] scan property not identified:', JSON.stringify({ community_id, status: match.status, reason: match.reason, options: match.matches.length }));
 
-    res.json({ extracted, raw_extracted: parsed, property_matches: match.matches, property_match: { status: match.status, reason: match.reason } });
+    // File the packet now (lib/home_sales/closing_packets.js), so a closing that
+    // is not recorded today is still on file and listed, never lost in the browser.
+    let packet = null;
+    try {
+      const only = match.status === 'matched' && match.matches.length === 1 ? (match.matches[0].property_id || match.matches[0].id) : null;
+      const { data: cm, error: cmErr } = await supabase.from('communities').select('management_company_id').eq('id', community_id).maybeSingle();
+      if (cmErr) throw new Error(cmErr.message);
+      packet = await CP.fileClosingPacket(supabase, { communityId: community_id, managementCompanyId: (cm && cm.management_company_id) || null,
+        buffer: req.file.buffer, fileName: req.file.originalname || null, mime: req.file.mimetype || null, extracted, match, propertyId: only });
+    } catch (e) {
+      console.error('[home-sales] closing packet could not be filed:', e.message);
+      packet = { error: 'closing_packet_not_filed: ' + safeErrorMessage(e) };
+    }
+
+    res.json({ extracted, raw_extracted: parsed, property_matches: match.matches, property_match: { status: match.status, reason: match.reason },
+      source_document_id: packet && packet.id ? packet.id : null, packet_already_on_file: !!(packet && packet.deduped), packet_error: packet && packet.error ? packet.error : null });
   } catch (err) {
     console.error('[home-sales] scan failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// ----------------------------------------------------------------------------
+// GET /api/home-sales/closing-packets?community_id — closing packets scanned
+// and filed but not yet recorded as a closing (no home_sales row points at
+// them). The work queue for closings that stopped part-way.
+// ----------------------------------------------------------------------------
+router.get('/closing-packets', async (req, res) => {
+  try {
+    if (!req.query.community_id) return res.status(400).json({ error: 'community_id_required' });
+    res.json({ packets: await CP.listUnrecordedPackets(supabase, req.query.community_id) });
+  } catch (err) {
+    console.error('[home-sales] closing-packets failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
   }
 });
@@ -537,6 +568,7 @@ router.post('/record-closing', express.json({ limit: '256kb' }), async (req, res
         closing_checks: checkPlan.checks || null, closing_payoff: checkPlan.payoff || null,
         buyer_phone: b.buyer_phone || null, source_document_name: b.source_document_name || null },
       notes: b.notes || null,
+      ...(/^[0-9a-f-]{36}$/i.test(String(b.source_document_id || '')) ? { source_document_id: b.source_document_id } : {}),
     };
     let saleId;
     if (b.sale_id) {
