@@ -18,6 +18,9 @@
 const assert = require('node:assert/strict');
 const crypto = require('crypto');
 for (const k of ['OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'SUPABASE_URL', 'SUPABASE_KEY']) process.env[k] = process.env[k] || (k === 'SUPABASE_URL' ? 'http://localhost:1' : 'test-key');
+// These tests exercise the send itself; the shared delivery window (lib/email/delivery_window)
+// has its own tests (tests/test_delivery_window.js), so it is set to 0 here.
+process.env.AI_EMAIL_MIN_DELAY_SECONDS = '0';
 process.env.GRAPH_TENANT_ID = process.env.GRAPH_TENANT_ID || 't'; process.env.GRAPH_CLIENT_ID = process.env.GRAPH_CLIENT_ID || 'c'; process.env.GRAPH_CLIENT_SECRET = process.env.GRAPH_CLIENT_SECRET || 's';
 let pass = 0, fail = 0; const pending = [];
 const check = (name, fn) => pending.push(async () => { try { await fn(); pass++; console.log('  ✓', name); } catch (e) { fail++; console.log('  ✗', name, '\n     ', e && e.message); } });

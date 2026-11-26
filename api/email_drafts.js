@@ -230,13 +230,16 @@ async function logSentDraftToTimeline(d, from, subject) {
   } catch (e) { console.warn('[email_drafts] timeline log skipped:', e.message); return { logged: false, resolved: false }; }
 }
 
-router.post('/:id/send', async (req, res) => {
+router.post('/:id/send', (req, res) => sendHandler(req, res));
+async function sendHandler(req, res) {
   try {
     // The approver is the signed-in person, verified from the session token,
     // never a name the browser supplies (Ed 2026-10-20: two of his approvals
     // were recorded as "staff" because the screen sent no name). No session,
     // no send.
-    const approver = await getActingUser(req);
+    // A scheduled release (lib/email/delivery_window) carries the approver recorded
+    // when the person approved it; it is set only in-process, never from HTTP.
+    const approver = req._approver || await getActingUser(req);
     if (!approver || approver.is_active === false || !approver.email) return res.status(401).json({ error: 'not_authenticated', message: 'Sign in to approve and send. Nothing was sent.' });
     const approvedBy = String(approver.email).toLowerCase();
     const { data: d, error } = await supabase.from('outbound_email_drafts').select('*').eq('id', req.params.id).maybeSingle();
@@ -272,6 +275,30 @@ router.post('/:id/send', async (req, res) => {
     } catch (e) {
       if (e.code === 'send_guard_not_installed') return res.status(503).json({ error: 'send_guard_not_installed', message: 'Sending is paused until the send-safety guard is installed (migration 539). Nothing was sent.' });
       throw e;
+    }
+
+    // THE SHARED COMMUNICATION WINDOW (Ed 2026-11-26, lib/email/delivery_window).
+    // The work is done and approved now; delivery waits a short window (2 minutes
+    // by default) so a newer message from the recipient, or a newer reply from us
+    // on the same thread, is accounted for instead of crossing in the mail. Urgent
+    // and time-sensitive mail, an explicit "send now", and workflows with their
+    // own window are not delayed. The release re-enters this handler and runs every
+    // check above again.
+    if (!req._deliveryRelease) {
+      const DW = require('../lib/email/delivery_window');
+      const waitMs = DW.windowFor(d, { sendNow: !!(req.body && req.body.send_now === true) });
+      if (waitMs > 0) {
+        const approvedAt = new Date().toISOString();
+        const sendAt = new Date(Date.now() + waitMs).toISOString();
+        const sched = { send_at: sendAt, approved_at: approvedAt, approved_by: approvedBy, approver_name: approver.full_name || null, approver_user_id: approver.id || null,
+          package_sha256: currentPackage, confirm_after_uncertain: retryAfterUncertain, confirm_after_amanda: !!(req.body && req.body.confirm_after_amanda === true), desk_persona: deskPersona };
+        const { error: sErr } = await supabase.from('outbound_email_drafts').update({ policy: { ...(d.policy || {}), scheduled_send: sched, delivery_hold: null }, send_error: null }).eq('id', d.id).eq('status', 'draft');
+        if (sErr) throw sErr;
+        DW.arm(d.id, sendAt, releaseScheduled);
+        const at = new Date(sendAt).toLocaleTimeString('en-US', { timeZone: 'America/Chicago', hour: 'numeric', minute: '2-digit' });
+        return res.status(202).json({ ok: true, scheduled: true, send_at: sendAt, to: d.to_email, window_seconds: Math.round(waitMs / 1000),
+          message: `Approved. It goes out at ${at} Central, unless the recipient writes again first (then it is held for you with the reason).` });
+      }
     }
 
     // Re-render the branded wrapper from the (possibly edited) plain body, so
@@ -397,7 +424,7 @@ router.post('/:id/send', async (req, res) => {
       approved_by: approvedBy, send_error: null, sent_internet_message_id: (sent && sent.internetMessageId) || null,
       // The approval record (Ed 2026-10-22): who approved, when, for which agent and mailbox, and
       // the message that went out. Never a generic "staff".
-      policy: { ...(d.policy || {}), approval: { approved_by: approvedBy, approved_by_name: approver.full_name || null, approver_user_id: approver.id || null, approved_at: sentAt, agent: d.persona, mailbox: from, message_id: (sent && sent.internetMessageId) || null, in_thread: !!threaded } },
+      policy: { ...(d.policy || {}), scheduled_send: null, approval: { approved_by: approvedBy, approved_by_name: approver.full_name || null, approver_user_id: approver.id || null, approved_at: sentAt, agent: d.persona, mailbox: from, message_id: (sent && sent.internetMessageId) || null, in_thread: !!threaded } },
       record_ownership: 'association_record',
     }).eq('id', d.id);
     if (replyTo) {
@@ -429,7 +456,57 @@ router.post('/:id/send', async (req, res) => {
     console.error('[email_drafts] send failed:', err.message);
     res.status(500).json({ error: safe(err) });
   }
-});
+}
+
+// Release a scheduled send at the end of its window (lib/email/delivery_window).
+// Held, never sent blindly, when the recipient or the thread wrote again, when a
+// newer reply on the same thread was approved (this one is superseded), or when
+// the draft changed after approval. Otherwise the normal send runs with every
+// check, as the person who approved it.
+async function releaseScheduled(id) {
+  const DW = require('../lib/email/delivery_window');
+  const { data: d, error } = await supabase.from('outbound_email_drafts').select('*').eq('id', id).maybeSingle();
+  if (error) throw error;
+  const sched = d && d.policy && d.policy.scheduled_send;
+  if (!d || d.status !== 'draft' || !sched) return { skipped: 'nothing scheduled' };
+  const hold = async (reason, extra = {}) => {
+    const { error: hErr } = await supabase.from('outbound_email_drafts').update({ policy: { ...(d.policy || {}), scheduled_send: null, delivery_hold: { reason, at: new Date().toISOString(), ...extra } }, send_error: `held: ${reason}` }).eq('id', d.id).eq('status', 'draft');
+    if (hErr) console.error(`[delivery_window] hold of ${d.id} not recorded: ${hErr.message}`);
+    console.log(`[delivery_window] ${d.persona || 'draft'} ${d.id} held: ${reason}`);
+    return { held: reason };
+  };
+  if (ReplyGuard.packageHash(d) !== sched.package_sha256) return hold('the draft changed after it was approved; review it again');
+  let conv = null;
+  if (d.source_email_ref) {
+    const { data: src } = await supabase.from('email_messages').select('conversation_id').eq('id', d.source_email_ref).maybeSingle();
+    conv = (src && src.conversation_id) || null;
+  }
+  const newer = await DW.newerInbound(supabase, { to: d.to_email, conversationId: conv, since: sched.approved_at });
+  if (newer) return hold(`${newer.sender_email || 'the recipient'} wrote again at ${new Date(newer.received_at).toLocaleTimeString('en-US', { timeZone: 'America/Chicago', hour: 'numeric', minute: '2-digit' })} ("${String(newer.subject || '').slice(0, 80)}"); answer both together`, { newer_message_id: newer.id });
+  const sup = await DW.supersededBy(supabase, d);
+  if (sup) {
+    const { error: xErr } = await supabase.from('outbound_email_drafts').update({ status: 'discarded', policy: { ...(d.policy || {}), scheduled_send: null, superseded_by: sup.id }, send_error: 'superseded: a newer reply on the same thread was approved' }).eq('id', d.id).eq('status', 'draft');
+    if (xErr) console.error(`[delivery_window] supersede of ${d.id} not recorded: ${xErr.message}`);
+    return { superseded_by: sup.id };
+  }
+  const out = { status: 200, json: null };
+  const res = { status(c) { out.status = c; return this; }, json(j) { out.json = j; return this; } };
+  await sendHandler({ params: { id }, _deliveryRelease: true,
+    _approver: { email: sched.approved_by, full_name: sched.approver_name, id: sched.approver_user_id, is_active: true },
+    body: { approved_package_sha256: sched.package_sha256, confirm_after_uncertain: sched.confirm_after_uncertain, confirm_after_amanda: sched.confirm_after_amanda, desk_persona: sched.desk_persona } }, res);
+  if (out.status !== 200) return hold(`not sent: ${(out.json && (out.json.message || out.json.error)) || 'status ' + out.status}`);
+  return { sent: true };
+}
+
+// Re-arm every pending scheduled send after a restart (one-shot timers; no polling).
+async function rearmScheduled() {
+  const DW = require('../lib/email/delivery_window');
+  const list = await DW.pending(supabase);
+  for (const d of list) DW.arm(d.id, d.policy.scheduled_send.send_at, releaseScheduled);
+  if (list.length) console.log(`[delivery_window] re-armed ${list.length} scheduled send(s)`);
+  return list.length;
+}
+
 
 // POST /api/email-drafts/:id/redraft — add comments and let the persona rewrite
 // the message body. Returns the revised body for review; does NOT save or send.
@@ -551,3 +628,5 @@ router.post('/:id/discard', async (req, res) => {
 });
 
 module.exports = router;
+module.exports.releaseScheduled = releaseScheduled;
+module.exports.rearmScheduled = rearmScheduled;
