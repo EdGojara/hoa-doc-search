@@ -138,11 +138,13 @@ router.get('/:cid/board-budget-report', async (req, res) => {
     const budget_id = /^[0-9a-f-]{36}$/i.test(String(req.query.budget_id || '')) ? req.query.budget_id : null;
     const report = await B.buildBoardReport(supabase, { community_id: req.params.cid, target_year, as_of, budget_id });
     // The in-app view keeps the notes, assumptions and explanations; the printed PDF is financial only unless ?notes=1.
-    if (String(req.query.format || 'pdf') === 'html') return res.set('Content-Type', 'text/html').send(B.renderBoardReportHtml(report, { notes: true }));
+    // ?audience=board: the board-facing package (no internal agreement tracking); notes on by default.
+    const audience = String(req.query.audience || '') === 'board' ? 'board' : 'full';
+    if (String(req.query.format || 'pdf') === 'html') return res.set('Content-Type', 'text/html').send(B.renderBoardReportHtml(report, { notes: true, audience }));
     const slug = String(report.community.name || 'budget').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
     res.set('Content-Type', 'application/pdf');
     res.set('Content-Disposition', `${req.query.download ? 'attachment' : 'inline'}; filename="${slug}-${report.budget.approved ? 'adopted' : 'proposed'}-${target_year}-budget.pdf"`);
-    res.send(await B.boardReportPdf(report, { notes: String(req.query.notes || '') === '1' }));
+    res.send(await B.boardReportPdf(report, { notes: audience === 'board' || String(req.query.notes || '') === '1', audience }));
   } catch (err) { fail(res, 'board-budget-report', err); }
 });
 
