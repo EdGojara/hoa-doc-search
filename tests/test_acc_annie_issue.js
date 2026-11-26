@@ -93,7 +93,7 @@ A.registerIssuer(async (id, body) => { calls.push({ id, body }); return { status
     delete process.env.ACC_AI_INFO_REQUESTS;
     check('kill switch: nothing sent', !r.requested_info && /turned off/.test(r.skipped || '') && calls.length === k2);
     const ei = fs.readFileSync(path.join(__dirname, '..', 'lib', 'applications', 'email_intake.js'), 'utf8');
-    check('the email door sends its receipt BEFORE Annie\'s next step', /deferIssue: true/.test(ei) && ei.indexOf('await sendAcknowledgment({ to: ackTo') > 0 && ei.indexOf('await sendAcknowledgment({ to: ackTo') < ei.indexOf('issueIfReadySoon(supabase, pend.id'));
+    check('the email door coordinates ONE first message (receipt folded into the outcome)', /deferIssue: true/.test(ei) && ei.includes("require('../acc/first_contact').respondToApplication(supabase, pend.id"));
   }
 
   console.log('\nWhich letter Annie sends');

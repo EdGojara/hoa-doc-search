@@ -148,6 +148,11 @@
       "consequence": "high",
       "prior": "haiku-4-5"
     },
+    "acc.multi_item_plan": {
+      "model": "tier:standard",
+      "fallback": null,
+      "consequence": "high"
+    },
     "drv.citation": {
       "model": "tier:standard",
       "fallback": null,
