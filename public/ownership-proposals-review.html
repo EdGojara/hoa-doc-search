@@ -290,6 +290,7 @@
       <label>Search
         <input type="search" id="filterSearch" placeholder="address, owner, account…">
       </label>
+      <button type="button" class="primary-btn" id="packageBtn" style="display:none;" title="Every completed builder closing pending in this community, approved together">Closing package</button>
       <div class="count" id="resultCount">—</div>
     </div>
     <div id="queueBody">
@@ -618,7 +619,58 @@ async function decide(id, action, prorationFlags) {
 }
 
 function debounce(fn, ms) { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; }
-$('filterCommunity').addEventListener('change', (e) => { filters.community_id = e.target.value; loadQueue(); });
+$('filterCommunity').addEventListener('change', (e) => { filters.community_id = e.target.value; $('packageBtn').style.display = filters.community_id ? '' : 'none'; loadQueue(); });
+$('packageBtn').addEventListener('click', () => openPackage(filters.community_id));
+
+// ----------------------------------------------------------------------------
+// Owner closing package (Ed 2026-11-26): every completed builder closing pending in the
+// community, shown once with what each posts, approved with ONE owner click. The server
+// re-checks the package (fingerprint) and runs each transfer through the same path as the
+// Approve button, then posts the buyers' capitalization fees through Kat's entry run.
+// ----------------------------------------------------------------------------
+function pkgMoney(c) { return (Number(c) < 0 ? '-' : '') + '$' + (Math.abs(Number(c || 0)) / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+async function openPackage(cid) {
+  const panel = $('detailPanel');
+  panel.style.display = '';
+  panel.innerHTML = '<div class="empty-state"><div class="loader"></div> Building the closing package…</div>';
+  let pkg;
+  try { pkg = await api('GET', '/api/ownership-proposals/package?community_id=' + encodeURIComponent(cid)); }
+  catch (e) { panel.innerHTML = '<div class="empty-state">' + escapeHtml(e.status === 403 ? 'Only the owner approves a closing package.' : e.message) + '</div>'; return; }
+  const t = pkg.totals;
+  const rows = pkg.rows.map((r) => '<tr><td>' + escapeHtml(r.address) + '</td><td>' + fmtDay(r.settlement_date) + '</td><td>' + escapeHtml(r.buyer || '') + '</td><td style="text-align:right">' + pkgMoney(r.builder_adjustment_cents) + '</td><td style="text-align:right">' + pkgMoney(r.homeowner_due_cents) + '</td><td style="text-align:right">' + (r.capitalization_cents ? pkgMoney(r.capitalization_cents) : escapeHtml(r.capitalization_note || '')) + '</td></tr>').join('');
+  const ex = pkg.excluded.map((x) => '<li>' + escapeHtml(x.address) + (x.settlement_date ? ' (' + fmtDay(x.settlement_date) + ')' : '') + ': ' + escapeHtml(x.reason) + '</li>').join('');
+  panel.innerHTML = '<h2 style="margin-top:0">Closing package</h2>'
+    + '<p>' + t.transfers + ' completed builder closing' + (t.transfers === 1 ? '' : 's') + ', each at its recorded settlement date. Previously billed amounts stay as billed; each transfer posts only the builder unbilled days and the buyer share, then the buyer capitalization fee.</p>'
+    + (pkg.rows.length ? '<table style="width:100%;border-collapse:collapse;font-size:13px"><thead><tr><th style="text-align:left">Property</th><th style="text-align:left">Settled</th><th style="text-align:left">Buyer</th><th style="text-align:right">Builder (unbilled days)</th><th style="text-align:right">Buyer share</th><th style="text-align:right">Capitalization fee</th></tr></thead><tbody>' + rows
+      + '<tr style="font-weight:600;border-top:1px solid currentColor"><td colspan="3">Total</td><td style="text-align:right">' + pkgMoney(t.builder_adjustment_cents) + '</td><td style="text-align:right">' + pkgMoney(t.homeowner_due_cents) + '</td><td style="text-align:right">' + pkgMoney(t.capitalization_cents) + '</td></tr></tbody></table>' : '<p>No completed builder closings are pending.</p>')
+    + (ex ? '<h3>Not in this package</h3><ul style="font-size:13px">' + ex + '</ul>' : '')
+    + (pkg.rows.length ? '<div class="actions" style="margin-top:14px"><button class="primary-btn" id="pkgApprove">Approve all ' + t.transfers + ' and post</button></div>' : '')
+    + '<div id="pkgResult" style="margin-top:12px"></div>';
+  const btn = $('pkgApprove');
+  if (!btn) return;
+  btn.addEventListener('click', async () => {
+    btn.disabled = true; btn.innerHTML = '<span class="loader"></span> Approving ' + t.transfers + ' transfers…';
+    try {
+      const out = await api('POST', '/api/ownership-proposals/package/execute', { community_id: cid, fingerprint: pkg.fingerprint });
+      const lines = out.results.map((r) => '<li>' + escapeHtml(r.address) + ': ' + (r.transferred ? 'transferred, proration ' + escapeHtml(r.proration) + (r.proration_error ? ' (' + escapeHtml(r.proration_error) + ')' : '') : 'NOT transferred: ' + escapeHtml(r.error || '')) + '</li>').join('');
+      const c = out.capitalization || {};
+      $('pkgResult').innerHTML = '<p><b>' + out.transferred + ' transferred, ' + out.failed + ' not.</b> Capitalization fees: ' + (c.error ? 'not posted (' + escapeHtml(c.error) + ')' : (c.posted || 0) + ' of ' + (c.prepared || 0) + ' posted') + '.</p><ul style="font-size:13px">' + lines + '</ul>';
+      btn.textContent = 'Done';
+      loadQueue();
+    } catch (e) {
+      btn.disabled = false; btn.textContent = 'Approve all ' + t.transfers + ' and post';
+      $('pkgResult').innerHTML = '<p>' + escapeHtml(e.message) + '</p>';
+      if (e.body && e.body.code === 'stale_package') openPackage(cid);
+    }
+  });
+}
+(function () {
+  const q = new URLSearchParams(location.search);
+  if (q.get('package') && q.get('community')) {
+    filters.community_id = q.get('community');
+    setTimeout(() => { const sel = $('filterCommunity'); if (sel) sel.value = filters.community_id; $('packageBtn').style.display = ''; openPackage(filters.community_id); }, 0);
+  }
+})();
 $('filterStatus').addEventListener('change', (e) => { filters.status = e.target.value; loadQueue(); });
 $('filterSearch').addEventListener('input', debounce((e) => { filters.q = e.target.value; loadQueue(); }, 250));
 $('refreshBtn').addEventListener('click', (e) => { e.preventDefault(); loadQueue(); });

@@ -59,6 +59,45 @@ router.get('/', async (req, res) => {
 });
 
 // ============================================================================
+// Owner transfer package (Ed 2026-11-26): every completed builder closing pending in one
+// community, approved with ONE owner click instead of lot by lot. Read: what each transfer posts
+// (the same proration Ownership Review shows) plus the buyer's capitalization fee, the totals and
+// the excluded transfers with their reasons. Execute: the signed-in owner's approval of exactly
+// that package (fingerprint), run through the existing transfer path and Kat's journal-entry run.
+// ============================================================================
+const TPKG = require('../lib/home_sales/transfer_package');
+const { requireOwner } = require('./_require_admin');
+const UUID_RE = /^[0-9a-f-]{36}$/i;
+
+router.get('/package', async (req, res) => {
+  try {
+    if (!(await requireOwner(req, res))) return;
+    if (!UUID_RE.test(String(req.query.community_id || ''))) return res.status(400).json({ error: 'community_id_required' });
+    res.json(await TPKG.buildPackage(supabase, { communityId: req.query.community_id }));
+  } catch (err) {
+    console.error('[ownership-proposals] package failed:', err.message);
+    res.status(err.code === 'too_many' ? 409 : 500).json({ error: err.code === 'too_many' ? err.message : safeErrorMessage(err) });
+  }
+});
+
+router.post('/package/execute', express.json({ limit: '16kb' }), async (req, res) => {
+  try {
+    const u = await requireOwner(req, res); if (!u) return;
+    const b = req.body || {};
+    if (!UUID_RE.test(String(b.community_id || ''))) return res.status(400).json({ error: 'community_id_required' });
+    if (!/^[0-9a-f]{64}$/.test(String(b.fingerprint || ''))) return res.status(400).json({ error: 'fingerprint_required' });
+    // The signed-in owner's session is the approval (never a chat instruction or a script).
+    const out = await TPKG.executePackage(supabase, { communityId: b.community_id, fingerprint: b.fingerprint, owner: { user_id: u.user && u.user.id, email: u.email } });
+    res.json(out);
+    require('../lib/onboarding/resume').resumeAfter({ reason: 'ownership transfer package approved' });
+  } catch (err) {
+    if (['stale_package', 'empty', 'approval_required'].includes(err.code)) return res.status(409).json({ error: err.message, code: err.code, package: err.package || null });
+    console.error('[ownership-proposals] package execute failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// ============================================================================
 // GET /api/ownership-proposals/:id
 // ============================================================================
 router.get('/:id', async (req, res) => {
