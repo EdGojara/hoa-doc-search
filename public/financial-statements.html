@@ -260,7 +260,11 @@
     const cats = j.categories.filter((c) => c.is_active);
     const todo = j.accounts.filter((a) => a.status !== 'approved');
     const opts = (sec, sel) => '<option value="">Choose a category…</option>' + cats.filter((c) => c.section === sec).sort((a, b) => a.name.localeCompare(b.name)).map((c) => '<option value="' + c.id + '"' + (c.id === sel ? ' selected' : '') + '>' + esc(c.report_label || c.name) + '</option>').join('');
+    // Approve Kat's proposals in one step (Ed 2026-11-26): the owner approves the recommendations shown
+    // below; each row still shows the proposed category and can be changed or approved on its own.
+    const proposedIds = todo.filter((a) => a.status === 'proposed').map((a) => a.id);
     panel.innerHTML = '<h3>Balance-sheet mapping</h3><div class="note">' + j.counts.approved + ' approved · ' + j.counts.proposed + ' proposed · ' + j.counts.unmapped + ' unmapped. Unmapped accounts stay in every total. A board packet can be finalized only after every account is mapped (or the owner overrides) and the period is closed.</div>'
+      + (proposedIds.length ? '<div class="row"><span class="nm">Review the proposed category on each account below, then approve them together.</span><button class="btn gold" id="bsApproveAll">Approve all ' + proposedIds.length + ' proposals</button></div>' : '')
       + todo.map((a) => '<div class="row" data-a="' + a.id + '"><span class="an">' + esc(a.account_number) + '</span><span class="nm">' + esc(a.account_name) + ' <span class="pill">' + esc(a.status) + '</span></span><select data-sec="' + a.account_type + '">' + opts(a.account_type, a.category_id) + '</select>'
         + (a.status === 'proposed' ? '<button class="btn" data-act="approve">Approve proposal</button>' : '') + '<button class="btn gold" data-act="set">Save</button></div>').join('')
       + '<div class="row"><span class="nm">New category</span><select id="ncSec"><option value="asset">Asset</option><option value="liability">Liability</option><option value="equity">Fund balance</option></select><input id="ncName" placeholder="Category name" style="font:inherit;padding:4px 8px;border:1px solid var(--rule);border-radius:6px;background:var(--sheet);color:var(--ink)"><button class="btn" id="ncAdd">Add</button></div>';
@@ -274,6 +278,15 @@
       if (!rr.ok) { b.disabled = false; alert(jj.detail || jj.error || 'Could not save the mapping.'); return; }
       load();
     }));
+    const all = $('bsApproveAll');
+    if (all) all.addEventListener('click', async () => {
+      if (!confirm('Approve all ' + proposedIds.length + ' proposed balance-sheet categories as shown?')) return;
+      all.disabled = true;
+      const rr = await fetch('/api/financial-statements/' + encodeURIComponent(S.cid) + '/balance-sheet-mapping/approve', { method: 'POST', headers: { 'Content-Type': 'application/json', ...(await authHeader()) }, body: JSON.stringify({ account_ids: proposedIds }) });
+      const jj = await rr.json().catch(() => ({}));
+      if (!rr.ok) { all.disabled = false; alert(jj.detail || jj.error || 'Could not approve the proposals.'); return; }
+      load();
+    });
     const add = $('ncAdd');
     if (add) add.addEventListener('click', async () => {
       const name = $('ncName').value.trim(); if (!name) return;
