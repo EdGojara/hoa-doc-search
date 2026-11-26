@@ -2938,6 +2938,10 @@ app.get('/acc-review/decisions', async (req, res) => {
   // (Pending Ed's approval / Submitted / Completed). Without them the tag was
   // computed from the request text alone and never cleared.
   const WITH_AUTHORITY = `${WITH_CURRENT}, decision_record, owner_review, approval_gate, approval_gate_reason, community_id, current_letter_body`;
+  // Work views (Ed 2026-11-26, lib/acc/work_view): receipt date (migration 579),
+  // duplicate link, and what the next action reads from.
+  const WITH_VIEW = `${WITH_AUTHORITY}, received_at, received_at_basis, duplicate_of_id, decided_at, letter_pdf_storage_path`;
+  const WITH_VIEW_PRE579 = `${WITH_AUTHORITY}, duplicate_of_id, decided_at, letter_pdf_storage_path`;
   // Decided cases being reconsidered (migration 576) are open work again.
   let recons = [];
   {
@@ -2969,7 +2973,9 @@ app.get('/acc-review/decisions', async (req, res) => {
     return query;
   };
   try {
-    let { data, error } = await run(WITH_AUTHORITY);
+    let { data, error } = await run(WITH_VIEW);
+    if (error && /received_at/i.test(error.message || '')) ({ data, error } = await run(WITH_VIEW_PRE579));
+    if (error && /duplicate_of_id|decided_at|letter_pdf_storage_path|does not exist/i.test(error.message || '')) ({ data, error } = await run(WITH_AUTHORITY));
     if (error && /decision_record|owner_review|approval_gate|does not exist/i.test(error.message || '')) ({ data, error } = await run(WITH_CURRENT));
     if (error && /current_ai_recommendation|current_review_at|does not exist/i.test(error.message || '')) ({ data, error } = await run(WITH_ACK));
     if (error && /acknowledged_at|acknowledgment_error|does not exist/i.test(error.message || '')) {
@@ -2987,11 +2993,30 @@ app.get('/acc-review/decisions', async (req, res) => {
     const delegations = await _accDelegations([...new Set((data || []).map((r) => r.community_id).filter(Boolean))]);
     // The decision shown is the one in effect (a revised decision, when there is one).
     const shown = await require('./lib/acc/effective').withEffective(supabase, data || []);
+    // Lifecycle of each community (an ended one never reaches Annie's queue) and
+    // the other applications at the same property (a decided twin flags a duplicate).
+    const WV = require('./lib/acc/work_view');
+    const commRows = new Map();
+    {
+      const cids = [...new Set((data || []).map((r) => r.community_id).filter(Boolean))];
+      if (cids.length) {
+        const { data: cs, error: cErr } = await supabase.from('communities').select('id, name, management_status, management_end_date').in('id', cids);
+        if (cErr) console.warn('[acc-review/decisions] community lifecycle not read:', cErr.message);
+        for (const c of cs || []) commRows.set(c.id, c);
+      }
+    }
+    const addrKey = (r) => `${r.community_id}|${String(r.homeowner_address || '').toLowerCase().replace(/,.*$/, '').replace(/[^a-z0-9]/g, '')}`;
+    const byAddr = new Map();
+    for (const r of data || []) { const k = addrKey(r); if (!k.endsWith('|')) { if (!byAddr.has(k)) byAddr.set(k, []); byAddr.get(k).push(r); } }
     const decisions = shown.map(({ decision_record, owner_review, approval_gate, approval_gate_reason, current_letter_body, ...r }) => {
       const row = { ...r, decision_record, owner_review, approval_gate, approval_gate_reason, current_letter_body, acc_delegation: delegations.get(r.community_id) || null };
       const a = DA.authorityFor(row);
       const rc = reconByCase.get(r.id);
-      const out = { ...r, queue_stage: DA.queueStage(row, a), ...(rc ? { reconsideration: rc, queue_stage: require('./lib/acc/reconsideration').queueStage(rc) } : {}) };
+      const comm = commRows.get(r.community_id) || null;
+      let work_view = WV.workView(row, { authority: a, community: comm ? { ...comm, acc_delegation: row.acc_delegation } : null, twins: byAddr.get(addrKey(r)) || [] });
+      // A decided case being reconsidered (migration 576) is open work again.
+      if (rc) work_view = { ...work_view, view: 'current', responsible: 'Annie', next_action: 'Reconsideration in progress: Annie reviews the new information' };
+      const out = { ...r, queue_stage: DA.queueStage(row, a), work_view, ...(rc ? { reconsideration: rc, queue_stage: require('./lib/acc/reconsideration').queueStage(rc) } : {}) };
       if (out.effective) out.effective = { ...out.effective, letter_text: undefined };
       return a.escalated && a.open ? { ...out, authority: { label: a.label, triggers: a.triggers } } : out;
     });
@@ -3795,6 +3820,13 @@ require('./lib/acc/annie_issue').registerIssuer(async (id, body) => {
   await _accFinalizeHandler({ params: { id }, body, headers: {}, _accAgentIssuer: _ACC_ANNIE_ISSUER }, res);
   return out;
 });
+// RECOVERY on start (Ed 2026-11-26, lib/acc/catch_up): current applications
+// whose receipt or request for information never went out are finished through
+// the normal path once per deploy. Not a poll: one run, after the engine and
+// mail are ready. Never the historical backlog.
+setTimeout(() => {
+  require('./lib/acc/catch_up').catchUpCurrentCases(supabase).catch((e) => console.error('[acc-catch-up] failed:', e.message));
+}, 90 * 1000).unref();
 
 // POST /acc-review/annie/issue-ready (owner only): cases already waiting when
 // Annie started issuing (their reviews predate it). { dry_run: true } lists

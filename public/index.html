@@ -15467,10 +15467,21 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
     // pending_review OR awaiting_info (waiting on the homeowner). Ed 2026-07-22.
     const oldestFirst = (a,b) => new Date(a.created_at||0) - new Date(b.created_at||0);
     const byStage = (st) => accCurrentList.filter(a => accStageOf(a) === st);
-    const pendingEd = byStage('pending_ed').sort(oldestFirst);
-    const submitted = byStage('submitted').sort(oldestFirst);
-    const readyToSend = byStage('ready_to_send').sort(oldestFirst);
-    const done = byStage('completed').sort((a,b) => new Date(b.created_at||0) - new Date(a.created_at||0));
+    // Work views (Ed 2026-11-26, lib/acc/work_view): Annie's queue holds only
+    // current, actionable applications; waiting, decision-owner and historical
+    // cases have their own views. An older server without work_view falls back
+    // to the stage sections.
+    const viewOf = (a) => (a.work_view && a.work_view.view) || null;
+    const hasViews = accCurrentList.some(a => a.work_view);
+    const byView = (v) => accCurrentList.filter(a => viewOf(a) === v);
+    const pendingEd = hasViews ? [] : byStage('pending_ed').sort(oldestFirst);
+    const submitted = hasViews ? [] : byStage('submitted').sort(oldestFirst);
+    const readyToSend = hasViews ? [] : byStage('ready_to_send').sort(oldestFirst);
+    const vCurrent = byView('current').sort(oldestFirst);
+    const vWaitingApplicant = byView('waiting_applicant').sort(oldestFirst);
+    const vWaitingDecision = byView('waiting_decision').sort(oldestFirst);
+    const vHistorical = byView('historical').sort(oldestFirst);
+    const done = (hasViews ? byView('completed') : byStage('completed')).sort((a,b) => new Date(b.created_at||0) - new Date(a.created_at||0));
 
     function rowHtml(a) {
       const created = a.created_at ? new Date(a.created_at) : null;
@@ -15510,7 +15521,21 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
             ${a.authority && a.authority.label ? `<div style="margin-top:4px;"><span class="acc-pill" style="background:#fee2e2; color:#991b1b;" title="${accEsc((a.authority.triggers || []).join(', '))}">⚑ ${accEsc(a.authority.label)}</span></div>` : ''}
           </div>
           <div class="acc-age ${ageClass}">${ageTxt}</div>
+          ${accWorkViewLine(a)}
         </div>`;
+    }
+    // Receipt date, deadline, responsible person and next action (lib/acc/work_view).
+    function accWorkViewLine(a) {
+      const w = a.work_view;
+      if (!w || w.view === 'completed') return '';
+      const d = (x) => x ? new Date(x).toLocaleDateString('en-US', { timeZone: 'America/Chicago', month: 'short', day: 'numeric', year: 'numeric' }) : 'unknown';
+      return `<div style="grid-column: 1 / -1; font-size:11.5px; color:#334155; margin-top:6px; display:flex; gap:14px; flex-wrap:wrap;">
+        <span><strong>Received</strong> ${accEsc(d(w.received_at))}</span>
+        <span title="${accEsc(w.deadline_basis || '')}" style="${w.overdue ? 'color:#b91c1c; font-weight:600;' : ''}"><strong>Deadline</strong> ${accEsc(d(w.deadline))}${w.overdue ? ' (passed)' : ''}</span>
+        <span><strong>Responsible</strong> ${accEsc(w.responsible || '')}</span>
+        <span><strong>Next</strong> ${accEsc(w.next_action || '')}</span>
+        ${(w.flags || []).length ? `<span style="color:#92400e;">⚑ ${accEsc(w.flags.join('; '))}</span>` : ''}
+      </div>`;
     }
 
     function draftRowHtml(d) {
@@ -15543,6 +15568,14 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
     const sections = [
       { key: 'not_filed', title: '⚠ Received, not filed', color: '#991b1b', rows: accIntakeExceptions, render: exceptionRowHtml,
         note: 'ACC emails that reached trustEd but are not in the queue, with the reason. File each one (it runs the same intake as Annie and joins an open application for the same homeowner instead of duplicating), or mark it not an application. Nothing is decided or sent to the homeowner.' },
+      { key: 'current', title: '📥 Current applications (Annie)', color: '#92400e', rows: vCurrent, render: rowHtml,
+        note: "Annie's working queue: receipt, review, requests for missing information and her decisions within delegated authority." },
+      { key: 'waiting_applicant', title: '📨 Waiting on homeowner or builder', color: '#1E2761', rows: vWaitingApplicant, render: rowHtml,
+        note: 'Annie asked for something specific; nothing new has arrived since. She re-reviews as soon as it does.' },
+      { key: 'waiting_decision', title: '✋ Waiting on committee or owner decision', color: '#991b1b', rows: vWaitingDecision, render: rowHtml,
+        note: 'The decision belongs to Ed (his two exceptions or his backlog hold), the Committee or Board, or the developer. Amanda tracks the deadline.' },
+      { key: 'historical', title: '🗄 Historical exceptions (management review)', color: '#475569', rows: vHistorical, render: rowHtml, collapsed: true,
+        note: 'Older unresolved applications past their review period, and applications in communities Bedrock no longer manages. Amanda oversees; Annie prepares a recommended disposition; nothing is sent to the homeowner without Ed.' },
       { key: 'pending_ed', title: "✋ Pending Ed's approval", color: '#991b1b', rows: pendingEd, render: rowHtml,
         note: 'Annie has recommended an approval or denial, or the case needs your judgment. Nothing is issued until an authorized decision is recorded.' },
       { key: 'submitted', title: '📥 Submitted applications', color: '#92400e', rows: submitted, render: rowHtml,
@@ -15550,15 +15583,17 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
       { key: 'drafts', title: '🗂️ Saved drafts', color: '#1E2761', rows: accSavedDrafts, render: draftRowHtml,
         note: 'Started on the Review screen and never submitted. Open resumes it with its files.' },
       { key: 'ready_to_send', title: '✓ Decided, letter not sent', color: '#166534', rows: readyToSend, render: rowHtml },
-      { key: 'completed', title: '✓ Completed decisions', color: '#166534', rows: done, render: rowHtml },
+      { key: 'completed', title: hasViews ? '✓ Completed and archived' : '✓ Completed decisions', color: '#166534', rows: done, render: rowHtml, collapsed: hasViews },
     ];
     let html = '';
     let first = true;
     for (const sec of sections) {
       if (!sec.rows.length) continue;
-      html += `<div data-acc-section="${sec.key}" style="font-size:12px; font-weight:700; color:${sec.color}; text-transform:uppercase; letter-spacing:0.5px; margin:${first ? '2px' : '20px'} 0 ${sec.note ? '2px' : '8px'};">${sec.title} — ${sec.rows.length}</div>`;
-      if (sec.note) html += `<div style="font-size:11.5px; color:#5a7390; margin:0 0 8px;">${sec.note}</div>`;
-      html += sec.rows.map(sec.render).join('');
+      const head = `<div data-acc-section="${sec.key}" style="display:inline; font-size:12px; font-weight:700; color:${sec.color}; text-transform:uppercase; letter-spacing:0.5px;">${sec.title} (${sec.rows.length})</div>`;
+      const body = (sec.note ? `<div style="font-size:11.5px; color:#5a7390; margin:2px 0 8px;">${sec.note}</div>` : '') + sec.rows.map(sec.render).join('');
+      html += sec.collapsed
+        ? `<details style="margin:${first ? '2px' : '20px'} 0 8px;"><summary style="cursor:pointer;">${head}</summary>${body}</details>`
+        : `<div style="margin:${first ? '2px' : '20px'} 0 ${sec.note ? '0' : '8px'};">${head}</div>${body}`;
       first = false;
     }
     wrap.innerHTML = html;
