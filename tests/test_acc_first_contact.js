@@ -95,7 +95,18 @@ check('association clock is separate (governing documents) and flags near/passed
   && T.governing({ community_name: 'Quail Ridge', created_at: '2026-10-01T12:00:00Z' }, null, new Date('2026-11-28T12:00:00Z')).state === 'passed');
 const sch = fs.readFileSync(path.join(__dirname, '..', 'lib', 'scheduler.js'), 'utf8');
 check('Amanda\'s sweep runs on the existing architectural-deadline job (no new timer)', /require\('\.\/acc\/tracking'\)\.sweep\(supabase/.test(sch));
-check('the sweep never sweeps the historical backlog or ended communities', /BH\.isBacklogHeld\(r\) \|\| \(comm && lifecycle\.isEnded\(comm, now\)\)/.test(fs.readFileSync(path.join(__dirname, '..', 'lib', 'acc', 'tracking.js'), 'utf8')));
+{
+  const trk = fs.readFileSync(path.join(__dirname, '..', 'lib', 'acc', 'tracking.js'), 'utf8');
+  check('the sweep skips ended communities; held (historical) cases are tracked for Ed with the association clock only, no escalation to send', /if \(comm && lifecycle\.isEnded\(comm, now\)\) continue;/.test(trk) && /const levels = held \? levelsFor\(\{ levels: \[\] \}, gov\)/.test(trk) && /if \(!held && owner && DA\.reviewAt/.test(trk) && !/\.sendAs\(|acknowledgeApplication|issueIfReady/.test(trk));
+  const g = { limit_at: '2026-12-10T18:00:35Z', state: 'open' };
+  const base = { decision_type: 'request_more_info', updated_at: '2026-11-26T19:44:00Z', submitter_email: 'a@example.test' };
+  let na = T.nextAction(base, { next: null }, g);
+  check('waiting on the homeowner: names it, owner Homeowner, due = association deadline', na.who === 'Homeowner' && na.due === g.limit_at && /Waiting on the homeowner/.test(na.text));
+  na = T.nextAction({ submitter_email: 'a@example.test' }, { next: null }, g, { held: true });
+  check('historical hold: owner Ed, nothing sent', na.who === 'Ed' && /nothing is sent/.test(na.text));
+  na = T.nextAction({ submitter_email: null }, { next: { key: 'acknowledgment', label: 'Acknowledge receipt', owner: 'Annie', due_at: '2026-11-19T18:04:00Z' } }, g, { owner: 'Ed' });
+  check('no applicant email: a person contacts the homeowner (no impossible "acknowledge" task)', /No applicant email/.test(na.text) && /Ed's/.test(na.text));
+}
 
 console.log(failures ? `\n\x1b[31m${failures} failed\x1b[0m` : '\n\x1b[32mall ACC first-contact checks passed\x1b[0m');
 process.exit(failures ? 1 : 0);
