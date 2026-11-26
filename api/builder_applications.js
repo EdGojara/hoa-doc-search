@@ -1150,9 +1150,12 @@ router.get('/', async (req, res) => {
       const { data: wis, error: we } = refs.length ? await supabase.from('work_items').select('source_ref, assigned_to, urgency').in('source_ref', refs).in('status', ['new', 'in_progress', 'waiting']) : { data: [], error: null };
       if (we) throw we;
       const wiBy = new Map((wis || []).map((w) => [w.source_ref, w]));
+      const openItems = items.filter((i) => ['received', 'under_review', 'info_requested'].includes(i.status));
+      const { clockFacts } = require('../lib/builder_arc/tracking');
+      const factsBy = await clockFacts(supabase, openItems.map((i) => ({ id: i.application_id })));
       for (const it of items) {
         const c = byId.get(it.community_id) || {};
-        if (['received', 'under_review', 'info_requested'].includes(it.status)) it.deadlines = computeDeadlines({ submitted_at: it.submitted_at, fast_track: it.fast_track }, c, readStandards(c) || {});
+        if (['received', 'under_review', 'info_requested'].includes(it.status)) it.deadlines = computeDeadlines({ submitted_at: it.submitted_at, decided_at: it.decided_at }, c, readStandards(c) || {}, new Date(), { ...(factsBy.get(it.application_id) || {}), recommended_action: it.assessment_recommended_action });
         const w = wiBy.get(`builder_arc:${it.application_id}`);
         if (w) { it.owner = w.assigned_to; it.urgency = w.urgency; }
       }
@@ -1331,7 +1334,11 @@ router.get('/:id', async (req, res, next) => {
       const { loadStandards } = require('../lib/builder_arc/standards');
       const { computeDeadlines } = require('../lib/builder_arc/deadlines');
       const { community: cm, standards } = await loadStandards(supabase, a.community_id);
-      if (['received', 'under_review', 'info_requested'].includes(a.status)) deadlines = computeDeadlines(a, cm || {}, standards || {});
+      if (['received', 'under_review', 'info_requested'].includes(a.status)) {
+        const { clockFacts } = require('../lib/builder_arc/tracking');
+        const f = (await clockFacts(supabase, [a])).get(a.id);
+        deadlines = computeDeadlines(a, cm || {}, standards || {}, new Date(), { ...f, recommended_action: a.assessment_recommended_action });
+      }
       const { data: wi } = await supabase.from('work_items').select('id, assigned_to, status, urgency, sla_due_at, next_step').eq('source_ref', `builder_arc:${a.id}`).order('created_at', { ascending: false }).limit(1);
       work_item = (wi && wi[0]) || null;
       const { parseAddress } = require('../lib/builder_arc/rules');
@@ -1783,7 +1790,8 @@ router.post('/:id/annie-review', express.json({ limit: '8kb' }), async (req, res
     const actor = await builderActor(req, res, 'request_more_info');
     if (!actor) return;
     const { runReview } = require('../lib/builder_arc/review');
-    const out = await runReview(supabase, req.params.id, { apply: !(req.body && req.body.dry_run) });
+    const { notifyEd } = require('../lib/builder_arc/review');
+    const out = await runReview(supabase, req.params.id, { apply: !(req.body && req.body.dry_run), notify: notifyEd });
     res.json({ ok: true, recommended_action: out.result.recommended_action, summary: out.result.summary, findings: out.result.findings, corrections: out.corrections, deadlines: out.deadlines, assessment_id: out.assessment_id || null, work_item: out.work_item || null, packet: out.packet });
   } catch (err) {
     if (err.statusCode) return res.status(err.statusCode).json({ error: err.message });
@@ -2140,7 +2148,7 @@ async function finalizeApplicationCore({ applicationId, action, conditions = nul
     // The decision closes the application's work item (approve / conditions /
     // deny). An info request leaves it open, waiting on the builder.
     if (appStatus !== 'info_requested') {
-      try { await require('../lib/builder_arc/tracking').closeWorkItem(supabase, app.id, { status_label: appStatus.replace(/_/g, ' '), decided_by }); }
+      try { await require('../lib/builder_arc/tracking').decisionRecorded(supabase, app.id, { status_label: appStatus.replace(/_/g, ' '), decided_by }); }
       catch (e) { console.warn('[builder_applications] work item close failed:', e.message); }
     }
 
@@ -2375,6 +2383,8 @@ router.post('/batch-approve-send', express.json({ limit: '1mb' }), async (req, r
         const f = finalized.find((x) => x.app.id === e.a.id);
         try { await supabase.from('builder_application_responses').update({ email_sent_at: send.ok ? sentAt : null, email_message_id: send.vendor_message_id || null }).eq('id', f.response.id); } catch (_) {}
         if (send.ok) { try { await supabase.from('interactions').update({ status: 'sent', sent_at: sentAt }).eq('original_external_id', e.a.reference_number).eq('type', 'letter_other'); } catch (_) {} }
+        // The decision is communicated: the application's work item closes.
+        if (send.ok) { try { await require('../lib/builder_arc/tracking').closeWorkItem(supabase, e.a.id, { status_label: 'approved', decided_by }); } catch (ce) { console.warn('[builder_applications] work item close failed:', ce.message); } }
       }
       emails_sent.push({ to: g.to, count: envelopes.length, ok: !!send.ok, error: send.ok ? null : (send.error || 'send failed') });
     }
@@ -2697,6 +2707,12 @@ router.post('/:id/send', express.json({ limit: '256kb' }), async (req, res) => {
         email_message_id: send.vendor_message_id || null,
       })
       .eq('id', response.id);
+
+    // The decision is communicated: the application's work item closes.
+    if (send.ok && response.response_type !== 'info_requested') {
+      try { await require('../lib/builder_arc/tracking').closeWorkItem(supabase, app.id, { status_label: String(response.response_type || '').replace(/_/g, ' '), decided_by: response.decided_by || '' }); }
+      catch (ce) { console.warn('[builder_applications] work item close failed:', ce.message); }
+    }
 
     // Flip the interaction status to 'sent' so the audit trail aligns.
     // Status enum: draft → approved → sent (CHECK in migration 050).
@@ -4854,6 +4870,11 @@ router.post('/upload-on-behalf', upload.single('submission_pdf'), async (req, re
         application_data: applicationData,
         status: 'received',
       };
+      // The deadline clocks start at actual receipt, not at entry: an emailed
+      // packet carries the time the email arrived (received_at, ISO). Never in
+      // the future; ignored when unreadable.
+      const _rcv = req.body && req.body.received_at ? new Date(req.body.received_at) : null;
+      if (_rcv && !Number.isNaN(_rcv.getTime()) && _rcv.getTime() <= Date.now() + 60000) tryInsertRow.submitted_at = _rcv.toISOString();
       // Only include the hash column if migration 229 has landed. Same
       // defensive pattern as the dedup query above -- the insert can't
       // succeed against a missing column either.

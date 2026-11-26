@@ -647,6 +647,11 @@
         </select>
       </div>
       <div>
+        <label style="display:block; font-size:12px; font-weight:600; color:#475569; margin-bottom:5px;">When the builder's email arrived</label>
+        <input type="datetime-local" id="usReceivedAt" style="width:100%; padding:8px 10px; border:1px solid #d0d7de; border-radius:6px; font-size:13px;">
+        <div style="font-size:11px; color:#64748b; margin-top:3px;">The deadlines run from when Bedrock received it, not from today. Leave blank only if it arrived just now.</div>
+      </div>
+      <div>
         <label style="display:block; font-size:12px; font-weight:600; color:#475569; margin-bottom:5px;">Submission PDF(s) *</label>
         <div id="usDropZone" style="border:2px dashed #cbd5e1; border-radius:10px; padding:28px 20px; text-align:center; background:#f8fafc; cursor:pointer; transition:all 0.15s;">
           <div style="font-size:32px; margin-bottom:6px;">📄</div>
@@ -1129,11 +1134,18 @@ async function loadCommunities() {
 // Queue
 // ----------------------------------------------------------------------------
 const ANNIE_LABEL = { approve: 'Ready to approve', request_more_info: 'Needs info from builder', manual_review: 'Your decision', approve_with_conditions: 'Approve with conditions', deny: 'Deny' };
-const DUE_LABEL = { on_track: 'On track', target_missed: 'Past target', limit_near: 'Period ends soon', limit_passed: 'Period passed' };
+// Two independent clocks (lib/builder_arc/deadlines.js): Bedrock's 2-business-day
+// standard (decision approved and emailed) and the association's review period.
+const STD_LABEL = { not_reviewed: 'Not reviewed', info_request_due: 'Info request due', info_request_overdue: 'Info request overdue', waiting_on_builder: 'Waiting on builder', on_track: 'On track', at_risk: 'At risk', missed: 'Missed', met: 'Met', met_late: 'Met late' };
+const STD_CLASS = { info_request_due: 'target_missed', info_request_overdue: 'limit_near', at_risk: 'target_missed', missed: 'limit_passed', waiting_on_builder: 'on_track' };
 function dueChip(d) {
   if (!d) return '';
-  const lim = d.limit_at ? (d.days_to_limit < 0 ? `ended ${fmtDate(d.limit_at)}` : `ends ${fmtDate(d.limit_at)} (${d.days_to_limit}d)`) : `target ${fmtDate(d.target_due_at)}`;
-  return `<span class="due-chip ${escapeHtml(d.state)}" title="Bedrock target ${escapeHtml(fmtDate(d.target_due_at))}${d.limit_at ? ' / review period ' + escapeHtml(fmtDate(d.limit_at)) : ''}">${escapeHtml(DUE_LABEL[d.state] || d.state)}: ${escapeHtml(lim)}</span>`;
+  const st = d.standard || {};
+  const g = d.governing || {};
+  const stDate = st.info_request_due_at && !st.info_requested_at ? st.info_request_due_at : st.due_at;
+  const stChip = `<span class="due-chip ${escapeHtml(STD_CLASS[st.state] || 'on_track')}" title="Bedrock standard: decision approved and emailed within 2 business days of the complete application">Bedrock: ${escapeHtml(STD_LABEL[st.state] || st.state || '')}${stDate ? ' · by ' + escapeHtml(fmtDate(stDate)) : ''}</span>`;
+  const gChip = g.limit_at ? ` <span class="due-chip ${g.state === 'passed' ? 'limit_passed' : g.state === 'near' ? 'limit_near' : 'on_track'}" title="Association review period (governing documents), from receipt">Association: ${g.state === 'passed' ? 'ended ' : 'ends '}${escapeHtml(fmtDate(g.limit_at))}</span>` : '';
+  return stChip + gChip;
 }
 
 function rowHtml(item) {
@@ -2172,6 +2184,8 @@ document.getElementById('uploadSubmissionForm').addEventListener('submit', async
       const fd = new FormData();
       fd.append('submission_pdf', f);
       fd.append('community_id', communityId);
+      const rcv = (document.getElementById('usReceivedAt') || {}).value;
+      if (rcv) fd.append('received_at', new Date(rcv).toISOString());
       const r = await fetch('/api/builder-applications/upload-on-behalf', { method: 'POST', headers: uploadHeaders, body: fd });
       const j = await r.json();
       if (r.status === 409 && j.duplicate_of) {

@@ -236,25 +236,79 @@ t('the saved application keeps materials taken from the packet form', () => {
 });
 
 // ---------------------------------------------------------------- deadlines
-t('deadlines: 9/23 submission, 30-day period, passed on 11/25', () => {
-  const d = DL.computeDeadlines({ submitted_at: '2026-09-23T20:43:53Z', fast_track: true }, { builder_arc_fast_track_business_days: 2 }, { legal_review_days: 30 }, new Date('2026-11-25T18:00:00Z'));
-  assert.strictEqual(d.limit_at.slice(0, 10), '2026-10-23');
-  assert.strictEqual(d.target_due_at.slice(0, 10), '2026-09-25');
-  assert.strictEqual(d.state, 'limit_passed');
-  const d2 = DL.computeDeadlines({ submitted_at: '2026-11-03T16:58:34Z', fast_track: true }, {}, { legal_review_days: 30 }, new Date('2026-11-27T18:00:00Z'));
-  assert.strictEqual(d2.limit_at.slice(0, 10), '2026-12-03');
-  assert.strictEqual(d2.state, 'limit_near');
-  const d3 = DL.computeDeadlines({ submitted_at: '2026-11-24T16:00:00Z', fast_track: false }, { builder_arc_sla_business_days: 5 }, {}, new Date('2026-11-25T18:00:00Z'));
-  assert.strictEqual(d3.limit_at, null, 'no review period without a stated standard');
-  assert.strictEqual(d3.state, 'on_track');
+const CD = (at, rec, nowIso, facts = {}, std = { legal_review_days: 30 }) => DL.computeDeadlines({ submitted_at: at }, {}, std, new Date(nowIso), { recommended_action: rec, ...facts });
+t('business days skip weekends and Bedrock holidays (Thanksgiving 11/26-27)', () => {
+  // Wed 11/25 10 AM Central + 2 business days: Thu/Fri holidays, weekend -> Tue 12/1.
+  assert.strictEqual(DL.addBusinessDays('2026-11-25T16:00:00Z', 2).slice(0, 10), '2026-12-01');
+  assert.strictEqual(DL.isBusinessDay(new Date('2026-11-26T18:00:00Z')), false);
+  assert.strictEqual(DL.isBusinessDay(new Date('2026-11-30T18:00:00Z')), true);
+  // A Saturday receipt counts from Monday: due Tuesday.
+  assert.strictEqual(DL.addBusinessDays('2026-11-21T16:00:00Z', 2).slice(0, 10), '2026-11-24');
 });
-t('ownership: Annie owns every open application; Amanda oversees late deadlines', () => {
-  for (const rec of ['approve', 'manual_review', 'request_more_info']) assert.strictEqual(T.ownerFor(rec, { state: 'limit_passed' }), 'Annie');
-  assert.strictEqual(T.overseerFor({ state: 'on_track' }), null);
-  for (const st of ['target_missed', 'limit_near', 'limit_passed']) assert.strictEqual(T.overseerFor({ state: st }), 'Amanda');
-  assert.strictEqual(T.urgencyFor({ state: 'limit_near' }), 'critical');
+t('Bedrock standard: complete on receipt -> decision approved and emailed within 2 business days', () => {
+  const d = CD('2026-09-23T20:43:53Z', 'approve', '2026-11-25T18:00:00Z');
+  assert.strictEqual(d.standard.complete_at, '2026-09-23T20:43:53Z');
+  assert.strictEqual(d.standard.due_at.slice(0, 10), '2026-09-25');
+  assert.strictEqual(d.standard.state, 'missed');
+  const fresh = CD('2026-11-30T15:00:00Z', 'approve', '2026-11-30T20:00:00Z');
+  assert.strictEqual(fresh.standard.state, 'on_track');
+  assert.strictEqual(CD('2026-11-30T15:00:00Z', 'approve', '2026-12-01T16:00:00Z').standard.state, 'at_risk', 'at risk after the first business day, before it is overdue');
+  assert.ok(CD('2026-11-30T15:00:00Z', 'approve', '2026-12-01T16:00:00Z').levels.includes('standard:at_risk'));
+  assert.strictEqual(CD('2026-11-30T15:00:00Z', 'approve', '2026-12-03T16:00:00Z', { communicated_at: '2026-12-02T14:00:00Z' }).standard.state, 'met', 'met only when the decision is emailed by the due time');
+  assert.strictEqual(CD('2026-11-30T15:00:00Z', 'approve', '2026-12-03T16:00:00Z', { communicated_at: '2026-12-03T14:00:00Z' }).standard.state, 'met_late');
+});
+t('incomplete: info request due within 1 business day; clock starts when the missing items arrive', () => {
+  const d = CD('2026-11-30T15:00:00Z', 'request_more_info', '2026-11-30T20:00:00Z');
+  assert.strictEqual(d.standard.info_request_due_at.slice(0, 10), '2026-12-01');
+  assert.strictEqual(d.standard.state, 'info_request_due');
+  assert.strictEqual(d.standard.due_at, null, 'no decision clock while incomplete');
+  assert.strictEqual(CD('2026-11-30T15:00:00Z', 'request_more_info', '2026-12-01T16:00:00Z').standard.state, 'info_request_overdue');
+  assert.strictEqual(CD('2026-11-30T15:00:00Z', 'request_more_info', '2026-12-01T16:00:00Z', { info_requested_at: '2026-11-30T18:00:00Z' }).standard.state, 'waiting_on_builder');
+  // Builder sends the missing items 12/2; Annie finds it complete -> due 12/4.
+  const after = CD('2026-11-30T15:00:00Z', 'approve', '2026-12-02T18:00:00Z', { info_requested_at: '2026-11-30T18:00:00Z', last_info_at: '2026-12-02T16:00:00Z' });
+  assert.strictEqual(after.standard.complete_at, '2026-12-02T16:00:00Z');
+  assert.strictEqual(after.standard.due_at.slice(0, 10), '2026-12-04');
+});
+t('internal delays and extraction errors never reset the clock', () => {
+  // Annie wrongly called it incomplete, then corrected: no new information arrived,
+  // so the application was complete at receipt.
+  const d = CD('2026-11-30T15:00:00Z', 'manual_review', '2026-12-03T16:00:00Z', {});
+  assert.strictEqual(d.standard.complete_at, '2026-11-30T15:00:00Z');
+  assert.strictEqual(d.standard.state, 'missed');
+});
+t('association period runs from receipt, independent of completeness and the standard', () => {
+  const inc = CD('2026-09-23T20:43:53Z', 'request_more_info', '2026-11-25T18:00:00Z', { info_requested_at: '2026-09-24T15:00:00Z' });
+  assert.strictEqual(inc.governing.limit_at.slice(0, 10), '2026-10-23');
+  assert.strictEqual(inc.governing.state, 'passed');
+  assert.strictEqual(inc.standard.state, 'waiting_on_builder');
+  assert.ok(inc.levels.includes('governing:passed') && !inc.levels.some((l) => l.startsWith('standard:')));
+  const near = CD('2026-11-03T16:58:34Z', 'manual_review', '2026-11-27T18:00:00Z');
+  assert.strictEqual(near.governing.state, 'near');
+  const none = CD('2026-11-24T16:00:00Z', 'approve', '2026-11-25T18:00:00Z', {}, {});
+  assert.strictEqual(none.governing.limit_at, null, 'no association period unless the standards state one');
+});
+t('ownership: Annie owns; Amanda oversees anything at risk, late or near the association period', () => {
+  for (const rec of ['approve', 'manual_review', 'request_more_info']) assert.strictEqual(T.ownerFor(rec), 'Annie');
+  assert.strictEqual(T.overseerFor({ levels: [] }), null);
+  for (const l of ['standard:at_risk', 'standard:missed', 'standard:info_request_overdue', 'governing:near', 'governing:passed']) assert.strictEqual(T.overseerFor({ levels: [l] }), 'Amanda');
+  assert.strictEqual(T.urgencyFor({ levels: ['standard:at_risk'], standard: { state: 'at_risk' } }), 'high');
+  assert.strictEqual(T.urgencyFor({ levels: ['governing:near'], standard: {} }), 'critical');
   const src = fs.readFileSync(path.join(__dirname, '..', 'lib', 'builder_arc', 'tracking.js'), 'utf8');
   assert.ok(!/assigned_to: 'Amanda'/.test(src), 'escalation must not take ownership from Annie');
+});
+t('a decision keeps the work item open until the letter is emailed', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'api', 'builder_applications.js'), 'utf8');
+  const core = src.slice(src.indexOf('async function finalizeApplicationCore'), src.indexOf("router.post('/:id/finalize'"));
+  assert.ok(/decisionRecorded\(/.test(core) && !/closeWorkItem\(/.test(core), 'finalize must not close the item');
+  assert.ok((src.match(/closeWorkItem\(/g) || []).length >= 2, 'single send and batch send close it');
+});
+t('daily digest lists each group and the separate clocks', () => {
+  const row = (ref, rec, d, status = 'received') => ({ app: { reference_number: ref, street_address: ref + ' St', status, assessment_recommended_action: rec }, community: { name: 'Still Creek Ranch' }, d });
+  const ready = CD('2026-11-30T15:00:00Z', 'approve', '2026-12-01T16:00:00Z');
+  const info = CD('2026-11-30T15:00:00Z', 'request_more_info', '2026-11-30T20:00:00Z');
+  const txt = T.digestText([row('A', 'approve', ready), row('B', 'request_more_info', info)], [{ ...row('A', 'approve', ready), levels: ['standard:at_risk'] }], { dateLabel: 'Tuesday, December 1' });
+  for (const s of ['Ready for your approval (1)', 'Info request to send to the builder (1)', 'Newly escalated to Amanda (1)', 'Bedrock standard at risk', 'decision due 2026-12-02']) assert.ok(txt.includes(s), s + '\n' + txt);
+  assert.ok(!/—/.test(txt), 'no em-dashes');
 });
 t('immaterial extraction differences are suppressed; real ones are kept', () => {
   const { immaterial } = P;
