@@ -293,6 +293,21 @@ const item = (l, d) => l.bridge.find((b) => b.driver === d);
     check('a line without a schedule keeps actual + remaining approved budget', /remaining approved budget/.test(plain.base.note), plain.base.note);
   }
 
+  console.log('a known base-year amount (received, not yet recorded) replaces actual + remaining budget');
+  {
+    const rev = (ytd) => ({ ...L({ type: 'revenue', n: '4200', name: 'Annual Contribution', budget: Array(12).fill(3800000), ytd, months: { 8: 0, 9: 0 } }) });
+    const kctx = (k) => ({ ...ctx, policy: { ...ctx.policy, base_year_known_amounts: { 4200: k } } });
+    const k = { amount_cents: 25000000, reason: 'Annual contribution set by the executed agreement, received', source: 'executed agreement; bank deposit', actor: 'kat' };
+    const plain = WF.buildLine(rev(0), ctx);
+    check('without it: actual + remaining approved budget', plain.base_year.current_forecast_cents === 3 * 3800000 && plain.base_year.forecast_method === 'remaining_budget', String(plain.base_year.current_forecast_cents));
+    const kn = WF.buildLine(rev(0), kctx(k));
+    check('with it: the known amount, method known_amount, explained and flagged', kn.base_year.current_forecast_cents === 25000000 && kn.base_year.forecast_method === 'known_amount' && /Known 2026 amount/.test(kn.base_year.forecast_explanation) && kn.flags.some((f) => f.code === 'known_base_amount'), JSON.stringify(kn.base_year));
+    const below = WF.buildLine(rev(30000000), kctx(k));
+    check('never below what the books already hold (books govern, flagged)', below.base_year.forecast_method !== 'known_amount' && below.flags.some((f) => f.code === 'known_amount_below_actual'));
+    const incomplete = WF.buildLine(rev(0), kctx({ amount_cents: 25000000, reason: 'x', source: '' }));
+    check('an entry without a reason and a source is ignored', incomplete.base_year.forecast_method === 'remaining_budget');
+  }
+
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 })().catch((e) => { console.error(e.stack); process.exit(1); });
