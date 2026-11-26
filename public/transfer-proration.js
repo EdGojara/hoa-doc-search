@@ -31,6 +31,35 @@
       + '<div style="font-size:12px; color:#5b6472; margin-top:6px;">' + books(p) + '</div>';
   }
 
+  // The closing statement (lib/accounting/closing_statement.js), in the sections
+  // the closing must show separately. Numbers come from the server only.
+  const PAYEE = { association: 'Association', management_company: 'Management company' };
+  function statementHtml(st) {
+    if (!st || !st.due_from_seller) return st && st.gaps ? '<div style="margin-top:6px; color:#a12828; font-size:12.5px;"><b>Closing statement unavailable:</b> ' + esc((st.gap_text || st.gaps).join('; ')) + '</div>' : '';
+    const amt = (c) => (c == null ? '<span style="color:#a12828;">not known</span>' : money(c));
+    const sec = (t) => '<tr><td colspan="2" style="padding:8px 0 2px; font-weight:700; border-top:1px solid #e6e1d4;">' + t + '</td></tr>';
+    let h = '<table style="border-collapse:collapse; font-size:13.5px; width:100%;">';
+    h += sec('Due from seller' + (st.seller_name ? ' (' + esc(st.seller_name) + ')' : ''));
+    (st.due_from_seller.lines || []).forEach((l) => { h += row(esc(l.label) + (l.period_start ? ' ' + day(l.period_start) + ' to ' + day(l.period_end) + ', ' + esc(l.days) + ' days' : ''), amt(l.amount_cents)); });
+    h += row('Total due from seller', amt(st.due_from_seller.cents), true);
+    h += sec('Due from buyer');
+    (st.due_from_buyer.lines || []).forEach((l) => { h += row(esc(l.label) + ', ' + esc(l.days) + ' days', amt(l.amount_cents)); });
+    h += row('Total due from buyer (assessment)', amt(st.due_from_buyer.cents), true);
+    const cap = st.capitalization_fee || {};
+    h += sec('Capitalization fee (capital contribution)');
+    h += row(cap.configured ? (pct(cap.pct) + '% of the ' + money(cap.annual_assessment_cents) + ' annual assessment, not prorated, paid by the buyer') : 'Not configured for this community', amt(cap.cents), true);
+    h += sec('Other fees');
+    if (!(st.other_fees || []).length) h += row('None entered', money(0));
+    (st.other_fees || []).forEach((f) => { h += row(esc(f.label) + ' (' + esc(f.payable_by) + ', payable to ' + esc(PAYEE[f.payable_to] || f.payable_to) + ')', money(f.amount_cents)); });
+    h += sec('Total due at closing');
+    h += row('Payable to the Association', amt(st.payable_to_association_cents), true);
+    if (Number(st.payable_to_management_company_cents)) h += row('Payable to the management company', money(st.payable_to_management_company_cents), true);
+    h += row('Total due at closing', amt(st.total_due_at_closing_cents), true);
+    h += '</table>';
+    if (!st.complete) h += '<div style="margin-top:6px; padding:8px 10px; border-radius:6px; background:#fde7e7; color:#a12828; font-size:12.5px;"><b>Incomplete, do not release a settlement figure:</b> ' + esc((st.gap_text || st.gaps || []).join('; ')) + '.</div>';
+    return '<div style="margin-top:10px;"><b>Closing statement</b>' + h + '</div>';
+  }
+
   // The GL the posting makes, on the community's own revenue treatment.
   function books(p) {
     const inc = esc(p.income_account || 'income'), ar = esc(p.ar_account || 'AR'), dfr = p.deferral_account, adj = Number(p.builder_adjustment_cents || 0), rec = p.homeowner_recognition;
@@ -105,13 +134,14 @@
       wrap.innerHTML = box('<b>Assessment proration needs a person</b> (' + esc(p.builder || 'builder') + ' to new owner)'
         + '<div style="margin:6px 0;">' + esc((p.blocked_text || []).join('; ')) + '.</div>'
         + (rows ? '<div>The builder\'s assessment activity this year:</div><ul style="margin:4px 0 8px 18px;">' + rows + '</ul>' : '')
+        + statementHtml(body.closing_statement)
         + '<div style="font-size:12.5px;">Nothing is guessed. You can record the ownership change now; the proration stays open until the ledger is clear, then post it from the sale.</div>'
         + '<button class="btn" data-tp="ack" style="margin-top:8px;">Record the transfer, leave the proration open</button>', 'warn');
       wrap.querySelector('[data-tp="ack"]').addEventListener('click', (e) => { e.preventDefault(); onAck(); });
     } else {
       const notReady = p.posting_ready === false;
       wrap.innerHTML = box('<b>Assessment proration</b> (' + esc(p.builder || 'builder') + ' to ' + esc(p.buyer_name || 'new owner') + ')'
-        + '<div style="margin:8px 0;">' + breakdown(p) + '</div>'
+        + '<div style="margin:8px 0;">' + breakdown(p) + statementHtml(body.closing_statement) + '</div>'
         + (notReady ? '<div style="margin:6px 0; padding:8px 10px; border-radius:6px; background:#fff8ec; border:1px solid #e8b86d; font-size:12.5px;"><b>Will be staged, not posted.</b> This community\'s accounting conversion is not posted yet, so the year\'s billing is not in trustEd\'s books. Recording the closing saves this calculation with the transfer; no charge, credit or GL entry is made. After the conversion posts, it is recomputed against the converted ledger and shown again before it posts.</div>' : '')
         + '<button class="btn" data-tp="ok" style="margin-top:4px;">' + (confirmLabel || (notReady ? 'Confirm, record, and stage the proration' : 'Confirm and record')) + '</button>');
       wrap.querySelector('[data-tp="ok"]').addEventListener('click', (e) => { e.preventDefault(); onConfirm(); });
@@ -152,5 +182,5 @@
       + '</div>';
   }
 
-  window.TransferProration = { breakdown, books, confirmPanel, resultHtml, money, queueHtml, wireQueue, coverageHtml };
+  window.TransferProration = { breakdown, statementHtml, books, confirmPanel, resultHtml, money, queueHtml, wireQueue, coverageHtml };
 })();
