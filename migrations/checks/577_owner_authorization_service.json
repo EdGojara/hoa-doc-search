@@ -1,0 +1,124 @@
+{
+  "migration": "577_owner_authorization_service.sql",
+  "summary": "Owner Authorization Service, step 1 (shared foundation for every AI teammate, module and channel). owner_authorizations (554-556, 566) gains coordinator (Amanda by default), executor and sensitivity_tier, fixed once requested, with a guard that a tier-3 action can never be authorized by reply. owner_execution_grants (567) gains kind (time_limited, as before, or standing with a written policy, at most one year) and policy; the window CHECK and the immutability guard are replaced to include them. New append-only authorization_events ledger recording the requesting teammate, coordinator, authorizing person and executing teammate separately, with the action, its fingerprint, the channel, evidence and result. No existing row's data changes; no journal, run or conversion row is touched.",
+  "requires": [
+    "556_owner_authorization_definer.sql",
+    "566_owner_authorized_accounting_runs.sql",
+    "567_owner_execution_grants.sql"
+  ],
+  "preflight": [
+    {
+      "name": "authorization_events does not exist yet",
+      "sql": "SELECT count(*)::int FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'authorization_events'",
+      "expect": 0
+    },
+    {
+      "name": "the 567 grant window constraint exists",
+      "sql": "SELECT count(*)::int FROM pg_constraint WHERE conname = 'owner_execution_grants_window'",
+      "expect": 1
+    },
+    {
+      "name": "owner_authorizations has no coordinator column yet",
+      "sql": "SELECT count(*)::int FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'owner_authorizations' AND column_name = 'coordinator'",
+      "expect": 0
+    }
+  ],
+  "expected_changes": [
+    "owner_authorizations gains coordinator (NOT NULL DEFAULT 'ai-team:amanda'), executor (nullable) and sensitivity_tier (NOT NULL DEFAULT 1, 1 to 3), plus a BEFORE UPDATE guard: these three are fixed once requested, and a tier-3 request cannot become authorized by reply.",
+    "owner_execution_grants gains kind (NOT NULL DEFAULT 'time_limited') and policy (jsonb). The window CHECK now allows time_limited grants of at most 24 hours (unchanged) or standing grants of at most 366 days that carry a written policy. owner_execution_grants_guard is replaced to keep kind and policy immutable.",
+    "Creates authorization_events (append-only, RLS on, service_role SELECT and INSERT only) with five indexes.",
+    "Existing rows take the column defaults; no row data is updated and no journal, run, conversion or grant row is otherwise touched."
+  ],
+  "objects": {
+    "added": [
+      "column:owner_authorizations.coordinator",
+      "column:owner_authorizations.executor",
+      "column:owner_authorizations.sensitivity_tier",
+      "constraint:owner_authorizations.owner_authorizations_sensitivity_tier_check",
+      "constraint:owner_authorizations.owner_authorizations_coordinator_check",
+      "function:owner_authorizations_service_guard",
+      "trigger:owner_authorizations.trg_owner_authorizations_service_guard",
+      "column:owner_execution_grants.kind",
+      "column:owner_execution_grants.policy",
+      "constraint:owner_execution_grants.owner_execution_grants_kind_check",
+      "table:authorization_events",
+      "column:authorization_events.id",
+      "column:authorization_events.occurred_at",
+      "column:authorization_events.community_id",
+      "column:authorization_events.authority_kind",
+      "column:authorization_events.authorization_id",
+      "column:authorization_events.grant_id",
+      "column:authorization_events.action_type",
+      "column:authorization_events.target_id",
+      "column:authorization_events.fingerprint",
+      "column:authorization_events.event",
+      "column:authorization_events.channel",
+      "column:authorization_events.requested_by",
+      "column:authorization_events.coordinator",
+      "column:authorization_events.authorized_by_user_id",
+      "column:authorization_events.authorized_by_email",
+      "column:authorization_events.executed_by",
+      "column:authorization_events.related_event_id",
+      "column:authorization_events.evidence",
+      "column:authorization_events.result",
+      "column:authorization_events.note",
+      "constraint:authorization_events.authorization_events_pkey",
+      "constraint:authorization_events.authorization_events_community_id_fkey",
+      "constraint:authorization_events.authorization_events_authority_kind_check",
+      "constraint:authorization_events.authorization_events_authorization_id_fkey",
+      "constraint:authorization_events.authorization_events_grant_id_fkey",
+      "constraint:authorization_events.authorization_events_action_type_check",
+      "constraint:authorization_events.authorization_events_event_check",
+      "constraint:authorization_events.authorization_events_channel_check",
+      "constraint:authorization_events.authorization_events_related_event_id_fkey",
+      "constraint:authorization_events.authorization_events_executor_named",
+      "constraint:authorization_events.authorization_events_authorizer_named",
+      "constraint:authorization_events.authorization_events_report_links",
+      "index:authorization_events_pkey",
+      "index:idx_authorization_events_authorization",
+      "index:idx_authorization_events_grant",
+      "index:idx_authorization_events_target",
+      "index:idx_authorization_events_followup",
+      "index:idx_authorization_events_related",
+      "function:authorization_events_append_only",
+      "trigger:authorization_events.trg_authorization_events_append_only"
+    ],
+    "changed": [
+      "constraint:owner_execution_grants.owner_execution_grants_window",
+      "function:owner_execution_grants_guard"
+    ],
+    "removed": []
+  },
+  "row_changes": {
+    "owner_authorizations": 0,
+    "owner_execution_grants": 0
+  },
+  "protected": [
+    { "table": "journal_entries", "order_by": "id" },
+    { "table": "accounting_runs", "order_by": "id" }
+  ],
+  "verify": [
+    {
+      "name": "authorization_events exists and is empty",
+      "sql": "SELECT count(*)::int FROM authorization_events",
+      "expect": 0
+    },
+    {
+      "name": "every existing grant is time-limited",
+      "sql": "SELECT count(*)::int FROM owner_execution_grants WHERE kind <> 'time_limited'",
+      "expect": 0
+    },
+    {
+      "name": "every existing owner authorization is coordinated by Amanda at tier 1",
+      "sql": "SELECT count(*)::int FROM owner_authorizations WHERE coordinator <> 'ai-team:amanda' OR sensitivity_tier <> 1",
+      "expect": 0
+    },
+    {
+      "name": "the append-only and tier guards are present",
+      "sql": "SELECT count(*)::int FROM pg_trigger WHERE tgname IN ('trg_authorization_events_append_only', 'trg_owner_authorizations_service_guard')",
+      "expect": 2
+    }
+  ],
+  "api_checks": [],
+  "reload_schema": true
+}
