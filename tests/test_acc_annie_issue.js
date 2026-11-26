@@ -211,7 +211,7 @@ A.registerIssuer(async (id, body) => { calls.push({ id, body }); return { status
   const fin = server.slice(server.indexOf('async function _accFinalizeHandler'), server.indexOf("app.post('/acc-review/decisions/:id/finalize', _accFinalizeHandler)"));
   check('finalize injects the notice into every denial before the authority gate', /_accWithAppealNotice\(bodyText\)/.test(fin) && fin.indexOf('_accWithAppealNotice') < fin.indexOf('checkFinalDecision'));
   check('finalize adds nothing else to approval letters (no attribution rewrite)', !/attributeToManagingAgent/.test(fin));
-  check('the agent issuer is set only in-process (never from the request body)', /req\._accAgentIssuer \|\| await getActingUser\(req\)/.test(fin) && !/req\.body\._accAgentIssuer|body\.agent/.test(fin));
+  check('the agent issuer and the owner-authorized actor are set only in-process (never from the request body)', /req\._accAgentIssuer \|\| req\._accOwnerAuthorized \|\| await getActingUser\(req\)/.test(fin) && !/req\.body\._accAgentIssuer|req\.body\._accOwnerAuthorized|body\.agent/.test(fin));
   check('the backlog endpoint is owner-only and dry-runs by default', /app\.post\('\/acc-review\/annie\/issue-ready'[\s\S]{0,200}requireOwner/.test(server) && /dryRun = !\(req\.body && req\.body\.dry_run === false\)/.test(server));
   const docs = fs.readFileSync(path.join(__dirname, '..', 'lib', 'acc', 'documents.js'), 'utf8');
   const intake = fs.readFileSync(path.join(__dirname, '..', 'lib', 'acc', 'pending_intake.js'), 'utf8');

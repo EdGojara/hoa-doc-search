@@ -231,6 +231,17 @@ async function logSentDraftToTimeline(d, from, subject) {
 }
 
 router.post('/:id/send', (req, res) => sendHandler(req, res));
+// OWNER AUTHORIZATION SERVICE, ARC/ACC (lib/authorization/arc_acc): a message the owner authorized
+// in a package is sent through this same handler (every check, the delivery window), with the
+// owner as approver as recorded by the verified reply. Set only in-process.
+require('../lib/authorization/arc_acc').registerExecutor('draft', {
+  async send(id, approver, packageSha) {
+    const out = { status: 200, json: null };
+    const res = { status(c) { out.status = c; return this; }, json(j) { out.json = j; return this; } };
+    await sendHandler({ params: { id }, _approver: approver, body: { approved_package_sha256: packageSha } }, res);
+    return out;
+  },
+});
 async function sendHandler(req, res) {
   try {
     // The approver is the signed-in person, verified from the session token,
@@ -251,6 +262,11 @@ async function sendHandler(req, res) {
     if (d.draft_kind === 'amanda_auto_reply') return res.status(409).json({ error: 'amanda_auto_reply_receipt', message: 'This is Amanda\'s automatic-reply record, not a draft. Reply from Communications, which checks whether Amanda already sent it.' });
     if (d.status === 'sent') return res.status(409).json({ error: 'already_sent' });
     if (d.status === 'discarded') return res.status(409).json({ error: 'discarded' });
+    // Part of an owner authorization package (lib/authorization/arc_acc): it goes only when the owner
+    // authorizes the package, through the package, never by a separate Send here.
+    if (d.policy && d.policy.awaiting_owner_authorization && !(approver.via && approver.via.channel === 'owner_authorization' && d.policy.owner_authorization)) {
+      return res.status(409).json({ error: 'awaiting_owner_authorization', message: 'This message is part of an authorization package waiting for Ed. It is sent when he authorizes the package. Nothing was sent.' });
+    }
     // An agent's desk approves only its own agent's drafts (Ed 2026-10-22): a draft opened on
     // Kat's desk can never be approved as Maggie's, and the reverse.
     const deskPersona = req.body && req.body.desk_persona ? String(req.body.desk_persona).toLowerCase() : null;
@@ -290,7 +306,7 @@ async function sendHandler(req, res) {
       if (waitMs > 0) {
         const approvedAt = new Date().toISOString();
         const sendAt = new Date(Date.now() + waitMs).toISOString();
-        const sched = { send_at: sendAt, approved_at: approvedAt, approved_by: approvedBy, approver_name: approver.full_name || null, approver_user_id: approver.id || null,
+        const sched = { send_at: sendAt, approved_at: approvedAt, approved_by: approvedBy, approver_name: approver.full_name || null, approver_user_id: approver.id || null, approver_via: approver.via || null,
           package_sha256: currentPackage, confirm_after_uncertain: retryAfterUncertain, confirm_after_amanda: !!(req.body && req.body.confirm_after_amanda === true), desk_persona: deskPersona };
         const { error: sErr } = await supabase.from('outbound_email_drafts').update({ policy: { ...(d.policy || {}), scheduled_send: sched, delivery_hold: null }, send_error: null }).eq('id', d.id).eq('status', 'draft');
         if (sErr) throw sErr;
@@ -424,7 +440,7 @@ async function sendHandler(req, res) {
       approved_by: approvedBy, send_error: null, sent_internet_message_id: (sent && sent.internetMessageId) || null,
       // The approval record (Ed 2026-10-22): who approved, when, for which agent and mailbox, and
       // the message that went out. Never a generic "staff".
-      policy: { ...(d.policy || {}), scheduled_send: null, approval: { approved_by: approvedBy, approved_by_name: approver.full_name || null, approver_user_id: approver.id || null, approved_at: sentAt, agent: d.persona, mailbox: from, message_id: (sent && sent.internetMessageId) || null, in_thread: !!threaded } },
+      policy: { ...(d.policy || {}), scheduled_send: null, approval: { approved_by: approvedBy, approved_by_name: approver.full_name || null, approver_user_id: approver.id || null, approved_at: sentAt, ...(approver.via ? { via: approver.via } : {}), agent: d.persona, mailbox: from, message_id: (sent && sent.internetMessageId) || null, in_thread: !!threaded } },
       record_ownership: 'association_record',
     }).eq('id', d.id);
     if (replyTo) {
@@ -449,6 +465,12 @@ async function sendHandler(req, res) {
       } catch (e) { console.warn('[email_drafts] review stamp failed:', e.message); }
     }
 
+    // A message the owner authorized in an ARC/ACC package (lib/authorization/arc_acc): stamp the
+    // decisions it carried, record it on the ledger, and let Amanda verify the package.
+    if (d.policy && d.policy.owner_authorization) {
+      try { await require('../lib/authorization/arc_acc').afterDraftSent(supabase, d, { sent_at: sentAt, message_id: (sent && sent.internetMessageId) || null }); }
+      catch (e) { console.error('[email_drafts] owner-authorized message sent; follow-through failed:', JSON.stringify({ draft: d.id, error: e.message })); }
+    }
     // Log the sent email onto the homeowner's 360 (resolved). Best-effort.
     const timeline = await logSentDraftToTimeline(d, from, subject);
     res.json({ ok: true, sent_from: from, to: d.to_email, timeline, threaded_reply: threaded || undefined });
@@ -473,6 +495,7 @@ async function releaseScheduled(id) {
     const { error: hErr } = await supabase.from('outbound_email_drafts').update({ policy: { ...(d.policy || {}), scheduled_send: null, delivery_hold: { reason, at: new Date().toISOString(), ...extra } }, send_error: `held: ${reason}` }).eq('id', d.id).eq('status', 'draft');
     if (hErr) console.error(`[delivery_window] hold of ${d.id} not recorded: ${hErr.message}`);
     console.log(`[delivery_window] ${d.persona || 'draft'} ${d.id} held: ${reason}`);
+    if (d.policy && d.policy.owner_authorization) { try { await require('../lib/authorization/arc_acc').afterDraftHeld(supabase, d, reason); } catch (e) { console.error(`[delivery_window] owner-authorized hold of ${d.id} not recorded: ${e.message}`); } }
     return { held: reason };
   };
   if (ReplyGuard.packageHash(d) !== sched.package_sha256) return hold('the draft changed after it was approved; review it again');
@@ -487,12 +510,13 @@ async function releaseScheduled(id) {
   if (sup) {
     const { error: xErr } = await supabase.from('outbound_email_drafts').update({ status: 'discarded', policy: { ...(d.policy || {}), scheduled_send: null, superseded_by: sup.id }, send_error: 'superseded: a newer reply on the same thread was approved' }).eq('id', d.id).eq('status', 'draft');
     if (xErr) console.error(`[delivery_window] supersede of ${d.id} not recorded: ${xErr.message}`);
+    if (d.policy && d.policy.owner_authorization) { try { await require('../lib/authorization/arc_acc').afterDraftHeld(supabase, d, 'a newer reply on the same thread was approved'); } catch (e) { console.error(`[delivery_window] owner-authorized supersede of ${d.id} not recorded: ${e.message}`); } }
     return { superseded_by: sup.id };
   }
   const out = { status: 200, json: null };
   const res = { status(c) { out.status = c; return this; }, json(j) { out.json = j; return this; } };
   await sendHandler({ params: { id }, _deliveryRelease: true,
-    _approver: { email: sched.approved_by, full_name: sched.approver_name, id: sched.approver_user_id, is_active: true },
+    _approver: { email: sched.approved_by, full_name: sched.approver_name, id: sched.approver_user_id, is_active: true, ...(sched.approver_via ? { via: sched.approver_via } : {}) },
     body: { approved_package_sha256: sched.package_sha256, confirm_after_uncertain: sched.confirm_after_uncertain, confirm_after_amanda: sched.confirm_after_amanda, desk_persona: sched.desk_persona } }, res);
   if (out.status !== 200) return hold(`not sent: ${(out.json && (out.json.message || out.json.error)) || 'status ' + out.status}`);
   return { sent: true };

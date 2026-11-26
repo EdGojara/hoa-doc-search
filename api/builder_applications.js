@@ -5790,4 +5790,14 @@ router.get('/portal/my-submissions', async (req, res) => {
 
 // Exported so backfills/repairs and tests can run the SAME extraction the
 // intake runs, instead of a lookalike that drifts. (Ed 2026-07-15.)
+// OWNER AUTHORIZATION SERVICE, ARC/ACC (Ed 2026-11-26, lib/authorization/arc_acc): an
+// owner-authorized builder decision goes through finalizeApplicationCore (the city-letter
+// validator, the dated letter, the response row), and its letter rides on the authorized
+// builder reply. Nothing here bypasses the module's own checks.
+require('../lib/authorization/arc_acc').registerExecutor('builder', {
+  finalize: (args) => finalizeApplicationCore(args),
+  envelope: (applicationId, responseId) => buildBuilderEmailEnvelope(applicationId, responseId),
+  validate: (applicationId) => require('../lib/builder_letter_validate').validateApplicationForLetterById(supabase, applicationId),
+});
+
 module.exports = { router, extractSubmissionFormFromPdfBuffer, renderBuilderLetterPdfBuffer, uploadLetterPdf, letterDateStr };

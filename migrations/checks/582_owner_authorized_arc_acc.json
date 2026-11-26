@@ -1,0 +1,60 @@
+{
+  "migration": "582_owner_authorized_arc_acc.sql",
+  "summary": "Extends the Owner Authorization Service to ARC/ACC decisions: owner_authorizations.scope also allows 'arc_acc_decisions', and owner_authorization_request_arc_acc() creates one numbered request of builder decisions, ACC decisions, requests for information and Draft Queue correspondence, each with its target, action, executing teammate and fingerprint. No rows are added, removed or changed; no decision, letter or message is touched.",
+  "requires": [
+    "554_owner_delegated_approvals.sql",
+    "566_owner_authorized_accounting_runs.sql",
+    "577_owner_authorization_service.sql"
+  ],
+  "preflight": [
+    {
+      "name": "the ARC/ACC request function does not exist yet",
+      "sql": "SELECT count(*)::int FROM pg_proc WHERE proname = 'owner_authorization_request_arc_acc'",
+      "expect": 0
+    },
+    {
+      "name": "no request uses an unknown scope",
+      "sql": "SELECT count(*)::int FROM owner_authorizations WHERE scope NOT IN ('conversion_objects', 'accounting_runs')",
+      "expect": 0
+    }
+  ],
+  "expected_changes": [
+    "owner_authorizations_scope_check now allows conversion_objects, accounting_runs and arc_acc_decisions.",
+    "Adds owner_authorization_request_arc_acc(text, text, jsonb, text, text, text, integer, integer), executable by service_role only.",
+    "No rows are added, removed or changed."
+  ],
+  "objects": {
+    "added": [
+      "function:owner_authorization_request_arc_acc"
+    ],
+    "changed": [
+      "constraint:owner_authorizations.owner_authorizations_scope_check"
+    ],
+    "removed": []
+  },
+  "verify": [
+    {
+      "name": "the request function exists",
+      "sql": "SELECT count(*)::int FROM pg_proc WHERE proname = 'owner_authorization_request_arc_acc'",
+      "expect": 1
+    },
+    {
+      "name": "the scope check allows ARC/ACC decisions",
+      "sql": "SELECT count(*)::int FROM pg_constraint WHERE conname = 'owner_authorizations_scope_check' AND pg_get_constraintdef(oid) LIKE '%arc_acc_decisions%'",
+      "expect": 1
+    }
+  ],
+  "row_changes": {
+    "owner_authorizations": 0
+  },
+  "protected": [
+    {
+      "table": "acc_finalizations",
+      "order_by": "id"
+    },
+    {
+      "table": "builder_application_responses",
+      "order_by": "id"
+    }
+  ]
+}
