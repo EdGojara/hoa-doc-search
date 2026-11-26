@@ -233,6 +233,7 @@ async function openRun(id){
         + its.map(it=>{ const ev=it.evidence||{}; return '<label style="display:block;padding:8px 0;border-bottom:1px solid #f1f3f6;font-size:12.5px;"><input type="checkbox" class="incl" value="'+esc(it.id)+'"> <b>'+esc(it.label)+'</b> · '+money(it.amount_cents)
           + '<br><span style="color:var(--muted);">Basis: '+esc(ev.basis||'')+(ev.source?' · Source: '+esc(ev.source):'')+'</span>'
           + (it.void_journal?'<div style="margin-top:4px;"><b>Void (system error):</b> '+esc(it.void_journal.reference)+' '+esc(it.void_journal.description||'')+' ('+esc(it.void_journal.posting_date||'')+'), and '+((it.void_journal.charges||[]).length)+' linked owner charge(s). The voided pair is kept for audit and hidden from the ledger and reports.</div>':'')
+          + (it.ledger_only?'<div style="margin-top:4px;"><b>Owner ledger only:</b> '+esc(it.ledger_only.reference)+' ('+esc(it.ledger_only.posting_date||'')+') is already in the GL; this adds only the owner\'s ledger line. No new journal entry.</div>':'')
           + (it.homeowner?'<div style="margin-top:4px;"><b>Owner ledger:</b> '+esc(it.homeowner.kind)+' '+money(it.homeowner.amount_cents)+' on '+esc(it.homeowner.address||'')+' ('+esc(it.homeowner.charge_category)+')</div>':'')
           + it.entries.map(e=>'<div style="margin-top:6px;"><b>'+esc(e.posting_date)+'</b> '+esc(e.description)+fmtLines(e)+'</div>').join('')
           + '<div style="margin-top:4px;color:#166534;">'+esc((it.verification||{}).text||'')+'</div></label>'; }).join('')

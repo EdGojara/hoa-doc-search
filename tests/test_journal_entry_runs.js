@@ -79,6 +79,30 @@ check('void of a system error: only a trustEd-generated posting in an open perio
   assert.strictEqual(J.buildProposals(f({ ...target, je: { ...je, status: 'voided' } }), [it]).items[0].already, true, 'already voided is idempotent');
 });
 
+check('owner-ledger line for a posting already in the GL: no new entry; refused when it is not a system posting, charges another lot, or is already on the ledger', () => {
+  const je = { id: 'je2', reference: 'JE-2026-09208', posting_date: '2026-08-27', status: 'posted', source_module: 'certified_letter_fee', description: 'Certified letter fee' };
+  const target = { je, lines: [{ account_number: '1300', debit_cents: 3500, credit_cents: 0, property_id: 'p1' }, { account_number: '2300', debit_cents: 0, credit_cents: 3500 }],
+    charges: [{ id: 'ch2', property_id: 'p1', original_amount_cents: 3500 }], ledger_rows: [] };
+  const f = (t) => facts({ ledgerTargets: { je2: t }, properties: { p1: { id: 'p1', street_address: '100 Test Ln' }, p2: { id: 'p2', street_address: '200 Test Ln' } } });
+  const it = { id: 'ledger-9208', ledger_for_journal_entry_id: 'je2', homeowner: { property_id: 'p1', charge_category: 'certified_letter' }, evidence: { basis: 'Certified fee posted to GL 1300 without the owner ledger line.' } };
+  const ok = J.buildProposals(f(target), [it]);
+  assert.deepStrictEqual(ok.exceptions, []);
+  const p = ok.items[0];
+  assert.deepStrictEqual(p.entries, [], 'no journal entry is posted');
+  assert.strictEqual(p.ledger_only.reference, 'JE-2026-09208');
+  assert.deepStrictEqual([p.homeowner.kind, p.homeowner.amount_cents, p.homeowner.property_id], ['charge', 3500, 'p1'], 'amount and lot come from the entry itself');
+  assert.strictEqual(J.buildProposals(f({ ...target, je: { ...je, source_module: 'manual' } }), [it]).exceptions.length, 1, 'only a trustEd-generated posting');
+  assert.strictEqual(J.buildProposals(f(target), [{ ...it, homeowner: { ...it.homeowner, property_id: 'p2' } }]).exceptions.length, 1, 'a different lot is refused');
+  assert.strictEqual(J.buildProposals(f({ ...target, je: { ...je, status: 'voided' } }), [it]).exceptions.length, 1, 'a voided entry is refused');
+  assert.strictEqual(J.buildProposals(f({ ...target, ledger_rows: [{ id: 'h1' }] }), [it]).items[0].already, true, 'already on the ledger: idempotent');
+  const read = (f) => fs.readFileSync(path.join(__dirname, '..', f), 'utf8');
+  const jr = read('lib/accounting/journal_entry_runs.js');
+  assert.ok(/contains\('raw_row_jsonb', \{ journal_entry_id: lj\.journal_entry_id \}\)/.test(jr), 'posting checks the ledger again before writing');
+  assert.ok(/voids_ledger_row_id: lr\.id/.test(jr), 'a void offsets an owner-ledger line written for the voided posting');
+  const cf = read('lib/enforcement/certified_fee.js');
+  assert.ok(/chargeCategory: 'certified_letter'/.test(cf) && /onHomeownerLedger/.test(cf), 'new certified fees write the owner-ledger line on the homeowner ledger');
+});
+
 check('reports hide a same-month void pair and keep a later-month void visible; the owner ledger leaves out voided charges', () => {
   const { dropSameMonthVoidPairs } = require('../lib/accounting/je_status');
   const L = (id, st, d, rv) => ({ journal_entries: { id, status: st, posting_date: d, void_reversal_je_id: rv } });
