@@ -29,6 +29,7 @@ const { matchAddress, normalizeAddress } = require('../lib/entity_resolution');
 const { fetchAllQuery } = require('../lib/db/fetch_all');
 const { planTenurePayment, postTenurePayment } = require('../lib/accounting/homeowner_payment');
 const TP = require('../lib/accounting/transfer_proration');
+const CS = require('../lib/accounting/closing_statement');
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -510,7 +511,17 @@ router.post('/record-closing', express.json({ limit: '256kb' }), async (req, res
       propertyId: b.property_id, sellerTenureId: sellerTenureBefore, settlementDate: b.closing_date,
       buyerName: String(b.buyer_name).trim(), confirmed: b.proration_confirmed, blockedAck: b.proration_blocked_ack,
     });
-    if (!prorationGate.proceed) return res.status(prorationGate.status).json(prorationGate.body);
+    if (!prorationGate.proceed) {
+      // The closing statement staff confirm with the proration: seller, buyer,
+      // capitalization fee, other fees and the total (read-only).
+      if (prorationGate.body && prorationGate.body.proration) {
+        try {
+          prorationGate.body.closing_statement = await closingStatementFor(snap, prorationGate.body.proration, {
+            managementFeeCents: checkPlan.checks ? checkPlan.bedrockFeeCents : b.management_transfer_fee_cents, otherFees: b.other_fees });
+        } catch (e) { console.warn('[home-sales] closing statement failed:', e.message); prorationGate.body.closing_statement = { complete: false, gaps: ['closing_statement_failed'], gap_text: [e.message] }; }
+      }
+      return res.status(prorationGate.status).json(prorationGate.body);
+    }
 
     // 1) The sale row, with everything staff entered, still open (requested/disclosed).
     const saleFields = {
@@ -713,6 +724,23 @@ router.post('/payoff-preview', express.json({ limit: '32kb' }), async (req, res)
   }
 });
 
+// The closing statement for a sale (lib/accounting/closing_statement.js): the
+// seller's balance from the snapshot (UNKNOWN stays unknown), the plan's
+// builder and buyer amounts, the configured capitalization fee, and the fees
+// staff entered. Read-only.
+async function closingStatementFor(snap, plan, { managementFeeCents, otherFees } = {}) {
+  const capitalization = await CS.loadCapitalization(supabase, snap.property.community_id);
+  const fees = [];
+  if (managementFeeCents != null && Number(managementFeeCents) > 0) {
+    fees.push({ label: 'Management company transfer fee', amount_cents: Number(managementFeeCents), payable_by: 'buyer', payable_to: 'management_company' });
+  }
+  for (const f of Array.isArray(otherFees) ? otherFees.slice(0, 20) : []) {
+    if (f && typeof f === 'object') fees.push({ label: String(f.label || '').slice(0, 120) || 'Fee', amount_cents: Number(f.amount_cents), payable_by: f.payable_by, payable_to: f.payable_to });
+  }
+  const st = CS.buildClosingStatement({ plan, seller: { balance_status: snap.balance_status, balance_cents: snap.balance_cents }, capitalization, otherFees: fees });
+  return { ...st, gap_text: CS.gapText(st.gaps), seller_name: snap.owner && snap.owner.owner_name, balance_as_of: snap.balance_as_of || null };
+}
+
 // ----------------------------------------------------------------------------
 // POST /api/home-sales/proration-preview — the assessment proration a closing
 // would post (issue #94). No writes.
@@ -729,7 +757,8 @@ router.post('/proration-preview', express.json({ limit: '8kb' }), async (req, re
     const proration = await TP.previewTransferProration(supabase, {
       propertyId: b.property_id, sellerTenureId: snap.owner.tenure_id, settlementDate: b.closing_date, buyerName: b.buyer_name || null,
     });
-    res.json({ proration });
+    const closing_statement = await closingStatementFor(snap, proration, { managementFeeCents: b.management_transfer_fee_cents, otherFees: b.other_fees });
+    res.json({ proration, closing_statement });
   } catch (err) {
     console.error('[home-sales] proration-preview failed:', err.message);
     res.status(err.code === 'P0001' ? 409 : 500).json({ error: err.code === 'P0001' ? err.message : safeErrorMessage(err) });
