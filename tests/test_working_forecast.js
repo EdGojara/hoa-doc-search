@@ -301,6 +301,16 @@ const item = (l, d) => l.bridge.find((b) => b.driver === d);
     const sched2 = { ...sched, postings: [{ period_month: '2026-08-01', kind: 'recognition', reversed: false }] };   // September not posted yet
     const late = WF.buildLine({ ...L({ type: 'revenue', n: '4000', name: 'Assessments' }), ytd_actual: 68495000, month_actuals: { 8: 8561875, 9: 0 }, budget_months: Array(12).fill(9000000), schedules: [sched2] }, ctx);
     check('a scheduled month not yet posted is still forecast (catch-up), so the year lands on the schedule', late.base_year.current_forecast_cents === 68495000 + 4 * 8561875, String(late.base_year.current_forecast_cents));
+    // A schedule that has run its course (a one-month prepaid deferral of one bill, recognized) does not
+    // replace the remaining budget for the rest of the year.
+    const done = { id: 's3', description: 'Prepaid one bill: service August', status: 'fully_recognized', schedule_basis: 'calculated',
+      periods: [per(8, 500000)], postings: [{ period_month: '2026-08-01', kind: 'recognition', reversed: false }] };
+    const sec = WF.buildLine({ ...L({}), ytd_actual: 1000000, month_actuals: { 8: 100000, 9: 100000 }, schedules: [done] }, ctx);
+    const secPlain = WF.buildLine({ ...L({}), ytd_actual: 1000000, month_actuals: { 8: 100000, 9: 100000 } }, ctx);
+    check('a finished one-month schedule keeps actual + remaining approved budget', /remaining approved budget/.test(sec.base.note) && sec.base_year.current_forecast_cents === secPlain.base_year.current_forecast_cents, sec.base.note);
+    const pending = { ...done, id: 's4', status: 'active', postings: [] };
+    const catchUp = WF.buildLine({ ...L({}), ytd_actual: 1000000, month_actuals: { 8: 100000, 9: 100000 }, schedules: [pending] }, ctx);
+    check('...but a scheduled month not yet recognized still drives the forecast (catch-up)', /remaining scheduled recognition/.test(catchUp.base.note), catchUp.base.note);
     const plain = WF.buildLine({ ...L({}), ytd_actual: 1000000, month_actuals: { 8: 100000, 9: 100000 } }, ctx);
     check('a line without a schedule keeps actual + remaining approved budget', /remaining approved budget/.test(plain.base.note), plain.base.note);
   }
