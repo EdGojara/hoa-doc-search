@@ -53,5 +53,13 @@ console.log('charges billed natively in trustEd (not in the migrated ledger)');
 const nat = reconcileAgingToGl({ rows, asOf: '2026-09-30', agingOpenCents: aging + 3500, nativeOpenCents: 3500, glArCents: receivable + 3500 });
 check('a native certified-letter fee is aged on top and added to the GL 1300 basis; still ties', nat.tied && nat.aging_matches_ledger && nat.lines.some((l) => l.key === 'native_charges' && l.cents === 3500));
 
+console.log('former owners (Ed 2026-11-26): in the GL, never in a current owner’s balance');
+const fo = reconcileAgingToGl({ rows, asOf: '2026-09-30', agingOpenCents: aging, glArCents: receivable + 720000, glPrepaidCents: -credits + 215000, formerReceivableCents: 720000, formerCreditCents: 215000, formerCount: 9 });
+check('GL 1300 = current owners’ receivables + former owners’ receivables: ties', fo.tied && fo.difference_cents === 0);
+check('former owners are their own line with a count; the aged open charges are unchanged', fo.lines.some((l) => l.key === 'former_owner_receivables' && l.cents === 720000 && l.count === 9) && fo.lines.find((l) => l.key === 'open_charges').cents === aging);
+check('2400 = current + former credits; subledger_cents stays current owners only (close AR-02 adds former itself)', fo.prepaid.difference_cents === 0 && fo.prepaid.subledger_cents === -credits && fo.prepaid.former_cents === 215000);
+const foMiss = reconcileAgingToGl({ rows, asOf: '2026-09-30', agingOpenCents: aging, glArCents: receivable + 720000 });
+check('without the former-owner line the same GL shows the former balances as the difference (never hidden)', foMiss.difference_cents === -720000);
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

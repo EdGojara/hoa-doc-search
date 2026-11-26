@@ -465,7 +465,7 @@ async function _glBalanceAsOf(cid, accountNumber, asOf) {
 async function computeArAging(cid, asOf) {
     asOf = asOf || _today();
     const charges = (await _fetchAll('ar_charges',
-      'property_id, tenure_id, charge_type_id, balance_remaining_cents, due_date, charge_date, status, source_module, ar_charge_types:charge_type_id(category, display_name)',
+      'id, property_id, tenure_id, charge_type_id, balance_remaining_cents, due_date, charge_date, status, source_module, posting_journal_entry_id, ar_charge_types:charge_type_id(category, display_name)',
       { community_id: cid, status: 'open' }))
       .filter((c) => !asOf || String(c.charge_date || c.due_date || '').slice(0, 10) <= asOf);
     // Current owner's tenure only (an unstamped charge is on the lot's current
@@ -491,6 +491,25 @@ async function computeArAging(cid, asOf) {
       ledgerRows = await _currentOwnerRows(cid, null, asOf);
       const fromTxns = _openChargesFromRows(ledgerRows);
       if (fromTxns.length || ledgerRows.length) {
+        // A native charge already mirrored onto the owner ledger is aged once, from the ledger
+        // (Ed 2026-11-26: certified-letter fees were counted twice). The ledger line names its
+        // charge (raw.ar_charge_id, lib/enforcement/certified_fee.js) or the charge's journal entry
+        // (raw.journal_entry_id, a Kat ledger-only line); either link is exact.
+        if (open.length) {
+          const jeIds = [...new Set(open.map((c) => c.posting_journal_entry_id).filter(Boolean))];
+          const chIds = open.map((c) => c.id).filter(Boolean);
+          const mirrored = new Set();
+          const look = async (key, vals) => {
+            for (let i = 0; i < vals.length; i += 100) {
+              const { data, error } = await supabase.from('homeowner_transactions').select('raw_row_jsonb').eq('community_id', cid).in(`raw_row_jsonb->>${key}`, vals.slice(i, i + 100));
+              if (error) throw new Error(`mirrored charges: ${error.message}`);
+              for (const r of data || []) { const v = r.raw_row_jsonb && r.raw_row_jsonb[key]; if (v) mirrored.add(`${key}:${v}`); }
+            }
+          };
+          if (jeIds.length) await look('journal_entry_id', jeIds);
+          if (chIds.length) await look('ar_charge_id', chIds);
+          open = open.filter((c) => !mirrored.has(`ar_charge_id:${c.id}`) && !(c.posting_journal_entry_id && mirrored.has(`journal_entry_id:${c.posting_journal_entry_id}`)));
+        }
         nativeOpenCents = open.reduce((s, c) => s + Number(c.balance_remaining_cents), 0);
         open = fromTxns.concat(open);
         ar_source = nativeOpenCents ? 'homeowner_transactions+ar_charges' : 'homeowner_transactions';
@@ -571,8 +590,15 @@ async function computeArAging(cid, asOf) {
     let reconciliation;
     if (ledgerRows && ar_source !== 'ar_charges') {
       const { reconcileAgingToGl } = require('../lib/ar/aging_reconciliation');
+      // Former owners' balances are part of GL 1300 / 2400 but never of any current owner's balance
+      // (Ed 2026-11-26): the reconciliation shows them as their own lines so the GL ties without
+      // moving a former owner's debt onto the lot's current owner. (Current balances; the view
+      // is not dated.)
+      const formerReceivableCents = formerLedger.filter((r) => r.balance_cents > 0).reduce((s, r) => s + r.balance_cents, 0);
+      const formerCreditCents = -formerLedger.filter((r) => r.balance_cents < 0).reduce((s, r) => s + r.balance_cents, 0);
       reconciliation = reconcileAgingToGl({ rows: ledgerRows, asOf, agingOpenCents: grandTotal, nativeOpenCents,
-        glArCents: glAr, glPrepaidCents: glPrepaid == null ? null : -glPrepaid });
+        glArCents: glAr, glPrepaidCents: glPrepaid == null ? null : -glPrepaid, formerReceivableCents, formerCreditCents,
+        formerCount: formerLedger.filter((r) => r.balance_cents > 0).length });
       for (const o of reconciliation.owners_in_credit) {
         const w = ownerByProp[o.property_id] || {};
         o.street_address = w.street_address || '—'; o.owner_name = w.owner_name || '—';
