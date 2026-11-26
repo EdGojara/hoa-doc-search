@@ -61,7 +61,7 @@
       h += '<div style="margin-top:8px; font-size:12.5px;"><b>Builder ownership</b> from ' + (own.acquisition_date ? day(own.acquisition_date) + ' (' + esc(own.acquisition_basis || '') + ')' : '<span style="color:#a12828;">acquisition date not on file</span>') + '<table style="border-collapse:collapse; width:100%; margin-top:4px;">'
         + (own.periods || []).map((p) => row(esc(p.fiscal_year) + ': ' + day(p.from) + ' to ' + day(p.through) + ', ' + esc(p.days) + ' days' + (p.formula ? ' (' + esc(p.formula) + ')' : ''), amt(p.cents))).join('')
         + '</table>'
-        + (own.prior_year_cents ? '<div>Earlier-year builder days: ' + money(own.prior_year_cents) + ', to be reconciled with what the legacy books billed before anything posts.</div>' : '')
+        + (own.prior_year_cents ? '<div>Earlier-year builder days: ' + money(own.prior_year_cents) + ' (recorded for reference; previously billed assessments stand, nothing is billed for them here).</div>' : '')
         + (own.flags || []).map((f) => '<div style="color:#8a5a00;">' + esc(f.kind === 'developer_period' ? 'Developer period' : 'Developer days billed to the builder') + ': ' + day(f.from) + ' to ' + day(f.through) + (f.cents != null ? ' ' + money(f.cents) : '') + '. ' + esc(f.note) + '</div>').join('')
         + (own.packet_remittances || []).map((r) => '<div style="color:#8a5a00;">Title already paid the Association: check ' + esc(r.check_number || '?') + ' ' + money(r.amount_cents) + (r.memo ? ' (' + esc(r.memo) + ')' : '') + '.</div>').join('')
         + (own.warnings || []).map((w) => '<div class="muted">' + esc(w) + '</div>').join('')

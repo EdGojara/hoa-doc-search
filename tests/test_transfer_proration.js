@@ -289,32 +289,22 @@ check('gate: ambiguous activity stops; recording the transfer anyway needs an ex
   assert.strictEqual(ok.proceed, true);
   assert.strictEqual((await TP.afterTransfer(null, ok, { proposalId: 'x' })).status, 'blocked');
 });
-check('ownership: a builder that owned the lot in an earlier year HOLDS the proration (earlier days reconciled first, nothing guessed)', async () => {
-  const T = { ...BASE_TABLES, ownership_tenures: [{ id: 't', start_date: '2025-12-08', start_date_basis: 'county_deed', origin: 'backfill_current', community_id: 'scr', property_id: 'p' }] };
-  const g = await gate({ data: { ...PLAN, builder_period_start: '2026-01-01', builder_period_end: '2026-06-30' }, error: null }, { confirmed: true }, T);
-  assert.deepStrictEqual([g.proceed, g.body.code], [false, 'proration_blocked']);
-  const o = g.body.proration.ownership;
-  assert.deepStrictEqual(o.holds, ['assessment_rate_unknown', 'prior_year_builder_days']);
-  assert.deepStrictEqual(o.schedule.periods.map((p) => [p.fiscal_year, p.from, p.through, p.days]), [[2025, '2025-12-08', '2025-12-31', 24], [2026, '2026-01-01', '2026-06-30', 181]]);
-  assert.ok(o.warnings[0].includes('county appraisal roll'));
-  assert.strictEqual((await TP.afterTransfer(null, await gate({ data: { ...PLAN, builder_period_start: '2026-01-01', builder_period_end: '2026-06-30' }, error: null }, { blockedAck: true }, T), { proposalId: 'x' })).status, 'blocked');
-});
-check('ownership: days before the builder acquired the lot are flagged separately and never charged to the builder', async () => {
-  const T = { ...BASE_TABLES, ownership_tenures: [{ id: 't', start_date: '2026-03-01', start_date_basis: 'county_deed', origin: 'backfill_current', community_id: 'scr', property_id: 'p' }] };
-  const g = await gate({ data: { ...PLAN, builder_period_start: '2026-01-01', builder_period_end: '2026-06-30' }, error: null }, { confirmed: true }, T);
-  assert.strictEqual(g.proceed, false);
-  const o = g.body.proration.ownership;
-  assert.deepStrictEqual(o.holds, ['builder_charged_before_acquisition']);
-  const f = o.flags.find((x) => x.kind === 'developer_period_billed_to_builder');
-  assert.deepStrictEqual([f.from, f.through, f.days, f.cents], ['2026-01-01', '2026-02-28', 59, 4001]);   // round(49500 x 50 x 59 / 36500) = 4000.7
-  assert.strictEqual(o.settlement_year_cents, 8273);   // 3/1-6/30 = 122 days: round(49500 x 50 x 122 / 36500) = 8273.0
-});
-check('ownership: a closing packet showing the title company already paid the Association holds any new charge (no duplicate billing)', async () => {
-  const pkt = { id: 'doc-1', community_id: 'scr', category: 'scanned_mail', extraction_notes: JSON.stringify({ kind: 'closing_packet', property_id: 'p', closing_date: '2026-07-01', checks: [{ check_number: '9', amount_cents: 99000, payee: 'Example HOA', classification: 'ASSOCIATION_PAYMENT' }, { check_number: '10', amount_cents: 35000, payee: 'Bedrock Association Management', classification: 'BEDROCK_FEE' }] }) };
-  const g = await gate({ data: PLAN, error: null }, { confirmed: true }, { ...BASE_TABLES, library_documents: [pkt] });
-  assert.strictEqual(g.proceed, false);
-  assert.deepStrictEqual(g.body.proration.ownership.holds, ['title_already_remitted']);
-  assert.deepStrictEqual(g.body.proration.ownership.packet_remittances.map((r) => r.amount_cents), [99000]);
+check('ownership differences are recorded, never a hold (Ed 11-26: previously billed assessments stand)', async () => {
+  const T1 = { ...BASE_TABLES, ownership_tenures: [{ id: 't', start_date: '2025-12-08', start_date_basis: 'county_deed', origin: 'backfill_current', community_id: 'scr', property_id: 'p' }] };
+  const g1 = await gate({ data: { ...PLAN, builder_period_start: '2026-01-01', builder_period_end: '2026-06-30' }, error: null }, {}, T1);
+  assert.deepStrictEqual([g1.proceed, g1.body.code], [false, 'proration_confirmation_required']);   // shown for confirmation, not blocked
+  assert.deepStrictEqual(g1.body.proration.ownership.differences, ['assessment_rate_unknown', 'prior_year_builder_days']);
+  assert.deepStrictEqual(g1.body.proration.ownership.holds, []);
+  const T2 = { ...BASE_TABLES, ownership_tenures: [{ id: 't', start_date: '2026-03-01', start_date_basis: 'county_deed', origin: 'backfill_current', community_id: 'scr', property_id: 'p' }] };
+  const g2 = await gate({ data: { ...PLAN, builder_period_start: '2026-01-01', builder_period_end: '2026-06-30' }, error: null }, { confirmed: true }, T2);
+  assert.strictEqual(g2.proceed, true);
+  assert.deepStrictEqual(g2.plan.ownership.differences, ['builder_charged_before_acquisition']);
+  const f = g2.plan.ownership.flags.find((x) => x.kind === 'developer_period_billed_to_builder');
+  assert.deepStrictEqual([f.from, f.through, f.days, f.cents], ['2026-01-01', '2026-02-28', 59, 4001]);
+  const pkt = { id: 'doc-1', community_id: 'scr', category: 'scanned_mail', extraction_notes: JSON.stringify({ kind: 'closing_packet', property_id: 'p', closing_date: '2026-07-01', checks: [{ check_number: '9', amount_cents: 99000, payee: 'Example HOA', classification: 'ASSOCIATION_PAYMENT' }] }) };
+  const g3 = await gate({ data: PLAN, error: null }, { confirmed: true }, { ...BASE_TABLES, library_documents: [pkt] });
+  assert.strictEqual(g3.proceed, true);
+  assert.deepStrictEqual(g3.plan.ownership.packet_remittances.map((r) => r.amount_cents), [99000]);
 });
 check('gate: ordinary transfers pass untouched, and nothing posts after them', async () => {
   const g = await gate({ data: { applies: false, reason: 'seller_not_builder' }, error: null });
