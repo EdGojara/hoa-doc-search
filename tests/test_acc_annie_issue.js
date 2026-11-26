@@ -56,8 +56,6 @@ A.registerIssuer(async (id, body) => { calls.push({ id, body }); return { status
   check('a driveway modification (Ed\'s approval): not issued', !r.issued && /owner review required/.test(r.skipped || ''), JSON.stringify(r));
   r = await A.issueIfReady(fakeDb({ c1: base({ project_summary: 'Requesting a variance to build an 8 ft fence' }) }), 'c1');
   check('a variance (committee or Board): not issued', !r.issued && /committee or board/i.test(r.skipped || ''), JSON.stringify(r));
-  r = await A.issueIfReady(fakeDb({ c1: base({ current_ai_recommendation: 'request_more_info' }) }), 'c1');
-  check('an incomplete case is not issued as a decision', !r.issued && /request more info/.test(r.skipped || ''), JSON.stringify(r));
   r = await A.issueIfReady(fakeDb({ c1: base({ submitter_email: null }) }), 'c1');
   check('no applicant email: left for a person to mail', !r.issued && /no applicant email/.test(r.skipped || ''), JSON.stringify(r));
   r = await A.issueIfReady(fakeDb({ c1: base({ status: 'decided' }) }), 'c1');
@@ -67,6 +65,36 @@ A.registerIssuer(async (id, body) => { calls.push({ id, body }); return { status
   delete process.env.ACC_AI_DECISIONS_ENABLED;
   check('kill switch: nothing issued', !r.issued && /turned off/.test(r.skipped || ''));
   check('none of those reached the send path', calls.length === n);
+
+  console.log('\nAnnie requests the missing information herself (Ed 2026-11-26, 6331 Clear Canyon)');
+  {
+    const rfi = (o) => base({ community_id: 'cg', community_name: 'Canyon Gate at Cinco Ranch', project_summary: 'Removal of 5 trees along the side street', current_review_at: null, current_ai_recommendation: null, current_letter_body: null,
+      ai_recommendation: 'request_more_info', ai_review_text: 'Missing: arborist report.', ai_letter_body: 'Thank you for your application. To complete the review, please send the arborist report.', created_at: '2026-11-26T18:17:04Z', updated_at: '2026-11-26T18:17:06Z', ...o });
+    const k = calls.length;
+    r = await A.issueIfReady(fakeDb({ c1: rfi() }, {}), 'c1');
+    check('an incomplete current case: Annie sends her request for information (no staff step, no Ed)', r.requested_info === true && calls.length === k + 1, JSON.stringify(r));
+    check('...as a request (not a decision), her drafted letter, to the applicant', calls[k] && calls[k].body.decision_type === 'request_more_info' && calls[k].body.send === true && calls[k].body.to_email === 'owner@example.test' && /arborist report/.test(calls[k].body.body_text));
+    check('...it is never issued as a decision', !r.issued);
+    r = await A.issueIfReady(fakeDb({ c1: rfi({ decision_type: 'request_more_info', updated_at: '2026-11-26T18:20:00Z' }) }, {}), 'c1');
+    check('the request for this review is sent once (already recorded: not again)', !r.requested_info && /already sent/.test(r.skipped || '') && calls.length === k + 1, JSON.stringify(r));
+    r = await A.issueIfReady(fakeDb({ c1: rfi({ decision_type: 'request_more_info', updated_at: '2026-11-26T18:20:00Z', current_review_at: '2026-11-28T15:00:00Z', current_ai_recommendation: 'request_more_info', current_letter_body: 'Thank you for the report. Please also send the survey.' }) }, {}), 'c1');
+    check('a NEW review after new documents may ask again', r.requested_info === true && /survey/.test(calls[calls.length - 1].body.body_text), JSON.stringify(r));
+    const k2 = calls.length;
+    r = await A.issueIfReady(fakeDb({ c1: rfi({ created_at: '2026-10-13T21:36:00Z' }) }, {}), 'c1');
+    check('a historical (backlog) case: nothing is sent to the homeowner', !r.requested_info && /backlog hold/.test(r.skipped || '') && calls.length === k2, JSON.stringify(r));
+    r = await A.issueIfReady(fakeDb({ c1: rfi({ ai_recommendation: 'approved_with_conditions', ai_letter_body: 'Your application is approved.', project_summary: 'Driveway extension, footprint not stated' }) }, {}), 'c1');
+    check('routed for information but the review recommends a decision: a person words the request', !r.requested_info && calls.length === k2, JSON.stringify(r));
+    r = await A.issueIfReady(fakeDb({ c1: rfi({ submitter_email: null }) }, {}), 'c1');
+    check('no applicant email: left for a person', !r.requested_info && /no applicant email/.test(r.skipped || '') && calls.length === k2, JSON.stringify(r));
+    r = await A.issueIfReady(fakeDb({ c1: rfi() }, {}), 'c1', { dryRun: true });
+    check('dry run lists it and sends nothing', r.would_request_info === true && calls.length === k2, JSON.stringify(r));
+    process.env.ACC_AI_INFO_REQUESTS = 'off';
+    r = await A.issueIfReady(fakeDb({ c1: rfi() }, {}), 'c1');
+    delete process.env.ACC_AI_INFO_REQUESTS;
+    check('kill switch: nothing sent', !r.requested_info && /turned off/.test(r.skipped || '') && calls.length === k2);
+    const ei = fs.readFileSync(path.join(__dirname, '..', 'lib', 'applications', 'email_intake.js'), 'utf8');
+    check('the email door sends its receipt BEFORE Annie\'s next step', /deferIssue: true/.test(ei) && ei.indexOf('await sendAcknowledgment({ to: ackTo') > 0 && ei.indexOf('await sendAcknowledgment({ to: ackTo') < ei.indexOf('issueIfReadySoon(supabase, pend.id'));
+  }
 
   console.log('\nWhich letter Annie sends');
   check('her current-review letter', A.letterFor(base(), 'approved_with_conditions').source === 'current_review');
