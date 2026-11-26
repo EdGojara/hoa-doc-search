@@ -1859,6 +1859,7 @@ router.post('/:id/send', express.json(), async (req, res) => {
       throw e;
     }
     await ReplyGuard.finish(supabase, suppressed ? { key: claim.key, token: claim.token, ok: false, err: 'suppressed: ' + suppressed, uncertain: false } : { key: claim.key, token: claim.token, ok: true });
+    const sentAtIso = new Date().toISOString(); // the moment the send returned
 
     // Mark the inbound handled + log the outbound reply on the record.
     await supabase.from('email_messages').update({ triage_status: 'handled', reviewed_by: reviewed_by, reviewed_at: new Date().toISOString() }).eq('id', req.params.id);
@@ -1889,6 +1890,20 @@ router.post('/:id/send', express.json(), async (req, res) => {
       internet_message_id: sentMessageId,
       extracted: { approval: { approved_by: reviewed_by, approved_by_name: _approver.full_name || null, approved_at: new Date().toISOString(), agent: persona, mailbox: fromMailbox, message_id: sentMessageId, in_thread: !!(threaded && graphSend.sameMailbox(fromMailbox, replyFrom)), path: 'communications' } },
     }).select('id').maybeSingle();
+
+    // Builder ARC (Ed 2026-11-25): a reply that carries information requests for
+    // builder applications (extracted.builder_info_requests, the application ids)
+    // records the actual send time on each one and discards Annie's per-lot
+    // request drafts, so no duplicate goes out and each deadline clock moves.
+    // Only a real send counts (never a suppressed / demo send). Best-effort; the
+    // email is already sent.
+    if (!suppressed && m.extracted && Array.isArray(m.extracted.builder_info_requests) && m.extracted.builder_info_requests.length) {
+      try {
+        const { recordInfoRequestSent } = require('../lib/builder_arc/tracking');
+        const rec = await recordInfoRequestSent(supabase, m.extracted.builder_info_requests, { sent_at: sentAtIso, via: `the reply "${subj}" to ${recipient}`, message_ref: sentMessageId || (outRow && outRow.id) || null, sent_by: reviewed_by });
+        console.log('[email_triage] builder info requests recorded:', JSON.stringify(rec));
+      } catch (e) { console.warn('[email_triage] builder info request recording failed:', e.message); }
+    }
 
     // Capture any commitment this reply made — or asked the other side for — as a
     // tracked follow-up, so "I'll schedule it" / "let me know what works" don't
