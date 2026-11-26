@@ -3382,7 +3382,9 @@ async function _accFinalizeHandler(req, res) {
   try {
     // Annie issuing her own routine decision (lib/acc/annie_issue) arrives with
     // the agent as the issuer; it is set only in-process, never from HTTP.
-    const actor = req._accAgentIssuer || await getActingUser(req);
+    // The owner's decision under a verified Owner Authorization Service reply (lib/authorization/arc_acc):
+    // built from the database by arc_acc.ownerActor, set only in-process, never from HTTP.
+    const actor = req._accAgentIssuer || req._accOwnerAuthorized || await getActingUser(req);
     const body = req.body || {};
     const { id } = req.params;
 
@@ -3844,6 +3846,20 @@ require('./lib/acc/annie_issue').registerIssuer(async (id, body) => {
   const res = { status(c) { out.status = c; return this; }, json(j) { out.json = j; return this; } };
   await _accFinalizeHandler({ params: { id }, body, headers: {}, _accAgentIssuer: _ACC_ANNIE_ISSUER }, res);
   return out;
+});
+// OWNER AUTHORIZATION SERVICE, ARC/ACC (Ed 2026-11-26, lib/authorization/arc_acc): an
+// owner-authorized decision or request for information goes through this same finalize path,
+// with the owner (as authorized by the verified reply) as the actor. The preflight
+// (lib/acc/owner_preflight) runs the same authority checks without writing, before a request
+// is offered to the owner.
+require('./lib/authorization/arc_acc').registerExecutor('acc', {
+  preflight: (id, body, actor) => require('./lib/acc/owner_preflight').preflight(supabase, { id, body, actor, managementCompanyId: BEDROCK_MGMT_CO_ID }),
+  async finalize(id, body, actor) {
+    const out = { status: 200, json: null };
+    const res = { status(c) { out.status = c; return this; }, json(j) { out.json = j; return this; } };
+    await _accFinalizeHandler({ params: { id }, body, headers: {}, _accOwnerAuthorized: actor }, res);
+    return out;
+  },
 });
 // RECOVERY on start (Ed 2026-11-26, lib/acc/catch_up): current applications
 // whose receipt or request for information never went out are finished through
