@@ -1,5 +1,5 @@
 -- ============================================================================
--- 579_capitalization_fee.sql  (Ed 2026-11-26)
+-- 581_capitalization_fee.sql  (Ed 2026-11-26)
 -- ----------------------------------------------------------------------------
 -- The capitalization fee (capital contribution) a closing collects, as
 -- configuration on the community's homeowner rate row, next to the annual
