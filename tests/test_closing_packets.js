@@ -92,6 +92,15 @@ check('unrecorded packets = closing packets no home sale points at; mail and oth
   assert.strictEqual(list[0].property_id, 'p2');
 });
 
+check('a closing recorded for the same lot and settlement date counts as recorded, even without the packet link', async () => {
+  const db = fakeDb();
+  await CP.fileClosingPacket(db, { communityId: 'c1', buffer: Buffer.from('k'), extracted, propertyId: 'p1' });
+  db.t.home_sales.push({ id: 's9', property_id: 'p1', closing_date: '2031-09-22', status: 'closed', source_document_id: null });
+  assert.deepStrictEqual(await CP.listUnrecordedPackets(db, 'c1'), []);
+  assert.strictEqual(CP.recordedByLotAndDate({ property_id: 'p1', closing_date: '2031-09-22' }, [{ property_id: 'p1', closing_date: '2031-09-23' }]), false);
+  assert.strictEqual(CP.recordedByLotAndDate({ property_id: null, closing_date: '2031-09-22' }, [{ property_id: null, closing_date: '2031-09-22' }]), false);
+});
+
 check('wiring: scan files the packet; record-closing links it; the list endpoint and screen exist', () => {
   const api = fs.readFileSync(path.join(__dirname, '..', 'api', 'home_sales.js'), 'utf8');
   assert.ok(/CP\.fileClosingPacket\(supabase/.test(api), 'scan files the packet');
