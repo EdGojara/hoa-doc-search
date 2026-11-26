@@ -59,22 +59,30 @@ check('review: earlier-year days and a county-roll date hold with a warning', ()
   assert.ok(r.flags.some((f) => f.kind === 'developer_period' && f.from === '2030-01-01' && f.through === '2030-12-07'));
 });
 
-check('packet next action: checks with void dates, lot, Kat reconciliation, escalation a week before the first void', () => {
+check('packet next action: each check stage, Bedrock fees kept apart, critical when an undeposited check voids within 21 days, due the next business day', () => {
   const n = { kind: 'closing_packet', property_id: 'p1', closing_date: '2031-09-22', checks: [
     { check_number: '1', amount_cents: 99000, check_date: '2031-09-22', payee: 'Example HOA', classification: 'ASSOCIATION_PAYMENT' },
     { check_number: '2', amount_cents: 35000, check_date: '2031-09-16', payee: 'Bedrock Association Management', classification: 'BEDROCK_FEE' }] };
-  const a = CP.packetNextAction(n, { today: '2031-11-26' });
-  assert.ok(a.next_action.startsWith('Reese: confirm the original checks'));
-  assert.ok(a.next_action.includes('#2 $350.00 to Bedrock Association Management, void 2031-12-15'));
+  const scanned = [{ check_number: '1', amount_cents: 99000, status: 'scanned' }];
+  const a = CP.packetNextAction(n, { today: '2031-11-26', receipts: scanned });
+  assert.ok(a.next_action.includes('#1 $990.00 to Example HOA (void 2031-12-21; received (scanned), not posted)'), a.next_action);
+  assert.ok(a.next_action.includes('#2 $350.00 to Bedrock Association Management (void 2031-12-15; Bedrock fee, not Association money)'));
   assert.ok(a.next_action.includes('Kat reconciles'));
-  assert.ok(a.next_action.includes('settlement date 2031-09-22'));
-  assert.strictEqual(a.first_void, '2031-12-15');
+  assert.ok(a.next_action.includes('Reese: record the closing in Home Sales with the settlement date 2031-09-22'));
+  assert.strictEqual(a.soonest_undeposited_void, '2031-12-21');
+  assert.strictEqual(a.priority, 'high');                          // 25 days to the void: high
+  assert.strictEqual(CP.packetNextAction(n, { today: '2031-12-01', receipts: scanned }).priority, 'critical');   // 20 days: critical
   assert.strictEqual(a.next_action_due, '2031-11-27T23:00:00Z');   // the next business day after filing
-  assert.strictEqual(a.priority, 'high');
-  // Filed on a Friday: due Monday.
-  assert.strictEqual(CP.packetNextAction(n, { filedAt: '2031-11-28T16:00:00Z' }).next_action_due, '2031-12-01T23:00:00Z');
+  assert.strictEqual(CP.packetNextAction(n, { filedAt: '2031-11-28T16:00:00Z', receipts: scanned }).next_action_due, '2031-12-01T23:00:00Z');
   assert.ok(CP.packetNextAction({ ...n, property_id: null }, { today: '2031-11-26' }).next_action.includes('match the packet to its lot'));
-  assert.strictEqual(CP.packetNextAction(n, { recorded: true }).done, true);
+  // Stages move the next step; scanning alone is never "deposited".
+  assert.ok(CP.packetNextAction(n, { today: '2031-11-26', receipts: [{ check_number: '1', amount_cents: 99000, status: 'recorded' }] }).next_action.includes('Emma prepares the deposit'));
+  assert.ok(CP.packetNextAction(n, { today: '2031-11-26', receipts: [{ check_number: '1', amount_cents: 99000, status: 'deposited' }] }).next_action.includes('Kat reconciles the deposit to the bank line'));
+  // Done only when the closing is recorded AND the Association check cleared the bank.
+  assert.strictEqual(CP.packetNextAction(n, { recorded: true, receipts: scanned }).done, false);
+  assert.strictEqual(CP.packetNextAction(n, { recorded: true, receipts: [{ check_number: '1', amount_cents: 99000, status: 'reconciled' }] }).done, true);
+  // A packet with only a Bedrock fee check is done once recorded.
+  assert.strictEqual(CP.packetNextAction({ ...n, checks: [n.checks[1]] }, { recorded: true, receipts: [] }).done, true);
 });
 
 check('Amanda tracks an unrecorded packet (REVIEW, Reese acts) and resolves it once a closing points at it', () => {
