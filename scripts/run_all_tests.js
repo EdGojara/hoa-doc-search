@@ -436,6 +436,7 @@ const CHECKS = [
   'tests/test_acc_decision_authority.js',
   'tests/test_acc_receipt.js',
   'tests/test_acc_work_views.js',
+  'tests/test_acc_first_contact.js',
   'tests/test_acc_annie_issue.js',
   'tests/test_acc_property_history.js',
   'tests/test_acc_intake_exceptions.js',

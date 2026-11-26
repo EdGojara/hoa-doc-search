@@ -3547,12 +3547,32 @@ async function _accFinalizeHandler(req, res) {
     const composeEmail = async () => {
       if (!graph.isConfigured()) throw new Error('email_not_configured');
       const { composeAccDecisionEmail } = require('./lib/email/acc_cover_note');
-      const m = composeAccDecisionEmail({ decisionType, homeownerName: dec.homeowner_name, homeownerAddress: dec.homeowner_address, projectSummary: dec.project_summary, letterBody: bodyText, communityName: dec.community_name });
+      // First email on the case (no receipt went out): it also confirms receipt,
+      // date and reference, so the homeowner gets one message (Ed 2026-11-26).
+      const firstContact = dec.acknowledged_at ? null : { reference: dec.reference_number || null, receivedAt: dec.received_at || dec.created_at || null };
+      // Several improvements with different outcomes (Ed 2026-11-26,
+      // lib/acc/multi_item): ONE email listing each improvement's status, with
+      // every letter attached. Set only in-process by Annie's issuer.
+      const companion = req._accAgentIssuer && body.companion && Array.isArray(body.companion.items) && body.companion.items.length ? body.companion : null;
+      const m = companion
+        ? require('./lib/email/acc_cover_note').composeMultiItemEmail({ homeownerName: dec.homeowner_name, homeownerAddress: dec.homeowner_address, communityName: dec.community_name, reference: String(dec.reference_number || '').replace(/-\d+$/, '') || null, items: companion.items, firstContact })
+        : composeAccDecisionEmail({ decisionType, homeownerName: dec.homeowner_name, homeownerAddress: dec.homeowner_address, projectSummary: dec.project_summary, letterBody: bodyText, communityName: dec.community_name, firstContact });
       const built = require('./lib/email/annie_signature').buildAnnieEmail(m.text, dec.community_name);
-      const pdfAtt = { '@odata.type': '#microsoft.graph.fileAttachment', name: letterFileName, contentType: 'application/pdf', contentBytes: pdfBuffer.toString('base64') };
+      const files = [{ name: letterFileName, buf: pdfBuffer }];
+      if (companion && companion.letter_text) {
+        const rfiBuf = await renderLetterPdfBuffer({ community: dec.community_name, homeowner_name: dec.homeowner_name, homeowner_address: dec.homeowner_address, project_summary: companion.project_summary || dec.project_summary, reference_number: companion.reference_number || null, decision_type: 'request_more_info', body_text: companion.letter_text });
+        files.push({ name: `${String(companion.reference_number || 'information_request').replace(/[^A-Za-z0-9._-]+/g, '_')}_information_request.pdf`, buf: rfiBuf });
+      }
+      for (const otherId of (companion && Array.isArray(companion.extra_decision_case_ids) ? companion.extra_decision_case_ids : [])) {
+        const { data: o, error: oErr } = await supabase.from('acc_decisions').select('reference_number, letter_pdf_storage_path').eq('id', otherId).maybeSingle();
+        if (oErr || !o || !o.letter_pdf_storage_path) throw new Error(`the letter for a related improvement could not be attached (${oErr ? oErr.message : 'not on file'})`);
+        const ob = await download(o.letter_pdf_storage_path);
+        if (!ob) throw new Error(`the letter for ${o.reference_number || 'a related improvement'} could not be loaded`);
+        files.push({ name: `${String(o.reference_number || 'decision').replace(/[^A-Za-z0-9._-]+/g, '_')}.pdf`, buf: ob });
+      }
       return { from: graph.ANNIE_MAILBOX, to: toEmail, subject: m.subject, text: m.text, html: built.html,
-        attachments: [...(built.attachments || []), pdfAtt],
-        archive_attachments: [{ name: letterFileName, content_type: 'application/pdf', sha256: _sha256(pdfBuffer), bytes: pdfBuffer.length }] };
+        attachments: [...(built.attachments || []), ...files.map((f) => ({ '@odata.type': '#microsoft.graph.fileAttachment', name: f.name, contentType: 'application/pdf', contentBytes: f.buf.toString('base64') }))],
+        archive_attachments: files.map((f) => ({ name: f.name, content_type: 'application/pdf', sha256: _sha256(f.buf), bytes: f.buf.length })) };
     };
     // accDecisionId: graph_send re-verifies this case's authorized decision
     // before any approval/denial email leaves (lib/acc/decision_authority).

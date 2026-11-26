@@ -15531,8 +15531,10 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
       const d = (x) => x ? new Date(x).toLocaleDateString('en-US', { timeZone: 'America/Chicago', month: 'short', day: 'numeric', year: 'numeric' }) : 'unknown';
       return `<div style="grid-column: 1 / -1; font-size:11.5px; color:#334155; margin-top:6px; display:flex; gap:14px; flex-wrap:wrap;">
         <span><strong>Received</strong> ${accEsc(d(w.received_at))}</span>
-        <span title="${accEsc(w.deadline_basis || '')}" style="${w.overdue ? 'color:#b91c1c; font-weight:600;' : ''}"><strong>Deadline</strong> ${accEsc(d(w.deadline))}${w.overdue ? ' (passed)' : ''}</span>
+        <span title="${accEsc(w.deadline_basis || '')}" style="${w.overdue ? 'color:#b91c1c; font-weight:600;' : ''}"><strong>Association deadline</strong> ${accEsc(d(w.deadline))}${w.overdue ? ' (passed)' : ''}</span>
         <span><strong>Responsible</strong> ${accEsc(w.responsible || '')}</span>
+        ${w.service && w.service.next ? `<span title="Bedrock service standard" style="${w.service.next.state === 'missed' ? 'color:#b91c1c; font-weight:600;' : ''}"><strong>Bedrock due</strong> ${accEsc(w.service.next.label)} by ${accEsc(new Date(w.service.next.due_at).toLocaleString('en-US', { timeZone: 'America/Chicago', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }))}${w.service.next.state === 'missed' ? ' (late)' : ''}</span>` : ''}
+        ${w.service && w.service.complex ? `<span style="color:#92400e;"><strong>Complex</strong> ${accEsc(w.service.complexity_reasons.join('; '))}</span>` : ''}
         <span><strong>Next</strong> ${accEsc(w.next_action || '')}</span>
         ${(w.flags || []).length ? `<span style="color:#92400e;">⚑ ${accEsc(w.flags.join('; '))}</span>` : ''}
       </div>`;

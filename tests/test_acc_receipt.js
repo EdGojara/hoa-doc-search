@@ -87,7 +87,7 @@ const ON_WROTE = `Please review.\n\nOn Mon, Nov 23, 2026 at 9:30 AM Owner Three 
   const ei = fs.readFileSync(path.join(__dirname, '..', 'lib', 'applications', 'email_intake.js'), 'utf8');
   check('the email door uses Annie\'s receipt sender, Draft Queue only as fallback', /acknowledgeApplication\(supabase/.test(ei) && ei.indexOf('acknowledgeApplication(supabase') < ei.indexOf('const q = await queueDraft({'));
   check('the original receipt date is read and passed to the case', /originalReceivedAt\(\{ subject: email\.subject/.test(ei) && /receivedAt: received\.at, receivedAtBasis: received\.basis/.test(ei));
-  check('a sent receipt is not overwritten with "not acknowledged"', /if \(!ackSent\) \{/.test(ei));
+  check('a sent first message is not overwritten with "not acknowledged"', ei.includes('if (!ackSent && ackError)') && ei.includes(".is('acknowledged_at', null)"));
   const pi = fs.readFileSync(path.join(__dirname, '..', 'lib', 'acc', 'pending_intake.js'), 'utf8');
   check('the case insert degrades until migration 579 (never loses the application)', /received_at column missing \(apply migration 579\)/.test(pi));
   check('migration 579 adds received_at + basis', /ADD COLUMN IF NOT EXISTS received_at timestamptz/.test(fs.readFileSync(path.join(__dirname, '..', 'migrations', '579_acc_received_at.sql'), 'utf8')));
