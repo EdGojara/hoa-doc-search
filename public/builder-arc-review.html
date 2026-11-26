@@ -1223,7 +1223,9 @@ async function batchApproveSend() {
   const btn = document.getElementById('batchApproveSend'); if (btn) { btn.disabled = true; btn.textContent = 'Checking…'; }
   try {
     // 1) Dry run — validate + group, no decisions and no email yet.
-    const dry = await api('POST', '/api/builder-applications/batch-approve-send', { application_ids: ids, dry_run: true });
+    // Lots Ed checks are his decision, including ones Annie flagged for his judgment
+    // (the server only approves for the owner and lists every lot in the dry run first).
+    const dry = await api('POST', '/api/builder-applications/batch-approve-send', { application_ids: ids, dry_run: true, include_flagged: true });
     const ready = dry.ready || [], groups = dry.builder_groups || [], skipped = dry.skipped || [];
     if (!ready.length) { alert('None of the selected lots are ready to approve.\n\n' + skipped.map((s) => `• ${s.reference_number}: ${s.reason}`).join('\n')); return; }
     const groupLines = groups.map((g) => `• ${g.name || g.to} <${g.to}> — ${g.count} letter${g.count === 1 ? '' : 's'} in ONE email`).join('\n');
@@ -1231,7 +1233,7 @@ async function batchApproveSend() {
     if (!confirm(`Approve ${ready.length} lot${ready.length === 1 ? '' : 's'} and send:\n\n${groupLines}${skipLines}\n\nProceed?`)) return;
     // 2) Real run.
     if (btn) btn.textContent = 'Approving + sending…';
-    const out = await api('POST', '/api/builder-applications/batch-approve-send', { application_ids: ids });
+    const out = await api('POST', '/api/builder-applications/batch-approve-send', { application_ids: ids, include_flagged: true });
     const sent = (out.emails_sent || []).map((e) => `• ${e.to}: ${e.count} letter${e.count === 1 ? '' : 's'} ${e.ok ? 'sent ✓' : 'FAILED — ' + (e.error || '')}`).join('\n');
     const skip2 = (out.skipped || []).length ? `\n\nSkipped ${out.skipped.length}:\n` + out.skipped.map((s) => `• ${s.reference_number}: ${s.reason}`).join('\n') : '';
     alert(`Approved ${out.approved} lot${out.approved === 1 ? '' : 's'}.\n\n${sent || '(no email sent)'}${skip2}`);
