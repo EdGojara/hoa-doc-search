@@ -367,93 +367,100 @@ function dollarsToCents(v) {
   return Number.isFinite(n) ? Math.round(n * 100) : null;
 }
 
+// Read a closing packet (model), classify its checks by payee, match the lot,
+// and FILE it (packet + its checks + Amanda's item). Shared by the Home Sales
+// scan and by Mail Scan when a scan is classified as a closing packet, so a
+// packet is processed the same way whichever door it came through.
+// Returns { ok, extracted, parsed, match, packet } or { ok:false, status, error, raw }.
+async function readAndFileClosingPacket({ community_id, buffer, originalname, mimetype }) {
+  const mime = mimetype || '';
+  const isPdf = mime.includes('pdf') || /\.pdf$/i.test(originalname || '');
+  const isImage = mime.startsWith('image/');
+  if (!isPdf && !isImage) return { ok: false, status: 400, error: 'file_must_be_pdf_or_image' };
+
+  // Send the binary straight to the model — never pre-extract form PDFs (scar: pdf-parse on Adobe forms).
+  const source = isPdf
+    ? { type: 'base64', media_type: 'application/pdf', data: buffer.toString('base64') }
+    : { type: 'base64', media_type: mime, data: buffer.toString('base64') };
+  const docBlock = isPdf ? { type: 'document', source } : { type: 'image', source };
+  const completion = await anthropic.messages.create({
+    model: aiRoute('home_sales.scan'),
+    max_tokens: 1500,
+    messages: [{ role: 'user', content: [docBlock, { type: 'text', text: SCAN_PROMPT }] }],
+  });
+  const text = (completion.content && completion.content[0] && completion.content[0].text) || '';
+  console.log('[home-sales] scan model returned:', text);
+  let parsed;
+  try {
+    parsed = JSON.parse(text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim());
+  } catch (e) {
+    return { ok: false, status: 422, error: 'could_not_parse_document', raw: text };
+  }
+  const extracted = {
+    property_address: parsed.property_address || null,
+    seller_name: parsed.seller_name || null,
+    buyer_name: parsed.buyer_name || null,
+    buyer_mailing_address: parsed.buyer_mailing_address || null,
+    buyer_email: parsed.buyer_email || null,
+    buyer_phone: parsed.buyer_phone || null,
+    closing_date: parsed.closing_date || null,
+    transfer_fee_cents: dollarsToCents(parsed.transfer_fee_dollars),
+    management_transfer_fee_cents: dollarsToCents(parsed.management_transfer_fee_dollars),
+    check_total_cents: dollarsToCents(parsed.check_total_dollars),
+    title_company_name: parsed.title_company_name || null,
+    document_type: parsed.document_type || null,
+    confidence: parsed.confidence || null,
+    notes: parsed.notes || null,
+  };
+
+  // Every check, classified by payee in code (never by the model, never by memo).
+  const { data: comm, error: commErr } = await supabase.from('communities')
+    .select('name, legal_name, hoa_legal_name').eq('id', community_id).maybeSingle();
+  if (commErr) throw commErr;
+  extracted.checks = (Array.isArray(parsed.checks) ? parsed.checks : []).map((c) => ({
+    check_number: c && c.check_number != null ? String(c.check_number).trim() : null,
+    amount_cents: dollarsToCents(c && c.amount_dollars),
+    check_date: (c && c.check_date) || null,
+    payee: (c && c.payee) || null,
+    memo: (c && c.memo) || null,
+    classification: classifyCheckPayee(c && c.payee, comm),
+  }));
+
+  // Propose a property match within this community by address.
+  // "matched" is the only status the screen may use without a person choosing.
+  let match = { status: 'none', reason: 'no_address', matches: [] };
+  if (extracted.property_address) {
+    const lots = await communityLots(community_id);
+    match = lots.length ? matchAddress(lots, extracted.property_address) : { status: 'none', reason: 'no_properties_loaded', matches: [] };
+  }
+  if (match.status !== 'matched') console.warn('[home-sales] scan property not identified:', JSON.stringify({ community_id, status: match.status, reason: match.reason, options: match.matches.length }));
+
+  // File the packet now (lib/home_sales/closing_packets.js), so a closing that
+  // is not recorded today is still on file and listed, never lost in the browser.
+  let packet = null;
+  try {
+    const only = match.status === 'matched' && match.matches.length === 1 ? (match.matches[0].property_id || match.matches[0].id) : null;
+    const { data: cm, error: cmErr } = await supabase.from('communities').select('management_company_id').eq('id', community_id).maybeSingle();
+    if (cmErr) throw new Error(cmErr.message);
+    packet = await CP.fileClosingPacket(supabase, { communityId: community_id, managementCompanyId: (cm && cm.management_company_id) || null,
+      buffer, fileName: originalname || null, mime: mimetype || null, extracted, match, propertyId: only });
+    await CP.processFiledPacket(supabase, packet.id, 'closing_packet_filed');
+  } catch (e) {
+    console.error('[home-sales] closing packet could not be filed:', e.message);
+    packet = { error: 'closing_packet_not_filed: ' + safeErrorMessage(e) };
+  }
+
+  return { ok: true, extracted, parsed, match, packet };
+}
+
 router.post('/scan', upload.single('file'), async (req, res) => {
   try {
     const community_id = req.body && req.body.community_id;
     if (!community_id) return res.status(400).json({ error: 'community_id_required' });
     if (!req.file) return res.status(400).json({ error: 'file_required' });
-
-    const mime = req.file.mimetype || '';
-    const isPdf = mime.includes('pdf') || /\.pdf$/i.test(req.file.originalname || '');
-    const isImage = mime.startsWith('image/');
-    if (!isPdf && !isImage) return res.status(400).json({ error: 'file_must_be_pdf_or_image' });
-
-    // Send the binary straight to the model — never pre-extract form PDFs (scar: pdf-parse on Adobe forms).
-    const source = isPdf
-      ? { type: 'base64', media_type: 'application/pdf', data: req.file.buffer.toString('base64') }
-      : { type: 'base64', media_type: mime, data: req.file.buffer.toString('base64') };
-    const docBlock = isPdf
-      ? { type: 'document', source }
-      : { type: 'image', source };
-
-    const completion = await anthropic.messages.create({
-      model: aiRoute('home_sales.scan'),
-      max_tokens: 1500,
-      messages: [{ role: 'user', content: [docBlock, { type: 'text', text: SCAN_PROMPT }] }],
-    });
-    const text = (completion.content && completion.content[0] && completion.content[0].text) || '';
-    console.log('[home-sales] scan model returned:', text);
-    let parsed;
-    try {
-      parsed = JSON.parse(text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim());
-    } catch (e) {
-      return res.status(422).json({ error: 'could_not_parse_document', raw_extracted: text });
-    }
-
-    const extracted = {
-      property_address: parsed.property_address || null,
-      seller_name: parsed.seller_name || null,
-      buyer_name: parsed.buyer_name || null,
-      buyer_mailing_address: parsed.buyer_mailing_address || null,
-      buyer_email: parsed.buyer_email || null,
-      buyer_phone: parsed.buyer_phone || null,
-      closing_date: parsed.closing_date || null,
-      transfer_fee_cents: dollarsToCents(parsed.transfer_fee_dollars),
-      management_transfer_fee_cents: dollarsToCents(parsed.management_transfer_fee_dollars),
-      check_total_cents: dollarsToCents(parsed.check_total_dollars),
-      title_company_name: parsed.title_company_name || null,
-      document_type: parsed.document_type || null,
-      confidence: parsed.confidence || null,
-      notes: parsed.notes || null,
-    };
-
-    // Every check, classified by payee in code (never by the model, never by memo).
-    const { data: comm, error: commErr } = await supabase.from('communities')
-      .select('name, legal_name, hoa_legal_name').eq('id', community_id).maybeSingle();
-    if (commErr) throw commErr;
-    extracted.checks = (Array.isArray(parsed.checks) ? parsed.checks : []).map((c) => ({
-      check_number: c && c.check_number != null ? String(c.check_number).trim() : null,
-      amount_cents: dollarsToCents(c && c.amount_dollars),
-      check_date: (c && c.check_date) || null,
-      payee: (c && c.payee) || null,
-      memo: (c && c.memo) || null,
-      classification: classifyCheckPayee(c && c.payee, comm),
-    }));
-
-    // Propose a property match within this community by address.
-    // "matched" is the only status the screen may use without a person choosing.
-    let match = { status: 'none', reason: 'no_address', matches: [] };
-    if (extracted.property_address) {
-      const lots = await communityLots(community_id);
-      match = lots.length ? matchAddress(lots, extracted.property_address) : { status: 'none', reason: 'no_properties_loaded', matches: [] };
-    }
-    if (match.status !== 'matched') console.warn('[home-sales] scan property not identified:', JSON.stringify({ community_id, status: match.status, reason: match.reason, options: match.matches.length }));
-
-    // File the packet now (lib/home_sales/closing_packets.js), so a closing that
-    // is not recorded today is still on file and listed, never lost in the browser.
-    let packet = null;
-    try {
-      const only = match.status === 'matched' && match.matches.length === 1 ? (match.matches[0].property_id || match.matches[0].id) : null;
-      const { data: cm, error: cmErr } = await supabase.from('communities').select('management_company_id').eq('id', community_id).maybeSingle();
-      if (cmErr) throw new Error(cmErr.message);
-      packet = await CP.fileClosingPacket(supabase, { communityId: community_id, managementCompanyId: (cm && cm.management_company_id) || null,
-        buffer: req.file.buffer, fileName: req.file.originalname || null, mime: req.file.mimetype || null, extracted, match, propertyId: only });
-      await CP.trackPacket(supabase, packet.id, 'closing_packet_filed');
-    } catch (e) {
-      console.error('[home-sales] closing packet could not be filed:', e.message);
-      packet = { error: 'closing_packet_not_filed: ' + safeErrorMessage(e) };
-    }
-
+    const r = await readAndFileClosingPacket({ community_id, buffer: req.file.buffer, originalname: req.file.originalname, mimetype: req.file.mimetype });
+    if (!r.ok) return res.status(r.status).json({ error: r.error, ...(r.raw != null ? { raw_extracted: r.raw } : {}) });
+    const { extracted, parsed, match, packet } = r;
     res.json({ extracted, raw_extracted: parsed, property_matches: match.matches, property_match: { status: match.status, reason: match.reason },
       source_document_id: packet && packet.id ? packet.id : null, packet_already_on_file: !!(packet && packet.deduped), packet_error: packet && packet.error ? packet.error : null });
   } catch (err) {
@@ -898,4 +905,5 @@ async function undoRecordClosing(proposalId, createdSaleId, reason) {
 }
 
 module.exports = router;
+module.exports.readAndFileClosingPacket = readAndFileClosingPacket;
 module.exports._test = { searchLots, balanceFromAR, propertySnapshot, sellerMatchesOwner, classifyCheckPayee, validateClosingChecks };

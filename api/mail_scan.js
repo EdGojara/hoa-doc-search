@@ -42,7 +42,7 @@ const CLASSIFY_PROMPT = `You are a mail classification system for Bedrock Associ
 Analyze this scanned mail document and extract the information. Respond ONLY with a valid JSON object — no preamble, no markdown.
 
 {
-  "type": "Legal / Attorney | Vendor Invoice | Homeowner Correspondence | Government / Regulatory | Insurance | Collections / Financial | Board Correspondence | Junk / Marketing | Other",
+  "type": "Closing / Title Packet | Legal / Attorney | Vendor Invoice | Homeowner Correspondence | Government / Regulatory | Insurance | Collections / Financial | Board Correspondence | Junk / Marketing | Other",   // Closing / Title Packet = a title company's closing package for a home sale (checks, deed, settlement statement or HOA transfer notice)
   "typeEmoji": "single emoji",
   "urgency": "critical | high | normal | discard",
   "bannerTitle": "one-line what-to-do headline",
@@ -288,6 +288,22 @@ router.post('/log', upload.single('file'), async (req, res) => {
     } catch (e) { console.warn('[mail-scan] AP intake skipped:', e.message); }
 
     res.json({ ok: true, library_document_id: doc.id, work_item_id: workItemId, linked, ap_intake: apIntake, record_ref: `ML-${Date.now().toString().slice(-6)}` });
+
+    // A closing / title packet is processed the same way as one scanned in Home
+    // Sales, right after filing: read, matched to its lot, its Association checks
+    // registered as received (Emma), Amanda's item opened (Reese acts). The same
+    // file becomes ONE packet row (no duplicate). Runs after the response so the
+    // filing is never slowed or failed by it; a failure is logged and the scan
+    // stays on file under its work item.
+    if (/closing|title packet|escrow|settlement statement/i.test(String(meta.type || '')) && meta.community_id) {
+      setImmediate(async () => {
+        try {
+          const r = await require('./home_sales').readAndFileClosingPacket({ community_id: meta.community_id, buffer: req.file.buffer, originalname: req.file.originalname, mimetype: req.file.mimetype });
+          if (!r.ok) console.warn('[mail-scan] closing packet not processed:', JSON.stringify({ doc: doc.id, error: r.error }));
+          else console.log('[mail-scan] closing packet processed:', JSON.stringify({ doc: doc.id, packet: r.packet && r.packet.id, match: r.match && r.match.status }));
+        } catch (e) { console.error('[mail-scan] closing packet processing failed:', JSON.stringify({ doc: doc.id, error: e.message })); }
+      });
+    }
   } catch (err) {
     console.error('[mail-scan] log failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
