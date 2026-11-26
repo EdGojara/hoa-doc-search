@@ -35,6 +35,11 @@ check('rows a pending reclassification would change carry the † mark', (html.m
 check('material changes show their explanation and contract support', /Earthcare \$8,842\.67 a month\./.test(html) && /Contract: EarthCare Management/.test(html));
 check('printed default is financial only: no narrative, decisions, material-change explanations, assumptions or † marks', !printed.includes('<b>Assumptions</b>') && !/Board decisions/.test(printed) && !/For board decision/.test(printed) && !/Material changes/.test(printed) && !/class="dag">†/.test(printed) && !/<p class="lead">/.test(printed) && /<td class="l gl">/.test(printed) && /NOT APPROVED/.test(printed));
 check('assumptions, board decisions and open items each have a section', /<b>Assumptions<\/b>/.test(html) && /<b>Board decisions<\/b>/.test(html) && /Open items and unresolved contract questions/.test(html));
+{
+  const boardHtml = B.renderBoardReportHtml(base, { notes: true, audience: 'board' });
+  check('board audience: keeps material changes, assumptions and decisions; drops internal agreement tracking', /Material changes/.test(boardHtml) && /<b>Assumptions<\/b>/.test(boardHtml) && /<b>Board decisions<\/b>/.test(boardHtml)
+    && !/Open items and unresolved contract questions/.test(boardHtml) && !/Contract: EarthCare Management/.test(boardHtml) && /Earthcare \$8,842\.67 a month\./.test(boardHtml));
+}
 check('no percent on net and fund-balance rows', !/Excess \(deficit\) of revenue over expenses<\/td>(<td>[^<]*<\/td>){4}<td>[^<]+%/.test(html));
 check('negative amounts in parentheses, whole dollars', /\(500\)/.test(html) && !/\.\d{2}<\/td>/.test(html.split('Material changes')[0]));
 check('landscape letter page with margins', /@page\{size:Letter landscape/.test(html));
