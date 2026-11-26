@@ -62,6 +62,7 @@
         <button class="am-go" id="am-go" type="button">Start talking</button>
         <button class="am-mute" id="am-mute" type="button" hidden>Mute</button>
       </div>
+      <div id="am-audition"></div>
       <div id="am-alert"></div>
       <div class="am-cards" id="am-cards"></div>
       <div class="am-captions" id="am-captions" aria-live="polite"></div>
@@ -87,6 +88,14 @@
   var seenCards = {};
 
   function alert_(kind, text) { $('am-alert').innerHTML = text ? '<div class="am-note ' + kind + '">' + esc(text) + '</div>' : ''; }
+  // Owner voice audition (?audition=harper): this session only, never Amanda's approved voice.
+  var AUDITION = (new URLSearchParams(location.search).get('audition') || '').trim().toLowerCase();
+  function showAudition(a) {
+    $('am-audition').innerHTML = AUDITION ? '<div class="am-note info">' + esc(a && a.name
+      ? 'Voice audition: ' + a.name + ' (' + a.tts_model + '). This session only; Amanda\'s approved voice is unchanged. Open this page without ?audition to go back.'
+      : 'Voice audition requested: ' + AUDITION + '.') + '</div>' : '';
+  }
+  showAudition(null);
   function state(text, mode) {
     $('am-state').textContent = text;
     $('am-face').className = 'am-face' + (mode ? ' is-' + mode : '');
@@ -133,10 +142,11 @@
     state('Connecting to Amanda…');
     var t1 = performance.now();
     var lib = import(CLIENT_URL);
-    var r = await TX.post('/api/amanda/voice/session', {});
+    var r = await TX.post('/api/amanda/voice/session', AUDITION ? { audition: AUDITION } : {});
     m.session_api_ms = Math.round(performance.now() - t1);
     if (!r.ok) { state('Ready when you are.'); setButton(false); alert_('bad', (r.body && r.body.error) || r.error || 'Amanda could not start.'); return; }
     session = r.data;
+    showAudition(session.audition);
     if (session.briefing_incomplete && session.briefing_incomplete.length) alert_('info', 'Some of Amanda\'s sources did not load (' + session.briefing_incomplete.join(', ') + '). She will say so if you ask about them.');
     var Conversation;
     try { Conversation = (await lib).Conversation; }
@@ -162,7 +172,10 @@
         onMessage: function (x) {
           var who = (x.role || x.source) === 'user' ? 'ed' : 'amanda';
           if (!x.message) return;
-          caption(who, x.message);
+          // Expressive cues like [laughs] are performance notes for the voice, never shown.
+          var said = who === 'amanda' ? String(x.message).replace(/\[[^\]\n]{0,40}\]\s*/g, '').replace(/ {2,}/g, ' ').trim() : x.message;
+          if (!said) return;
+          caption(who, said);
           if (who === 'ed') m.lastUserAt = performance.now();
           else refreshCards();
         },
