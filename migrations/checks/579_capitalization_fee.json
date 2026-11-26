@@ -27,7 +27,9 @@
       "column:community_assessment_rates.capitalization_fee_pct",
       "column:community_assessment_rates.capitalization_fee_evidence",
       "constraint:community_assessment_rates.community_assessment_rates_capitalization_fee_check"
-    ]
+    ],
+    "changed": [],
+    "removed": []
   },
   "verify": [
     {
@@ -38,5 +40,6 @@
   ],
   "row_changes": {
     "community_assessment_rates": 1
-  }
+  },
+  "protected": []
 }

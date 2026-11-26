@@ -1,0 +1,59 @@
+{
+  "migration": "579_acc_received_at.sql",
+  "summary": "ACC applications record when the homeowner actually submitted them: acc_decisions.received_at + received_at_basis (CHECK forwarded_original | email_received | backfill_created_at | backfill_email). Existing applications are backfilled with the date the case was opened (created_at), labeled backfill_created_at; new emailed applications get the homeowner's original send time read from a forward's quoted header. Shares the number 579 with 579_capitalization_fee.sql (both landed the same day); the two are independent. No decision, letter, finalization, fee or ledger field changes; no rows added or removed.",
+  "requires": [
+    "032_acc_decisions.sql",
+    "480_acc_finalization_record.sql"
+  ],
+  "preflight": [
+    {
+      "name": "received_at does not exist yet",
+      "sql": "SELECT count(*)::int FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'acc_decisions' AND column_name IN ('received_at', 'received_at_basis')",
+      "expect": 0
+    },
+    {
+      "name": "the receipt-basis constraint does not exist yet",
+      "sql": "SELECT count(*)::int FROM pg_constraint WHERE conname = 'acc_decisions_received_at_basis_check'",
+      "expect": 0
+    }
+  ],
+  "expected_changes": [
+    "acc_decisions: adds nullable received_at timestamptz and received_at_basis text with CHECK (forwarded_original | email_received | backfill_created_at | backfill_email).",
+    "Every existing acc_decisions row gets received_at = created_at, received_at_basis = 'backfill_created_at' (an UPDATE of two new columns only; the finalized-case guard of migration 480 permits it because neither column is protected).",
+    "No rows are added or removed; acc_finalizations and journal_entries are untouched."
+  ],
+  "objects": {
+    "added": [
+      "column:acc_decisions.received_at",
+      "column:acc_decisions.received_at_basis",
+      "constraint:acc_decisions.acc_decisions_received_at_basis_check"
+    ],
+    "changed": [],
+    "removed": []
+  },
+  "verify": [
+    {
+      "name": "every application has a receipt date",
+      "sql": "SELECT count(*)::int FROM acc_decisions WHERE received_at IS NULL",
+      "expect": 0
+    },
+    {
+      "name": "backfilled receipt dates equal the opened date",
+      "sql": "SELECT count(*)::int FROM acc_decisions WHERE received_at_basis = 'backfill_created_at' AND received_at IS DISTINCT FROM created_at",
+      "expect": 0
+    }
+  ],
+  "row_changes": {
+    "acc_decisions": 0
+  },
+  "protected": [
+    {
+      "table": "acc_finalizations",
+      "order_by": "id"
+    },
+    {
+      "table": "journal_entries",
+      "order_by": "id"
+    }
+  ]
+}
