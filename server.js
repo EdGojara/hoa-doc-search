@@ -404,6 +404,8 @@ const app = express();
 // fails signature verification (the route's own express.raw() sees nothing).
 app.use((req, res, next) => {
   if (req.path === '/api/payments/webhook') return next();
+  // Talk to Amanda's brain parses its own (larger) body: a long conversation's history.
+  if (req.path === '/api/amanda/voice/llm/chat/completions' || req.path === '/api/amanda/voice/llm') return next();
   express.json()(req, res, next);
 });
 
@@ -462,6 +464,9 @@ const _STAFF_GATE_PUBLIC = [
   /^\/api\/voice\/vapi-llm-webhook\b/,
   /^\/api\/voice\/vapi-llm-webhook-es\b/,
   /^\/api\/voice\/vapi-assistant-request$/,
+  // Talk to Amanda's brain, called by the voice shell (ElevenLabs Agents). The handler requires
+  // the agent's header secret AND a short-lived token minted for the owner's conversation.
+  /^\/api\/amanda\/voice\/llm(?:\/chat\/completions)?$/,
   /^\/api\/voice\/incoming$/,
   /^\/api\/voice\/status$/,
   /^\/api\/voice\/stream$/,
@@ -908,6 +913,8 @@ app.get('/app/financial', (req, res) => res.sendFile(require('path').join(__dirn
 app.get('/app/operations', (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'app', 'operations.html')));
 // Mission Control (Ed 2026-10-12): Operations, Platform Buildout, Needs my action.
 app.get('/app/mission-control', (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'app', 'mission-control.html')));
+// Talk to Amanda (Ed 2026-11-26): the owner's voice conversation with Amanda.
+app.get('/app/amanda', (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'app', 'amanda.html')));
 app.get('/app/time', (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'app', 'time.html')));
 app.get('/app/time-admin', (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'app', 'time-admin.html')));
 app.get('/app/irs-mailing', (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'app', 'irs-mailing.html')));
@@ -1377,6 +1384,7 @@ app.use('/api/feed', require('./api/feed'));
 app.use('/api/amanda/email', require('./api/amanda_email'));  // Amanda's email desk (prepare + list; sending stays on /api/email-drafts)
 app.use('/api/agents', require('./api/agent_desk'));  // AI employee email desk for every roster agent with email_desk (Ed 2026-10-22)
 app.use('/api/agent-browser', require('./api/agent_browser'));  // owner-only: guarded server-side browser skills for AI employees (Ed 2026-10-23)
+app.use('/api/amanda/voice', require('./api/amanda_voice'));  // Talk to Amanda (owner only; Ed 2026-11-26)
 app.use('/api/amanda', require('./api/amanda'));
 // Staff Time & Attendance (Ed 2026-10-26, migration 547): employee routes act as the
 // signed-in employee (their own token, row-level security); /admin routes are owner-only.
@@ -11656,7 +11664,10 @@ app.get('/api/me', async (req, res) => {
     // Return the profile even if inactive — the UI uses is_active to show
     // a "deactivated" page. Downstream API endpoints enforce inactive
     // refusal via resolveUserRole returning 'inactive'.
-    res.json({ user: profile });
+    // is_owner: lets the app shell show owner-only entries (Talk to Amanda). Display only;
+    // every owner endpoint re-checks with requireOwner.
+    const { isOwnerIdentity } = require('./api/_require_admin');
+    res.json({ user: { ...profile, is_owner: isOwnerIdentity({ role: profile.role, email: profile.email, user }) } });
   } catch (err) {
     console.error('[/api/me]', err);
     res.status(500).json({ error: err.message });

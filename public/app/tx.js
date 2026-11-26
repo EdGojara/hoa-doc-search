@@ -42,6 +42,7 @@
       return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
     });
   }
+  var MIC = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><path d="M12 19v3"/></svg>';
   function icon(name, opts) { return window.TXIcons ? window.TXIcons.icon(name, opts) : ''; }
   function initials(name) {
     return String(name || '').split(/\s+/).filter(Boolean).slice(0, 2).map(function (w) { return w[0].toUpperCase(); }).join('') || '·';
@@ -100,7 +101,9 @@
     side.className = 'tx-side';
     side.setAttribute('aria-label', 'Main navigation');
     side.innerHTML =
-      '<div class="tx-logo">' + mark() + '<span>TRUSTED</span></div>' + nav +
+      '<div class="tx-logo">' + mark() + '<span>TRUSTED</span></div>' +
+      // Talk to Amanda (Ed 2026-11-26): owner only; the server re-checks on every call.
+      (user.is_owner ? '<a class="tx-amanda" href="/app/amanda" title="Talk to Amanda by voice">' + MIC + '<span>Talk to Amanda</span></a>' : '') + nav +
       // Ask Amanda opens askEd in the main app until the command palette ships.
       '<a class="tx-cmd" href="/#tab=asked" title="Ask Amanda (Ctrl K)">' + icon('sparkles', { size: 15 }) + '<span>Ask Amanda</span><span class="tx-kbd">Ctrl K</span></a>' +
       // Explicit legacy entry: ?workspace=legacy keeps this tab in the old app.
@@ -109,6 +112,13 @@
       '<div style="min-width:0"><div class="tx-me-name">' + esc(user.full_name || user.email || 'Signed in') + '</div>' +
       '<div class="tx-me-role">' + esc(user.role === 'admin' ? 'Owner' : 'Staff') + '</div></div></div>';
     host.insertBefore(side, main);
+    // On a phone the sidebar is behind the menu, so the owner also gets a floating button.
+    if (user.is_owner && location.pathname.indexOf('/app/amanda') !== 0) {
+      var fab = document.createElement('a');
+      fab.className = 'tx-amanda-fab'; fab.href = '/app/amanda'; fab.setAttribute('aria-label', 'Talk to Amanda');
+      fab.innerHTML = MIC + '<span>Talk to Amanda</span>';
+      document.body.appendChild(fab);
+    }
     document.addEventListener('keydown', function (e) {
       if ((e.ctrlKey || e.metaKey) && (e.key === 'k' || e.key === 'K')) { e.preventDefault(); location.href = '/#tab=asked'; }
     });

@@ -1,0 +1,107 @@
+{
+  "migration": "578_amanda_conversations.sql",
+  "summary": "Talk to Amanda, stage 1. Reuses the existing conversation store (claire_sessions / claire_session_turns) for owner conversations with Amanda: a new surface 'conversation', channel / provider / provider conversation id, measured metrics, measured cost and audio seconds, finalized_at; turns gain the 'teammate' speaker, per-turn latency and tools used. New amanda_memory table (workpaper) for what Amanda keeps between conversations. agent_runs.run_kind gains 'conversation' for one usage row per conversation. No existing row's data changes.",
+  "requires": [
+    "366_claire_visits.sql",
+    "368_claire_personas.sql",
+    "399_objectives.sql",
+    "476_agent_runs_model_telemetry.sql"
+  ],
+  "preflight": [
+    {
+      "name": "amanda_memory does not exist yet",
+      "sql": "SELECT count(*)::int FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'amanda_memory'",
+      "expect": 0
+    },
+    {
+      "name": "claire_sessions has no provider_conversation_id column yet",
+      "sql": "SELECT count(*)::int FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'claire_sessions' AND column_name = 'provider_conversation_id'",
+      "expect": 0
+    }
+  ],
+  "expected_changes": [
+    "claire_sessions: surface CHECK now also allows 'conversation'; adds nullable channel (CHECK voice|text|phone|email), provider, provider_conversation_id, metrics, cost_usd, audio_seconds, finalized_at; two partial indexes.",
+    "claire_session_turns: speaker CHECK now also allows 'teammate'; adds nullable latency_ms and tool_calls.",
+    "Creates amanda_memory (RLS on, service_role SELECT/INSERT/UPDATE, updated_at trigger) with four indexes.",
+    "agent_runs: run_kind CHECK now also allows 'conversation'.",
+    "No existing row is changed."
+  ],
+  "objects": {
+    "added": [
+      "column:claire_sessions.channel",
+      "column:claire_sessions.provider",
+      "column:claire_sessions.provider_conversation_id",
+      "column:claire_sessions.metrics",
+      "column:claire_sessions.cost_usd",
+      "column:claire_sessions.audio_seconds",
+      "column:claire_sessions.finalized_at",
+      "constraint:claire_sessions.claire_sessions_channel_check",
+      "index:idx_claire_sessions_conversations",
+      "index:idx_claire_sessions_provider_conv",
+      "column:claire_session_turns.latency_ms",
+      "column:claire_session_turns.tool_calls",
+      "table:amanda_memory",
+      "column:amanda_memory.id",
+      "column:amanda_memory.owner_user_id",
+      "column:amanda_memory.kind",
+      "column:amanda_memory.content",
+      "column:amanda_memory.community_id",
+      "column:amanda_memory.objective_id",
+      "column:amanda_memory.source_session_id",
+      "column:amanda_memory.source_channel",
+      "column:amanda_memory.status",
+      "column:amanda_memory.record_ownership",
+      "column:amanda_memory.created_at",
+      "column:amanda_memory.updated_at",
+      "constraint:amanda_memory.amanda_memory_pkey",
+      "constraint:amanda_memory.amanda_memory_kind_check",
+      "constraint:amanda_memory.amanda_memory_content_check",
+      "constraint:amanda_memory.amanda_memory_community_id_fkey",
+      "constraint:amanda_memory.amanda_memory_objective_id_fkey",
+      "constraint:amanda_memory.amanda_memory_source_session_id_fkey",
+      "constraint:amanda_memory.amanda_memory_source_channel_check",
+      "constraint:amanda_memory.amanda_memory_status_check",
+      "constraint:amanda_memory.amanda_memory_record_ownership_check",
+      "index:amanda_memory_pkey",
+      "index:idx_amanda_memory_owner_active",
+      "index:idx_amanda_memory_session",
+      "index:idx_amanda_memory_objective",
+      "index:idx_amanda_memory_community",
+      "trigger:amanda_memory.trg_amanda_memory_updated"
+    ],
+    "changed": [
+      "constraint:claire_sessions.claire_sessions_surface_check",
+      "constraint:claire_session_turns.claire_session_turns_speaker_check",
+      "constraint:agent_runs.agent_runs_run_kind_check"
+    ],
+    "removed": []
+  },
+  "row_changes": {
+    "claire_sessions": 0,
+    "claire_session_turns": 0,
+    "agent_runs": 0
+  },
+  "protected": [
+    { "table": "journal_entries", "order_by": "id" },
+    { "table": "homeowner_transactions", "order_by": "id" }
+  ],
+  "verify": [
+    {
+      "name": "amanda_memory exists and is empty",
+      "sql": "SELECT count(*)::int FROM amanda_memory",
+      "expect": 0
+    },
+    {
+      "name": "no existing session is on the new surface",
+      "sql": "SELECT count(*)::int FROM claire_sessions WHERE surface = 'conversation'",
+      "expect": 0
+    },
+    {
+      "name": "the conversation run kind is allowed",
+      "sql": "SELECT count(*)::int FROM pg_constraint WHERE conname = 'agent_runs_run_kind_check' AND pg_get_constraintdef(oid) LIKE '%conversation%'",
+      "expect": 1
+    }
+  ],
+  "api_checks": [],
+  "reload_schema": true
+}
