@@ -18,15 +18,18 @@ function repo(files) {
   return root;
 }
 // One character, persona "x": face v1 (old image A), face v2 (new image B + photo C).
-function fakeRegistry({ v2Assets, mappings = [] }) {
+// Release r2 (face v2, approved) is current unless noRelease.
+function fakeRegistry({ v2Assets, mappings = [], noRelease = false }) {
   const versions = [
-    { id: 'f1', component: 'face', version_no: 1, assets: [{ sha256: sha('A'), role: 'canonical' }] },
-    { id: 'f2', component: 'face', version_no: 2, assets: v2Assets },
-    { id: 'vo', component: 'voice', version_no: 1, assets: [] },
+    { id: 'f1', component: 'face', version_no: 1, status: 'rejected', assets: [{ sha256: sha('A'), role: 'canonical' }] },
+    { id: 'f2', component: 'face', version_no: 2, status: 'approved', assets: v2Assets },
+    { id: 'vo', component: 'voice', version_no: 1, status: 'proposed', assets: [] },
   ];
-  const d = { character: { character_id: 'c1', character_slug: 'x_y', roster_persona: 'x', current_release_id: null }, versions, releases: [], mappings };
+  const releases = noRelease ? [] : [{ id: 'r2', release_no: 2, components: { face: 'f2' } }];
+  const d = { character: { character_id: 'c1', character_slug: 'x_y', roster_persona: 'x', current_release_id: noRelease ? null : 'r2' }, versions, releases, mappings };
   return { listCharacters: async () => [d.character], getCharacterDetail: async () => d };
 }
+const prodLook = (src, id = 'L1', channel = 'video') => ({ status: 'active', provider: 'heygen', kind: 'look', external_id: id, channel, sources: [{ component_version_id: src }] });
 const base = (reg, root, extra = {}) => checkIdentityDrift({
   registry: reg, repoRoot: root, faceOf: () => 'X',
   personaImages: { _canonical_index: { x: { canonical: 'public/assets/presentations/team/x.jpg' } } },
@@ -36,7 +39,7 @@ const base = (reg, root, extra = {}) => checkIdentityDrift({
 (async () => {
   await t('clean: current headshot, photo and its sized copies pass; legacy face in the headshot slot is an error', async () => {
     const root = repo({ 'public/assets/presentations/team/x.jpg': 'B', 'public/assets/personas/x/x-photo.jpg': 'C', 'public/assets/personas/x/x-photo-480.jpg': 'C480', 'public/assets/personas/x/x-photo-square.jpg': 'Csq' });
-    const reg = fakeRegistry({ v2Assets: [{ sha256: sha('B'), role: 'canonical' }, { sha256: sha('C'), role: 'derived' }] });
+    const reg = fakeRegistry({ v2Assets: [{ sha256: sha('B'), role: 'canonical' }, { sha256: sha('C'), role: 'derived' }], mappings: [prodLook('f2')] });
     let r = await base(reg, root);
     assert.deepStrictEqual(r.findings, []);
     fs.writeFileSync(path.join(root, 'public/assets/presentations/team/x.jpg'), 'A');
@@ -48,25 +51,27 @@ const base = (reg, root, extra = {}) => checkIdentityDrift({
     const r = await base(fakeRegistry({ v2Assets: [{ sha256: sha('B'), role: 'canonical' }] }), root);
     assert.ok(r.findings.some((f) => f.area === 'photos' && f.severity === 'warn' && /new-generated/.test(f.message)));
   });
-  await t('avatar built from a replaced face is an error; from the current face it passes; unregistered avatar is an error', async () => {
+  await t('the Canon decides the production look: a look only from a replaced face is an error; from the current face it passes; a stale env avatar is only a warning; no current release is an error', async () => {
     const root = repo({ 'public/assets/presentations/team/x.jpg': 'B' });
-    const look = (src) => ({ status: 'active', provider: 'heygen', kind: 'look', external_id: 'L1', sources: [{ component_version_id: src }] });
-    let r = await base(fakeRegistry({ v2Assets: [{ sha256: sha('B'), role: 'canonical' }], mappings: [look('f1')] }), root, { env: { X_AVATAR_ID: 'L1' } });
-    assert.ok(r.findings.some((f) => f.area === 'avatar' && /replaced face v1/.test(f.message)));
-    r = await base(fakeRegistry({ v2Assets: [{ sha256: sha('B'), role: 'canonical' }], mappings: [look('f2')] }), root, { env: { X_AVATAR_ID: 'L1' } });
+    const v2 = [{ sha256: sha('B'), role: 'canonical' }];
+    let r = await base(fakeRegistry({ v2Assets: v2, mappings: [prodLook('f1')] }), root);
+    assert.ok(r.findings.some((f) => f.area === 'avatar' && f.severity === 'error' && /no production HeyGen look is mapped to face v2/.test(f.message)), JSON.stringify(r.findings));
+    r = await base(fakeRegistry({ v2Assets: v2, mappings: [prodLook('f2')] }), root);
     assert.ok(!r.findings.some((f) => f.area === 'avatar'));
-    r = await base(fakeRegistry({ v2Assets: [{ sha256: sha('B'), role: 'canonical' }] }), root, { env: { X_AVATAR_ID: 'L9' } });
-    assert.ok(r.findings.some((f) => f.area === 'avatar' && /not a registered look/.test(f.message)));
+    r = await base(fakeRegistry({ v2Assets: v2, mappings: [prodLook('f2')] }), root, { env: { X_AVATAR_ID: 'OLD' } });
+    assert.ok(r.findings.some((f) => f.area === 'avatar' && f.severity === 'warn' && /stale \(ignored\)/.test(f.message)));
+    assert.ok(r.ok, 'a stale env value is not an error: renders no longer read it');
+    r = await base(fakeRegistry({ v2Assets: v2, mappings: [prodLook('f2')], noRelease: true }), root);
+    assert.ok(r.findings.some((f) => f.area === 'avatar' && /no current approved release/.test(f.message)));
   });
   await t('a face version that shares an image with the current one is the same face (no false replaced-face alarm)', async () => {
     const root = repo({ 'public/assets/presentations/team/x.jpg': 'B' });
-    const look = { status: 'active', provider: 'heygen', kind: 'look', external_id: 'L1', sources: [{ component_version_id: 'f1' }] };
-    const r = await base(fakeRegistry({ v2Assets: [{ sha256: sha('B'), role: 'canonical' }, { sha256: sha('A'), role: 'derived' }], mappings: [look] }), root, { env: { X_AVATAR_ID: 'L1' } });
+    const r = await base(fakeRegistry({ v2Assets: [{ sha256: sha('B'), role: 'canonical' }, { sha256: sha('A'), role: 'derived' }], mappings: [prodLook('f1')] }), root);
     assert.ok(!r.findings.some((f) => f.area === 'avatar'), JSON.stringify(r.findings));
   });
   await t('video voice missing from the provider catalog is an error', async () => {
     const root = repo({ 'public/assets/presentations/team/x.jpg': 'B' });
-    const r = await base(fakeRegistry({ v2Assets: [{ sha256: sha('B'), role: 'canonical' }] }), root,
+    const r = await base(fakeRegistry({ v2Assets: [{ sha256: sha('B'), role: 'canonical' }], mappings: [prodLook('f2')] }), root,
       { env: { X_VOICE_ID: 'v-gone' }, heygenVoiceIds: new Set(['v-ok']) });
     assert.ok(r.findings.some((f) => f.area === 'voice' && f.severity === 'error' && /catalog/.test(f.message)));
   });

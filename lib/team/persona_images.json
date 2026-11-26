@@ -122,6 +122,15 @@
       "microsoft_365": {
         "photo": "canonical_square",
         "status": "set 2026-11-17 from team/amanda.jpg (378x378 source); previous mailbox photo was face v2 648px. Ed 2026-11-17: \"Use trustEd portraits\" (team-wide portrait standardization)"
+      },
+      "heygen_avatar": {
+        "photo": "face v4 (10/21 office portrait)",
+        "status": "switched 2026-11-26 (Ed): the Character Canon now decides the production look; renders no longer read <FACE>_AVATAR_ID; primary = 16:9 office portrait look; portrait, presenter and presenter-3:2 looks are approved variants",
+        "legacy": "the August v1 look and its copy are retired in the Canon"
+      },
+      "portal_video_visit": {
+        "photo": "amanda-office-portrait-square",
+        "status": "set 2026-11-26: explainers/faces/amanda.webp created (the file was missing)"
       }
     },
     "high_resolution_review": {
@@ -273,12 +282,17 @@
         "note": "the videos show the production face, so their posters must too"
       },
       "heygen_avatar": {
-        "photo": "unchanged",
-        "status": "original production portrait remains the avatar reference until Ed approves a change"
+        "photo": "face v2 (16:9 look from her approved gentle-smile photo)",
+        "status": "switched 2026-11-26 (Ed): the Character Canon now decides the production look; renders no longer read <FACE>_AVATAR_ID",
+        "legacy": "August look (same woman, older photo) retired in the Canon"
       },
       "microsoft_365": {
         "photo": "canonical_square",
         "status": "set 2026-11-17 from team/paige.jpg. Ed 2026-11-17: \"Use trustEd portraits\" (team-wide portrait standardization)"
+      },
+      "portal_video_visit": {
+        "photo": "canonical headshot",
+        "status": "set 2026-11-26: explainers/faces/paige.webp created from the canonical headshot (the file was missing)"
       }
     },
     "excluded": [
@@ -349,11 +363,15 @@
       },
       "heygen_avatar": {
         "photo": "unchanged",
-        "status": "the 640 original remains the avatar source"
+        "status": "the 640 original remains her production look (same face as face v3); confirmed 2026-11-26"
       },
       "microsoft_365": {
         "photo": "unchanged",
         "status": "needs separate authorization"
+      },
+      "portal_video_visit": {
+        "photo": "canonical headshot",
+        "status": "set 2026-11-26: explainers/faces/phoebe.webp created from the canonical headshot (the file was missing)"
       }
     },
     "excluded": [
@@ -435,8 +453,8 @@
         "status": "set 2026-11-17 from the canonical file (Ed-authorized); see _canonical_index"
       },
       "portal_video_visit": {
-        "photo": "unchanged",
-        "note": "faces/maggie.webp in storage; PENDING Ed's go-ahead after merge"
+        "photo": "canonical headshot",
+        "status": "set 2026-11-26: explainers/faces/maggie.webp created from the canonical headshot (the file was missing)"
       }
     }
   },
@@ -498,19 +516,22 @@
         "photo": "canonical_square"
       },
       "video_posters": {
-        "photo": "claire_legacy_2026-10-22"
+        "photo": null,
+        "status": "no active video uses this teammate's replaced face (Claire's two team clips and the English ACC explainer were archived 2026-11-26)",
+        "legacy_file": "claire_legacy_2026-10-22.jpg kept as history"
       },
       "microsoft_365": {
         "photo": "canonical_square",
         "status": "set 2026-11-17 from the canonical file (Ed-authorized); see _canonical_index"
       },
       "heygen_avatar": {
-        "photo": "unchanged",
-        "note": "pending Ed's separate approval"
+        "photo": "face v2 (16:9 look from the approved portrait)",
+        "status": "switched 2026-11-26 (Ed): the Character Canon now decides the production look; renders no longer read <FACE>_AVATAR_ID",
+        "legacy": "the look built from the replaced face is retired in the Canon (history kept)"
       },
       "portal_video_visit": {
-        "photo": "unchanged",
-        "note": "faces/claire.webp; pending Ed's separate approval"
+        "photo": "headset portrait (face v2)",
+        "status": "set 2026-11-26: explainers/faces/claire.webp replaced; the August face is kept at faces/legacy/claire_2026-08-16_superseded.webp"
       }
     }
   },
@@ -571,19 +592,22 @@
         "photo": "canonical_square"
       },
       "video_posters": {
-        "photo": "annie_legacy_2026-10-22"
+        "photo": null,
+        "status": "no active video uses this teammate's replaced face",
+        "legacy_file": "annie_legacy_2026-10-22.jpg kept as history"
       },
       "microsoft_365": {
         "photo": "canonical_square",
         "status": "set 2026-11-17 from the canonical file (Ed-authorized); see _canonical_index"
       },
       "heygen_avatar": {
-        "photo": "unchanged",
-        "note": "pending Ed's separate approval"
+        "photo": "face v2 (16:9 look from the approved portrait)",
+        "status": "switched 2026-11-26 (Ed): the Character Canon now decides the production look; renders no longer read <FACE>_AVATAR_ID",
+        "legacy": "the look built from the replaced face is retired in the Canon (history kept)"
       },
       "portal_video_visit": {
-        "photo": "unchanged",
-        "note": "faces/annie.webp; pending Ed's separate approval"
+        "photo": "canonical headshot",
+        "status": "set 2026-11-26: explainers/faces/annie.webp created from the canonical headshot (the file was missing)"
       }
     }
   },
@@ -644,19 +668,22 @@
         "photo": "canonical_square"
       },
       "video_posters": {
-        "photo": "miranda_legacy_2026-10-22"
+        "photo": null,
+        "status": "no active video uses this teammate's replaced face",
+        "legacy_file": "miranda_legacy_2026-10-22.jpg kept as history"
       },
       "microsoft_365": {
         "photo": "canonical_square",
         "status": "set 2026-11-17 from the canonical file (Ed-authorized); see _canonical_index"
       },
       "heygen_avatar": {
-        "photo": "unchanged",
-        "note": "pending Ed's separate approval"
+        "photo": "face v2 (16:9 look from the approved portrait)",
+        "status": "switched 2026-11-26 (Ed): the Character Canon now decides the production look; renders no longer read <FACE>_AVATAR_ID",
+        "legacy": "the look built from the replaced face is retired in the Canon (history kept)"
       },
       "portal_video_visit": {
-        "photo": "unchanged",
-        "note": "faces/miranda.webp; pending Ed's separate approval"
+        "photo": "canonical headshot",
+        "status": "set 2026-11-26: explainers/faces/miranda.webp created from the canonical headshot (the file was missing)"
       }
     }
   },
@@ -793,7 +820,7 @@
       "registry": {
         "character_slug": "claire_bennett",
         "face_version": 2,
-        "status": "proposed 2026-11-22; approval is Ed's in /admin/characters"
+        "status": "approved; current release; recorded in the Character Canon 2026-11-26 from Ed's standing decisions (canon_reconcile; chat instruction, not an in-app click)"
       }
     },
     "isabella": {
@@ -808,7 +835,7 @@
       "registry": {
         "character_slug": "isabella_reyes",
         "face_version": 1,
-        "status": "proposed 2026-11-22; approval is Ed's in /admin/characters"
+        "status": "approved; current release; recorded in the Character Canon 2026-11-26 from Ed's standing decisions (canon_reconcile; chat instruction, not an in-app click)"
       }
     },
     "mei": {
@@ -824,7 +851,7 @@
       "registry": {
         "character_slug": "mei_chen",
         "face_version": 1,
-        "status": "proposed 2026-11-22; approval is Ed's in /admin/characters"
+        "status": "approved; current release; recorded in the Character Canon 2026-11-26 from Ed's standing decisions (canon_reconcile; chat instruction, not an in-app click)"
       }
     },
     "priya": {
@@ -840,7 +867,7 @@
       "registry": {
         "character_slug": "priya_sharma",
         "face_version": 1,
-        "status": "proposed 2026-11-22; approval is Ed's in /admin/characters"
+        "status": "approved; current release; recorded in the Character Canon 2026-11-26 from Ed's standing decisions (canon_reconcile; chat instruction, not an in-app click)"
       }
     },
     "emma": {
@@ -853,7 +880,7 @@
       "registry": {
         "character_slug": "emma_brooks",
         "face_version": 1,
-        "status": "proposed 2026-11-22; approval is Ed's in /admin/characters"
+        "status": "approved; current release; recorded in the Character Canon 2026-11-26 from Ed's standing decisions (canon_reconcile; chat instruction, not an in-app click)"
       }
     },
     "kat": {
@@ -866,8 +893,9 @@
       "registry": {
         "character_slug": "kat_reed",
         "face_version": 1,
-        "status": "proposed 2026-11-22; approval is Ed's in /admin/characters"
-      }
+        "status": "approved; current release; recorded in the Character Canon 2026-11-26 from Ed's standing decisions (canon_reconcile; chat instruction, not an in-app click)"
+      },
+      "portal_video_visit": "set 2026-11-26: explainers/faces/kat.webp created from the canonical headshot (the file was missing)"
     },
     "annie": {
       "canonical": "public/assets/presentations/team/annie.jpg",
@@ -881,7 +909,7 @@
       "registry": {
         "character_slug": "annie_reeves",
         "face_version": 2,
-        "status": "proposed 2026-11-22; approval is Ed's in /admin/characters"
+        "status": "approved; current release; recorded in the Character Canon 2026-11-26 from Ed's standing decisions (canon_reconcile; chat instruction, not an in-app click)"
       }
     },
     "miranda": {
@@ -896,7 +924,7 @@
       "registry": {
         "character_slug": "miranda_pierce",
         "face_version": 2,
-        "status": "proposed 2026-11-22; approval is Ed's in /admin/characters"
+        "status": "approved; current release; recorded in the Character Canon 2026-11-26 from Ed's standing decisions (canon_reconcile; chat instruction, not an in-app click)"
       }
     },
     "amanda": {
@@ -912,7 +940,7 @@
       "registry": {
         "character_slug": "amanda_albright",
         "face_version": 4,
-        "status": "proposed 2026-11-22; approval is Ed's in /admin/characters"
+        "status": "approved; current release; recorded in the Character Canon 2026-11-26 from Ed's standing decisions (canon_reconcile; chat instruction, not an in-app click)"
       }
     },
     "reese": {
@@ -925,8 +953,9 @@
       "registry": {
         "character_slug": "reese_calloway",
         "face_version": 1,
-        "status": "proposed 2026-11-22; approval is Ed's in /admin/characters"
-      }
+        "status": "approved; current release; recorded in the Character Canon 2026-11-26 from Ed's standing decisions (canon_reconcile; chat instruction, not an in-app click)"
+      },
+      "portal_video_visit": "set 2026-11-26: explainers/faces/reese.webp created from the canonical headshot (the file was missing)"
     },
     "darby": {
       "canonical": "public/assets/presentations/team/darby.jpg",
@@ -938,7 +967,7 @@
       "registry": {
         "character_slug": "darby_woods",
         "face_version": 1,
-        "status": "proposed 2026-11-22; approval is Ed's in /admin/characters"
+        "status": "approved; current release; recorded in the Character Canon 2026-11-26 from Ed's standing decisions (canon_reconcile; chat instruction, not an in-app click)"
       }
     },
     "paige": {
@@ -954,7 +983,7 @@
       "registry": {
         "character_slug": "paige_chandler",
         "face_version": 2,
-        "status": "proposed 2026-11-22; approval is Ed's in /admin/characters"
+        "status": "approved; current release; recorded in the Character Canon 2026-11-26 from Ed's standing decisions (canon_reconcile; chat instruction, not an in-app click)"
       }
     },
     "phoebe": {
@@ -967,7 +996,7 @@
       "registry": {
         "character_slug": "phoebe_hart",
         "face_version": 3,
-        "status": "proposed 2026-11-22; approval is Ed's in /admin/characters"
+        "status": "approved; current release; recorded in the Character Canon 2026-11-26 from Ed's standing decisions (canon_reconcile; chat instruction, not an in-app click)"
       }
     },
     "maggie": {
@@ -983,7 +1012,7 @@
       "registry": {
         "character_slug": "maggie_sullivan",
         "face_version": 2,
-        "status": "proposed 2026-11-22; approval is Ed's in /admin/characters"
+        "status": "approved; current release; recorded in the Character Canon 2026-11-26 from Ed's standing decisions (canon_reconcile; chat instruction, not an in-app click)"
       }
     },
     "tessa": {
@@ -996,8 +1025,9 @@
       "registry": {
         "character_slug": "tessa_mccall",
         "face_version": 1,
-        "status": "proposed 2026-11-22; approval is Ed's in /admin/characters"
-      }
+        "status": "approved; current release; recorded in the Character Canon 2026-11-26 from Ed's standing decisions (canon_reconcile; chat instruction, not an in-app click)"
+      },
+      "portal_video_visit": "set 2026-11-26: explainers/faces/tessa.webp created from the canonical headshot (the file was missing)"
     },
     "vivian": {
       "canonical": "public/assets/presentations/team-internal/vivian.jpg",
@@ -1011,7 +1041,7 @@
       "registry": {
         "character_slug": "vivian_hale",
         "face_version": 1,
-        "status": "proposed 2026-11-22; approval is Ed's in /admin/characters"
+        "status": "approved; current release; recorded in the Character Canon 2026-11-26 from Ed's standing decisions (canon_reconcile; chat instruction, not an in-app click)"
       }
     }
   },

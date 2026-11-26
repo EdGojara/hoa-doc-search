@@ -19,6 +19,12 @@ const registry = require('../lib/characters/registry');
 const approval = require('../lib/characters/approval');
 const roster = require('../lib/team/roster');
 
+// Approvals change what production may use: refresh the Canon's production
+// identity right away (lib/characters/production.js).
+function refreshProduction() {
+  require('../lib/characters/production').load(registry).catch((e) => console.warn('[characters] production refresh failed:', e.message));
+}
+
 const router = express.Router();
 router.use(express.json({ limit: '64kb' }));
 
@@ -182,6 +188,7 @@ router.post('/:id/approve-package', async (req, res) => {
     }
     await registry.approvePackage({ characterId: req.params.id, currentReleaseId: current_release_id,
       legacyReleaseIds: legacy_release_ids || [], actor: actorOf(req), reason: String(reason).slice(0, 500) });
+    refreshProduction();
     res.json({ ok: true });
   } catch (err) {
     console.error('[characters] approve-package failed:', err.message);
@@ -207,6 +214,7 @@ router.post('/:id/components/:vid/status', async (req, res) => {
       }
     }
     await registry.setComponentStatus({ versionId: req.params.vid, event, actor: actorOf(req), reason: String(reason).slice(0, 500) });
+    refreshProduction();
     res.json({ ok: true });
   } catch (err) {
     console.error('[characters] component status failed:', err.message);
@@ -223,6 +231,7 @@ router.post('/:id/releases/:rid/promote', async (req, res) => {
     const d = await loadOwned(req, res); if (!d) return;
     if (!d.releases.some((r) => r.id === req.params.rid)) return res.status(404).json({ error: 'release_not_for_character' });
     await registry.promoteRelease({ releaseId: req.params.rid, actor: actorOf(req), reason: String(reason).slice(0, 500) });
+    refreshProduction();
     res.json({ ok: true });
   } catch (err) {
     console.error('[characters] promote failed:', err.message);

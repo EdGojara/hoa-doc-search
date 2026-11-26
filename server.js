@@ -1930,6 +1930,11 @@ app.use('/api/ach', achRouter);
 // avatar sessions and rendered video use them without waiting for a redeploy.
 loadVoiceOverrides().catch((e) => console.warn('[voices] initial load failed:', e.message));
 loadTtsVoiceOverrides().catch((e) => console.warn('[voices] initial TTS load failed:', e.message));
+// The Character Canon governs production identity (faces, looks, canonical
+// voices). Load it at boot. It refreshes itself when read after 5 minutes (no
+// timer), on every render, and right after an approval in /admin/characters.
+require('./lib/characters/production').load(require('./lib/characters/registry'))
+  .catch((e) => console.warn('[characters] production identity load failed:', e.message));
 
 const { router: apIntakeRouter } = require('./api/ap_intake');
 app.use('/api/ap-intake', apIntakeRouter);

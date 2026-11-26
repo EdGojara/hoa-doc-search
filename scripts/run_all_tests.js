@@ -307,6 +307,7 @@ const CHECKS = [
   'tests/test_character_registry.js',
   'tests/test_identity_drift.js',           // identity drift: headshot, photos, avatar from replaced face, voice catalog, website portraits
   'tests/test_character_approval.js',
+  'tests/test_character_production.js',   // the Canon governs renders: one approved look, approved ElevenLabs voice, no fallbacks
   'tests/test_payment_foundation.js',
   'tests/test_autopay_intent.js',         // autopay on the one-time path: platform enrollment, off-session destination charge, notice fee+total, switch, in-flight
   'tests/test_payment_quote.js',          // funding-aware fees: credit-only surcharge cap, server-side confirm, PI webhook settlement

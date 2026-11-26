@@ -61,18 +61,18 @@ function log(msg) { console.log('  ' + msg); }
   if (!title) die('--title is required');
   if (!script) die('--script or --script-file is required');
 
-  // Resolve the avatar/voice up front so a misconfigured persona fails BEFORE
-  // we spend any HeyGen quota, not minutes into a render.
-  const avatarId = heygen.avatarIdFor(persona);
-  const voiceId = heygen.voiceIdFor(persona);
-  if (!avatarId) die('no avatar configured for persona "' + persona + '" (check ' + persona.toUpperCase() + '_AVATAR_ID)');
-  if (!voiceId) die('no voice configured for persona "' + persona + '" (check ' + persona.toUpperCase() + '_VOICE_ID)');
+  // Resolve the approved identity from the Character Canon up front, so an
+  // unapproved face or voice fails BEFORE any HeyGen quota is spent.
+  let ident;
+  try { ident = await require('../lib/characters/production').resolveForRender(require('../lib/characters/registry'), persona); }
+  catch (e) { die(e.message); }
+  log('identity  face v' + ident.face_version + ', release ' + ident.release_no + ', look ' + ident.avatar_id.slice(0, 8));
 
   console.log('\nrender_explainer  topic=' + topic + '  persona=' + persona + '  lang=' + language);
   log('script  ' + script.length + ' chars, ~' + Math.round(script.split(/\s+/).length / 2.5) + 's spoken');
 
   // 1) Kick off the render.
-  const videoId = await heygen.renderExplainer({ script, language, persona, avatarId, voiceId, background, title });
+  const videoId = await heygen.renderExplainer({ script, language, persona, background, title });
   log('video   ' + videoId + ' (rendering)');
 
   // 2) Poll to completion. HeyGen renders a ~45s clip in a couple of minutes;
