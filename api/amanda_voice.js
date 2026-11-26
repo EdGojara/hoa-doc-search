@@ -69,11 +69,10 @@ function baseUrl(req) {
   const proto = String(req.headers['x-forwarded-proto'] || req.protocol || 'https').split(',')[0].trim();
   return `${proto}://${req.headers['x-forwarded-host'] || req.headers.host}`;
 }
+// Amanda's approved canonical voice from the Character Canon, and nothing else:
+// never another teammate's voice (Ed 2026-11-26). Null = no approved voice.
 function amandaVoiceId() {
-  let v = null;
-  try { v = require('../lib/team/roster').ttsVoiceIdFor('amanda'); } catch (_) { v = null; }
-  if (!v) { try { v = require('../lib/voice/persona').PERSONA.tts.voice_id; } catch (_) { v = null; } }
-  return v;
+  try { return require('../lib/team/roster').canonicalVoiceIdFor('amanda'); } catch (_) { return null; }
 }
 function ownerOf(u) { return { user_id: u.user.id, email: u.email, name: u.full_name || null }; }
 
@@ -106,6 +105,7 @@ router.post('/session', express.json({ limit: '16kb' }), async (req, res) => {
     // Recovery, not polling: a conversation left open by a closed tab is finished when the next one starts.
     finishAbandoned(supabase, owner.user_id).catch((e) => console.warn('[amanda.voice] abandoned cleanup failed:', e.message));
     const voiceId = amandaVoiceId();
+    if (!voiceId) return res.status(409).json({ ok: false, code: 'voice_not_approved', error: 'Amanda has no approved voice in the Character Canon (/admin/characters).' });
     const brainUrl = `${baseUrl(req)}/api/amanda/voice/llm`;
     const [agent, started] = await Promise.all([
       V.ensureAgent({ brainUrl, voiceId }).then((a) => { timings.agent_ms = a.ms; return a; }),

@@ -1406,10 +1406,11 @@ router.post('/speak', express.json({ limit: '32kb' }), async (req, res) => {
     if (text.length > 4000) return res.status(400).json({ error: 'text_too_long' });
 
     const { speakOnce } = require('../lib/voice/speak');
-    const { PERSONA } = require('../lib/voice/persona');
+    // Amanda's approved canonical voice only; never another teammate's voice
+    // or an env fallback (Ed 2026-11-26).
     let voiceId = null;
-    try { const roster = require('../lib/team/roster'); voiceId = roster.ttsVoiceIdFor && roster.ttsVoiceIdFor('amanda'); } catch (_) {}
-    voiceId = voiceId || process.env.AMANDA_VOICE_ID || PERSONA.tts.voice_id;
+    try { voiceId = require('../lib/team/roster').canonicalVoiceIdFor('amanda'); } catch (_) {}
+    if (!voiceId) return res.status(503).json({ error: 'voice_not_approved' });
 
     const audio = await speakOnce(text, { voiceId, outputFormat: 'mp3_44100_128' });
     res.setHeader('Content-Type', 'audio/mpeg');

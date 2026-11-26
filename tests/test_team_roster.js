@@ -170,6 +170,10 @@ check('avatars come from the Character Canon per teammate, independently; env av
   assert.strictEqual(roster.avatarIdFor('claire'), 'avatar_claire_test');
   assert.notStrictEqual(roster.avatarIdFor('annie'), roster.avatarIdFor('claire'), 'two teammates share one face');
   assert.strictEqual(roster.ttsVoiceIdFor('claire'), 'el_claire', 'an approved canonical voice wins for spoken audio');
+  roster.setTtsVoiceOverrides({ ANNIE: { voice_id: 'picker_override' } });
+  assert.strictEqual(roster.canonicalVoiceIdFor('claire'), 'el_claire');
+  assert.strictEqual(roster.canonicalVoiceIdFor('annie'), null, 'no approved voice = null, never an override or another voice');
+  roster.setTtsVoiceOverrides({});
   delete process.env.ANNIE_AVATAR_ID;
 });
 
