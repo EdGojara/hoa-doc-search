@@ -112,6 +112,17 @@ check('execution grant (mig 567): owner-only issue/revoke; instruction recorded;
   assert.ok(mig.includes("expires_at <= issued_at + interval '24 hours'") && mig.includes("'instruction', p_instruction") && mig.includes('per-run ceiling'));
 });
 
+check('an interest run shows what it charges and who is held, and the package summary leads the email', () => {
+  const run = { id: '68fa0000-0000-4000-8000-000000000001', process: 'interest', status: 'prepared', community_id: 'c1', period_month: '2026-11-01',
+    preview: { items: [{ interest_cents: 121 }, { interest_cents: 300 }, { interest_cents: 50, exception: true }, { interest_cents: 0 }, { interest_cents: 999, skip: true }] } };
+  const mail = O.renderPackage({ subject: 'S', verified: [{ run, units: [], notes: [] }], communityNames: { c1: 'Example' }, expiresAt: 'soon', summary: 'Kat: November interest' });
+  assert.ok(mail.text.includes('Interest charged to 2 owner accounts: $4.21 total'), mail.text);
+  assert.ok(mail.text.includes('Held as exceptions, not charged: 1 owner account ($0.50)'));
+  assert.ok(!mail.text.includes('(nothing posts)'));
+  assert.ok(mail.text.indexOf('Kat: November interest') < mail.text.indexOf('Kat has'), 'summary first');
+  assert.ok(mail.html.includes('Kat: November interest'));
+});
+
 (async () => {
   let pass = 0, fail = 0;
   for (const [n, fn] of tests) { try { await fn(); pass++; console.log('  ✓ ' + n); } catch (e) { fail++; console.log('  ✗ ' + n + '\n    ' + e.message); } }
