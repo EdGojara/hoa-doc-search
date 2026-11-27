@@ -278,6 +278,7 @@ const CHECKS = [
   'tests/test_transfer_proration.js',
   'tests/test_transfer_package.js',
   'tests/test_check_allocations.js',
+  'tests/test_amanda_internal_replies.js',
   'tests/test_closing_statement.js',
   'tests/test_closing_packets.js',
   'tests/test_builder_ownership.js',

@@ -476,7 +476,7 @@ check('ACKNOWLEDGE: the fixed, non-AI acknowledgement is sent ONCE and verified;
   assert.strictEqual(M.sends, 1);
 });
 
-check('INGEST leaves every staff-assist draft pending for a person (Ed 2026-10-22: no automatic send)', () => {
+check('INGEST keeps every staff-assist draft as the pending draft (sending internal mail is the separate internal-replies gate, after the insert)', () => {
   const ing = fs.readFileSync(path.join(__dirname, '..', 'lib', 'email', 'graph_ingest.js'), 'utf8');
   assert.match(ing, /persona: 'amanda', review_hint: d\.review_hint \|\| null \};\s*if \(d\.amanda_request\) draft\.amanda_request = d\.amanda_request;/);
   assert.ok(!/draft\.autonomy/.test(ing), 'no automatic-send decision on any draft');
@@ -561,8 +561,11 @@ check('DRAFT QUEUE: Amanda receipt records are never sent, edited or discarded f
 });
 
 // ================= WIRING =================
-check('WIRING: ingest never sends automatically (Ed 2026-10-22: human approval for all five); recovery rides boot + the push pass; no new timer; no sign-off; migration shape', () => {
+check('WIRING: ingest sends automatically ONLY internal mail to Amanda under the 2026-11-28 standing authority (lib/amanda/internal_replies); external mail stays human-approved; recovery rides boot + the push pass; no new timer; no sign-off; migration shape', () => {
   const ing = fs.readFileSync(path.join(__dirname, '..', 'lib', 'email', 'graph_ingest.js'), 'utf8');
+  const hook = ing.slice(ing.indexOf("AMANDA'S STANDING AUTHORITY FOR INTERNAL CORRESPONDENCE"), ing.indexOf('// Capture the sender' + String.fromCharCode(39) + 's own contact details'));
+  assert.ok(hook.includes("ex.classification === 'internal'") && hook.includes("draft.persona === 'amanda'") && hook.includes('AMANDA_MAILBOX') && hook.includes('!_vigilanceFlagged'), 'only internal mail delivered to Amanda, drafted by Amanda, not flagged by vigilance');
+  assert.ok(hook.includes("require('../amanda/internal_replies').handleInternal"), 'through the internal-replies gate');
   assert.ok(!/getAutoReply\(\)\.(decide|execute)\(/.test(ing), 'ingest must not decide on or start an automatic Amanda send');
   assert.ok(!/draft\.autonomy/.test(ing), 'no draft carries an automatic-send decision');
   const push = fs.readFileSync(path.join(__dirname, '..', 'lib', 'email', 'graph_push.js'), 'utf8');
