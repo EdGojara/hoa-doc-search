@@ -147,6 +147,14 @@ function fakeTwilio({ approveCode = '123456' } = {}) {
     const good = await Verification.check({ attempt_id: s.attempt_id, code: '123456', deps: tw.deps });
     assert.deepStrictEqual({ kind: good.record.kind, user_id: good.record.user_id }, { kind: 'owner', user_id: 'u-ed' });
   });
+  await check('readiness is read only: it never creates the Verify service', async () => {
+    Verification._resetForTests();
+    const calls = [];
+    const deps = { fetchImpl: async (url, opts) => { calls.push(opts.method); return { ok: true, status: 200, text: async () => JSON.stringify({ services: [] }) }; } };
+    const r = await Verification.readiness(deps);
+    assert.strictEqual(r.exists, false);
+    assert.deepStrictEqual(calls, ['GET']);
+  });
   await check('no credentials -> no code, a plain spoken fallback', async () => {
     const save = process.env.TWILIO_AUTH_TOKEN; delete process.env.TWILIO_AUTH_TOKEN;
     const r = await Verification.start({ supabase: sb, subject: { kind: 'owner' }, holder: {} });
@@ -253,6 +261,45 @@ function fakeTwilio({ approveCode = '123456' } = {}) {
     const b = V.agentConfig({ brainUrl: 'u', voiceId: 'harper', headerSecret: 'h', ttsModel: 'eleven_v4_turbo', keywords: ['Canyon Gate'] });
     assert.deepStrictEqual(b.conversation_config.asr, c.conversation_config.asr);
     assert.strictEqual(b.conversation_config.asr.quality, 'high');
+  });
+
+  await check('Claire phone turns survive resends: a resent turn joins (one computation), a new utterance supersedes', async () => {
+    const J = require('../lib/phone/turn_join'); J._resetForTests();
+    let runs = 0; let release;
+    const gateP = new Promise((r) => { release = r; });
+    const produce = async (emit, sig) => { runs++; emit('Hello.'); await gateP; if (!sig.aborted) emit(' There.'); return { spoken: 'Hello. There.', aborted: sig.aborted }; };
+    const a = []; const b = [];
+    // The voice shell drops the first request when it resends (that is what a resend is).
+    const ac = new AbortController();
+    const pa = J.joinTurn({ scope: 's:claire', key: 'k1', produce, onText: (t) => a.push(t), signal: ac.signal });
+    await new Promise((r) => setImmediate(r)); // the first request has heard "Hello."
+    ac.abort();
+    const pb = J.joinTurn({ scope: 's:claire', key: 'k1', produce, onText: (t) => b.push(t) });
+    release();
+    const [ra, rb] = await Promise.all([pa, pb]);
+    assert.strictEqual(runs, 1, 'a resend must not run the turn again');
+    assert.deepStrictEqual([a.join(''), b.join('')], ['Hello.', ' There.'], 'the resend gets only what was not delivered yet');
+    assert.ok(rb.joined && !ra.joined);
+    let rel2; const g2 = new Promise((r) => { rel2 = r; });
+    const p1 = J.joinTurn({ scope: 's2:claire', key: 'old', produce: async (emit, sig) => { await g2; return { aborted: sig.aborted }; }, onText: () => {} });
+    const p2 = J.joinTurn({ scope: 's2:claire', key: 'new', produce: async () => ({ fresh: true }), onText: () => {} });
+    rel2();
+    assert.strictEqual((await p1).aborted, true, 'the old turn is superseded');
+    assert.strictEqual((await p2).fresh, true);
+  });
+  await check('verify_caller never texts the same owner twice within 90 seconds', async () => {
+    Verification._resetForTests();
+    const tw = fakeTwilio();
+    const realFetch = global.fetch; global.fetch = tw.deps.fetchImpl;
+    try {
+      const st = { sid: 's', community: { id: 'dc' }, caller_phone: '+19995550000', holder: {}, conv: { chain: Promise.resolve(), seq: 0 } };
+      const FX2 = { ...FIX, properties: [{ id: 'p1', street_address: 'DC-41-058', community_id: 'dc' }] };
+      const h = Call.verifyHandlers(fakeSupabase(FX2), st, 'claire');
+      const r1 = await h.verify_caller({ address: 'DC-41-058' });
+      const r2 = await h.verify_caller({ address: 'DC 41 058' });
+      assert.ok(r1.ok && r2.ok && r2.already_sent, JSON.stringify([r1, r2]));
+      assert.strictEqual(tw.calls.filter((c) => /Verifications$/.test(c.url)).length, 1);
+    } finally { global.fetch = realFetch; }
   });
 
   // ---- agents ----------------------------------------------------------------------------
