@@ -255,6 +255,45 @@ function fakeTwilio({ approveCode = '123456' } = {}) {
     assert.strictEqual(b.conversation_config.asr.quality, 'high');
   });
 
+  await check('Claire phone turns survive resends: a resent turn joins (one computation), a new utterance supersedes', async () => {
+    const J = require('../lib/phone/turn_join'); J._resetForTests();
+    let runs = 0; let release;
+    const gateP = new Promise((r) => { release = r; });
+    const produce = async (emit, sig) => { runs++; emit('Hello.'); await gateP; if (!sig.aborted) emit(' There.'); return { spoken: 'Hello. There.', aborted: sig.aborted }; };
+    const a = []; const b = [];
+    // The voice shell drops the first request when it resends (that is what a resend is).
+    const ac = new AbortController();
+    const pa = J.joinTurn({ scope: 's:claire', key: 'k1', produce, onText: (t) => a.push(t), signal: ac.signal });
+    await new Promise((r) => setImmediate(r)); // the first request has heard "Hello."
+    ac.abort();
+    const pb = J.joinTurn({ scope: 's:claire', key: 'k1', produce, onText: (t) => b.push(t) });
+    release();
+    const [ra, rb] = await Promise.all([pa, pb]);
+    assert.strictEqual(runs, 1, 'a resend must not run the turn again');
+    assert.deepStrictEqual([a.join(''), b.join('')], ['Hello.', ' There.'], 'the resend gets only what was not delivered yet');
+    assert.ok(rb.joined && !ra.joined);
+    let rel2; const g2 = new Promise((r) => { rel2 = r; });
+    const p1 = J.joinTurn({ scope: 's2:claire', key: 'old', produce: async (emit, sig) => { await g2; return { aborted: sig.aborted }; }, onText: () => {} });
+    const p2 = J.joinTurn({ scope: 's2:claire', key: 'new', produce: async () => ({ fresh: true }), onText: () => {} });
+    rel2();
+    assert.strictEqual((await p1).aborted, true, 'the old turn is superseded');
+    assert.strictEqual((await p2).fresh, true);
+  });
+  await check('verify_caller never texts the same owner twice within 90 seconds', async () => {
+    Verification._resetForTests();
+    const tw = fakeTwilio();
+    const realFetch = global.fetch; global.fetch = tw.deps.fetchImpl;
+    try {
+      const st = { sid: 's', community: { id: 'dc' }, caller_phone: '+19995550000', holder: {}, conv: { chain: Promise.resolve(), seq: 0 } };
+      const FX2 = { ...FIX, properties: [{ id: 'p1', street_address: 'DC-41-058', community_id: 'dc' }] };
+      const h = Call.verifyHandlers(fakeSupabase(FX2), st, 'claire');
+      const r1 = await h.verify_caller({ address: 'DC-41-058' });
+      const r2 = await h.verify_caller({ address: 'DC 41 058' });
+      assert.ok(r1.ok && r2.ok && r2.already_sent, JSON.stringify([r1, r2]));
+      assert.strictEqual(tw.calls.filter((c) => /Verifications$/.test(c.url)).length, 1);
+    } finally { global.fetch = realFetch; }
+  });
+
   // ---- agents ----------------------------------------------------------------------------
   await check('agent config: AI + recording disclosed first, our brain + secret header, 90-day retention, webhook + extra body on', () => {
     const c = A.agentConfig({ persona: 'claire', brainUrl: 'https://x/api/phone/llm/claire', headerSecret: 'h', voiceId: 'v', ttsModel: 'eleven_flash_v2', transferTo: 'amanda-id' });

@@ -163,27 +163,34 @@ router.post(['/llm/claire/chat/completions', '/llm/claire'], express.json({ limi
   const phoneDirective = verifiedPid
     ? '=== THIS CALLER IS VERIFIED ===\nThey proved they own the home in WHO\'S CALLING with a code texted to the phone on file. Their own account is open to you through my_account and homeowner_transactions. Only that home.\nWhen Ed Gojara, a Bedrock employee, a board member or a vendor is calling, or they ask for a manager or Amanda, hand the call to Amanda with transfer_to_agent after one short sentence. She sees this whole call. When they are done, say goodbye and use end_call.'
     : '=== VERIFICATION IS AVAILABLE ON THIS CALL (this replaces the line saying private information is not available on the phone) ===\nWhen the caller wants their OWN account (balance, payments, violations, ACC, letters), offer to text a one-time code to the phone number on file for the owner of their home. Ask for their street address, call verify_caller, then ask them to read the code and call check_code. Until check_code says verified, nothing private is available and you say nothing private. Never say or confirm which phone number is on file, and never repeat a code back.\nWhen Ed Gojara, a Bedrock employee, a board member or a vendor is calling, or they ask for a manager or Amanda, hand the call to Amanda with transfer_to_agent after one short sentence. She sees this whole call, so they never repeat themselves. When they are done, say goodbye and use end_call.';
-  const ctrl = { aborted: false };
-  res.on('close', () => { if (!res.writableEnded) ctrl.aborted = true; });
-  let spoken = ''; let firstAt = null; let passthrough = null; let error = null;
-  try {
-    for await (const piece of streamTurn({
-      utterance, history, community: st.community, caller, caller_phone: st.caller_phone, abort: ctrl, channel: 'phone',
-      tools: [...VOICE_TOOLS.filter((t) => !PHONE_EXCLUDED.has(t.name)), ...Call.CLAIRE_VERIFY_TOOLS, ...lookups, ...shell],
-      toolHandlers: handlers, passthroughToolNames: shell.map((t) => t.name), phone_verification: st.phone_verification || undefined, phoneDirective,
-    })) {
-      if (ctrl.aborted) break;
-      if (piece && typeof piece === 'object' && piece[PASSTHROUGH_CONTROL_MARKER]) { passthrough = { name: piece.toolName, input: piece.toolArgs }; break; }
-      if (typeof piece !== 'string' || !piece.trim()) continue;
-      if (!firstAt) firstAt = Date.now();
-      const text = piece.replace(/[—–]/g, ', ');
-      out.text((spoken ? ' ' : '') + text); spoken += (spoken ? ' ' : '') + text;
-    }
-  } catch (e) { error = e.message; console.error('[phone.llm.claire] turn failed:', e.message); }
-  if (!spoken && error && !passthrough) { spoken = 'Sorry, I lost that for a second. Could you say it again?'; out.text(spoken); }
-  if (passthrough) out.tool(passthrough.name, passthrough.input); else out.end();
-  logTurn(st, { userText: lastUser >= 0 ? utterance : null, spoken, persona: 'claire', latency: firstAt ? firstAt - t0 : null, passthrough, error });
-  console.log('[phone.llm.claire] turn', JSON.stringify({ session_id: st.sid, first_text_ms: firstAt ? firstAt - t0 : null, total_ms: Date.now() - t0, verified: !!verifiedPid, passthrough: passthrough ? passthrough.name : null, error }));
+  // One computation per turn (lib/phone/turn_join): a voice-shell resend of the same turn joins it
+  // instead of re-running tools (a verification code is never sent twice); a new utterance supersedes.
+  const reqCtrl = new AbortController();
+  res.on('close', () => { if (!res.writableEnded) reqCtrl.abort(); });
+  const produce = async (emit, abortSignal) => {
+    const ctrl = { get aborted() { return abortSignal.aborted; } };
+    let spoken = ''; let firstAt = null; let passthrough = null; let error = null;
+    try {
+      for await (const piece of streamTurn({
+        utterance, history, community: st.community, caller, caller_phone: st.caller_phone, abort: ctrl, channel: 'phone',
+        tools: [...VOICE_TOOLS.filter((t) => !PHONE_EXCLUDED.has(t.name)), ...Call.CLAIRE_VERIFY_TOOLS, ...lookups, ...shell],
+        toolHandlers: handlers, passthroughToolNames: shell.map((t) => t.name), phone_verification: st.phone_verification || undefined, phoneDirective,
+      })) {
+        if (ctrl.aborted) break;
+        if (piece && typeof piece === 'object' && piece[PASSTHROUGH_CONTROL_MARKER]) { passthrough = { name: piece.toolName, input: piece.toolArgs }; break; }
+        if (typeof piece !== 'string' || !piece.trim()) continue;
+        if (!firstAt) firstAt = Date.now();
+        const text = piece.replace(/[—–]/g, ', ');
+        emit((spoken ? ' ' : '') + text); spoken += (spoken ? ' ' : '') + text;
+      }
+    } catch (e) { error = e.message; console.error('[phone.llm.claire] turn failed:', e.message); }
+    if (!spoken && !passthrough && !ctrl.aborted) { spoken = 'Sorry, I lost that for a second. Could you say it again?'; emit(spoken); error = error || 'nothing_spoken'; }
+    if (!ctrl.aborted) logTurn(st, { userText: lastUser >= 0 ? utterance : null, spoken, persona: 'claire', latency: firstAt ? firstAt - t0 : null, passthrough, error });
+    return { spoken, passthrough, first_text_ms: firstAt ? firstAt - t0 : null, error, superseded: ctrl.aborted || undefined };
+  };
+  const r = await require('../lib/phone/turn_join').joinTurn({ scope: `${st.sid}:claire`, key: require('../lib/amanda/conversation').turnKey(req.body.messages), produce, onText: (t) => out.text(t), signal: reqCtrl.signal });
+  if (r.passthrough) out.tool(r.passthrough.name, r.passthrough.input); else out.end();
+  console.log('[phone.llm.claire] turn', JSON.stringify({ session_id: st.sid, first_text_ms: r.first_text_ms, total_ms: Date.now() - t0, verified: !!verifiedPid, joined: !!r.joined, passthrough: r.passthrough ? r.passthrough.name : null, error: r.error || null }));
 });
 
 function logTurn(st, { userText, spoken, persona, latency, passthrough, error }) {
