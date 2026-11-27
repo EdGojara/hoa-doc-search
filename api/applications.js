@@ -1021,7 +1021,7 @@ router.post('/public/:slug/submit', upload.any(), async (req, res) => {
       kind: completeness.passed ? 'received' : 'needs_more',
       title: completeness.passed
         ? 'We received your application'
-        : 'Almost there — we need a little more',
+        : 'Almost there. We need a little more.',
       message: completeness.message,
       submitted_at_iso: app.submitted_at || new Date().toISOString(),
       submitted_at_human: new Date(app.submitted_at || Date.now())

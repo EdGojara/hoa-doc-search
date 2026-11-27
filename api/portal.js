@@ -3679,6 +3679,7 @@ router.post('/arc/submit', requirePortalCookie, portalArcUpload.any(), async (re
       service_type: serviceType,
       application_data: applicationData,
       attachments: savedAttachments,
+      channel: 'portal',
     });
 
     const stagedStatus = completeness.passed ? 'pending_review' : 'incomplete';
@@ -3714,7 +3715,7 @@ router.post('/arc/submit', requirePortalCookie, portalArcUpload.any(), async (re
       status_url: `/apply/status/${encodeURIComponent(reference)}`,
       receipt: {
         kind: completeness.passed ? 'received' : 'needs_more',
-        title: completeness.passed ? 'We received your application' : 'Almost there — we need a little more',
+        title: completeness.passed ? 'We received your application' : 'Almost there. We need a little more.',
         message: completeness.message,
         submitted_at_iso: app.submitted_at,
         submitted_at_human: new Date(app.submitted_at).toLocaleString('en-US', {
