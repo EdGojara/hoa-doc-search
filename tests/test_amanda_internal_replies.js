@@ -58,13 +58,20 @@ function deps(o = {}) {
     }
   });
 
-  await check('restricted topics stay with a person (payments, postings, write-offs, contracts, legal, personnel)', async () => {
-    for (const t of ['Please approve the payment to the vendor', 'Can you post the entry today?', 'We should write off the balance', 'Sign the contract with the vendor', 'Is this legal advice?', 'About her salary']) {
+  await check('coordinating restricted topics is routine; a reply that authorizes or executes one stays with a person', async () => {
+    for (const t of ['Please approve the payment to the vendor', 'Can you post the entry today?', 'Should we write off the balance?', 'Can we sign the contract with the vendor?', 'A question about her salary']) {
       const d = deps();
       const r = await IR.handleInternal({ supabase: fakeDb({ users: STAFF }), inbound: inbound({ body_full: t }), draft, env: {}, deps: d });
-      assert.strictEqual(r.action, 'review', t); assert.ok(r.reasons[0].startsWith('restricted:'), t); assert.strictEqual(d.sent.length, 0);
+      assert.strictEqual(r.action, 'sent', t);   // the colleague asked about it; Amanda coordinates
     }
-    assert.deepStrictEqual(IR.restrictedTopics('Thanks, I deposited the checks.'), []);
+    for (const body of ['Hi Pat, I have approved the payment to the vendor.', 'Hi Pat, I just posted the charge and issued the refund.', 'Hi Pat, go ahead and release the payment.', 'Hi Pat, we will sign the contract tomorrow.', 'Hi Pat, the routing number is below.', 'Hi Pat, in my legal opinion the board can do this.']) {
+      const d = deps();
+      const r = await IR.handleInternal({ supabase: fakeDb({ users: STAFF }), inbound: inbound(), draft: { ...draft, body }, env: {}, deps: d });
+      assert.strictEqual(r.action, 'review', body); assert.strictEqual(d.sent.length, 0, body);
+    }
+    assert.deepStrictEqual(IR.restrictedTopics('Payments are approved by Ed in Payables; I have sent it to Kat to prepare for his approval.'), []);
+    assert.deepStrictEqual(IR.restrictedTopics('Thanks, I deposited the checks. The contract renewal is on the board agenda.'), []);
+    assert.deepStrictEqual(IR.restrictedTopics('The contract was signed by the board last week.'), []);   // reporting is routine; the send check verifies it is true
   });
 
   await check('the send check decides: unsupported claims or a curt tone stay drafts; no reply needed is handled silently', async () => {
