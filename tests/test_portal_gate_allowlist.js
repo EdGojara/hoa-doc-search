@@ -32,6 +32,15 @@ for (const f of fs.readdirSync(path.join(root, 'public')).filter((n) => /^portal
     if (!patterns.some((r) => r.test(p))) misses.push(`${f}: ${m[1]}`);
   }
 }
+// Claire's visit page (portal tile): its calls are built as A + '/session/' + SESSION.id + '/x'.
+{
+  const html = fs.readFileSync(path.join(root, 'public', 'claire.html'), 'utf8');
+  for (const m of html.matchAll(/A\+'(\/[a-z/-]+)'(?:\+SESSION\.id\+'(\/[a-z-]+)')?/g)) {
+    const p = '/api/claire' + m[1] + (m[2] ? ID + m[2] : '');
+    if (!patterns.some((r) => r.test(p))) misses.push(`claire.html: ${p}`);
+  }
+  assert.ok(html.includes("A+'/session/'+SESSION.id+'/speak'"), 'the voice call is still where this test looks for it');
+}
 assert.deepStrictEqual(misses, [], 'homeowner portal pages call paths the staff gate blocks:\n  ' + misses.join('\n  '));
 // Staff-only endpoints must stay gated.
 for (const p of ['/api/portal/mimic/start', '/api/portal/staff-enter', '/api/portal/manager/properties', '/api/portal-admin/communities']) {
