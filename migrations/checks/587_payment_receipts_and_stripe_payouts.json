@@ -1,5 +1,5 @@
 {
-  "migration": "585_payment_receipts_and_stripe_payouts.sql",
+  "migration": "587_payment_receipts_and_stripe_payouts.sql",
   "summary": "Post-payment experience and Stripe payout reconciliation. payments gains the Bedrock confirmation number (BP-XXXX-XXXX, unique on the assessment row, format CHECK) and the once-only notice record for the receipt and the ACH 'submitted' email (claimed/sent/message id, recipient, last error), plus payment_new_confirmation_number(). Existing assessment payment groups are backfilled with a confirmation number (updates only). bank_rec_payouts (migration 240) gains the Stripe payout columns (payout id, balance transaction id UNIQUE, charge, PaymentIntent, payment FK, status, arrival date, payout amount, resolution and note, updated_at with its trigger). No rows are added or removed; existing Vantaca payout rows keep NULL in every new column.",
   "requires": [
     "240_continuous_bank_rec_register.sql",

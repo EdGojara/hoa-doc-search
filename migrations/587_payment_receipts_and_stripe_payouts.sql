@@ -1,5 +1,5 @@
 -- ============================================================================
--- 585_payment_receipts_and_stripe_payouts.sql  (Ed 2026-11-27)
+-- 587_payment_receipts_and_stripe_payouts.sql  (Ed 2026-11-27)
 -- ----------------------------------------------------------------------------
 -- Post-payment experience and Stripe payout reconciliation for homeowner
 -- assessment payments (portal Pay, autopay, Checkout). Two parts, no new table.

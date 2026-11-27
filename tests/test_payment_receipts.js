@@ -243,7 +243,7 @@ t('no portal user: falls back to the contact email; none at all is recorded, not
   assert.ok(/no email/.test(sb2.db.payments[0].notice_error));
   assert.strictEqual(sb2.db.payments[0].receipt_claimed_at, null);
 });
-t('a payment from before migration 585 gets a confirmation number once', async () => {
+t('a payment from before migration 587 gets a confirmation number once', async () => {
   const sb = world({ confirmation: null }); const m = mailer();
   const r = await notifierFor(sb, m).notify('pay-a', 'receipt');
   assert.ok(isConfirmationNumber(r.confirmation_number));

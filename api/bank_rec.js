@@ -529,7 +529,7 @@ async function _replaceRange(table, community_id, account_last4, dateCol, lo, hi
   let q = supabase.from(table).delete().eq('community_id', community_id).gte(dateCol, lo).lte(dateCol, hi);
   if (account_last4 != null) q = q.eq('account_last4', account_last4);
   // A Vantaca payout upload replaces ITS rows only. Stripe payout components staged by the
-  // webhook (kind 'stripe', migration 585) are settlement evidence for posted entries and are
+  // webhook (kind 'stripe', migration 587) are settlement evidence for posted entries and are
   // never deleted by a file upload.
   if (table === 'bank_rec_payouts') q = q.or('kind.is.null,kind.neq.stripe');
   const { error } = await q;
