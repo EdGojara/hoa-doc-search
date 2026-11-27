@@ -528,7 +528,12 @@ async function retainBankRecSource(file, rec, category, title) {
 async function _replaceRange(table, community_id, account_last4, dateCol, lo, hi) {
   let q = supabase.from(table).delete().eq('community_id', community_id).gte(dateCol, lo).lte(dateCol, hi);
   if (account_last4 != null) q = q.eq('account_last4', account_last4);
-  await q;
+  // A Vantaca payout upload replaces ITS rows only. Stripe payout components staged by the
+  // webhook (kind 'stripe', migration 587) are settlement evidence for posted entries and are
+  // never deleted by a file upload.
+  if (table === 'bank_rec_payouts') q = q.or('kind.is.null,kind.neq.stripe');
+  const { error } = await q;
+  if (error) console.warn(`[bank-rec] ${table} replace failed:`, error.message);
 }
 async function _insertChunks(table, rows) {
   for (let i = 0; i < rows.length; i += 500) {
@@ -1110,7 +1115,8 @@ router.post('/reconciliations/:id/run-match', async (req, res) => {
         .select('trxn_date, payout_date, account_ref, kind, txn_type, amount_cents')
         .eq('community_id', rec.community_id).lte('trxn_date', periodEnd).limit(20000);
       if (payRows && payRows.length) {
-        vantacaPayouts = payRows.map((p) => ({ trxn_date: p.trxn_date, payout_date: p.payout_date, account_ref: p.account_ref, kind: p.kind, type: p.txn_type, amount_cents: Number(p.amount_cents) }));
+        // Stripe payouts are reconciled by Kat's monthly run (lib/banking/stripe_clearing.js), not here.
+        vantacaPayouts = payRows.filter((p) => p.kind !== 'stripe').map((p) => ({ trxn_date: p.trxn_date, payout_date: p.payout_date, account_ref: p.account_ref, kind: p.kind, type: p.txn_type, amount_cents: Number(p.amount_cents) }));
       }
     }
 

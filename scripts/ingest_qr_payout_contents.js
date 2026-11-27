@@ -24,7 +24,8 @@ const FILE = process.argv[2] || path.join(HOME, 'Downloads', 'VantacaPayPayoutCo
   const pays = (parsed.payments || []).filter((p) => p.trxn_date && p.amount_cents != null);
   if (!pays.length) { console.error('no payout rows parsed'); process.exit(1); }
   const dates = pays.map((p) => p.trxn_date).sort();
-  await s.from('bank_rec_payouts').delete().eq('community_id', QR).gte('trxn_date', dates[0]).lte('trxn_date', dates[dates.length - 1]);
+  // Never the Stripe payout rows the webhook staged (kind 'stripe', migration 587).
+  await s.from('bank_rec_payouts').delete().eq('community_id', QR).gte('trxn_date', dates[0]).lte('trxn_date', dates[dates.length - 1]).or('kind.is.null,kind.neq.stripe');
   for (let i = 0; i < pays.length; i += 500) {
     const rows = pays.slice(i, i + 500).map((p) => ({
       community_id: QR, trxn_date: p.trxn_date, payout_date: p.payout_date,

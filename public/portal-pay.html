@@ -83,6 +83,8 @@
   <div id="stepResult" class="card hidden">
     <h2 id="resTitle"></h2>
     <p id="resText" class="muted"></p>
+    <div id="resConf" class="row hidden"><span>Confirmation number</span><strong id="resConfNum" style="font-family:monospace;"></strong></div>
+    <p id="resEmail" class="muted hidden"></p>
     <div id="resBreakdown"></div>
     <p><a href="/portal">Back to the portal</a></p>
   </div>
@@ -145,7 +147,13 @@
     const disc = document.createElement('div'); disc.className = 'disclosure'; disc.textContent = q.disclosure; el.appendChild(disc);
   }
 
-  function showResult(status, q) {
+  // The Bedrock confirmation number from /pay/confirm. Kept for this tab only, so a
+  // 3-D Secure redirect back to this page (returned=1) can still show it.
+  const CONF_KEY = 'bp_last_confirmation';
+  const rememberConf = (n) => { try { if (n) sessionStorage.setItem(CONF_KEY, n); } catch (_) {} };
+  const recallConf = () => { try { return sessionStorage.getItem(CONF_KEY); } catch (_) { return null; } };
+
+  function showResult(status, q, confirmation) {
     const map = {
       succeeded: ['Payment received', 'Thank you. Your payment was approved. Your balance updates as soon as it is confirmed, usually within a minute.'],
       processing: ['Bank payment submitted', 'Thank you. Bank payments take a few business days to clear. Your balance updates when the bank confirms it.'],
@@ -155,6 +163,13 @@
     $('resTitle').className = map[status] ? 'ok' : '';
     $('resText').textContent = m[1];
     if (q && map[status]) renderBreakdown(q, $('resBreakdown')); else $('resBreakdown').textContent = '';
+    const ok = !!map[status] && !!confirmation;
+    $('resConf').classList.toggle('hidden', !ok);
+    $('resConfNum').textContent = ok ? confirmation : '';
+    $('resEmail').classList.toggle('hidden', !map[status]);
+    $('resEmail').textContent = status === 'processing'
+      ? 'We emailed you a confirmation. Your receipt follows when the bank payment clears. Keep the confirmation number for your records.'
+      : 'Your receipt is on its way to your email. Keep the confirmation number for your records.';
     show('stepResult');
   }
 
@@ -225,12 +240,14 @@
       }
       if (!r.ok) throw new Error(r.j.hint || r.j.error || 'The payment could not be completed.');
       const shown = r.j.quote || quote;
+      const conf = r.j.confirmation_number || null;
+      rememberConf(conf);
       if (r.j.status === 'requires_action' && r.j.client_secret) {
         const na = await stripe.handleNextAction({ clientSecret: r.j.client_secret });
         if (na.error) throw new Error(na.error.message + ' You have not been charged. Please try again.');
-        return showResult(na.paymentIntent && na.paymentIntent.status, shown);
+        return showResult(na.paymentIntent && na.paymentIntent.status, shown, conf);
       }
-      showResult(r.j.status, shown);
+      showResult(r.j.status, shown, conf);
     } catch (e) {
       $('errReview').textContent = e.message;
       btn.disabled = false; btn.textContent = 'Pay ' + usd(quote.total_cents);
@@ -255,7 +272,7 @@
     const secret = params.get('payment_intent_client_secret');
     if (params.get('returned') === '1' && secret) {
       const pr = await stripe.retrievePaymentIntent(secret);
-      return showResult(pr.paymentIntent && pr.paymentIntent.status, null);
+      return showResult(pr.paymentIntent && pr.paymentIntent.status, null, recallConf());
     }
 
     $('assocName').textContent = setup.association_name || 'your association';

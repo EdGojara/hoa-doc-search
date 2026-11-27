@@ -594,6 +594,44 @@ router.post('/:id/retry-posting', async (req, res) => {
   }
 });
 
+// GET /api/payments/by-confirmation/:number  (staff)
+// A homeowner quotes the Bedrock confirmation number from their receipt; staff
+// find the payment. Typed loosely (case, O/0, I/1, missing dashes) and normalized.
+router.get('/by-confirmation/:number', async (req, res) => {
+  try {
+    const { normalizeConfirmationNumber } = require('../lib/payments/confirmation_number');
+    const n = normalizeConfirmationNumber(req.params.number);
+    if (!n) return res.status(400).json({ error: 'confirmation_number_invalid', hint: 'A confirmation number looks like BP-7K3M-9QXA.' });
+    const { data, error } = await supabase.from('payments')
+      .select('id, community_id, property_id, payment_group_id, confirmation_number, fee_type, payee, amount_cents, payment_method_type, status, settlement_state, posting_state, posting_note, '
+        + 'settled_at, created_at, receipt_email, receipt_sent_at, submitted_notice_sent_at, notice_error, needs_review, review_reason, journal_entry_id, homeowner_txn_id')
+      .eq('confirmation_number', n).order('fee_type').limit(5);
+    if (error) throw error;
+    if (!data || !data.length) return res.status(404).json({ error: 'not_found', confirmation_number: n });
+    res.json({ ok: true, confirmation_number: n, payment: data.find((r) => r.fee_type === 'assessment') || data[0], group: data });
+  } catch (err) {
+    console.error('[payments] by-confirmation failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// POST /api/payments/:id/send-receipt  (staff)
+// Sends the receipt for a SETTLED assessment payment whose automatic receipt did
+// not go out (notice_error on the payment record). Same once-only claim as the
+// webhook: a receipt already sent is never sent again from here.
+router.post('/:id/send-receipt', async (req, res) => {
+  try {
+    const { createPaymentNotifier } = require('../lib/payments/payment_receipts');
+    const r = await createPaymentNotifier({ supabase, sendEmail }).notify(req.params.id, 'receipt');
+    if (r.action === 'sent') return res.json({ ok: true, ...r });
+    const status = r.action === 'already_sent' || r.action === 'already_claimed' ? 409 : r.action === 'error' ? 500 : 422;
+    res.status(status).json({ error: r.action, reason: r.reason || null });
+  } catch (err) {
+    console.error('[payments] send-receipt failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
 // POST /api/payments/payment-link  { community_id, property_id }  (staff)
 // Mint a STABLE, emailable pay link for a homeowner's balance. Does NOT require
 // Stripe to be live to mint (staff can prepare), but reports readiness. The link
@@ -1069,6 +1107,15 @@ router.post('/:id/refund', express.json({ limit: '32kb' }), async (req, res) => 
     if (!payment.processor_payment_id) {
       return res.status(400).json({ error: 'no processor_payment_id on record (was this a paper payment?)' });
     }
+    // Assessment payments refund in FULL only (Ed 2026-11-27, payout reconciliation
+    // design): the ledger reverses only a full refund automatically, and a partial
+    // refund would leave Stripe clearing and the association's Stripe balance apart.
+    // The whole charge comes back with the transfer reversed and Bedrock's fee
+    // refunded, so the association returns exactly the assessment it received.
+    const isAssessment = payment.product_type === 'assessment_payment';
+    if (isAssessment && amount_cents) {
+      return res.status(400).json({ error: 'assessment_refunds_are_full', hint: 'An online assessment payment is refunded in full. For a partial credit, refund in full and have the homeowner pay the right amount.' });
+    }
 
     // Whether Bedrock gives back its management fee is a judgement about
     // whether the service happened, so the operator states it rather than the
@@ -1081,7 +1128,7 @@ router.post('/:id/refund', express.json({ limit: '32kb' }), async (req, res) => 
       amountCents: amount_cents || undefined,
       connectedAccountId: payment.connected_account_id || undefined,
       reason: reason || 'requested_by_customer',
-      reverseTransfer: !!reverse_transfer,
+      reverseTransfer: isAssessment || !!reverse_transfer,
       // Assessments: the convenience fee is Bedrock's, collected as the
       // application fee. Refunding the charge reverses the WHOLE transfer from
       // the association, so unless the application fee comes back too, the
