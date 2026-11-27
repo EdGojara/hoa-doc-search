@@ -241,6 +241,20 @@ const { router } = require('../api/portal_admin');
     assert.ok(db.portal_users.filter((u) => u.id !== pilotUser.id).every((u) => u.invited_by === roster.SILENT_CREATE_MARK && u.management_company_id === BEDROCK_MGMT_CO_ID));
     assert.ok(!db.portal_users.some((u) => ['cC', 'cD', 'cE', 'cF', 'cG', 'cI'].includes(u.contact_id)), 'no account for a risky recipient');
 
+    // A silent account that already exists still gets a lot it did not have
+    // (a later purchase, or the same owner's lots in another association).
+    db.v_current_property_owners.push({ property_id: 'p13', street_address: '13 Oak', owner_contact_id: 'cJ', owner_name: 'Jo J', owner_email: 'jo@example.com', community_id: 'c1' });
+    db.properties.push({ id: 'p13', community_id: 'c1', excluded_at: null });
+    const jo = db.portal_users.find((u) => u.contact_id === 'cJ');
+    const p3c = await call({ dry_run: true });
+    fake.writes.length = 0;
+    const again = await call({ mode: 'create_only', preview_hash: p3c.body.preview_hash, portal_active_expected: false, broader_launch_approved: true });
+    assert.strictEqual(again.status, 200); assert.strictEqual(again.body.accounts_created, 0, 'no duplicate account');
+    assert.strictEqual(again.body.existing_accounts_checked, 2, 'both existing silent accounts were checked for missing lots');
+    assert.ok(jo && fake.writes.some((w) => w.table === 'portal_user_properties' && w.op === 'upsert'), 'the existing account gets its missing lot grant');
+    assert.ok(!fake.writes.some((w) => w.table === 'portal_users'), 'no account row written');
+    assert.strictEqual(sent.length, 0, 'still nobody emailed');
+
     // Switch day: portal on, preview shows them as not yet emailed, send emails each once.
     db.communities[0].portal_active = true;
     const p4 = await call({ dry_run: true });

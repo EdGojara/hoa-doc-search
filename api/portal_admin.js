@@ -1207,9 +1207,26 @@ router.post('/community/:communityId/bulk-invite', async (req, res) => {
       resource_type: 'community', resource_id: community.id, performed_by: performedBy,
       notes: `hash=${hash}${b.broader_launch_approved === true ? ' broader_launch_approved=true' : ''} accounts_created=${Object.keys(created.byContact).length} failures=${created.failures.length} to_email=${mode === 'send' ? roster.invite.length : 0}`,
     });
+    // An owner whose account already exists (created silently earlier, not yet
+    // emailed) still needs THIS roster's lots: a later silent create in another
+    // association, or a lot bought since, never reached them before. Grants are
+    // idempotent (insert-if-missing on portal_user_id + property_id). (Ed 2026-11-27.)
+    const existingGrants = [];
+    for (const r of roster.invite.filter((x) => x.action === 'email_existing' && x.portal_user_id)) {
+      for (const p of r.properties) existingGrants.push({ portal_user_id: r.portal_user_id, property_id: p.property_id, granted_by: performedBy });
+    }
+    // Missing grants only: a grant staff revoked stays revoked.
+    for (let i = 0; i < existingGrants.length; i += 200) {
+      const { error } = await supabase.from('portal_user_properties').upsert(existingGrants.slice(i, i + 200), { onConflict: 'portal_user_id,property_id', ignoreDuplicates: true });
+      if (error) {
+        console.error('[portal_admin] existing-account lot grants failed:', error.message);
+        created.failures.push({ contact_id: null, reason: 'lot_grant_failed', detail: safeErrorMessage(error) });
+      }
+    }
     const result = {
       ok: true, mode, ...preview,
       accounts_created: Object.keys(created.byContact).length,
+      existing_accounts_checked: new Set(existingGrants.map((g) => g.portal_user_id)).size,
       failures: created.failures,
     };
     if (mode === 'create_only') return res.json(result);
