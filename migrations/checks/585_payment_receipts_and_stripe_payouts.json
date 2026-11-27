@@ -1,0 +1,91 @@
+{
+  "migration": "585_payment_receipts_and_stripe_payouts.sql",
+  "summary": "Post-payment experience and Stripe payout reconciliation. payments gains the Bedrock confirmation number (BP-XXXX-XXXX, unique on the assessment row, format CHECK) and the once-only notice record for the receipt and the ACH 'submitted' email (claimed/sent/message id, recipient, last error), plus payment_new_confirmation_number(). Existing assessment payment groups are backfilled with a confirmation number (updates only). bank_rec_payouts (migration 240) gains the Stripe payout columns (payout id, balance transaction id UNIQUE, charge, PaymentIntent, payment FK, status, arrival date, payout amount, resolution and note, updated_at with its trigger). No rows are added or removed; existing Vantaca payout rows keep NULL in every new column.",
+  "requires": [
+    "240_continuous_bank_rec_register.sql",
+    "469_payments_safe_foundation.sql"
+  ],
+  "preflight": [
+    {
+      "name": "payments.confirmation_number does not exist yet",
+      "sql": "SELECT count(*)::int FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'payments' AND column_name = 'confirmation_number'",
+      "expect": 0
+    },
+    {
+      "name": "bank_rec_payouts.balance_txn_id does not exist yet",
+      "sql": "SELECT count(*)::int FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'bank_rec_payouts' AND column_name = 'balance_txn_id'",
+      "expect": 0
+    }
+  ],
+  "expected_changes": [
+    "payments: adds nullable confirmation_number (CHECK format), receipt_email, receipt_claimed_at, receipt_sent_at, receipt_message_id, submitted_notice_claimed_at, submitted_notice_sent_at, submitted_notice_message_id, notice_error.",
+    "payments: unique index on confirmation_number for the assessment row; partial index on notice_error.",
+    "payments: every existing assessment payment group gets one confirmation number on all its rows (UPDATE only; net row count unchanged).",
+    "Adds function payment_new_confirmation_number().",
+    "bank_rec_payouts: adds nullable processor_payout_id, balance_txn_id (UNIQUE), charge_id, payment_intent_id, payment_id (FK payments, RESTRICT), payout_status (CHECK paid/failed), arrival_date, payout_amount_cents, resolution (CHECK tied/unresolved), resolution_note, updated_at; two indexes; the updated_at trigger. No rows change.",
+    "Grants on bank_rec_payouts restated (already present from migration 240)."
+  ],
+  "objects": {
+    "added": [
+      "column:payments.confirmation_number",
+      "column:payments.receipt_email",
+      "column:payments.receipt_claimed_at",
+      "column:payments.receipt_sent_at",
+      "column:payments.receipt_message_id",
+      "column:payments.submitted_notice_claimed_at",
+      "column:payments.submitted_notice_sent_at",
+      "column:payments.submitted_notice_message_id",
+      "column:payments.notice_error",
+      "constraint:payments.payments_confirmation_number_format",
+      "index:uq_payments_confirmation_number",
+      "index:idx_payments_notice_error",
+      "function:payment_new_confirmation_number",
+      "column:bank_rec_payouts.processor_payout_id",
+      "column:bank_rec_payouts.balance_txn_id",
+      "column:bank_rec_payouts.charge_id",
+      "column:bank_rec_payouts.payment_intent_id",
+      "column:bank_rec_payouts.payment_id",
+      "column:bank_rec_payouts.payout_status",
+      "column:bank_rec_payouts.arrival_date",
+      "column:bank_rec_payouts.payout_amount_cents",
+      "column:bank_rec_payouts.resolution",
+      "column:bank_rec_payouts.resolution_note",
+      "column:bank_rec_payouts.updated_at",
+      "constraint:bank_rec_payouts.bank_rec_payouts_payment_id_fkey",
+      "constraint:bank_rec_payouts.bank_rec_payouts_payout_status_check",
+      "constraint:bank_rec_payouts.bank_rec_payouts_resolution_check",
+      "constraint:bank_rec_payouts.uq_bank_rec_payouts_balance_txn",
+      "index:uq_bank_rec_payouts_balance_txn",
+      "index:idx_bank_rec_payouts_processor_payout",
+      "index:idx_bank_rec_payouts_payment",
+      "trigger:bank_rec_payouts.trg_bank_rec_payouts_updated_at"
+    ],
+    "changed": [],
+    "removed": []
+  },
+  "verify": [
+    {
+      "name": "every assessment payment group has a confirmation number",
+      "sql": "SELECT count(*)::int FROM payments WHERE product_type = 'assessment_payment' AND payment_group_id IS NOT NULL AND confirmation_number IS NULL",
+      "expect": 0
+    },
+    {
+      "name": "each confirmation number belongs to one payment group",
+      "sql": "SELECT count(*)::int FROM (SELECT confirmation_number FROM payments WHERE confirmation_number IS NOT NULL GROUP BY confirmation_number HAVING count(DISTINCT payment_group_id) > 1) x",
+      "expect": 0
+    },
+    {
+      "name": "no existing payout row was given Stripe data",
+      "sql": "SELECT count(*)::int FROM bank_rec_payouts WHERE balance_txn_id IS NOT NULL OR processor_payout_id IS NOT NULL OR payout_status IS NOT NULL",
+      "expect": 0
+    }
+  ],
+  "row_changes": {
+    "payments": 0,
+    "bank_rec_payouts": 0
+  },
+  "protected": [
+    { "table": "journal_entries", "order_by": "id" },
+    { "table": "homeowner_transactions", "order_by": "id" }
+  ]
+}
