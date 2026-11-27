@@ -125,7 +125,7 @@ router.get('/status', express.json(), async (req, res) => {
     if (sv.error) out.audition = { ok: false, error: sv.error };
     else {
       try {
-        const a = await V.ensureAgent({ brainUrl: `${baseUrl(req)}/api/amanda/voice/llm`, voiceId: sv.voiceId, ttsModel: sv.ttsModel, audition: true });
+        const a = await V.ensureAgent({ brainUrl: `${baseUrl(req)}/api/amanda/voice/llm`, voiceId: sv.voiceId, ttsModel: sv.ttsModel, audition: true, expressive: !!sv.expressive });
         const live = await V.getAgentTts(a.agent_id);
         out.audition = { ok: true, key: sv.audition.key, agent_id: a.agent_id, requested: { voice_id: sv.voiceId, tts_model: sv.ttsModel }, live };
       } catch (e) { out.audition = { ok: false, code: e.code || null, error: e.message }; }
@@ -150,7 +150,7 @@ router.post('/session', express.json({ limit: '16kb' }), async (req, res) => {
     if (audition) console.log('[amanda.voice] voice audition session', JSON.stringify({ audition: audition.key, tts_model: ttsModel }));
     const brainUrl = `${baseUrl(req)}/api/amanda/voice/llm`;
     const [agent, started] = await Promise.all([
-      V.ensureAgent({ brainUrl, voiceId, ttsModel, audition: !!audition }).then((a) => { timings.agent_ms = a.ms; return a; }),
+      V.ensureAgent({ brainUrl, voiceId, ttsModel, audition: !!audition, expressive: !!expressive }).then((a) => { timings.agent_ms = a.ms; return a; }),
       C.startConversation(supabase, { owner, channel: 'voice', provider: 'elevenlabs' }).then((s) => { timings.briefing_ms = s.briefing_ms; return s; }),
     ]);
     const tok = await V.conversationToken(agent.agent_id);
