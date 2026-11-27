@@ -413,6 +413,12 @@
       "consequence": "standard",
       "prior": "sonnet-4-5"
     },
+    "team.amanda_internal_send_check": {
+      "model": "tier:standard",
+      "fallback": null,
+      "consequence": "high",
+      "prior": null
+    },
     "team.amanda_review": {
       "model": "tier:standard",
       "fallback": "sonnet-4-6",
