@@ -22,7 +22,7 @@
 
 const express = require('express');
 const crypto = require('crypto');
-const multer = require('multer');
+const { publicUpload } = require('../lib/uploads/public_upload');
 const { createClient } = require('@supabase/supabase-js');
 const { safeErrorMessage } = require('./_safe_error');
 const { sendEmail } = require('../lib/notifications/email');
@@ -3479,12 +3479,23 @@ router.post('/messages/:threadId/reply', express.json({ limit: '256kb' }), async
 //                                   + JSON application_data field)
 //   GET   /api/portal/arc         — list MY applications (open + past)
 // ============================================================================
-const portalArcUpload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: 12 * 1024 * 1024, files: 20 },
+// These two upload routes pass the staff gate on the portal cookie alone, so
+// the multipart body must not be parsed for an anonymous caller: the cookie is
+// checked first (cheap HMAC, no DB), then publicUpload() applies every limit
+// (CLAUDE.md "Upload routes reachable without login"). The handler still runs
+// its full role + lot check.
+function requirePortalCookie(req, res, next) {
+  if (!resolvePortalUser(req).portalUserId) return res.status(401).json({ error: 'not_signed_in' });
+  return next();
+}
+const portalArcUpload = publicUpload({
+  route: 'POST /api/portal/arc/submit',
+  fileSize: 12 * 1024 * 1024,
+  files: 20,
+  maxTotalBytes: 100 * 1024 * 1024,
 });
 
-router.post('/arc/submit', portalArcUpload.any(), async (req, res) => {
+router.post('/arc/submit', requirePortalCookie, portalArcUpload.any(), async (req, res) => {
   try {
     const roleCheck = await assertOwnerLikeRole(req, res);
     if (!roleCheck) return;
@@ -4870,11 +4881,13 @@ router.get('/builder/master-plan-approvals', async (req, res) => {
 // ============================================================================
 // Residents may attach a few photos so staff can USE the image if they pick
 // the submission. Images only, capped — same memoryStorage pattern as ARC.
-const newsletterPhotoUpload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: 10 * 1024 * 1024, files: 6 },
+const newsletterPhotoUpload = publicUpload({
+  route: 'POST /api/portal/newsletter-submissions',
+  fileSize: 10 * 1024 * 1024,
+  files: 6,
+  maxTotalBytes: 61 * 1024 * 1024,
 });
-router.post('/newsletter-submissions', newsletterPhotoUpload.array('photos', 6), async (req, res) => {
+router.post('/newsletter-submissions', requirePortalCookie, newsletterPhotoUpload.array('photos', 6), async (req, res) => {
   try {
     const roleCheck = await resolveUserWithRole(req, res);
     if (!roleCheck) return; // 401 already sent

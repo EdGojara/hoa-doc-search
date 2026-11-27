@@ -195,7 +195,7 @@
     <div id="successState" style="display:none;" class="success-state">
       <div class="check">✓</div>
       <h2>Check your email</h2>
-      <p>If <strong id="sentEmail">that email</strong> is registered, a sign-in link is on its way. The link is valid for 1 hour.</p>
+      <p>If <strong id="sentEmail">that email</strong> is registered, a sign-in link is on its way. The link is valid for 24 hours.</p>
       <div class="helper" style="border-top:none; padding-top: 0;">
         Didn't get the email? Check spam, or <a href="#" onclick="window.location.reload();">try again</a>.
       </div>
@@ -312,7 +312,7 @@ function renderRenewalState(data) {
   const COPY = {
     expired: {
       title: '⏱ Your sign-in link expired',
-      body:  'Sign-in links are good for 2 hours. Yours has passed that window. No problem, enter your email below and we\'ll send a fresh one.',
+      body:  'Sign-in links are good for 24 hours. Yours has passed that window. No problem, enter your email below and we\'ll send a fresh one.',
     },
     used:    {
       title: '✓ That link was already used',
