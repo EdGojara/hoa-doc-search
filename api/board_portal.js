@@ -123,8 +123,8 @@ router.get('/community/:id/summary', async (req, res) => {
       // balance on the same snapshot date were silently collapsed,
       // undercounting AR aging numbers shown to boards. Added property_id
       // to the SELECT and the dedupe key.
-      // AR aging rollup. CANONICAL source = v_homeowner_current_balance — the
-      // SAME ledger the AR detail list and the accounting screens read. The old
+      // AR aging rollup. CANONICAL source = v_current_owner_balance (current owner
+      // only, one row per lot; lib/ar/current_owner_ledger) — the SAME ledger the AR detail list and the accounting screens read. The old
       // code read owner_ar_snapshots FIRST and only fell back to the ledger when
       // there were ZERO snapshot rows. But a Vantaca-migrated community can have
       // a few legacy collections rows in owner_ar_snapshots (Waterview had 3, at
@@ -133,9 +133,7 @@ router.get('/community/:id/summary', async (req, res) => {
       // Prefer the ledger; use owner_ar_snapshots ONLY when the ledger is empty.
       // At-legal / collections flags come from the enforcement SSOT
       // (property_enforcement_states), not the stale snapshot. (Ed 2026-08-10.)
-      const { fetchAllQuery } = require('../lib/db/fetch_all');
-      const bals = await fetchAllQuery(() => supabase.from('v_homeowner_current_balance')
-        .select('property_id, balance_cents').eq('community_id', communityId), { orderBy: 'property_id' });
+      const bals = await require('../lib/ar/current_owner_ledger').currentOwnerBalancesForCommunity(supabase, communityId);
       const ledger = bals.filter((b) => b.property_id);   // roster only (drop null-property rows)
       if (ledger.length) {
         const owing = ledger.filter((b) => Number(b.balance_cents) > 0);
@@ -342,18 +340,15 @@ router.get('/community/:id/properties', async (req, res) => {
     const limit = Math.max(1, Math.min(2000, parseInt(req.query.limit || '500', 10)));
     const orderBy = req.query.order_by || 'open_violations_desc';
 
-    // Canonical current balance lives in v_homeowner_current_balance (cents) —
+    // Canonical current balance lives in v_current_owner_balance (cents, current
+    // owner only, via lib/ar/current_owner_ledger) —
     // the SAME source the summary rollup uses. v_property_summary.current_balance
     // is NULL for native-ledger (Vantaca-migrated) communities like Waterview, so
     // the board AR view read $0 while $265k was actually owed. Source the balance
     // from the canonical view and overlay it (cents -> dollars, matching the
     // display), so every community's AR is correct and consistent. (Ed 2026-08-10
     // SSOT: one balance source, not a per-view copy that drifts.)
-    const { fetchAllQuery } = require('../lib/db/fetch_all');
-    const balRows = await fetchAllQuery(() => supabase
-      .from('v_homeowner_current_balance')
-      .select('property_id, balance_cents')
-      .eq('community_id', communityId), { orderBy: 'property_id' });
+    const balRows = await require('../lib/ar/current_owner_ledger').currentOwnerBalancesForCommunity(supabase, communityId);
     // Drop rows with no property_id (unmatched transactions can surface a null
     // key in the balance view — a null in a later .in() throws a uuid error).
     const balValid = balRows.filter((b) => b.property_id);
@@ -432,11 +427,9 @@ router.get('/community/:id/ar-categorized', async (req, res) => {
     if (!viewer) return;
     const communityId = req.params.id;
     if (!canSeeCommunity(viewer, communityId)) return res.status(403).json({ error: 'forbidden_community' });
-    const { fetchAllQuery } = require('../lib/db/fetch_all');
 
     // Owing accounts from the canonical ledger.
-    const bals = await fetchAllQuery(() => supabase.from('v_homeowner_current_balance')
-      .select('property_id, balance_cents').eq('community_id', communityId), { orderBy: 'property_id' });
+    const bals = await require('../lib/ar/current_owner_ledger').currentOwnerBalancesForCommunity(supabase, communityId);
     const owing = new Map();
     for (const b of bals) { if (b.property_id && Number(b.balance_cents) > 0) owing.set(b.property_id, Number(b.balance_cents)); }
     const ids = [...owing.keys()];
@@ -1202,7 +1195,7 @@ Answer as board education, following your rules. If the excerpts don't cover it,
 //
 // Every number Amanda cites comes from the SAME canonical views the board tiles
 // read (v_property_summary, v_reserve_community_summary, community_budgets,
-// v_homeowner_current_balance, property_enforcement_states). Two readers of one
+// v_current_owner_balance, property_enforcement_states). Two readers of one
 // view agree, so Amanda's figures match the dashboard. She also inherits the
 // Community Key Issues via buildCommunityContextBlock, so she knows live matters
 // like the LOPF / Barker Cypress MUD negotiation without being told twice.
@@ -1258,12 +1251,10 @@ async function buildBoardAggregateContext(communityId, communityName) {
   } catch (e) { console.warn('[board_portal] amanda props skipped:', e.message); }
 
   // Accounts receivable — AGGREGATE ONLY (counts + total; never per-owner).
-  // Ledger-first, exactly like the /summary tile: prefer v_homeowner_current_balance,
+  // Ledger-first, exactly like the /summary tile: prefer v_current_owner_balance (current owner),
   // with enforcement flags from the SSOT property_enforcement_states.
   try {
-    const { fetchAllQuery } = require('../lib/db/fetch_all');
-    const bals = await fetchAllQuery(() => supabase.from('v_homeowner_current_balance')
-      .select('property_id, balance_cents').eq('community_id', communityId), { orderBy: 'property_id' });
+    const bals = await require('../lib/ar/current_owner_ledger').currentOwnerBalancesForCommunity(supabase, communityId);
     const ledger = (bals || []).filter((b) => b.property_id);
     if (ledger.length) {
       const owing = ledger.filter((b) => Number(b.balance_cents) > 0);

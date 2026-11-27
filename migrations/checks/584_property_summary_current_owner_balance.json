@@ -1,0 +1,28 @@
+{
+  "migration": "584_property_summary_current_owner_balance.sql",
+  "summary": "v_property_summary.current_balance reads the CURRENT owner's balance (v_current_owner_balance, mig 457) instead of v_homeowner_current_balance (mig 195), which also sums former owners' tenures. Same columns, order and types as migration 361; GRANT re-issued. View DDL only; no rows change.",
+  "requires": [],
+  "preflight": [
+    { "name": "v_property_summary has one row per property", "sql": "SELECT (count(*) = (SELECT count(*) FROM properties))::int FROM v_property_summary", "expect": 1 },
+    { "name": "v_current_owner_balance is one row per property", "sql": "SELECT (count(*) - count(DISTINCT property_id))::int FROM v_current_owner_balance", "expect": 0 }
+  ],
+  "expected_changes": [
+    "v_property_summary recreated: identical columns; current_balance now prefers the current owner's ledger balance, falling back to the legacy snapshot as before.",
+    "No table rows added, changed or deleted."
+  ],
+  "objects": {
+    "added": [],
+    "changed": ["view:v_property_summary"],
+    "removed": []
+  },
+  "row_changes": { "properties": 0, "homeowner_transactions": 0 },
+  "protected": [
+    { "table": "homeowner_transactions", "order_by": "id" },
+    { "table": "properties", "order_by": "id" }
+  ],
+  "verify": [
+    { "name": "still one row per property", "sql": "SELECT (count(*) = (SELECT count(*) FROM properties))::int FROM v_property_summary", "expect": 1 },
+    { "name": "current_balance equals the current owner's balance wherever one exists", "sql": "SELECT count(*)::int FROM v_property_summary s JOIN v_current_owner_balance b ON b.property_id = s.property_id WHERE s.current_balance IS DISTINCT FROM b.balance_cents / 100.0", "expect": 0 },
+    { "name": "service_role can still read the view", "sql": "SELECT has_table_privilege('service_role', 'v_property_summary', 'SELECT')::int", "expect": 1 }
+  ]
+}

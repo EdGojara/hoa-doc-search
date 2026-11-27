@@ -126,14 +126,14 @@ async function katFinancialContext({ propertyId } = {}) {
   if (!propertyId) return null;
   const lines = [];
   try {
-    const { data: bal } = await supabase.from('v_homeowner_current_balance')
-      .select('balance_cents, most_recent_txn_date').eq('property_id', propertyId).maybeSingle();
+    // The CURRENT owner's balance (one row per lot), never a former owner's.
+    const bal = await require('../lib/ar/current_owner_ledger').currentOwnerBalance(supabase, propertyId);
     if (bal) {
       const c = Number(bal.balance_cents) || 0;
       const amt = '$' + (Math.abs(c) / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
       lines.push(`Account balance: ${c > 0 ? amt + ' owed' : c < 0 ? amt + ' credit' : '$0.00 (current)'}${bal.most_recent_txn_date ? `, last activity ${String(bal.most_recent_txn_date).slice(0, 10)}` : ''}`);
     }
-  } catch (_) { /* balance view absent — skip */ }
+  } catch (e) { console.warn('[email_triage] Kat balance not read:', e.message); }
   try {
     const { data: col } = await supabase.from('ar_account_collections')
       .select('collection_status, bankruptcy_petition_date, bankruptcy_chapter').eq('property_id', propertyId).maybeSingle();

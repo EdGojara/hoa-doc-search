@@ -444,6 +444,7 @@ const CHECKS = [
   'tests/test_delivery_window.js',
   'tests/test_acc_annie_issue.js',
   'tests/test_acc_property_history.js',
+  'tests/test_ssot_readers.js',
   'tests/test_acc_intake_exceptions.js',
   'tests/test_acc_saved_drafts.js',
   'tests/test_acc_approval_queue.js',

@@ -373,47 +373,39 @@ async function assemble(contactId) {
     };
   });
 
-  // ARC / ACC decisions for THIS owner's properties. The old code queried a
-  // NON-EXISTENT `arc_applications` table, so this panel was always empty and
-  // ACC history/conditions never surfaced at the property (Ed 2026-07-25). Real
-  // sources: acc_decisions (Annie's queue, matched by community + address key)
-  // and community_applications (portal, linked by property_address_id). Conditions
-  // ride along so enforcement can check compliance against what was approved.
-  const _arcAddrKey = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().split(' ').slice(0, 3).join(' ');
-  const _propKeys = new Set(properties.map((p) => _arcAddrKey(p.address)).filter(Boolean));
-  const _arcCommIds = [...new Set(properties.map((p) => p.community_id).filter(Boolean))];
-  let arc = [];
-  if (_arcCommIds.length) {
-    const accRows = await safe(() => supabase.from('acc_decisions')
-      .select('id, reference_number, project_summary, decision_type, status, letter_body, homeowner_address, created_at, decided_at')
-      .in('community_id', _arcCommIds).order('created_at', { ascending: false }).limit(60));
-    // A withdrawn duplicate or an archived record is not a pending application; the
-    // decision shown is the one in effect (a revised decision, when there is one).
-    const accMine = await require('../lib/acc/effective').withEffective(supabase, accRows.filter((d) => _propKeys.has(_arcAddrKey(d.homeowner_address)) && !['withdrawn', 'archived'].includes(d.status)));
-    accMine.forEach((d) => {
+  // ARC / ACC decisions for THIS owner's properties. The canonical record is
+  // acc_decisions (Annie's queue). It has no property_id, so a case belongs to a
+  // lot by community + canonical street address (lib/acc/address_cases), read per
+  // owned property so an older case is never cut off by a community-wide window.
+  // Portal applications are on acc_decisions too (community_application_id links
+  // them back to the portal intake row), so they appear here without a second
+  // read. (community_applications.property_address_id points at
+  // community_addresses, not properties, so it can never match a property id.)
+  // Conditions ride along so enforcement can check compliance against what was
+  // approved. Withdrawn duplicates and archived records are excluded; the
+  // decision shown is the one in effect (a revised decision, when there is one).
+  const { accCasesForAddress } = require('../lib/acc/address_cases');
+  const arc = [];
+  const seenAcc = new Set();
+  for (const p of properties) {
+    if (!p.community_id || !p.address) continue;
+    let rows = [];
+    try {
+      // eslint-disable-next-line no-await-in-loop
+      rows = await accCasesForAddress(supabase, { communityId: p.community_id, address: p.address, select: 'letter_body' });
+    } catch (e) { console.warn('[homeowner360] ACC cases not read:', e.message); }
+    rows.forEach((d) => {
+      if (seenAcc.has(d.id)) return;
+      seenAcc.add(d.id);
       const decided = d.status === 'decided';
       arc.push({
-        source: 'acc', id: d.id, reference: d.reference_number, project: d.project_summary || null,
+        source: d.community_application_id ? 'portal' : 'acc', id: d.id, reference: d.reference_number, project: d.project_summary || null,
         status: decided ? 'decided' : 'pending', decision: d.decision_type || null,
         submitted_at: d.created_at, decided_at: (d.effective && d.effective.finalized_at) || d.decided_at || (decided ? d.created_at : null),
         original_decision: d.original_decision_type || null, original_decided_at: d.effective ? d.decided_at : null,
         // For a conditional approval the conditions live in the sent letter body —
         // carry it so enforcement can see exactly what was approved.
         conditions: (decided && /condition/i.test(String(d.decision_type || ''))) ? ((d.effective ? d.effective.letter_text : d.letter_body) || null) : null,
-      });
-    });
-  }
-  if (propIds.length) {
-    const portalRows = await safe(() => supabase.from('community_applications')
-      .select('id, reference_number, service_type, final_status, final_decided_at, submitted_at, final_decision_reasoning, property_address_id')
-      .in('property_address_id', propIds).order('submitted_at', { ascending: false }).limit(25));
-    portalRows.forEach((d) => {
-      const decided = !!d.final_decided_at;
-      arc.push({
-        source: 'portal', id: d.id, reference: d.reference_number, project: d.service_type || null,
-        status: decided ? 'decided' : 'pending', decision: d.final_status || null,
-        submitted_at: d.submitted_at, decided_at: d.final_decided_at,
-        conditions: (decided && /condition/i.test(String(d.final_status || ''))) ? (d.final_decision_reasoning || null) : null,
       });
     });
   }

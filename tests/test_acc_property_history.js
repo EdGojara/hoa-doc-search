@@ -18,10 +18,14 @@ function fakeDb(tables, { failOn = null } = {}) {
       select() { return q; }, order() { return q; }, limit() { return q; },
       eq(k, v) { st.filters.push((r) => r[k] === v); return q; },
       in(k, vs) { st.filters.push((r) => vs.includes(r[k])); return q; },
+      gt(k, v) { st.filters.push((r) => r[k] > v); return q; },
+      not(k, op, list) { const vs = String(list).replace(/[()]/g, '').split(','); st.filters.push((r) => !vs.includes(r[k])); return q; },
+      range(a, b) { st.range = [a, b]; return q; },
       ilike(k, pat) { const rx = new RegExp('^' + pat.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/%/g, '.*') + '$', 'i'); st.filters.push((r) => rx.test(String(r[k] || ''))); return q; },
       then(res, rej) {
         if (failOn === t) return Promise.resolve({ data: null, error: { message: 'boom' } }).then(res, rej);
-        return Promise.resolve({ data: (tables[t] || []).filter((r) => st.filters.every((f) => f(r))), error: null }).then(res, rej);
+        const rows = (tables[t] || []).filter((r) => st.filters.every((f) => f(r)));
+        return Promise.resolve({ data: st.range ? rows.slice(st.range[0], st.range[1] + 1) : rows, error: null }).then(res, rej);
       },
     };
     return q;
