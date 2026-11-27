@@ -116,11 +116,40 @@ check('turn: a tool call runs through the loop and its result reaches the second
   } finally { C.TOOLS.get_status = saved; }
 });
 
-check('turn: barge-in (the shell drops the request) stops the turn and is counted', async () => {
-  const st = state(); const ctrl = new AbortController();
-  const anthropic = { messages: { create: async () => streamOf((function* () { yield { type: 'content_block_start', index: 0, content_block: { type: 'text' } }; yield { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'Let me tell you about ' } }; ctrl.abort(); yield { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'everything. ' } }; })()) } };
-  const out = await C.runTurn({ supabase: fakeSupabase([]), anthropic, sessionId: 's1', state: st, messages: [{ role: 'user', content: 'x' }], onText: () => {}, signal: ctrl.signal });
-  assert.strictEqual(out.interrupted, true); assert.strictEqual(st.counters.interrupted, 1);
+check('turn: a dropped request detaches but the answer completes; the resend gets the rest; a new utterance supersedes', async () => {
+  const st = state(); const ctrl = new AbortController(); let release;
+  const gate = new Promise((r) => { release = r; });
+  const anthropic = { messages: { create: async () => ({ async *[Symbol.asyncIterator]() { yield { type: 'content_block_start', index: 0, content_block: { type: 'text' } }; yield { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'Let me tell you about it. ' } }; await gate; yield { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'Here is everything. ' } }; } }) } };
+  const msgs = [{ role: 'user', content: 'compare them' }];
+  const first = []; const p1 = C.runTurn({ supabase: fakeSupabase([]), anthropic, sessionId: 'sj', state: st, messages: msgs, onText: (t) => first.push(t), signal: ctrl.signal });
+  await new Promise((r) => setTimeout(r, 20)); ctrl.abort();
+  const out1 = await p1; assert.ok(out1.detached, 'the dropped request detaches');
+  const second = []; const p2 = C.runTurn({ supabase: fakeSupabase([]), anthropic, sessionId: 'sj', state: st, messages: msgs, onText: (t) => second.push(t) });
+  release();
+  const out2 = await p2;
+  assert.ok(out2.joined, 'the resend joins the same computation');
+  assert.ok(first.join(' ').includes('Let me tell you') && !second.join(' ').includes('Let me tell you'), 'what was already delivered is not repeated');
+  assert.ok(second.join(' ').includes('Here is everything'), 'the resend receives the rest of the answer');
+  assert.strictEqual(st.counters.turns, 1, 'one computation, not one per resend');
+  assert.strictEqual(st.counters.interrupted, 0);
+});
+
+check('turn: identical lookups in one conversation are answered once (no repeated work or cards); a turn with nothing spoken counts as failed', async () => {
+  const st = state(); let calls = 0;
+  C.TOOLS.__probe = async () => { calls++; return { ok: true, v: 1 }; };
+  C.TOOL_DEFS.push({ name: '__probe', description: 'x', input_schema: { type: 'object', properties: {} } });
+  try {
+    let n = 0;
+    const anthropic = { messages: { create: async () => { n++; return streamOf((function* () {
+      if (n <= 2) { yield { type: 'content_block_start', index: 0, content_block: { type: 'tool_use', id: 't' + n, name: '__probe' } }; yield { type: 'content_block_delta', index: 0, delta: { type: 'input_json_delta', partial_json: '{}' } }; yield { type: 'message_delta', delta: { stop_reason: 'tool_use' } }; }
+      else { yield { type: 'content_block_start', index: 0, content_block: { type: 'text' } }; yield { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'Done. ' } }; }
+    })()); } } };
+    await C.runTurn({ supabase: fakeSupabase([]), anthropic, sessionId: 'sc', state: st, messages: [{ role: 'user', content: 'a' }], onText: () => {} });
+    assert.strictEqual(calls, 1, 'the second identical call is served from the cache');
+    const silent = { messages: { create: async () => streamOf((function* () { yield { type: 'message_delta', delta: { stop_reason: 'end_turn' } }; })()) } };
+    const out = await C.runTurn({ supabase: fakeSupabase([]), anthropic: silent, sessionId: 'sc2', state: st, messages: [{ role: 'user', content: 'b' }], onText: () => {} });
+    assert.strictEqual(out.error, 'no_spoken_answer'); assert.ok(st.counters.failed >= 1);
+  } finally { delete C.TOOLS.__probe; C.TOOL_DEFS.pop(); }
 });
 
 check('turn: a model failure is spoken as a short apology, counted, never silent', async () => {
