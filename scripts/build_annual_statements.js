@@ -101,14 +101,24 @@ function applyDefer(good, defer) {
   }
   return { mail, deferred, unmatched: [...defer.keys()].filter((a) => !hit.has(a)) };
 }
-// Who of the held accounts gets a counsel notice: never a bankruptcy, never
-// without the firm's contact information, never an incomplete address.
+// Who of the held accounts gets a counsel notice: only accounts actually with
+// counsel (at_legal, lien_filed, judgment). Never a bankruptcy, a payment plan
+// or a collections-agency account (the notice says "being handled by legal
+// counsel", which is not true for them), never a firm on file that carries a
+// note (for example a firm transition: the notice must name the CURRENT firm),
+// never without the firm's verified contact information, never an incomplete
+// address. Firms are matched exactly against the verified firms file.
+const NOTICE_STATES = new Set(['at_legal', 'lien_filed', 'judgment']);
 function counselNotices(held, firms, defer = new Map()) {
   const send = []; const none = [];
   for (const h of held) {
-    const firm = h.firm && (firms || {})[h.firm];
+    const raw = String(h.firm || '').trim();
+    const note = /\(([^)]*)\)/.exec(raw);
+    const firm = raw && !note && (firms || {})[raw];
     const why = defer.has(String(h.d.account_number)) ? defer.get(String(h.d.account_number))
       : h.state === 'in_bankruptcy' ? 'bankruptcy: through bankruptcy counsel only'
+      : !NOTICE_STATES.has(h.state) ? `${String(h.state).replace(/_/g, ' ')}: not with counsel, so the counsel notice wording does not apply; statement held for review`
+      : note ? `firm on file carries a note ("${note[1]}"): confirm the current firm before any notice`
       : !firm ? 'no verified contact information for the firm'
         : (h.d._why || []).some((w) => /mailing address|owner name|account number/.test(w)) ? h.d._why.join('; ') : null;
     if (why) none.push({ ...h, why }); else send.push({ ...h, firm });
@@ -141,9 +151,13 @@ function billingGates({ opts, community, budget, lockbox, announcementRaw = null
     warnings.push(...r.warnings.map((w) => `announcement: ${w}`));
     announcement = r.ann;
   }
+  if (opts.disclosure && !String(opts['disclosure-approved'] || '').trim()) {
+    const why = '--disclosure prints on every statement: record who approved the exact wording and when with --disclosure-approved "<name, date, where>"';
+    if (preview) warnings.push(`PREVIEW: ${why}`); else blockers.push(why);
+  }
   const noticeText = (opts['notice-text'] && String(opts['notice-text']).trim()) || (announcement && announcement.notice_text) || null;
   if (!noticeText) blockers.push('the statement notice (delinquency wording per the collection policy) was not given: --notice-text or notice_text in --announce');
-  return { blockers, warnings, billing: { year, assessment_cents: rate, due_date: opts.due, activity_from: opts['activity-from'] || null, disclosure: opts.disclosure || null }, announcement, noticeText };
+  return { blockers, warnings, billing: { year, assessment_cents: rate, due_date: opts.due, activity_from: opts['activity-from'] || null, disclosure: opts.disclosure || null, disclosure_approved: opts['disclosure-approved'] || null }, announcement, noticeText };
 }
 
 function validate(d, { lockbox, sample }) {
@@ -176,16 +190,26 @@ function counselHoldReason(st) {
 // Split built statements into mailable and held. states: active
 // property_enforcement_states rows; legalFees: Map property_id -> cents of
 // legal/attorney charges billed. Pure; tested in test_annual_statement_run.js.
-function applyCounselHolds(good, states, legalFees = new Map()) {
+// Legal fees on an account with no recorded enforcement state are HELD, not
+// mailed: an itemized collection fee printed without the §209.0064 notice on
+// record is a statutory problem. An account is released only when it is on the
+// signed-off list (signoff: Set of account numbers confirmed by counsel or Ed).
+function applyCounselHolds(good, states, legalFees = new Map(), signoff = new Set()) {
   const byProp = new Map((states || []).map((x) => [x.property_id, x]));
   const mail = []; const held = []; const unflagged = [];
   for (const d of good) {
     const st = byProp.get(d.property_id);
     const reason = counselHoldReason(st);
     if (reason) { held.push({ d, state: st.state, reason, firm: st.attorney_firm || null }); continue; }
-    mail.push(d);
     const fee = legalFees.get(d.property_id) || 0;
-    if (fee > 0 && !st) unflagged.push({ d, legal_fees_cents: fee });
+    if (fee > 0 && !st) {
+      unflagged.push({ d, legal_fees_cents: fee });
+      if (!signoff.has(String(d.account_number))) {
+        held.push({ d, state: 'legal_fees_unflagged', reason: `Legal fees billed (${(fee / 100).toFixed(2)}) but no enforcement state on file: confirm the §209.0064 notice with counsel, then list the account in --legal-fee-signoff`, firm: null });
+        continue;
+      }
+    }
+    mail.push(d);
   }
   return { mail, held, unflagged };
 }
@@ -271,7 +295,8 @@ async function main() {
     .or('description.ilike.%attorney%,description.ilike.%legal fee%'), { orderBy: 'id' });
   const legalFees = new Map();
   for (const r of legalRows) if (r.property_id && r.amount_cents > 0) legalFees.set(r.property_id, (legalFees.get(r.property_id) || 0) + r.amount_cents);
-  const ch = sample ? { mail: withD, held: [], unflagged: [] } : applyCounselHolds(withD, states, legalFees);
+  const signoff = !sample && o['legal-fee-signoff'] ? new Set(parseAccountList(fs.readFileSync(path.resolve(o['legal-fee-signoff']), 'utf8')).keys()) : new Set();
+  const ch = sample ? { mail: withD, held: [], unflagged: [] } : applyCounselHolds(withD, states, legalFees, signoff);
   for (const h of ch.held) if (h.d._why && h.d._why.length) h.reason += `; also: ${h.d._why.join('; ')}`;
   const heldIds = new Set(ch.held.map((h) => h.d.property_id));
   const defer = !sample && o.defer ? parseAccountList(fs.readFileSync(path.resolve(o.defer), 'utf8')) : new Map();
@@ -319,8 +344,8 @@ async function main() {
     prior_balance: b.d ? dollars(b.d.prior_balance_cents) : '', pay_this_amount: b.d ? dollars(b.d.balance_cents) : '', reasons: b.why }));
   fs.writeFileSync(path.join(out, `${stem}_counsel_hold.csv`), [['account_number', 'owner', 'property', 'prior_balance', 'held_because'].join(',')]
     .concat(ch.held.map((h) => [h.d.account_number, h.d.addressee && h.d.addressee.name, h.d.property_address, dollars(h.d.prior_balance_cents), h.reason].map(csv).join(',')))
-    .concat(ch.unflagged.length ? ['', '"NOT HELD - legal fees billed but no enforcement state on file; confirm with counsel:"'] : [])
-    .concat(ch.unflagged.map((u) => [u.d.account_number, u.d.addressee && u.d.addressee.name, u.d.property_address, dollars(u.d.prior_balance_cents), `legal fees billed ${dollars(u.legal_fees_cents)}; no state recorded`].map(csv).join(','))).join('\n'));
+    .concat(ch.unflagged.length ? ['', '"Legal fees billed but no enforcement state on file (held above unless listed in --legal-fee-signoff); confirm the §209.0064 notice with counsel:"'] : [])
+    .concat(ch.unflagged.map((u) => [u.d.account_number, u.d.addressee && u.d.addressee.name, u.d.property_address, dollars(u.d.prior_balance_cents), `legal fees billed ${dollars(u.legal_fees_cents)}; no state recorded; ${signoff.has(String(u.d.account_number)) ? 'signed off: mailed' : 'held'}`].map(csv).join(','))).join('\n'));
   fs.writeFileSync(path.join(out, `${stem}_exceptions.csv`), [['account_number', 'owner', 'property', 'prior_balance', 'pay_this_amount', 'reasons'].join(',')]
     .concat(exc.map((e) => [e.account, e.owner, e.property, e.prior_balance, e.pay_this_amount, e.reasons.join('; ')].map(csv).join(','))).join('\n'));
   if (defer.size) fs.writeFileSync(path.join(out, `${stem}_deferred.csv`), [['account_number', 'owner', 'property', 'prior_balance', 'reason'].join(',')]
