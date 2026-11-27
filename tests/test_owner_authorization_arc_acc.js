@@ -27,6 +27,7 @@ function fakeDb(seed = {}) {
     const api = {
       select() { return api; }, order() { return api; },
       eq(k, v) { st.filters.push((x) => x[k] === v); return api; },
+      is(k, v) { st.filters.push((x) => (x[k] == null ? null : x[k]) === v); return api; },
       neq(k, v) { st.filters.push((x) => x[k] !== v); return api; },
       in(k, vs) { st.filters.push((x) => vs.includes(x[k])); return api; },
       gte(k, v) { st.filters.push((x) => x[k] != null && String(x[k]) >= String(v)); return api; },
@@ -193,7 +194,7 @@ check('execute: builder decisions as the owner by email authorization, ACC throu
   assert.strictEqual(calls.acc[0].actor.email, OWNER); assert.strictEqual(calls.acc[0].actor.via.channel, 'owner_authorization');
   assert.strictEqual(calls.acc[0].body.send, true); assert.strictEqual(calls.acc[1].body.send, false, 'the mailed letter is filed, not emailed');
   assert.strictEqual(db.t.outbound_email_drafts.find((d) => d.id === 'old1').status, 'discarded', 'the replaced draft is withdrawn');
-  assert.ok(db.t.work_items.some((w) => /Print and mail/.test(w.title) && w.source_ref === 'owner_authorization:auth-1:4'));
+  assert.ok(db.t.work_items.some((w) => /Print and mail/.test(w.title) && w.source_ref === 'owner_authorization:auth-1:4:mail'));
   const reply = db.t.outbound_email_drafts.find((d) => d.id === 'm1');
   assert.deepStrictEqual(reply.attachments.map((x) => x.name), ['a1.pdf', 'a2.pdf']);
   assert.strictEqual(reply.policy.owner_authorization.authorization_id, 'auth-1');
@@ -403,6 +404,32 @@ check('after the one completion report, an outstanding item finished on Amanda\'
   const again = await AA.reportUpdate(db, a, { send: async (m) => sent.push(m.subject) });
   assert.strictEqual(again.updated, false, 'each completed item is reported once');
   assert.strictEqual(db.t.owner_authorizations[0].status, 'executed');
+});
+
+check('an item that succeeds on retry closes its failure follow-up, and a mailed letter still gets its own print-and-mail task', async () => {
+  const db = fakeDb(seed());
+  const a = await authorized(db);
+  installExecutors(db, { accStatus: 422 });
+  await AA.executePackage({ supabase: db, sentItems: async () => [], sendReport: async () => {} }, a);
+  const fu = db.t.work_items.find((w) => w.source_ref === 'owner_authorization:auth-1:4');
+  assert.ok(fu && fu.status === 'new', 'the refused item has a follow-up for Amanda');
+  installExecutors(db);
+  await AA.executePackage({ supabase: db, sentItems: async () => [], sendReport: async () => {} }, a, { retry: [3, 4] });
+  assert.strictEqual(fu.status, 'done', 'the follow-up closes once the item is carried out');
+  const mail = db.t.work_items.find((w) => w.source_ref === 'owner_authorization:auth-1:4:mail');
+  assert.ok(mail && mail.status === 'new' && /^Print and mail/.test(mail.title), 'staff are still told to mail the letter');
+});
+
+check('the run lease is settled once nothing is scheduled; it stays open while a message is still waiting to go', async () => {
+  const db = fakeDb(seed());
+  const a = await authorized(db);
+  db.t.work_items.push({ id: 'lease-1', source_ref: 'owner_authorization_run:auth-1', status: 'waiting', notes: null });
+  db.t.outbound_email_drafts[0].policy = { scheduled_send: { send_at: 'x' } };
+  await AA.settleLease(db, a);
+  assert.strictEqual(db.t.work_items[0].status, 'waiting');
+  db.t.outbound_email_drafts[0].status = 'sent';
+  await AA.settleLease(db, a);
+  assert.strictEqual(db.t.work_items[0].status, 'done');
 });
 
 (async () => {
