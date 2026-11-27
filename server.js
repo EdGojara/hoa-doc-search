@@ -406,6 +406,7 @@ app.use((req, res, next) => {
   if (req.path === '/api/payments/webhook') return next();
   // Talk to Amanda's brain parses its own (larger) body: a long conversation's history.
   if (req.path === '/api/amanda/voice/llm/chat/completions' || req.path === '/api/amanda/voice/llm') return next();
+  if (/^\/api\/phone\/llm\/(?:claire|amanda)(?:\/chat\/completions)?$/.test(req.path)) return next();
   express.json()(req, res, next);
 });
 
@@ -467,6 +468,12 @@ const _STAFF_GATE_PUBLIC = [
   // Talk to Amanda's brain, called by the voice shell (ElevenLabs Agents). The handler requires
   // the agent's header secret AND a short-lived token minted for the owner's conversation.
   /^\/api\/amanda\/voice\/llm(?:\/chat\/completions)?$/,
+  // Claire + Amanda on the telephone (api/phone.js, Ed 2026-11-27). init: the ElevenLabs
+  // initiation webhook, keyed secret in the URL + our agent ids. llm: header secret AND a signed
+  // per-call token. status/setup: owner sign-in or the ops key, checked in the handler.
+  /^\/api\/phone\/init$/,
+  /^\/api\/phone\/llm\/(?:claire|amanda)(?:\/chat\/completions)?$/,
+  /^\/api\/phone\/(?:status|setup)$/,
   /^\/api\/voice\/incoming$/,
   /^\/api\/voice\/status$/,
   /^\/api\/voice\/stream$/,
@@ -1409,6 +1416,7 @@ app.use('/api/amanda/email', require('./api/amanda_email'));  // Amanda's email 
 app.use('/api/agents', require('./api/agent_desk'));  // AI employee email desk for every roster agent with email_desk (Ed 2026-10-22)
 app.use('/api/agent-browser', require('./api/agent_browser'));  // owner-only: guarded server-side browser skills for AI employees (Ed 2026-10-23)
 app.use('/api/amanda/voice', require('./api/amanda_voice'));  // Talk to Amanda (owner only; Ed 2026-11-26)
+app.use('/api/phone', require('./api/phone'));               // Claire + Amanda on the telephone (ElevenLabs phone agents; Ed 2026-11-27)
 app.use('/api/amanda', require('./api/amanda'));
 // Staff Time & Attendance (Ed 2026-10-26, migration 547): employee routes act as the
 // signed-in employee (their own token, row-level security); /admin routes are owner-only.

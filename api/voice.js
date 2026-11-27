@@ -46,6 +46,45 @@ const router = express.Router();
 router.use(express.urlencoded({ extended: false, limit: '64kb' }));
 
 // ----------------------------------------------------------------------------
+// Webhook authentication (Ed 2026-11-27, telephone decision 11). Both checks
+// FAIL CLOSED: a missing secret refuses the request instead of letting it in.
+//   /vapi-*            Bearer VAPI_WEBHOOK_SECRET (was: open when the secret was unset)
+//   /incoming, /status X-Twilio-Signature over the URL + form params, keyed by
+//                      TWILIO_AUTH_TOKEN (was: not checked at all)
+// These runtimes are retired once the ElevenLabs phone agents (api/phone.js)
+// pass the pilot; until then they cannot be driven by an outsider.
+// ----------------------------------------------------------------------------
+const _crypto = require('crypto');
+function _safeEq(a, b) { const x = Buffer.from(String(a || '')); const y = Buffer.from(String(b || '')); return x.length > 0 && x.length === y.length && _crypto.timingSafeEqual(x, y); }
+/** PURE: Twilio's request signature (https://www.twilio.com/docs/usage/security#validating-requests). */
+function twilioSignature(authToken, url, params) {
+  const data = Object.keys(params || {}).sort().reduce((acc, k) => acc + k + (params[k] == null ? '' : String(params[k])), String(url));
+  return _crypto.createHmac('sha1', authToken).update(Buffer.from(data, 'utf-8')).digest('base64');
+}
+function _publicUrl(req) {
+  const env = (process.env.APP_BASE_URL || process.env.PUBLIC_BASE_URL || '').replace(/\/+$/, '');
+  const proto = String(req.headers['x-forwarded-proto'] || req.protocol || 'https').split(',')[0].trim();
+  const origin = env || `${proto}://${req.headers['x-forwarded-host'] || req.headers.host}`;
+  return origin + req.originalUrl;
+}
+function requireTwilioSignature(req, res, next) {
+  const token = process.env.TWILIO_AUTH_TOKEN || '';
+  const got = String(req.headers['x-twilio-signature'] || '');
+  if (token && got && _safeEq(got, twilioSignature(token, _publicUrl(req), req.body || {}))) return next();
+  console.warn(`[voice] Twilio webhook rejected (${token ? 'bad or missing signature' : 'TWILIO_AUTH_TOKEN not set'}) on ${req.path}`);
+  if (req.path === '/incoming') return res.status(403).set('Content-Type', 'text/xml').send('<?xml version="1.0" encoding="UTF-8"?><Response><Say>Sorry, this line is not available right now.</Say><Hangup/></Response>');
+  return res.status(403).json({ error: 'forbidden' });
+}
+router.use(['/incoming', '/status'], requireTwilioSignature);
+router.use((req, res, next) => {
+  if (!/^\/vapi-/.test(req.path)) return next();
+  const secret = process.env.VAPI_WEBHOOK_SECRET || '';
+  if (!secret) { console.warn(`[voice] Vapi route refused: VAPI_WEBHOOK_SECRET is not set (${req.path})`); return res.status(503).json({ error: 'not_configured' }); }
+  if (!_safeEq(req.headers.authorization, `Bearer ${secret}`)) { console.warn(`[voice] Vapi route refused: bad bearer (${req.path})`); return res.status(401).json({ error: 'unauthorized' }); }
+  return next();
+});
+
+// ----------------------------------------------------------------------------
 // POST /api/voice/incoming — Twilio webhook for a new inbound call
 // ----------------------------------------------------------------------------
 // Returns TwiML that opens a bidirectional Media Stream to our WebSocket.
@@ -654,9 +693,8 @@ async function handleVapiLlmTurn(req, res, personaConfig) {
       console.warn(`[${logTag} ${requestId}] auth failed (header: ${auth.slice(0, 30)}…)`);
       return res.status(401).json({ error: 'unauthorized' });
     }
-  } else {
-    console.warn(`[${logTag} ${requestId}] DIAGNOSTIC MODE — VAPI_WEBHOOK_SECRET unset, allowing request. Set the env var to enforce auth.`);
   }
+  // (No diagnostic mode any more: the router refuses every /vapi-* request when the secret is unset.)
 
   // ---- Diagnostic logging (Phase 2a — learn Vapi's actual payload shape) ----
   // Log ALL headers too: Vapi's docs are vague on which header carries the
@@ -1949,4 +1987,4 @@ function _extractToolArgs(msg) {
   return args || {};
 }
 
-module.exports = { router, handleWebSocketConnection, buildCallerContextResult };
+module.exports = { router, handleWebSocketConnection, buildCallerContextResult, twilioSignature };

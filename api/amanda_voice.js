@@ -96,6 +96,15 @@ function sessionVoice(auditionKey, canonicalId, conv = amandaConversationModel()
   if (!a) return { error: 'unknown_audition' };
   return { voiceId: a.voice_id, ttsModel: a.tts_model, expressive: !!a.expressive, audition: { key, name: a.name, tts_model: a.tts_model, expressive: !!a.expressive } };
 }
+// Community names for the recognizer (lib/amanda/voice_elevenlabs asrKeywords), read once per 10 minutes.
+let _names = { at: 0, list: [] };
+async function communityNames(supabase) {
+  if (Date.now() - _names.at < 10 * 60 * 1000) return _names.list;
+  const { data, error } = await supabase.from('communities').select('name').order('name').limit(200);
+  if (error) { console.warn('[amanda.voice] community names unavailable:', error.message); return _names.list; }
+  _names = { at: Date.now(), list: (data || []).map((c) => c.name) };
+  return _names.list;
+}
 function ownerOf(u) { return { user_id: u.user.id, email: u.email, name: u.full_name || null }; }
 
 // The greeting is deterministic (no model call): what changed since last time, from the briefing.
@@ -154,7 +163,7 @@ router.post('/session', express.json({ limit: '16kb' }), async (req, res) => {
     if (audition) console.log('[amanda.voice] voice audition session', JSON.stringify({ audition: audition.key, tts_model: ttsModel }));
     const brainUrl = `${baseUrl(req)}/api/amanda/voice/llm`;
     const [agent, started] = await Promise.all([
-      V.ensureAgent({ brainUrl, voiceId, ttsModel, audition: !!audition, expressive: !!expressive, tuning: audition ? {} : { similarity_boost: amandaConversationModel().similarity_boost, speculative_turn: amandaConversationModel().speculative_turn } }).then((a) => { timings.agent_ms = a.ms; return a; }),
+      communityNames(supabase).then((keywords) => V.ensureAgent({ brainUrl, voiceId, ttsModel, audition: !!audition, expressive: !!expressive, keywords, tuning: audition ? {} : { similarity_boost: amandaConversationModel().similarity_boost, speculative_turn: amandaConversationModel().speculative_turn } })).then((a) => { timings.agent_ms = a.ms; return a; }),
       C.startConversation(supabase, { owner, channel: 'voice', provider: 'elevenlabs' }).then((s) => { timings.briefing_ms = s.briefing_ms; return s; }),
     ]);
     const tok = await V.conversationToken(agent.agent_id);
