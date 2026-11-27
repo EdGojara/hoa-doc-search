@@ -82,6 +82,8 @@ function fakeStripe() {
   return {
     sessions,
     isConfigured: () => true,
+    // The stored connected account exists in this mode and takes charges (E1 gate).
+    async retrieveAccountRequirements() { return { ok: true, charges_enabled: true, payouts_enabled: true, details_submitted: true }; },
     async createCheckoutSession(opts) { sessions.push(opts); return { ok: true, session_id: `cs_test_${sessions.length}`, checkout_url: 'https://checkout.stripe.test/x' }; },
   };
 }

@@ -18,7 +18,8 @@ assert.ok(patterns.length > 50, 'parsed the staff-gate allowlist');
 // Pages that only staff open (manager tools, admin screens).
 const STAFF_PAGES = new Set(['portal-adoption.html', 'portal-arc-admin.html', 'portal-tiles-admin.html', 'portal-staff-enter.html', 'portal-staff-enter-builder.html']);
 // Endpoints a homeowner page may call that are deliberately staff-only (staff mode / demo / sandbox).
-const STAFF_ONLY = [/^\/api\/portal\/(staff-enter|mimic\/(start|stop)|presentation|manager\/properties)$/, /^\/api\/payments\/test\//];
+// /api/payments/live-verification/: the owner's live $1 verification on the Pay page (staff gate + requireOwner).
+const STAFF_ONLY = [/^\/api\/portal\/(staff-enter|mimic\/(start|stop)|presentation|manager\/properties)$/, /^\/api\/payments\/test\//, /^\/api\/payments\/live-verification\//];
 
 const ID = '00000000-0000-0000-0000-000000000000';
 const misses = [];

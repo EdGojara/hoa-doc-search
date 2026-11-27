@@ -3153,6 +3153,7 @@
   };
 
   // ── Online Payments (Stripe Connect) ───────────────────────────────────────
+  let OP_MODE = null;   // Stripe mode from portfolio-status, for the property search rows
   async function renderOnlinePay() {
     $('body').innerHTML = '<div class="muted" style="padding:30px; text-align:center;">Loading…</div>';
     const [j, pf] = await Promise.all([
@@ -3161,6 +3162,7 @@
     ]);
     if (j.error) { $('body').innerHTML = `<div class="card" style="color:var(--err)">${esc(j.error)}</div>`; return; }
     const badge = !j.has_account ? '<span class="badge err">Not set up</span>'
+      : j.account_in_mode === false ? '<span class="badge err">Set up again for '+esc(j.mode||'this')+' mode</span>'
       : j.onboarded ? '<span class="badge ok">Ready — accepting payments</span>'
       : '<span class="badge" style="background:#fef3c7; color:#92400e;">Onboarding incomplete</span>';
     const BTN = 'padding:9px 18px; border-radius:8px; border:1px solid var(--navy); background:var(--navy); color:#fff; font-weight:700; cursor:pointer; font-size:13.5px;';
@@ -3176,10 +3178,11 @@
     ) : '';
     // Portfolio onboarding — every community's status on one screen.
     const pfRows = (pf && pf.communities || []).map((c) => {
-      const b = c.onboarded ? '<span class="badge ok">Ready</span>'
+      const b = c.account_in_mode === false ? '<span class="badge err" title="The stored Stripe account was created in the other mode (sandbox accounts do not exist under the live key). Set up again to create the account for this mode. The old id is kept in the audit log.">Set up again</span>'
+        : c.onboarded ? '<span class="badge ok">Ready</span>'
         : c.has_account ? '<span class="badge" style="background:#fef3c7; color:#92400e;">Incomplete</span>'
         : '<span class="badge err">Not started</span>';
-      const act = c.onboarded ? 'Manage' : (c.has_account ? 'Finish' : 'Set up');
+      const act = c.onboarded ? 'Manage' : (c.has_account ? 'Finish' : 'Set up');   // has_account is false for a stale other-mode account
       const here = c.id === CID ? ' style="font-weight:700;"' : '';
       // Homeowners are looking at a balance they have no way to pay.
       const deadEnd = c.portal_live_without_payments
@@ -3190,6 +3193,11 @@
         <td style="padding:6px 8px; text-align:right;"><button style="${GHOST}" onclick="opConnectFor('${c.id}','${esc((c.name||'').replace(/'/g,''))}')">${act} →</button></td></tr>`;
     }).join('');
     // Loud when a live portal is showing owners a balance it can't collect.
+    const staleCount = (pf && pf.summary && pf.summary.not_in_current_mode) || 0;
+    const staleBanner = staleCount ? `<div class="card" style="margin-bottom:14px; background:#fef2f2; border:1px solid #fecaca;">
+      <b style="color:#991b1b;">${staleCount} ${staleCount===1?'community has':'communities have'} a Stripe account from the other mode</b>
+      <div class="muted" style="margin-top:4px;">Those accounts were created in the sandbox and do not exist under the ${esc(pf.mode)} key, so they cannot take payments. Click <b>Set up</b> on each row to create its ${esc(pf.mode)} account. The old account id is kept in the audit log.</div>
+    </div>` : '';
     const deadEndCount = (pf && pf.summary && pf.summary.portal_live_without_payments) || 0;
     const deadEndBanner = deadEndCount ? `<div class="card" style="margin-bottom:14px; background:#fef2f2; border:1px solid #fecaca;">
       <b style="color:#991b1b;">${deadEndCount} ${deadEndCount===1?'community has':'communities have'} a live portal with no way to pay</b>
@@ -3201,11 +3209,13 @@
         <div class="sub muted" style="margin-bottom:8px;">Onboard any community from here — each connects its own bank. The board treasurer can complete the Stripe form from the link that opens.</div>
         <table style="width:100%; border-collapse:collapse; font-size:13px;"><tbody>${pfRows}</tbody></table>
       </div>` : '';
-    $('body').innerHTML = modeBanner + deadEndBanner + pfCard + `
+    OP_MODE = (pf && pf.mode) || null;
+    $('body').innerHTML = modeBanner + staleBanner + deadEndBanner + pfCard + `
       <div class="card" style="margin-bottom:14px;">
         <h2 class="sec">Online payments <span class="muted" style="font-size:13px;">· Stripe</span></h2>
         <div class="sub muted" style="margin-bottom:12px;">Each community has its own Stripe connected account, so assessment payments settle to that association's own bank — never pooled.</div>
         ${kv('Status', badge)}
+        ${j.account_in_mode === false && j.hint ? kv('Note', esc(j.hint)) : ''}
         ${j.account_id ? kv('Connected account', `<span style="font-family:ui-monospace,monospace; font-size:12px;">${esc(j.account_id)}</span>`) : ''}
         ${j.has_account && !j.onboarded ? kv('Details submitted', j.details_submitted?'yes':'no') : ''}
         ${j.has_account && !j.onboarded && ((j.currently_due||[]).length || (j.past_due||[]).length || j.disabled_reason) ? kv('Stripe still needs', esc([...(j.past_due||[]), ...(j.currently_due||[]).filter((x)=>!(j.past_due||[]).includes(x))].join(', ') || j.disabled_reason)) : ''}
@@ -3217,8 +3227,10 @@
         <span id="opStatus" class="muted" style="display:block; margin-top:8px; font-size:12.5px;"></span>
       </div>
       ${j.onboarded ? `<div class="card">
-        <h2 class="sec" style="margin-bottom:6px;">Run a test payment</h2>
-        <div class="sub muted" style="margin-bottom:10px;">Sandbox only. Pick any property and we'll create a $1.00 test charge — pay it with Stripe test card <b>4242 4242 4242 4242</b> (any future date/CVC) to confirm money routes to this community's connected account.</div>
+        <h2 class="sec" style="margin-bottom:6px;">${pf && pf.mode === 'live' ? 'Live $1.00 verification' : 'Run a test payment'}</h2>
+        <div class="sub muted" style="margin-bottom:10px;">${pf && pf.mode === 'live'
+          ? 'Owner only. Pick a lot and pay $1.00 plus the fee with a real card or bank account, before online payments open for this association to homeowners. It goes through the same gates, fee and books posting as a homeowner payment, then is refunded automatically, fee included, as soon as Stripe confirms it. Demo lots are refused.'
+          : 'Sandbox only. Pick any property and we will create a $1.00 test charge. Pay it with Stripe test card <b>4242 4242 4242 4242</b> (any future date/CVC) to confirm money routes to the connected account of this community.'}</div>
         <input type="text" id="opSearch" placeholder="Search property or owner…" style="padding:8px 12px; border:1px solid var(--rule); border-radius:8px; width:280px;" autocomplete="off">
         <div id="opResults" style="margin-top:8px;"></div>
       </div>` : ''}`;
@@ -3253,8 +3265,14 @@
     const j = await fetch(`/api/home-sales/properties/search?community_id=${CID}&q=${encodeURIComponent(q)}`).then((r)=>r.json()).catch(()=>({properties:[]}));
     $('opResults').innerHTML = (j.properties||[]).map((p)=>`<div style="padding:7px 0; border-bottom:1px solid #f1efe8; display:flex; justify-content:space-between; align-items:center; gap:10px;">
       <span>${esc(p.street_address)}${p.unit?(' '+esc(p.unit)):''} <span class="muted" style="font-size:12px;">${esc(p.owner_name||'')}</span></span>
-      <button style="padding:5px 12px; border-radius:6px; border:1px solid var(--navy); background:#fff; color:var(--navy); font-weight:600; cursor:pointer; font-size:12px;" onclick="opTestPay('${p.property_id}')">Create $1 test charge</button>
+      <span style="display:flex; gap:6px;">${OP_MODE === 'live' ? '' : `<button style="padding:5px 12px; border-radius:6px; border:1px solid var(--navy); background:#fff; color:var(--navy); font-weight:600; cursor:pointer; font-size:12px;" onclick="opTestPay('${p.property_id}')">Create $1 test charge</button>`}
+      <button style="padding:5px 12px; border-radius:6px; border:1px solid var(--navy); background:var(--navy); color:#fff; font-weight:600; cursor:pointer; font-size:12px;" title="Owner only: the $1.00 verification on the real pay page, refunded automatically" onclick="opLiveVerify('${p.property_id}')">${OP_MODE === 'live' ? 'Live $1 verification' : '$1 verification (sandbox lot only)'}</button></span>
     </div>`).join('') || '<div class="muted" style="padding:6px 0;">No match.</div>';
+  };
+  // Owner's $1.00 verification (Ed 2026-11-27): the real Pay page in live_verify
+  // mode; the server is owner-only, fixes the amount and refunds it automatically.
+  window.opLiveVerify = function(propertyId) {
+    window.open('/portal/pay?live_verify=1&property_id=' + encodeURIComponent(propertyId), '_blank');
   };
   window.opTestPay = async function(propertyId) {
     // Test-mode-only route: the server refuses unless Stripe is in test mode and

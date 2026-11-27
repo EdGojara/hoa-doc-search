@@ -73,6 +73,7 @@
     "test:lifecycle": "node tests/test_community_lifecycle.js",
     "test:bedrock-pay": "node tests/test_bedrock_pay.js",
     "test:refunds": "node tests/test_refund_routing.js",
+    "test:stripe-live": "node tests/test_stripe_live_activation.js",
     "test:autopay": "node tests/test_autopay.js && node tests/test_autopay_intent.js",
     "test:posted-je": "node tests/test_posted_je_immutable.js",
     "test:posted-lines": "node scripts/check_posted_lines_immutable.js",
