@@ -180,6 +180,18 @@ const CID = '11111111-1111-1111-1111-111111111111';
   assert.ok(out.ok && out.results[0].status === 'excluded' && ex.portal_users.length === 0, 'excluded association is not created');
   assert.ok(ex.authorization_events.some((e) => e.event === 'declined'), 'ledger records it as left out');
 
+  // ---- re-request after a partial execution (scar 1E9EEA2C) ------------------------------------
+  // An authorized request keeps covering an association until it executed it, refused it or the
+  // owner left it out; a pending request covers everything it lists.
+  const reqd = { id: 'r1', subject: 'S1', status: 'requested', items: [{ community_id: 'A' }, { community_id: 'B' }] };
+  const authd = { id: 'r2', subject: 'S2', status: 'authorized', items: [{ community_id: 'C' }, { community_id: 'D' }] };
+  const evs = [{ authorization_id: 'r2', target_id: 'C', event: 'executed' }, { authorization_id: 'r2', target_id: 'D', event: 'execution_failed' }];
+  assert.strictEqual(PS.coveringRequest([reqd, authd], evs, ['D']), undefined, 'a refused association can be requested again');
+  assert.strictEqual(PS.coveringRequest([reqd, authd], evs, ['C']), undefined, 'an executed one is no longer covered');
+  assert.strictEqual(PS.coveringRequest([reqd, authd], [], ['D']).id, 'r2', 'authorized and not yet run: still covered');
+  assert.strictEqual(PS.coveringRequest([reqd, authd], [{ authorization_id: 'r1', target_id: 'A', event: 'execution_failed' }], ['A']).id, 'r1', 'a pending request always covers its own');
+  assert.strictEqual(PS.coveringRequest([reqd, authd], [{ authorization_id: 'r9', target_id: 'D', event: 'executed' }], ['D']).id, 'r2', "another request's events do not settle this one");
+
   // ---- staff exceptions are masked --------------------------------------------------------------
   const exc = PS.sharedEmailExceptions('Sample Ridge', pkg.associations[0].loaded.roster);
   assert.strictEqual(exc.length, 2);
