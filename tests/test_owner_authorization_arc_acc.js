@@ -38,7 +38,10 @@ function fakeDb(seed = {}) {
       update(p) { st.op = 'update'; st.patch = p; return api; },
       then(res, rej) {
         let data;
-        if (st.op === 'insert') { data = st.rows.map((r) => ({ id: `${name}-${++ids}`, occurred_at: new Date(Date.now() + ids).toISOString(), ...r })); table(name).push(...data); }
+        if (st.op === 'insert') {
+          if (name === 'work_items' && st.rows.some((r) => r.source_ref && table(name).some((x) => x.source_ref === r.source_ref && ['new', 'in_progress', 'waiting'].includes(x.status)))) return Promise.resolve({ data: null, error: { code: '23505', message: 'duplicate key value violates unique constraint' } }).then(res, rej);
+          data = st.rows.map((r) => ({ id: `${name}-${++ids}`, occurred_at: new Date(Date.now() + ids).toISOString(), updated_at: new Date(Date.now() + ids).toISOString(), ...r })); table(name).push(...data);
+        }
         else {
           const hit = table(name).filter((x) => st.filters.every((f) => f(x)));
           if (st.op === 'update') { for (const x of hit) Object.assign(x, JSON.parse(JSON.stringify(st.patch))); }
@@ -54,7 +57,7 @@ function fakeDb(seed = {}) {
   return {
     t, storage, rpcCalls, from,
     storage: { from: () => ({ async upload(p, buf) { storage[p] = buf; return { error: null }; } }) },
-    async rpc(name, args) { rpcCalls.push([name, args]); if (name === 'owner_authorization_mark_executed') { const a = table('owner_authorizations').find((x) => x.id === args.p_id); if (a) a.status = 'executed'; } return { data: null, error: null }; },
+    async rpc(name, args) { rpcCalls.push([name, args]); if (name === 'owner_authorization_mark_executed') { const a = table('owner_authorizations').find((x) => x.id === args.p_id); if (!a || a.status !== 'authorized') return { data: null, error: { message: 'only an authorized owner authorization is marked executed' } }; a.status = 'executed'; } return { data: null, error: null }; },
   };
 }
 
@@ -92,7 +95,7 @@ function installExecutors(db, { accStatus = 200 } = {}) {
     async finalize(id, body, actor) { calls.acc.push({ id, body, actor }); if (accStatus !== 200) return { status: accStatus, json: { error: 'refused' } }; const d = db.t.acc_decisions.find((x) => x.id === id); if (body.decision_type !== 'request_more_info') d.status = 'decided'; return { status: 200, json: { email: { sent: !!body.send } } }; },
   });
   AA.registerExecutor('draft', {
-    async send(id, approver, sha) { calls.draft.push({ id, approver, sha }); const d = db.t.outbound_email_drafts.find((x) => x.id === id); assert.strictEqual(RG.packageHash(d), sha, 'the send echoes the hash of the message as it now stands, letters included'); return { status: 202, json: { send_at: new Date(Date.now() + 120000).toISOString() } }; },
+    async send(id, approver, sha) { calls.draft.push({ id, approver, sha }); const d = db.t.outbound_email_drafts.find((x) => x.id === id); assert.strictEqual(RG.packageHash(d), sha, 'the send echoes the hash of the message as it now stands, letters included'); const at = new Date(Date.now() + 120000).toISOString(); d.policy = { ...(d.policy || {}), scheduled_send: { send_at: at } }; return { status: 202, json: { send_at: at } }; },
   });
   return calls;
 }
@@ -272,6 +275,106 @@ check('wiring: the action registry, the Tessa reply loop, the ACC finalize path,
   const sql = read('migrations/582_owner_authorized_arc_acc.sql');
   assert.ok(/'conversion_objects', 'accounting_runs', 'arc_acc_decisions'/.test(sql) && /owner_authorization_request_arc_acc/.test(sql) && /GRANT EXECUTE .* TO service_role/.test(sql));
   assert.ok(/via: actor\.via/.test(read('lib/acc/decision_authority.js')), 'the decision record says how the owner\'s decision reached it');
+});
+
+check('durable: the completion report goes exactly once, even when several workers finish at the same moment', async () => {
+  const db = fakeDb(seed());
+  const a = await authorized(db);
+  installExecutors(db);
+  await AA.executePackage({ supabase: db, sentItems: async () => [], sendReport: async () => ({}) }, a);
+  const d = db.t.outbound_email_drafts.find((x) => x.id === 'm1'); d.status = 'sent'; d.sent_at = new Date().toISOString();
+  const { recordEvents } = require('../lib/authorization/events');
+  await recordEvents(db, { authority_kind: 'request', authorization_id: a.id, action_type: 'arc_acc_decision', target_id: 'm1', event: 'executed', executed_by: 'ai-team:annie', result: { ok: true } });
+  const reports = [];
+  const send = async (m) => { reports.push(m.subject); };
+  await Promise.all([AA.verifyAndReport(db, a.id, { send }), AA.verifyAndReport(db, a.id, { send }), AA.verifyAndReport(db, a.id, { send })]);
+  await AA.verifyAndReport(db, a.id, { send });   // a restart later
+  assert.strictEqual(reports.length, 1, 'one completion report per authorization');
+  assert.strictEqual(db.t.owner_authorizations[0].status, 'executed');
+});
+
+check('durable: a resumed run never repeats completed work; only system failures are retried', async () => {
+  const db = fakeDb(seed());
+  const a = await authorized(db);
+  let calls = installExecutors(db);
+  await AA.executePackage({ supabase: db, sentItems: async () => [], sendReport: async () => ({}) }, a);
+  const done = calls.builder.length + calls.acc.length;
+  // A restart: the run is resumed while the scheduled reply is still pending.
+  calls = installExecutors(db);
+  const again = await AA.resumePending(db, { sentItems: async () => [] });
+  assert.strictEqual(calls.builder.length + calls.acc.length, 0, 'nothing already carried out is carried out again');
+  assert.strictEqual(calls.draft.length, 0, 'a scheduled message is not sent a second time');
+  assert.ok(done > 0 && again.length === 1);
+  assert.ok(AA.isRetryable({ status: 'held', detail: 'not sent: The attachment "x.pdf" no longer matches the version that was reviewed' }));
+  assert.ok(AA.isRetryable({ status: 'failed', detail: 'not issued: The final record could not be filed (...)' }));
+  assert.ok(!AA.isRetryable({ status: 'superseded', detail: 'not sent: the recipient wrote again' }));
+  assert.ok(!AA.isRetryable({ status: 'failed', detail: 'the case or its letter changed after you reviewed it', retryable: false }));
+});
+
+check('durable: one runner per authorization; a second worker steps aside while the first holds the lease, and takes over a dead one', async () => {
+  const db = fakeDb(seed());
+  const a = await authorized(db);
+  installExecutors(db);
+  db.t.work_items.push({ id: 'lease-1', source_ref: 'owner_authorization_run:auth-1', status: 'in_progress', updated_at: new Date().toISOString() });
+  const r = await AA.executePackage({ supabase: db, sentItems: async () => [] }, a);
+  assert.ok(r.skipped, 'a live lease means another worker is carrying it out');
+  db.t.work_items[0].updated_at = new Date(Date.now() - 3600e3).toISOString();
+  const r2 = await AA.executePackage({ supabase: db, sentItems: async () => [], sendReport: async () => ({}) }, a);
+  assert.ok(!r2.skipped && r2.results.length === 5, 'a lease left by a worker that died is taken over');
+});
+
+check("durable: Amanda's retry list completes items the owner told her to finish, once", async () => {
+  const db = fakeDb(seed());
+  const a = await authorized(db);
+  const { recordEvents } = require('../lib/authorization/events');
+  await recordEvents(db, { authority_kind: 'request', authorization_id: a.id, action_type: 'arc_acc_decision', target_id: 'd1', event: 'execution_failed', executed_by: 'ai-team:annie', result: { ok: false, status: 'failed', detail: 'not issued: Decision authority required' } });
+  db.t.work_items.push({ id: 'lease-1', source_ref: 'owner_authorization_run:auth-1', status: 'waiting', updated_at: new Date().toISOString(), notes: JSON.stringify({ retry: [3] }) });
+  const calls = installExecutors(db);
+  await AA.executePackage({ supabase: db, sentItems: async () => [], sendReport: async () => ({}) }, a);
+  assert.strictEqual(calls.acc.filter((c) => c.id === 'd1').length, 1, 'item 3 is carried out on the retry list');
+  assert.strictEqual(db.t.work_items.find((w) => w.id === 'lease-1').notes, null, 'the list is consumed');
+});
+
+check('file fingerprints hash the raw bytes (the Draft Queue compares them with the stored file)', async () => {
+  const db = fakeDb(seed());
+  const a = await authorized(db);
+  installExecutors(db);
+  await AA.executePackage({ supabase: db, sentItems: async () => [], sendReport: async () => ({}) }, a);
+  const att = db.t.outbound_email_drafts.find((x) => x.id === 'm1').attachments[0];
+  assert.strictEqual(att.sha256, require('crypto').createHash('sha256').update(Buffer.from('letter a1')).digest('hex'));
+});
+
+check('a reference to an approval already decided and on record is not a new approval; any other approval statement still is', () => {
+  const DA = require('../lib/acc/decision_authority');
+  const L = 'We have filed them with your tree removal application, which was approved with conditions on August 10, 2026. Are you asking for approval of new work?';
+  assert.strictEqual(DA.grantsApproval(L), true, 'without the record, it reads as an approval');
+  assert.strictEqual(DA.grantsApproval(L, { priorApprovalDates: ['2026-08-10'] }), false, 'with the decided approval on record, it is the record');
+  assert.strictEqual(DA.grantsApproval(L, { priorApprovalDates: ['2026-08-11'] }), true, 'a date that is not on record still counts');
+  assert.strictEqual(DA.grantsApproval('Your application is approved. Your earlier one was approved on August 10, 2026.', { priorApprovalDates: ['2026-08-10'] }), true);
+  assert.ok(DA.checkOutboundText(L, { priorApprovalDates: ['2026-08-10'] }).ok);
+  assert.ok(/prior_approval_dates/.test(read('server.js')) && /priorApprovalDates/.test(read('lib/email/graph_send.js')) && /prior_approvals/.test(read('lib/acc/owner_preflight.js')));
+});
+
+check('the complete ACC record keeps an encrypted or signed PDF whole (embedded, named, fingerprinted) instead of failing the decision', async () => {
+  const { buildAccPacket } = require('../lib/acc/packet');
+  const { PDFDocument } = require('pdf-lib');
+  const letter = await PDFDocument.create(); letter.addPage(); const lb = Buffer.from(await letter.save());
+  const bad = Buffer.from('%PDF-1.7\n%encrypted and unreadable\n');
+  const pk = await buildAccPacket({ dec: { supporting_docs_storage_paths: ['acc/x/signed.pdf'], photo_storage_paths: [], document_manifest: [{ path: 'acc/x/signed.pdf', filename: 'Signed form.pdf' }] }, letterBuffer: lb, download: async () => bad });
+  assert.ok(pk.ok); assert.deepStrictEqual(pk.omitted, []);
+  const e = pk.included.find((x) => x.embedded);
+  assert.ok(e && /Signed form/.test(e.what) && e.sha256 === require('crypto').createHash('sha256').update(bad).digest('hex'));
+  assert.strictEqual((await PDFDocument.load(pk.bytes)).getPageCount(), 2, 'the letter page plus the page naming the embedded original');
+});
+
+check("wiring: Tessa acknowledges at once; boot and Amanda's scheduled pass resume authorized work; the release race does not record a failure", () => {
+  const tessa = read('lib/ea/tessa_inbox.js');
+  assert.ok(tessa.includes('subject: `Received: ${auth.subject}`') && tessa.indexOf('Received: ${auth.subject}') < tessa.indexOf('AZ.executeAuthorized(ctx, auth'), 'the acknowledgment goes before the work runs');
+  const server = read('server.js');
+  assert.ok(/resumePending\(supabase\)/.test(server) && /second re-arm/.test(server));
+  assert.ok(/resumePending\(supabase\)/.test(read('lib/scheduler.js')));
+  assert.ok(/rearm: \(\) => rearmScheduled\(\)/.test(read('api/email_drafts.js')));
+  assert.ok(read('lib/authorization/arc_acc.js').includes("if (now && now.status === 'sent') return null;"));
 });
 
 (async () => {
