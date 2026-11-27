@@ -89,6 +89,8 @@ const CHECKS = [
   'tests/test_forecast_engine.js',
   'tests/test_budget_four_columns.js',
   'tests/test_check_receipts.js',
+  'tests/test_vantaca_receipts.js',
+  'tests/test_newfirst_iremit.js',
   'tests/test_collection_notices.js',
   'tests/test_lockbox_scanline.js',
   'tests/test_annual_statement_run.js',     // annual statement: announcement from validated JSON, coupon text, preview watermark, final gates
