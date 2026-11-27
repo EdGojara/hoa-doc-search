@@ -458,6 +458,13 @@
       "prior": null,
       "note": "Amanda acceptance tests (2026-11-28): grades a real conversation turn against facts the harness read independently. Engineering only, never in a live path."
     },
+    "team.amanda_greeting": {
+      "model": "tier:standard",
+      "fallback": "sonnet-4-6",
+      "consequence": "standard",
+      "prior": null,
+      "note": "Talk to Amanda (2026-11-28): the opening line of a conversation, from its context (time of day, time since last spoken, what is waiting). Latency-bound; falls back to a plain line."
+    },
     "team.amanda_memory_extract": {
       "model": "haiku-4-5",
       "fallback": "sonnet-4-6",
