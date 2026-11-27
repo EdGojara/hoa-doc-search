@@ -1,0 +1,68 @@
+{
+  "migration": "585_owner_authorized_legal_reversal.sql",
+  "summary": "Extends the Owner Authorization Service to legal bill-back reversals: owner_authorizations.scope also allows 'legal_posting_reversals'. Adds legal_posting_reversal_sha256() (the fingerprint of a legal posting, its entry and owner charge) and owner_authorization_request_legal_reversals(), which creates one numbered request of posted, unreversed legal postings, each with its stated reason and fingerprint, executed by Kat at sensitivity tier 2. No rows are added, removed or changed; no posting, entry or owner charge is touched.",
+  "requires": [
+    "508_legal_review_approval.sql",
+    "554_owner_delegated_approvals.sql",
+    "577_owner_authorization_service.sql",
+    "584_check_receipt_allocations.sql"
+  ],
+  "preflight": [
+    {
+      "name": "the legal reversal request function does not exist yet",
+      "sql": "SELECT count(*)::int FROM pg_proc WHERE proname = 'owner_authorization_request_legal_reversals'",
+      "expect": 0
+    },
+    {
+      "name": "no request uses an unknown scope",
+      "sql": "SELECT count(*)::int FROM owner_authorizations WHERE scope NOT IN ('conversion_objects', 'accounting_runs', 'arc_acc_decisions', 'closing_packages', 'check_receipt_allocations')",
+      "expect": 0
+    }
+  ],
+  "expected_changes": [
+    "owner_authorizations_scope_check also allows legal_posting_reversals.",
+    "Adds legal_posting_reversal_sha256(uuid) and owner_authorization_request_legal_reversals(text, text, jsonb, text, text, integer), executable by service_role only.",
+    "No rows are added, removed or changed."
+  ],
+  "objects": {
+    "added": [
+      "function:legal_posting_reversal_sha256",
+      "function:owner_authorization_request_legal_reversals"
+    ],
+    "changed": [
+      "constraint:owner_authorizations.owner_authorizations_scope_check"
+    ],
+    "removed": []
+  },
+  "verify": [
+    {
+      "name": "both functions exist",
+      "sql": "SELECT count(*)::int FROM pg_proc WHERE proname IN ('legal_posting_reversal_sha256', 'owner_authorization_request_legal_reversals')",
+      "expect": 2
+    },
+    {
+      "name": "the scope check allows legal posting reversals",
+      "sql": "SELECT count(*)::int FROM pg_constraint WHERE conname = 'owner_authorizations_scope_check' AND pg_get_constraintdef(oid) LIKE '%legal_posting_reversals%'",
+      "expect": 1
+    },
+    {
+      "name": "the request function is not executable by authenticated users",
+      "sql": "SELECT has_function_privilege('authenticated', 'owner_authorization_request_legal_reversals(text, text, jsonb, text, text, integer)', 'EXECUTE')::int",
+      "expect": 0
+    }
+  ],
+  "row_changes": {
+    "owner_authorizations": 0,
+    "legal_invoice_postings": 0
+  },
+  "protected": [
+    {
+      "table": "legal_invoice_postings",
+      "order_by": "id"
+    },
+    {
+      "table": "homeowner_transactions",
+      "order_by": "id"
+    }
+  ]
+}
