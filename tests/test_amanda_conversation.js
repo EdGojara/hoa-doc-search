@@ -163,25 +163,38 @@ check('voice shell config: custom LLM is ours, auth required, header secret set,
   assert.ok(!DASH.test(JSON.stringify(cfg)));
 });
 
-check('voice audition: default is the canonical voice on Flash; auditions are a closed allowlist', () => {
+check('Canon voice (Ed 2026-11-27): Amanda talks on Eleven v4 Turbo, expressive; others keep Flash v2', () => {
+  const VM = require('../lib/characters/voice_models');
+  assert.deepStrictEqual(VM.conversationModelFor('amanda'), { model_id: 'eleven_v4_turbo', expressive: true });
+  assert.deepStrictEqual(VM.conversationModelFor('claire'), { model_id: 'eleven_flash_v2', expressive: false }, 'no entry -> unchanged default');
+  for (const p of Object.keys(VM._BY_PERSONA)) assert.ok(V.ENGLISH_AGENT_MODELS.includes(VM.conversationModelFor(p).model_id), `${p}: an English agent can use it`);
   const plain = V.agentConfig({ brainUrl: 'https://x/llm', voiceId: 'canon', headerSecret: V.brainHeaderSecret() });
-  assert.strictEqual(plain.conversation_config.tts.model_id, 'eleven_flash_v2', 'normal sessions use English Flash v2');
-  const exp = V.agentConfig({ brainUrl: 'https://x/llm', voiceId: 'h', headerSecret: V.brainHeaderSecret(), ttsModel: 'eleven_v3_conversational' });
-  assert.strictEqual(exp.conversation_config.tts.model_id, 'eleven_v3_conversational');
-  // no audition -> the Canon voice, unchanged
-  assert.deepStrictEqual(API.sessionVoice(undefined, 'canonVoice'), { voiceId: 'canonVoice', ttsModel: 'eleven_flash_v2', audition: null });
+  assert.strictEqual(plain.conversation_config.tts.model_id, 'eleven_flash_v2', 'agent fallback is English Flash v2');
+  // the normal session: the Canon voice on Amanda's conversation model, expressive
+  assert.deepStrictEqual(API.sessionVoice(undefined, 'canonVoice'), { voiceId: 'canonVoice', ttsModel: 'eleven_v4_turbo', expressive: true, audition: null });
   assert.deepStrictEqual(API.sessionVoice('', null), { error: 'voice_not_approved' });
-  // harper -> her voice on Eleven v4 Turbo (expressive mode), labelled as an audition
-  const h = API.sessionVoice(' Harper ', 'canonVoice');
-  assert.strictEqual(h.voiceId, API.AUDITION_VOICES.harper.voice_id);
-  assert.strictEqual(h.ttsModel, 'eleven_v4_turbo');
-  assert.strictEqual(h.audition.key, 'harper');
-  assert.strictEqual(h.audition.expressive, true);
+  // the old audition link opens the same normal session (Harper was adopted), with no audition label
+  assert.deepStrictEqual(API.sessionVoice(' Harper ', 'canonVoice'), API.sessionVoice('', 'canonVoice'));
+  assert.ok(!Object.prototype.hasOwnProperty.call(API.AUDITION_VOICES, 'harper'));
   // anything else is refused, including prototype keys
   for (const bad of ['hazel', 'toString', '__proto__', 'constructor', 'c1uwEpPUcC16tq1udqxk']) assert.deepStrictEqual(API.sessionVoice(bad, 'canonVoice'), { error: 'unknown_audition' }, bad);
 });
 
-check('voice audition: its own ElevenLabs agent; the shared agent is never touched or given a non-canon model', async () => {
+check('media voice: Amanda renders on Eleven v3 (Natural); the phone and other teammates keep the default body', () => {
+  const VM = require('../lib/characters/voice_models');
+  const S = require('../lib/voice/speak');
+  assert.deepStrictEqual(VM.mediaModelFor('amanda'), { model_id: 'eleven_v3', voice_settings: { stability: 0.5 } });
+  assert.strictEqual(VM.mediaModelFor('claire'), null);
+  const m = VM.mediaModelFor('amanda');
+  const body = S.ttsBody('Hi.', { modelId: m.model_id, voiceSettings: m.voice_settings });
+  assert.strictEqual(body.model_id, 'eleven_v3');
+  assert.deepStrictEqual(body.voice_settings, { stability: 0.5 }, 'v3 gets only its own settings');
+  const def = S.ttsBody('Hi.');
+  assert.strictEqual(def.model_id, 'eleven_flash_v2_5', 'default body unchanged');
+  assert.strictEqual(def.voice_settings.stability, 0.4);
+});
+
+check('agents: an audition gets its own agent; a model an English agent cannot use is refused', async () => {
   const calls = []; const realFetch = global.fetch; const realKey = process.env.ELEVENLABS_API_KEY;
   process.env.ELEVENLABS_API_KEY = 'test-key';
   global.fetch = async (url, opts = {}) => {
@@ -191,13 +204,13 @@ check('voice audition: its own ElevenLabs agent; the shared agent is never touch
   };
   try {
     V._resetForTests();
-    const a = await V.ensureAgent({ brainUrl: 'https://x/llm', voiceId: 'harper', ttsModel: 'eleven_v4_turbo', audition: true });
+    const a = await V.ensureAgent({ brainUrl: 'https://x/llm', voiceId: 'cand', ttsModel: 'eleven_v4_turbo', audition: true });
     assert.strictEqual(a.agent_id, 'new-audition-agent');
-    assert.ok(calls.every((c) => !c.url.includes(encodeURIComponent(V.AGENT_NAME))), 'never looks up or patches the shared agent');
+    assert.ok(calls.every((c) => !c.url.includes(encodeURIComponent(V.AGENT_NAME))), 'an audition never looks up or patches the shared agent');
     const created = calls.find((c) => c.method === 'POST');
     assert.strictEqual(created.body.name, V.AUDITION_AGENT_NAME);
     assert.strictEqual(created.body.conversation_config.tts.model_id, 'eleven_v4_turbo');
-    await assert.rejects(V.ensureAgent({ brainUrl: 'https://x/llm', voiceId: 'harper', ttsModel: 'eleven_v4_turbo' }), /only runs the canonical voice/);
+    await assert.rejects(V.ensureAgent({ brainUrl: 'https://x/llm', voiceId: 'canon', ttsModel: 'eleven_flash_v2_5' }), /not a model an English ElevenLabs agent can use/);
   } finally { global.fetch = realFetch; if (realKey === undefined) delete process.env.ELEVENLABS_API_KEY; else process.env.ELEVENLABS_API_KEY = realKey; V._resetForTests(); }
 });
 

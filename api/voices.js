@@ -131,24 +131,25 @@ router.post('/tts-sample', express.json({ limit: '16kb' }), async (req, res) => 
     const text = String(b.text || '').trim();
     if (!text) return res.status(400).json({ error: 'text_required' });
     if (text.length > 1500) return res.status(400).json({ error: 'text_too_long' });
-    let voiceId = null;
+    let voiceId = null; let media = null;
     if (b.persona) {
       voiceId = roster.canonicalVoiceIdFor(String(b.persona));
+      media = require('../lib/characters/voice_models').mediaModelFor(String(b.persona));
       if (!voiceId) return res.status(409).json({ error: 'voice_not_approved', detail: `${b.persona} has no approved voice in the Character Canon.` });
     } else {
       voiceId = String(b.voice_id || '');
       await getTtsCatalog();
       if (!_ttsById.has(voiceId)) return res.status(400).json({ error: 'unknown_voice' });
     }
-    const audio = await require('../lib/voice/speak').speakOnce(text, { voiceId, outputFormat: 'mp3_44100_128' });
+    const audio = await require('../lib/voice/speak').speakOnce(text, { voiceId, outputFormat: 'mp3_44100_128', ...(media ? { modelId: media.model_id, voiceSettings: media.voice_settings } : {}) });
     const crypto = require('crypto');
-    const path = `voice-samples/${voiceId}/${crypto.createHash('sha256').update(text).digest('hex').slice(0, 16)}.mp3`;
+    const path = `voice-samples/${voiceId}/${crypto.createHash('sha256').update((media ? media.model_id + '|' : '') + text).digest('hex').slice(0, 16)}.mp3`;
     const up = await supabase.storage.from('videos').upload(path, audio, { contentType: 'audio/mpeg', upsert: true });
     if (up.error) throw up.error;
     const { data: signed, error: sErr } = await supabase.storage.from('videos').createSignedUrl(path, 60 * 60);
     if (sErr) throw sErr;
     const v = _ttsById.get(voiceId);
-    res.json({ voice_id: voiceId, voice_name: v ? v.name : null, path, url: signed.signedUrl, bytes: audio.length });
+    res.json({ voice_id: voiceId, voice_name: v ? v.name : null, model_id: media ? media.model_id : null, path, url: signed.signedUrl, bytes: audio.length });
   } catch (e) {
     console.error('[voices] tts-sample failed:', e.message);
     res.status(e.code === 'ELEVENLABS_NOT_CONFIGURED' ? 503 : 500).json({ error: safeErrorMessage(e) });
