@@ -94,7 +94,7 @@ const CID = '11111111-1111-1111-1111-111111111111';
     assert.ok((mail.subject + mail.text).includes(must), `request says: ${must}`);
   const onDb = freshDb({ portalActive: true });
   const onPkg = await PS.buildPackage(makeFake(onDb), ['sample-ridge']);
-  assert.ok(onPkg.associations[0].portal_active && PS.renderRequest({ subject: 's', associations: onPkg.associations, expiresAt: 'x' }).text.includes('ALREADY ON'), 'a portal that is on is disclosed');
+  assert.ok(PS.PORTAL_ON_REFUSED && !onPkg.ok && onPkg.associations.length === 0 && /public launch hold/.test(onPkg.problems[0].problems.join(' ')), 'launch hold: a portal-on association is not requested');
   const badCross = freshDb(); badCross.properties.push({ id: 'p7', community_id: CID, excluded_at: null });
   assert.ok(!(await PS.buildPackage(makeFake(badCross), ['sample-ridge'])).ok, 'a failed lot cross-check is not requested');
   assert.ok(!(await PS.buildPackage(sb, ['no-such'])).ok, 'an unknown association is not requested');
@@ -133,7 +133,13 @@ const CID = '11111111-1111-1111-1111-111111111111';
   out = await PS.executeAuthorized({ supabase: makeFake(badCross) }, auth());
   assert.ok(!out.ok && /cross-check/.test(out.results[0].detail) && badCross.portal_users.length === 0);
   out = await PS.executeAuthorized({ supabase: makeFake(onDb) }, auth());
-  assert.ok(!out.ok && /switched on/.test(out.results[0].detail) && onDb.portal_users.length === 0, 'portal state change refuses');
+  assert.ok(!out.ok && /public launch hold/.test(out.results[0].detail) && onDb.portal_users.length === 0, 'launch hold: portal switched on after approval refuses');
+  // Even an item approved while stating the portal was on is refused under the hold.
+  out = await PS.executeAuthorized({ supabase: makeFake(onDb) }, auth({ items: [{ ...auth().items[0], portal_active: true }] }));
+  assert.ok(!out.ok && /public launch hold/.test(out.results[0].detail) && onDb.portal_users.length === 0, 'launch hold: an approved portal-on association is refused');
+  // And a portal switched OFF after approval (approved as on) is a state change: refused.
+  out = await PS.executeAuthorized({ supabase: makeFake(freshDb()) }, auth({ items: [{ ...auth().items[0], portal_active: true }] }));
+  assert.ok(!out.ok && /switched off/.test(out.results[0].detail), 'portal state change refuses');
 
   // ---- executes, creating no email or magic link ---------------------------------------------
   const marked = [];
