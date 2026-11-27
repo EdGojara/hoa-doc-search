@@ -216,6 +216,66 @@
   let refreshTimer = null;
   function refreshList() { clearTimeout(refreshTimer); refreshTimer = setTimeout(() => { if (!Q.running) render(CID, ROOT); }, 400); }
 
+  // Split allocation (migration 584): one check across several owner accounts (seller, buyer)
+  // and a held portion when the funding party is unknown. Lines must total the check. Nothing
+  // posts here; Record posts the whole check once.
+  const FUND = [['seller', 'Seller'], ['buyer', 'Buyer'], ['payer', 'Payer (the account owner)'], ['third_party', 'Third party']];
+  const PURP = [['assessment', 'Assessment'], ['capitalization_fee', 'Capitalization fee'], ['other', 'Other charge'], ['excess', 'Excess (stays as credit)']];
+  const opt = (list, v) => list.map(([k, t]) => `<option value="${k}" ${k === v ? 'selected' : ''}>${esc(t)}</option>`).join('');
+  function allocHtml(lines, p, editable) {
+    const live = lines.filter((l) => l.status !== 'superseded');
+    const table = live.length ? `<table style="font-size:12px; width:100%;"><thead><tr><th>#</th><th>Account</th><th>Funded by</th><th>For</th><th class="num">Amount</th><th>Basis</th></tr></thead><tbody>${live.map((l) => `<tr><td>${l.line_no}</td><td>${l.kind === 'held' ? '<strong>Held</strong> (funding party not established)' : esc(l.property_id ? (l.address || l.property_id.slice(0, 8)) : '')}${l.tenure_label ? `<div class="muted">${esc(l.tenure_label)}</div>` : ''}</td><td>${esc(l.funding_party)}</td><td>${esc(l.purpose)}</td><td class="num">${fmt(l.amount_cents)}</td><td style="font-size:11px;">${esc(l.basis)}</td></tr>`).join('')}</tbody></table>` : '';
+    const split = p && !p.error && p.accounts ? `<h3 style="font-size:13px; margin:10px 0 4px;">How each account's share applies (Tex. Prop. Code 209.0063)</h3><table style="font-size:12px;"><tbody>${p.accounts.map((a) => `<tr><td colspan="3"><strong>${esc(a.funding_parties || '')} share ${fmt(a.amount_cents)}</strong></td></tr>${(a.applications || []).map((x) => `<tr><td>${esc(x.date)}</td><td>${esc(x.description || x.category)}</td><td class="num">${fmt(x.applied_cents)}</td></tr>`).join('')}${a.unapplied_cents ? `<tr><td colspan="2">Unapplied credit on this account</td><td class="num">${fmt(a.unapplied_cents)}</td></tr>` : ''}`).join('')}${p.held_cents ? `<tr><td colspan="2"><strong>Held in Unidentified Receipts</strong></td><td class="num">${fmt(p.held_cents)}</td></tr>` : ''}</tbody></table>` : '';
+    return `<h3 style="font-size:13px; margin:12px 0 4px;">Split across accounts</h3>
+      ${table || '<div class="muted">Not split. A check that pays more than one owner account (a title company paying the seller and the buyer) is split here by its settlement statement.</div>'}
+      ${split}
+      ${editable ? `<details style="margin-top:6px;"><summary style="cursor:pointer; color:#1e40af;">${live.length ? 'Change the split' : 'Split this check'}</summary>
+        <div id="cr-alloc-rows"></div>
+        <button type="button" id="cr-alloc-add" style="margin-top:4px;">+ Line</button>
+        <div style="margin-top:6px;"><button type="button" id="cr-alloc-save" style="padding:6px 12px; border:1px solid #0B1D34; border-radius:7px; background:#fff; font-weight:600; cursor:pointer;">Save split</button>
+        ${live.length ? '<button type="button" id="cr-alloc-clear" style="margin-left:6px; padding:6px 12px; border:1px solid #cbd5e1; border-radius:7px; background:#fff; cursor:pointer;">Clear split</button>' : ''}
+        <span id="cr-alloc-total" class="muted" style="margin-left:8px;"></span></div></details>` : ''}`;
+  }
+  function wireAlloc(m, id, r, msg) {
+    const rows = m.querySelector('#cr-alloc-rows'); if (!rows) return;
+    const total = () => { let t = 0; rows.querySelectorAll('[data-a="amount"]').forEach((el) => { t += Math.round(Number(String(el.value).replace(/[$,]/g, '')) * 100) || 0; }); m.querySelector('#cr-alloc-total').textContent = `Lines ${fmt(t)} of ${fmt(r.amount_cents)}${t === r.amount_cents ? ' (balanced)' : ''}`; };
+    const addRow = () => {
+      const d = document.createElement('div');
+      d.style.cssText = 'border:1px solid #e2e8f0; border-radius:6px; padding:6px; margin-top:6px; display:grid; grid-template-columns:1fr 1fr; gap:4px;';
+      d.innerHTML = `<label><input type="checkbox" data-a="held"> Held (funding party not established)</label><span></span>
+        <label>Account #<input data-a="acct" style="width:100%"></label><label>Owner account<select data-a="tenure" style="width:100%"><option value="">look up the account #</option></select></label>
+        <label>Funded by<select data-a="funding" style="width:100%">${opt(FUND, 'buyer')}</select></label><label>For<select data-a="purpose" style="width:100%">${opt(PURP, 'assessment')}</select></label>
+        <label>Amount ($)<input data-a="amount" style="width:100%"></label><label>Basis (settlement statement line)<input data-a="basis" style="width:100%"></label>`;
+      rows.appendChild(d);
+      const acct = d.querySelector('[data-a="acct"]'); const sel = d.querySelector('[data-a="tenure"]');
+      acct.addEventListener('change', async () => {
+        try {
+          const want = acct.value.trim(); if (!want) return;
+          const pj = await api(`/api/gl/${CID}/owners/search?q=${encodeURIComponent(want)}`);
+          const hits = (pj.owners || []).filter((o) => [o.trusted_account_number, o.vantaca_account_id].map((v) => String(v || '')).includes(want));
+          if (hits.length !== 1) { sel.innerHTML = `<option value="">${hits.length ? 'more than one property' : 'no property with that account #'}</option>`; return; }
+          const tj = await api(`/api/check-receipts/owner-accounts?community_id=${encodeURIComponent(CID)}&property_id=${encodeURIComponent(hits[0].property_id)}`);
+          sel.innerHTML = (tj.accounts || []).map((t) => `<option value="${t.tenure_id}" data-p="${t.property_id}">${esc(t.label)}</option>`).join('') || '<option value="">no owner accounts</option>';
+        } catch (e) { msg(e.message, true); }
+      });
+      d.querySelector('[data-a="amount"]').addEventListener('input', total);
+    };
+    m.querySelector('#cr-alloc-add').addEventListener('click', addRow);
+    addRow(); addRow(); total();
+    m.querySelector('#cr-alloc-save').addEventListener('click', async () => {
+      const lines = [...rows.children].map((d) => {
+        const held = d.querySelector('[data-a="held"]').checked; const sel = d.querySelector('[data-a="tenure"]'); const o = sel.selectedOptions[0];
+        return { kind: held ? 'held' : 'owner_account', property_id: held ? null : (o && o.dataset.p) || null, tenure_id: held ? null : sel.value || null,
+          funding_party: held ? 'unknown' : d.querySelector('[data-a="funding"]').value, purpose: held ? 'held' : d.querySelector('[data-a="purpose"]').value,
+          amount_cents: Math.round(Number(String(d.querySelector('[data-a="amount"]').value).replace(/[$,]/g, '')) * 100), basis: d.querySelector('[data-a="basis"]').value };
+      });
+      try { const j2 = await api(`/api/check-receipts/${id}/allocation`, json({ lines })); msg(j2.receipt.status === 'matched' ? 'Split saved. Review how each share applies, then record the payment.' : `Held: ${j2.receipt.exception_reason}`, j2.receipt.status !== 'matched'); setTimeout(() => openReceipt(id), 700); }
+      catch (e) { msg(e.message, true); }
+    });
+    const clr = m.querySelector('#cr-alloc-clear');
+    if (clr) clr.addEventListener('click', async () => { try { await api(`/api/check-receipts/${id}/allocation/clear`, json({})); openReceipt(id); } catch (e) { msg(e.message, true); } });
+  }
+
   async function openReceipt(id) {
     const m = ROOT.querySelector('#cr-modal');
     m.innerHTML = '<div class="card">Loading...</div>';
@@ -250,7 +310,8 @@
             ${editable ? `<div style="margin-top:6px;">Other property (trusted account #)<input id="cr-other" placeholder="account number" style="width:160px; margin-left:6px; padding:4px 6px; border:1px solid #cbd5e1; border-radius:5px;"></div>
               <label style="display:block; margin-top:6px;">Reason / note (required when you choose an account the system did not propose, or to record past a possible duplicate)<input id="cr-note" value="${esc(r.override_note || '')}" style="width:100%; padding:5px 7px; border:1px solid #cbd5e1; border-radius:5px;"></label>` : ''}
             ${finds.length ? `<h3 style="font-size:13px; margin:12px 0 4px;">Duplicate checks</h3>${finds.map((f) => `<div style="color:${f.severity === 'blocking' ? '#991b1b' : '#92400e'};">&bull; ${esc(f.detail)}</div>`).join('')}` : ''}
-            ${p && !p.error ? `<h3 style="font-size:13px; margin:12px 0 4px;">How it applies (Tex. Prop. Code 209.0063)</h3>
+            ${allocHtml(j.allocation || [], p, editable)}
+            ${p && !p.error && !p.accounts ? `<h3 style="font-size:13px; margin:12px 0 4px;">How it applies (Tex. Prop. Code 209.0063)</h3>
               <table style="font-size:12px;"><tbody>${(p.applications || []).map((a) => `<tr><td>${esc(a.date)}</td><td>${esc(a.description || a.category)}</td><td class="num">${fmt(a.applied_cents)}</td></tr>`).join('')}
               ${p.unapplied_cents ? `<tr><td colspan="2">Unapplied credit (prepayment)</td><td class="num">${fmt(p.unapplied_cents)}</td></tr>` : ''}</tbody></table>` : p && p.error ? `<div style="color:#991b1b;">${esc(p.error)}</div>` : ''}
             ${r.status === 'returned' ? `<div style="margin-top:10px; color:#991b1b;">Returned: ${esc(r.return_reason || '')}</div>` : ''}
@@ -295,10 +356,12 @@
     });
     const rec = m.querySelector('#cr-record');
     if (rec) rec.addEventListener('click', async () => {
-      if (!(await txConfirm(`Record check #${r.check_number} for ${fmt(r.amount_cents)} to this owner account?\n\nPosts Dr Undeposited Funds / Cr Accounts Receivable, dated ${r.received_date}.`))) return;
+      const isSplit = (j.allocation || []).some((l) => l.status === 'prepared');
+      if (!(await txConfirm(isSplit ? `Record check #${r.check_number} for ${fmt(r.amount_cents)} split across its allocation lines?\n\nPosts Dr Undeposited Funds / Cr Accounts Receivable per owner account${(j.preview && j.preview.held_cents) ? ' / Cr Unidentified Receipts (held)' : ''}, dated ${r.received_date}.` : `Record check #${r.check_number} for ${fmt(r.amount_cents)} to this owner account?\n\nPosts Dr Undeposited Funds / Cr Accounts Receivable, dated ${r.received_date}.`))) return;
       try { const j2 = await api(`/api/check-receipts/${id}/record`, json({ override_note: note() || null })); msg(`Recorded (${j2.journal_reference || 'already recorded'}).`); setTimeout(() => { close(); render(CID, ROOT); }, 900); }
       catch (e) { msg(e.message, true); }
     });
+    wireAlloc(m, id, r, msg);
     const vd = m.querySelector('#cr-void');
     if (vd) vd.addEventListener('click', async () => { const why = prompt('Why void this scan? (nothing was posted)'); if (!why) return; try { await api(`/api/check-receipts/${id}/void`, json({ reason: why })); close(); render(CID, ROOT); } catch (e) { msg(e.message, true); } });
     const rt = m.querySelector('#cr-return');

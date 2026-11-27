@@ -1,0 +1,113 @@
+{
+  "migration": "584_check_receipt_allocations.sql",
+  "summary": "Split allocations in Check Receipts: one physical check (one receipt, one amount, one deposit) with allocation lines across owner accounts (seller, buyer, payer) and a held portion when the funding party is unknown. Adds homeowner_check_receipt_allocations, the allocation fingerprint, check_receipt_set_allocations(), post_check_receipt_split() (one payment row per owner account, applied in the 209.0063 order, excess stays as that account's unapplied credit), and extends check_receipt_commit_posting() to commit split receipts. Adds the Owner Authorization Service scope check_receipt_allocations and owner_authorization_request_check_allocations(). No existing rows are added, removed or changed; single-account checks post exactly as before.",
+  "requires": [
+    "514_homeowner_check_receipts.sql",
+    "524_unidentified_receipts_account.sql",
+    "583_owner_authorized_closing_package.sql"
+  ],
+  "preflight": [
+    {
+      "name": "the allocation table does not exist yet",
+      "sql": "SELECT count(*)::int FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'homeowner_check_receipt_allocations'",
+      "expect": 0
+    },
+    {
+      "name": "no request uses an unknown scope",
+      "sql": "SELECT count(*)::int FROM owner_authorizations WHERE scope NOT IN ('conversion_objects', 'accounting_runs', 'arc_acc_decisions', 'closing_packages')",
+      "expect": 0
+    }
+  ],
+  "expected_changes": [
+    "Adds table homeowner_check_receipt_allocations (association_record), service_role only.",
+    "Adds a unique index so a split check has one ledger payment row per receipt and owner account.",
+    "Adds check_receipt_allocation_sha256, check_receipt_set_allocations, post_check_receipt_split and owner_authorization_request_check_allocations, executable by service_role only.",
+    "Replaces check_receipt_commit_posting so it also commits split receipts; single-account receipts commit as before.",
+    "owner_authorizations_scope_check also allows check_receipt_allocations.",
+    "No rows are added, removed or changed."
+  ],
+  "objects": {
+    "added": [
+      "column:homeowner_check_receipt_allocations.amount_cents",
+      "column:homeowner_check_receipt_allocations.basis",
+      "column:homeowner_check_receipt_allocations.community_id",
+      "column:homeowner_check_receipt_allocations.created_at",
+      "column:homeowner_check_receipt_allocations.evidence_document_id",
+      "column:homeowner_check_receipt_allocations.funding_party",
+      "column:homeowner_check_receipt_allocations.homeowner_txn_id",
+      "column:homeowner_check_receipt_allocations.id",
+      "column:homeowner_check_receipt_allocations.kind",
+      "column:homeowner_check_receipt_allocations.line_no",
+      "column:homeowner_check_receipt_allocations.prepared_by",
+      "column:homeowner_check_receipt_allocations.property_id",
+      "column:homeowner_check_receipt_allocations.purpose",
+      "column:homeowner_check_receipt_allocations.receipt_id",
+      "column:homeowner_check_receipt_allocations.record_ownership",
+      "column:homeowner_check_receipt_allocations.status",
+      "column:homeowner_check_receipt_allocations.tenure_id",
+      "column:homeowner_check_receipt_allocations.updated_at",
+      "constraint:homeowner_check_receipt_allocations.homeowner_check_receipt_allocations_amount_cents_check",
+      "constraint:homeowner_check_receipt_allocations.homeowner_check_receipt_allocations_basis_check",
+      "constraint:homeowner_check_receipt_allocations.homeowner_check_receipt_allocations_check",
+      "constraint:homeowner_check_receipt_allocations.homeowner_check_receipt_allocations_community_id_fkey",
+      "constraint:homeowner_check_receipt_allocations.homeowner_check_receipt_allocations_evidence_document_id_fkey",
+      "constraint:homeowner_check_receipt_allocations.homeowner_check_receipt_allocations_funding_party_check",
+      "constraint:homeowner_check_receipt_allocations.homeowner_check_receipt_allocations_homeowner_txn_id_fkey",
+      "constraint:homeowner_check_receipt_allocations.homeowner_check_receipt_allocations_kind_check",
+      "constraint:homeowner_check_receipt_allocations.homeowner_check_receipt_allocations_line_no_check",
+      "constraint:homeowner_check_receipt_allocations.homeowner_check_receipt_allocations_pkey",
+      "constraint:homeowner_check_receipt_allocations.homeowner_check_receipt_allocations_property_id_fkey",
+      "constraint:homeowner_check_receipt_allocations.homeowner_check_receipt_allocations_purpose_check",
+      "constraint:homeowner_check_receipt_allocations.homeowner_check_receipt_allocations_receipt_id_fkey",
+      "constraint:homeowner_check_receipt_allocations.homeowner_check_receipt_allocations_record_ownership_check",
+      "constraint:homeowner_check_receipt_allocations.homeowner_check_receipt_allocations_status_check",
+      "constraint:homeowner_check_receipt_allocations.homeowner_check_receipt_allocations_tenure_id_fkey",
+      "function:check_receipt_allocation_sha256",
+      "function:check_receipt_set_allocations",
+      "function:owner_authorization_request_check_allocations",
+      "function:post_check_receipt_split",
+      "index:homeowner_check_receipt_allocations_pkey",
+      "index:idx_check_alloc_receipt",
+      "index:idx_check_alloc_tenure",
+      "index:uq_check_alloc_line",
+      "index:uq_homeowner_txn_check_alloc",
+      "table:homeowner_check_receipt_allocations"
+    ],
+    "changed": [
+      "constraint:owner_authorizations.owner_authorizations_scope_check",
+      "function:check_receipt_commit_posting"
+    ],
+    "removed": []
+  },
+  "verify": [
+    {
+      "name": "the allocation table exists",
+      "sql": "SELECT count(*)::int FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'homeowner_check_receipt_allocations'",
+      "expect": 1
+    },
+    {
+      "name": "the four new functions exist",
+      "sql": "SELECT count(*)::int FROM pg_proc WHERE proname IN ('check_receipt_allocation_sha256', 'check_receipt_set_allocations', 'post_check_receipt_split', 'owner_authorization_request_check_allocations')",
+      "expect": 4
+    },
+    {
+      "name": "the scope check allows check allocations",
+      "sql": "SELECT count(*)::int FROM pg_constraint WHERE conname = 'owner_authorizations_scope_check' AND pg_get_constraintdef(oid) LIKE '%check_receipt_allocations%'",
+      "expect": 1
+    }
+  ],
+  "row_changes": {
+    "owner_authorizations": 0,
+    "homeowner_check_receipts": 0
+  },
+  "protected": [
+    {
+      "table": "homeowner_check_receipts",
+      "order_by": "id"
+    },
+    {
+      "table": "homeowner_check_deposits",
+      "order_by": "id"
+    }
+  ]
+}
