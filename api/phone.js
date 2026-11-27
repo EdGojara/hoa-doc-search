@@ -271,7 +271,9 @@ router.post('/setup', express.json({ limit: '8kb' }), async (req, res) => {
   const who = await requireOwnerOrOps(req, res); if (!who) return;
   try {
     const base = baseUrl(req);
-    const agents = await A.ensureAgents({ baseUrl: base });
+    const { data: comms, error: cErr } = await sb().from('communities').select('name').order('name').limit(200);
+    if (cErr) console.warn('[phone.setup] community names unavailable:', cErr.message);
+    const agents = await A.ensureAgents({ baseUrl: base, keywords: (comms || []).map((c) => c.name) });
     if (!agents.ok) return res.status(409).json({ ok: false, step: 'agents', ...agents });
     const webhook = await A.ensureInitWebhook({ baseUrl: base });
     let number = null;

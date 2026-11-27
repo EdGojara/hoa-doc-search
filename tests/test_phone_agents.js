@@ -224,6 +224,32 @@ function fakeTwilio({ approveCode = '123456' } = {}) {
     assert.ok(block.indexOf('Workstream 1') < block.indexOf('Workstream 3') && block.indexOf('Workstream 3') < block.indexOf('Workstream 4'));
   });
 
+  await check('find_anything: one tool across every source; owner-only authorizations; never offered to an unverified caller', async () => {
+    const C = require('../lib/amanda/conversation');
+    assert.ok(C.TOOL_DEFS.some((t) => t.name === 'find_anything'));
+    assert.deepStrictEqual(C.searchWords('Where are we on the 2027 assessment mailing?'), ['we', '2027', 'assessment', 'mailing'].filter((w) => w.length >= 3));
+    assert.deepStrictEqual(C.searchWords("x) , or(drop"), ['drop']);
+    const FX = {
+      objectives: [{ id: 'o1', title: 'Workstream 2: Homeowner portal and Stripe', status: 'open', next_action: 'Ed: Stripe dashboard', accountable_persona: 'amanda' }],
+      objective_events: [], owner_authorizations: [{ subject: 'Portal balance corrections', summary: 'portal', status: 'requested' }],
+      outbound_email_drafts: [], email_messages: [], amanda_memory: [{ kind: 'fact', content: 'Portal launch is workstream 2', status: 'active', owner_user_id: 'u-ed' }], claire_sessions: [],
+    };
+    const owner = await C.findAnything(fakeSupabase(FX), { query: 'portal', ownerUserId: 'u-ed', ownerView: true });
+    assert.ok(owner.ok && owner.found >= 3 && owner.objectives[0].id === 'o1' && owner.authorizations_waiting.length === 1 && owner.kept_in_mind.length === 1);
+    const staff = await C.findAnything(fakeSupabase(FX), { query: 'portal', ownerUserId: 'u-staff', ownerView: false });
+    assert.strictEqual(staff.authorizations_waiting.length, 0);
+    assert.ok(!staff.searched.some((x) => /authorization/.test(x)));
+    assert.strictEqual((await C.findAnything(fakeSupabase(FX), { query: 'a b', ownerUserId: 'u' })).ok, false);
+    const sys = C.systemPrompt({});
+    assert.ok(/ONE EMPTY LOOKUP IS NOT ABSENCE/.test(sys) && /find_anything/.test(sys) && /Use start_work only when he asks for something to be done/.test(sys));
+  });
+  await check('phone agents hear our names: recognizer keywords include the team and community names', () => {
+    const k = A.asrKeywords(['Drama Creek Estates (TEST)', 'Waterview Estates']);
+    assert.ok(k.includes('Amanda') && k.includes('Drama Creek Estates') && k.includes('Waterview Estates') && !k.some((x) => /TEST/.test(x)));
+    const c = A.agentConfig({ persona: 'claire', brainUrl: 'u', headerSecret: 'h', voiceId: 'v', ttsModel: 'eleven_flash_v2', keywords: ['Canyon Gate'] });
+    assert.ok(c.conversation_config.asr.keywords.includes('Canyon Gate'));
+  });
+
   // ---- agents ----------------------------------------------------------------------------
   await check('agent config: AI + recording disclosed first, our brain + secret header, 90-day retention, webhook + extra body on', () => {
     const c = A.agentConfig({ persona: 'claire', brainUrl: 'https://x/api/phone/llm/claire', headerSecret: 'h', voiceId: 'v', ttsModel: 'eleven_flash_v2', transferTo: 'amanda-id' });
