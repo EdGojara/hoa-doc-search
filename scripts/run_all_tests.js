@@ -197,6 +197,9 @@ const CHECKS = [
   'tests/test_letter_batch.js',
   'tests/test_bd_card.js',
   'tests/test_claire_guardrails.js',
+  // Phone homeowner security boundary (Ed 2026-11-27): private records are
+  // closed on the phone until a real verification step exists. Offline.
+  'tests/test_phone_private_records_gate.js',
   'tests/test_amanda_guardrails.js',
   'tests/test_amanda_audience.js',
   'tests/test_amanda_disposition.js',
@@ -405,6 +408,7 @@ const CHECKS = [
   'tests/test_ops_feed_phase1.js',
   'tests/test_amanda_request.js',
   'tests/test_amanda_conversation.js',     // Talk to Amanda (2026-11-26): brain, token, policy invariant, measurements
+  'tests/test_shared_lookups.js',          // Shared records lookups (2026-11-27): access by principal in code, dispatch, completion
   'tests/test_amanda_email_door.js',
   'tests/test_amanda_auto_reply.js',
   'tests/test_amanda_status_intent.js',
@@ -445,6 +449,7 @@ const CHECKS = [
   'tests/test_delivery_window.js',
   'tests/test_acc_annie_issue.js',
   'tests/test_acc_property_history.js',
+  'tests/test_ssot_readers.js',
   'tests/test_acc_intake_exceptions.js',
   'tests/test_acc_saved_drafts.js',
   'tests/test_acc_approval_queue.js',

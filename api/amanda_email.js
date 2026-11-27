@@ -83,31 +83,10 @@ router.post('/ask', async (req, res) => {
   if (text.length > 2000) return res.status(400).json({ ok: false, error: 'too_long' });
   if (rateLimited(u.email)) return res.status(429).json({ ok: false, error: 'rate_limited' });
   try {
-    const { runRequest } = require('../lib/ea/tessa_request');
-    const { searchMailbox } = require('../lib/email/graph_search');
-    const { resolveRecipient } = require('./tessa');
-    const graphSend = require('../lib/email/graph_send');
-    const out = await runRequest(text, {
-      resolveRecipient: (h) => resolveRecipient(h, AMANDA_LOOKUP),
-      searchMailbox,
-      mailboxes: graphSend.isConfigured() ? [graphSend.AMANDA_MAILBOX] : [],
-      drafter: desk.draftAmandaEmail,
-      onEdsBehalf: false,
-      addressStore: require('../lib/ea/address_status').supabaseStore(sb()),
-    });
-    if (out.degraded) return res.status(503).json({ ok: false, error: 'not_understood', detail: 'Amanda could not work that one out. Try saying it a different way.' });
-    const people = (list) => (list || []).map((p) => ({ name: p.name || null, email: p.email || null }));
-    const base = { to: people(out.to), cc: people(out.cc), questions: out.questions || [] };
-    if (out.questions && out.questions.length) return res.json({ ok: true, staged: false, ...base, reply: 'Amanda needs a little more before she can prepare this.' });
-    if (!out.to.length) return res.json({ ok: true, staged: false, ...base, reply: 'Amanda could not tell who this should go to. Name the people or paste their addresses.' });
-    if (!out.draft) return res.status(503).json({ ok: false, ...base, error: 'draft_failed', detail: 'Amanda found the recipients but could not draft the email. Nothing was staged.' });
-    const row = await desk.stageDraft(sb(), {
-      to: out.to.map((p) => p.email), cc: out.cc.map((p) => p.email),
-      toName: out.to.length === 1 ? out.to[0].name : null,
-      subject: out.draft.subject, body: out.draft.body, createdBy: u.email,
-      reason: `Asked by ${u.full_name || u.email}: "${text.slice(0, 300)}"`,
-    });
-    res.json({ ok: true, staged: true, ...base, draft: { ...row, body_text: out.draft.body }, reply: 'Prepared and waiting in Amanda’s outbox for review. Nothing was sent.' });
+    const out = await require('../lib/amanda/email_ask').stageEmailRequest(sb(), text, { createdBy: u.email, createdByName: u.full_name || u.email });
+    if (out.error === 'not_understood') return res.status(503).json({ ok: false, error: 'not_understood', detail: out.reply });
+    if (out.error === 'draft_failed') return res.status(503).json({ ok: false, to: out.to, cc: out.cc, questions: out.questions, error: 'draft_failed', detail: out.reply });
+    res.json(out);
   } catch (e) {
     console.error('[amanda.email.ask] failed:', e.message);
     res.status(500).json({ ok: false, error: safeErrorMessage(e) });
