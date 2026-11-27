@@ -131,6 +131,10 @@ router.get('/status', express.json(), async (req, res) => {
       } catch (e) { out.audition = { ok: false, code: e.code || null, error: e.message }; }
     }
   }
+  // ?compare=1: the shared agent's and the (retired) audition agent's full voice settings, read only.
+  if (out.key && req.query && req.query.compare) {
+    try { out.compare = await Promise.all([V.AGENT_NAME, V.AUDITION_AGENT_NAME].map((n) => V.describeAgentByName(n))); } catch (e) { out.compare = { error: e.message }; }
+  }
   res.json(out);
 });
 
