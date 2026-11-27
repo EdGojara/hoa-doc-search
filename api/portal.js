@@ -300,6 +300,18 @@ async function assertOwnerLikeRole(req, res) {
 // Per-endpoint code reads property.id / vantaca_account_id / community_id
 // from this without caring whether the user is an owner or a manager.
 // ----------------------------------------------------------------------------
+// A lot on a verified ledger with no rows for the current owner owes nothing:
+// zero-balance lots got no opening row at conversion, and a buyer's tenure starts
+// empty (the seller's rows never carry over). Shown as $0.00 as of the date the
+// owner verified the ledger complete through. Only when balances are verified for
+// the association, the lot is on that ledger (has its account), and the owner
+// stated that date; otherwise nothing is claimed. (Ed 2026-11-27 balance review.)
+function noActivityZeroBalance(prop, access) {
+  if (!access || !access.balance || !access.ledger_through) return null;
+  if (!prop || !prop.vantaca_account_id) return null;
+  return { as_of: access.ledger_through, source: 'no_activity_verified_ledger' };
+}
+
 async function resolveScopedProperty(req, supabase, user) {
   const isManager = user.role === 'manager';
   const requestedPropertyId = String(req.query?.property_id || '').trim();
@@ -1454,6 +1466,7 @@ router.get('/me', async (req, res) => {
           id,
           street_address,
           lot_number,
+          vantaca_account_id,
           community_id
         )
       `)
@@ -1608,6 +1621,10 @@ router.get('/me', async (req, res) => {
     // leaves the server unless the association's balances are switched on AND verified.
     const financialAccess = require('../lib/portal/financial_access').decideFinancialAccess({ ...community, is_demo: isDemoCommunity });
     if (!financialAccess.balance) balance = { status: 'hidden', amount_cents: null, as_of: null };
+    else if (balance.amount_cents == null) {
+      const zero = noActivityZeroBalance(prop, financialAccess);
+      if (zero) balance = { amount_cents: 0, as_of: zero.as_of, source: zero.source, status: 'current' };
+    }
 
     // Compliance — count of open notices we ACTUALLY MAILED the homeowner.
     // Same accuracy gate as GET /compliance: the raw violations table is heavily
@@ -2605,11 +2622,9 @@ router.get('/balance', async (req, res) => {
     }
     const prop = scoped.property;
     if (!prop) return res.json({ property: null });
-    {
-      const FA = require('../lib/portal/financial_access');
-      const access = await FA.financialAccessFor(supabase, prop.community_id);
-      if (!access.balance) return res.status(403).json({ error: 'balance_not_available', reason: access.reason, detail: FA.HIDDEN_REASON });
-    }
+    const FA = require('../lib/portal/financial_access');
+    const access = await FA.financialAccessFor(supabase, prop.community_id);
+    if (!access.balance) return res.status(403).json({ error: 'balance_not_available', reason: access.reason, detail: FA.HIDDEN_REASON });
 
     const community = prop.communities || {};
 
@@ -2663,6 +2678,17 @@ router.get('/balance', async (req, res) => {
         enforcement_stage: ar.enforcement_stage || null,
         source: ar.source,
       };
+    } else {
+      const zero = noActivityZeroBalance(prop, access);
+      if (zero) {
+        statusKey = 'current';
+        currentBlock = {
+          snapshot_date: zero.as_of, balance_total: 0,
+          bucket_0_30: 0, bucket_31_60: 0, bucket_61_90: 0, bucket_91_120: 0, bucket_over_120: 0,
+          at_legal: false, in_collections: false, payment_plan_active: false,
+          payment_plan_terms_text: null, enforcement_stage: (ar && ar.enforcement_stage) || null, source: zero.source,
+        };
+      }
     }
     const current = currentBlock;
 
@@ -2740,11 +2766,9 @@ router.get('/transactions', async (req, res) => {
     }
     const prop = scoped.property;
     if (!prop) return res.json({ property: null, transactions: [], balance: null, freshness: null });
-    {
-      const FA = require('../lib/portal/financial_access');
-      const access = await FA.financialAccessFor(supabase, prop.community_id);
-      if (!access.balance) return res.status(403).json({ error: 'balance_not_available', reason: access.reason, detail: FA.HIDDEN_REASON });
-    }
+    const FA = require('../lib/portal/financial_access');
+    const access = await FA.financialAccessFor(supabase, prop.community_id);
+    if (!access.balance) return res.status(403).json({ error: 'balance_not_available', reason: access.reason, detail: FA.HIDDEN_REASON });
 
     const community = prop.communities || {};
     const vantacaAccountId = prop.vantaca_account_id;   // displayed only; not the key
@@ -2770,16 +2794,21 @@ router.get('/transactions', async (req, res) => {
     const visibleTxns = await currentOwnerActivity(supabase, prop.id, { ascending: false, limit });
     const balance = await currentOwnerBalance(supabase, prop.id);
 
-    // Freshness disclosure
-    let freshness = null;
-    try {
-      const { data: f } = await supabase
-        .from('v_community_transaction_freshness')
-        .select('period_label, as_of_date, committed_at')
-        .eq('community_id', community.id)
-        .maybeSingle();
-      if (f) freshness = f;
-    } catch (_) {}
+    // "Shown through" = the date the owner verified this association's homeowner
+    // ledger complete through (balances switch). Never the latest import batch:
+    // its date says nothing about completeness, and its label is another owner's
+    // transaction text (e.g. a closing payoff check number). (Ed 2026-11-27.)
+    const freshness = access.ledger_through ? { as_of_date: access.ledger_through } : null;
+
+    // Running balance computed from this owner's own ledger, newest first: the
+    // balance after the newest row is the current balance, and each older row's
+    // is the newer one minus the newer row's amount. Vantaca's imported running
+    // balance is not used: it is absent on native rows and spans prior owners.
+    const runningAfter = [];
+    if (balance && balance.balance_cents != null) {
+      let rb = Number(balance.balance_cents);
+      for (const t of visibleTxns) { runningAfter.push(rb); rb -= Number(t.amount_cents || 0); }
+    }
 
     res.json({
       property: {
@@ -2789,22 +2818,19 @@ router.get('/transactions', async (req, res) => {
         community_name: community.name,
         vantaca_account_id: vantacaAccountId,
       },
-      transactions: visibleTxns.map(t => ({
+      transactions: visibleTxns.map((t, i) => ({
         id: t.id,
         date: t.transaction_date,
         description: t.description,
         type: t.txn_type,
         amount_cents: t.amount_cents,
-        running_balance_cents: t.running_balance_cents,
+        running_balance_cents: runningAfter.length ? runningAfter[i] : null,
       })),
       balance: balance ? {
         balance_cents: balance.balance_cents,
         most_recent_txn_date: balance.most_recent_txn_date,
       } : null,
-      freshness: freshness ? {
-        period_label: freshness.period_label,
-        as_of_date: freshness.as_of_date,
-      } : null,
+      freshness,
     });
   } catch (err) {
     console.error('[portal/transactions] failed:', err.message);
