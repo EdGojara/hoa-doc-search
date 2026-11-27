@@ -104,14 +104,14 @@ router.post('/incoming', async (req, res) => {
     }
 
     // STEP 2 — caller-ID lookup against contacts table (Model A: one Bedrock
-    // number, identify who's calling by their phone). This is the killer
-    // feature — Claire greets by first name and already knows their
-    // community + property without the caller saying a word.
+    // number, identify who's calling by their phone) so Claire knows which
+    // community's public facts to use without the caller saying a word.
     //
-    // Privacy/security note: caller ID can be spoofed. We use this match
-    // for *context* (greeting, community routing) but Claire still verifies
-    // identity before sharing sensitive info (AR balance, payment info,
-    // ARC outcomes). Handled in the system prompt, not here.
+    // Security (Ed 2026-11-27): caller ID can be spoofed, so this match is
+    // NOT identity. It is used only for community routing and to attribute
+    // the call log row. Nothing private is loaded or spoken from it, and the
+    // opener does not use the name. Private records stay closed by code in
+    // lib/voice/private_gate.js until a real verification step exists.
     let callerContact = null;
     let callerProperty = null;
     let callerCommunity = null;
@@ -173,228 +173,18 @@ router.post('/incoming', async (req, res) => {
     }
 
     // ========================================================================
-    // PRE-CALL CONTEXT WARMUP (Ed 2026-06-08)
+    // NO PRIVATE PRE-CALL WARMUP (homeowner security boundary, Ed 2026-11-27)
     // ------------------------------------------------------------------------
-    // When we identified the caller via caller-ID, fire parallel queries to
-    // pull what Ed would already know if HE were picking up the phone:
-    //   - Current AR balance (any recent payment? any arrears?)
-    //   - Any open violations on the property
-    //   - Any open ACC submissions
-    //   - Recent calls in the last 30 days (continuation? repeat issue?)
-    //
-    // Result: Claire's first response can already be specific. Encode-Ed
-    // pattern at its purest — the system shows up informed instead of
-    // asking the caller to re-explain context from prior interactions.
-    //
-    // Timeboxed to 800ms total via Promise.race so a slow query never
-    // delays the opener. Worst case: warmup is empty, opener falls back
-    // to the generic flow.
+    // This used to prefetch AR, enforcement / attorney / bankruptcy state,
+    // payment plan terms, open violations, pending ACC, and prior call
+    // summaries for the caller-ID match and load them into Claire's prompt,
+    // plus speak an ARC / compliance hint in the opener. Caller ID can be
+    // spoofed and there is no phone verification step yet, so none of that is
+    // loaded for a phone call any more. The caller-ID match is used ONLY to
+    // route the community (public facts) and to attribute the call log row.
+    // When a real verification step exists, private context is fetched
+    // AFTER it succeeds (lib/voice/private_gate.js), never before.
     // ========================================================================
-    let callerWarmup = null;
-    if (callerContact && callerProperty) {
-      try {
-        const warmupPromise = (async () => {
-          const propId = callerProperty.id;
-          // 4 parallel queries. arc_historical_decisions IS the canonical
-          // ACC table — decision_type='pending' represents in-flight
-          // submissions; 'approved'/'denied'/'conditional' are historical.
-          // Settled question (Ed 2026-06-08): we pull PENDING here so
-          // Claire knows about open requests; historical decisions go to
-          // the precedent retrieval layer instead.
-          const [arRes, violationsRes, accRes, recentCallsRes, esRes] = await Promise.allSettled([
-            supabase
-              .from('owner_ar_snapshots')
-              .select('balance_total, snapshot_date, enforcement_stage, at_legal, in_collections, payment_plan_active')
-              .eq('property_id', propId)
-              .order('snapshot_date', { ascending: false })
-              .limit(1)
-              .maybeSingle(),
-            supabase
-              .from('violations')
-              .select('id, primary_category_id, current_stage, opened_at')
-              .eq('property_id', propId)
-              .is('closed_at', null)
-              .order('opened_at', { ascending: false })
-              .limit(3),
-            supabase
-              .from('arc_historical_decisions')
-              .select('id, decision_type, project_type, project_description, summary, created_at')
-              .eq('property_id', propId)
-              .eq('decision_type', 'pending')
-              .order('created_at', { ascending: false })
-              .limit(2),
-            supabase
-              .from('homeowner_calls')
-              .select('call_sid, started_at, brief, status')
-              .eq('caller_homeowner_id', callerContact.id)
-              .neq('call_sid', callSid)
-              .order('started_at', { ascending: false })
-              .limit(3),
-            // Operator-managed enforcement state (migration 202) — canonical
-            // signals override the legacy snapshot. Critical for HARD RULE
-            // #16 (bankruptcy automatic stay), at_legal FDCPA, etc.
-            supabase
-              .from('v_current_enforcement_state')
-              .select('state, attorney_name, attorney_firm, attorney_email, attorney_phone, bankruptcy_chapter, bankruptcy_case_number, bankruptcy_filing_date, bankruptcy_attorney_name, bankruptcy_attorney_email, payment_plan_terms_text, effective_at')
-              .eq('property_id', propId)
-              .maybeSingle(),
-          ]);
-          const ar = arRes.status === 'fulfilled' ? arRes.value?.data : null;
-          const enforcement = esRes.status === 'fulfilled' ? esRes.value?.data : null;
-          const violations = violationsRes.status === 'fulfilled' ? (violationsRes.value?.data || []) : [];
-          const accRaw = accRes.status === 'fulfilled' ? (accRes.value?.data || []) : [];
-          // Shape ACC rows to match what the prompt builder expects
-          // (status + project_summary + submitted_at)
-          const acc = accRaw.map(a => ({
-            status: a.decision_type || 'pending',
-            project_type: a.project_type || null,
-            project_summary: a.summary || a.project_description || a.project_type || 'ARC submission',
-            submitted_at: a.created_at,
-          }));
-          const recentCallsRaw = recentCallsRes.status === 'fulfilled' ? (recentCallsRes.value?.data || []) : [];
-          // Flatten the brief JSONB into a 'summary' field the prompt builder
-          // can read directly. Use brief.concern as the primary summary;
-          // fall back to answer_or_status if no concern.
-          const recentCalls = recentCallsRaw.map(c => ({
-            started_at: c.started_at,
-            status: c.status,
-            summary: c.brief?.concern || c.brief?.answer_or_status || null,
-          }));
-          // If bankruptcy on file with filing date, compute pre/post-petition
-          // split via the unified resolver. Helps Claire route balance
-          // questions intelligently (HARD RULE #16 — pre is stay-protected,
-          // post is normal AR).
-          let petitionSplit = null;
-          if (enforcement?.state === 'in_bankruptcy' && enforcement?.bankruptcy_filing_date) {
-            try {
-              const { resolveCurrentAR } = require('../lib/ar/resolve_current_ar');
-              const arRes = await resolveCurrentAR(supabase, { propertyId: propId });
-              if (arRes) {
-                petitionSplit = {
-                  pre_petition_balance_cents:  arRes.pre_petition_balance_cents,
-                  post_petition_balance_cents: arRes.post_petition_balance_cents,
-                  petition_date: arRes.petition_date,
-                };
-              }
-            } catch (_) { /* leave petitionSplit null */ }
-          }
-          return { ar, violations, acc, recentCalls, enforcement, petitionSplit };
-        })();
-        // Race against an 800ms timeout so we never delay the opener
-        const timeout = new Promise((resolve) => setTimeout(() => resolve(null), 800));
-        callerWarmup = await Promise.race([warmupPromise, timeout]);
-        if (callerWarmup) {
-          const summaryParts = [];
-          if (callerWarmup.violations?.length) summaryParts.push(`${callerWarmup.violations.length} open violation${callerWarmup.violations.length > 1 ? 's' : ''}`);
-          if (callerWarmup.acc?.length) summaryParts.push(`${callerWarmup.acc.length} open ACC submission${callerWarmup.acc.length > 1 ? 's' : ''}`);
-          if (callerWarmup.recentCalls?.length) summaryParts.push(`${callerWarmup.recentCalls.length} prior call${callerWarmup.recentCalls.length > 1 ? 's' : ''} in last 30 days`);
-          console.log(`[voice/incoming] warmup for ${callerContact.preferred_name || callerContact.full_name}: ${summaryParts.join(', ') || 'no flags'}`);
-        } else {
-          console.log(`[voice/incoming] warmup timed out (>800ms) — falling back to generic opener`);
-        }
-      } catch (e) {
-        console.warn('[voice/incoming] warmup fetch failed (non-fatal):', e.message);
-      }
-    }
-
-    // Build a short hint string for the opener IF there's exactly one
-    // likely call reason. Multiple flags → don't probe (would feel like a
-    // database dump). Zero flags → fall back to generic opener. One clear
-    // flag → soft probe so Claire shows up informed.
-    let warmupOpenerHint = null;
-    if (callerWarmup) {
-      const accCount = callerWarmup.acc?.length || 0;
-      const violationCount = callerWarmup.violations?.length || 0;
-      const recentCallCount = callerWarmup.recentCalls?.length || 0;
-      // Single-flag probes only. Order: ACC > violation > recent call.
-      if (accCount === 1 && violationCount === 0) {
-        // For the opener, prefer the raw project_type ('paint', 'fence',
-        // 'addition') which reads naturally as a noun phrase after "your
-        // ARC submission for the ___". The longer summary is reserved
-        // for the system prompt where Claire can use it in fuller
-        // context. Falls back to a generic phrasing if no type.
-        const accRow = (callerWarmup.acc[0]) || {};
-        const projectType = accRow.project_type;
-        warmupOpenerHint = projectType
-          ? `I see we have your ARC submission for the ${projectType} project in review — calling about that?`
-          : `I see we have an open ARC submission for you — calling about that?`;
-      } else if (violationCount === 1 && accCount === 0) {
-        warmupOpenerHint = `I see we have an open compliance item on the property — calling about that?`;
-      } else if (recentCallCount > 0 && accCount === 0 && violationCount === 0) {
-        warmupOpenerHint = `Good to hear from you again — what can I help with today?`;
-      }
-    }
-    // Serialize warmup context for the bridge (caps total parameter size
-    // for TwiML — keep it tight). JSON-encoded then base64 to avoid XML-
-    // escape headaches in the TwiML <Parameter value>.
-    let warmupSerialized = '';
-    if (callerWarmup) {
-      try {
-        // Enforcement state from canonical operator-managed table OVERRIDES
-        // the legacy snapshot signals. When es.state='in_bankruptcy',
-        // HARD RULE #16 fires and Claire cannot discuss the account.
-        const es = callerWarmup.enforcement || null;
-        const compact = {
-          ar: callerWarmup.ar ? {
-            balance_total: callerWarmup.ar.balance_total,
-            snapshot_date: callerWarmup.ar.snapshot_date,
-            // Enforcement signals: canonical state if present, otherwise
-            // fall back to the legacy snapshot fields.
-            enforcement_stage:    es?.state          || callerWarmup.ar.enforcement_stage,
-            at_legal:             es ? (es.state === 'at_legal')       : !!callerWarmup.ar.at_legal,
-            in_collections:       es ? (es.state === 'in_collections') : !!callerWarmup.ar.in_collections,
-            payment_plan_active:  es ? (es.state === 'on_payment_plan') : !!callerWarmup.ar.payment_plan_active,
-            in_bankruptcy:        es ? (es.state === 'in_bankruptcy')  : false,
-            lien_filed:           es ? (es.state === 'lien_filed')     : false,
-            judgment:             es ? (es.state === 'judgment')       : false,
-            // Pre/post-petition split (only populated when in_bankruptcy with filing date)
-            pre_petition_balance_cents:  callerWarmup.petitionSplit?.pre_petition_balance_cents  ?? null,
-            post_petition_balance_cents: callerWarmup.petitionSplit?.post_petition_balance_cents ?? null,
-            petition_date:               callerWarmup.petitionSplit?.petition_date               ?? null,
-          } : (es ? {
-            // No legacy snapshot but enforcement state IS present —
-            // still surface the signals so HARD RULE #16 fires.
-            balance_total: null,
-            snapshot_date: null,
-            enforcement_stage: es.state,
-            at_legal:            es.state === 'at_legal',
-            in_collections:      es.state === 'in_collections',
-            payment_plan_active: es.state === 'on_payment_plan',
-            in_bankruptcy:       es.state === 'in_bankruptcy',
-            lien_filed:          es.state === 'lien_filed',
-            judgment:            es.state === 'judgment',
-          } : null),
-          // Structured enforcement details for HARD RULE rendering
-          // (attorney info for at_legal handoff, bankruptcy attorney
-          // for HARD RULE #16). Empty when no state on file.
-          enforcement: es ? {
-            state: es.state,
-            attorney_name: es.attorney_name || es.attorney_firm || null,
-            attorney_email: es.attorney_email || null,
-            attorney_phone: es.attorney_phone || null,
-            bankruptcy_chapter: es.bankruptcy_chapter || null,
-            bankruptcy_case_number: es.bankruptcy_case_number || null,
-            bankruptcy_attorney_name: es.bankruptcy_attorney_name || null,
-            bankruptcy_attorney_email: es.bankruptcy_attorney_email || null,
-            payment_plan_terms_text: es.payment_plan_terms_text || null,
-          } : null,
-          v_count: callerWarmup.violations?.length || 0,
-          acc: (callerWarmup.acc || []).slice(0, 2).map(a => ({
-            status: a.status,
-            project_type: a.project_type || null,
-            project_summary: (a.project_summary || '').slice(0, 80),
-            submitted_at: a.submitted_at,
-          })),
-          recent: (callerWarmup.recentCalls || []).slice(0, 3).map(c => ({
-            started_at: c.started_at,
-            summary: (c.summary || '').slice(0, 120),
-          })),
-        };
-        warmupSerialized = Buffer.from(JSON.stringify(compact), 'utf8').toString('base64');
-      } catch (e) {
-        warmupSerialized = '';
-      }
-    }
 
     // Derive the community Claire uses for context. Priority order:
     //   1. voice_phone_routes (Model B — explicit per-community routing)
@@ -402,15 +192,6 @@ router.post('/incoming', async (req, res) => {
     //   3. null (generic Bedrock greeting + Claire asks which community)
     const effectiveCommunityId = route?.community_id || callerCommunity?.id || null;
     const effectiveCommunityName = route?.community_display_name || callerCommunity?.name || null;
-
-    // Derive first name for the opener — preferred_name if set, else first
-    // word of full_name. (Bedrock's contacts schema uses full_name not
-    // separate first_name/last_name.)
-    let callerFirstName = null;
-    if (callerContact) {
-      const candidate = callerContact.preferred_name || callerContact.full_name || '';
-      callerFirstName = candidate.trim().split(/\s+/)[0] || null;
-    }
 
     // Pre-create the homeowner_calls row so the bridge can update it as
     // the call progresses. ALWAYS write — even when community couldn't
@@ -453,13 +234,7 @@ router.post('/incoming', async (req, res) => {
       <Parameter name="community_id" value="${escapeXml(effectiveCommunityId || '')}"/>
       <Parameter name="community_name" value="${escapeXml(effectiveCommunityName || '')}"/>
       <Parameter name="caller_contact_id" value="${escapeXml(callerContact?.id || '')}"/>
-      <Parameter name="caller_name" value="${escapeXml(callerContact?.full_name || '')}"/>
-      <Parameter name="caller_first_name" value="${escapeXml(callerFirstName || '')}"/>
       <Parameter name="caller_property_id" value="${escapeXml(callerProperty?.id || '')}"/>
-      <Parameter name="caller_property_address" value="${escapeXml(callerProperty?.street_address || '')}"/>
-      <Parameter name="caller_residency_type" value="${escapeXml(callerProperty?.residency_type || '')}"/>
-      <Parameter name="warmup_opener_hint" value="${escapeXml(warmupOpenerHint || '')}"/>
-      <Parameter name="warmup_b64" value="${escapeXml(warmupSerialized || '')}"/>
     </Stream>
   </Connect>
 </Response>`;
@@ -549,37 +324,21 @@ function handleWebSocketConnection(ws, req) {
     if (msg.event === 'start' && !bridge) {
       const params = msg.start?.customParameters || {};
 
-      // Pre-call warmup unpacks back into a structured object the bridge
-      // forwards into Claire's system prompt. Encode-Ed: opener feels
-      // informed because we already pulled AR + violations + ACC + recent
-      // calls during the Twilio webhook (Ed 2026-06-08).
-      let warmup = null;
-      if (params.warmup_b64) {
-        try {
-          warmup = JSON.parse(Buffer.from(String(params.warmup_b64), 'base64').toString('utf8'));
-        } catch (e) {
-          console.warn('[voice/stream] warmup decode failed:', e.message);
-        }
-      }
-
       const callContext = {
         call_sid: params.call_sid || msg.start.callSid,
         from_phone: params.from_phone,
         caller_phone: params.from_phone,  // alias used by SMS-link tool
         to_phone: params.to_phone,
-        // Caller-ID-matched homeowner info (null if anonymous / unknown caller)
+        // Caller-ID match: an id for the call log ONLY. Stream parameters are
+        // not proof of identity, so no name, address, residency, account data,
+        // or `verified` flag is accepted from them (Ed 2026-11-27; see
+        // lib/voice/private_gate.js). The prompt drops even this unless the
+        // call is verified.
         caller: params.caller_contact_id
           ? {
               contact_id: params.caller_contact_id,
-              id: params.caller_contact_id,    // alias used by tools
-              full_name: params.caller_name || null,
-              first_name: params.caller_first_name || null,
+              id: params.caller_contact_id,    // alias used by tools / call log
               property_id: params.caller_property_id || null,
-              property_address: params.caller_property_address || null,
-              // owner / renter / vacant / unknown — from property_residencies.
-              // Lets Claire skip the "are you the homeowner?" question when
-              // the system already knows. Encode-Ed correction 2026-06-08.
-              residency_type: params.caller_residency_type || null,
             }
           : null,
         community: {
@@ -592,8 +351,9 @@ function handleWebSocketConnection(ws, req) {
           profile_block: null,
           doc_context: null,
         },
-        warmup,                                              // structured prefetch
-        warmup_opener_hint: params.warmup_opener_hint || '', // soft probe for buildOpener
+        // No private pre-call warmup and no opener hint (Ed 2026-11-27).
+        warmup: null,
+        warmup_opener_hint: '',
       };
       bridge = new CallBridge({ twilioWs: ws, callContext, supabase });
     }
@@ -770,7 +530,9 @@ router.post('/vapi-assistant-request', express.json({ limit: '64kb' }), async (r
   const useIsabella = callerLanguage === 'es' && !!VAPI_ISABELLA_ASSISTANT_ID;
   const selectedAssistantId = useIsabella ? VAPI_ISABELLA_ASSISTANT_ID : VAPI_ASSISTANT_ID;
   const openerBuilder = useIsabella ? buildIsabellaOpener : buildOpener;
-  const firstMessage = openerBuilder(community?.name || null, caller?.first_name || null);
+  // No caller-ID name in the opener: it is spoken before anyone is verified
+  // and caller ID can be spoofed (Ed 2026-11-27).
+  const firstMessage = openerBuilder(community?.name || null, null);
   if (useIsabella) {
     console.log(`[vapi-ar ${requestId}] routing to Isabella (Spanish) — caller.preferred_language=es`);
   }
@@ -810,9 +572,9 @@ router.post('/vapi-assistant-request', express.json({ limit: '64kb' }), async (r
     assistantOverrides: {
       firstMessage,
       metadata: {
+        // Call-log attribution only. No owner names in metadata: it flows
+        // back into every LLM turn and the caller is not verified.
         caller_contact_id: caller?.id || null,
-        caller_first_name: caller?.first_name || null,
-        caller_full_name: caller?.full_name || null,
         caller_preferred_language: callerLanguage,
         community_id: community?.id || null,
         community_name: community?.name || null,
@@ -969,11 +731,8 @@ async function handleVapiLlmTurn(req, res, personaConfig) {
       name: callMetadata.community_name || null,
     };
     if (callMetadata.caller_contact_id) {
-      caller = {
-        id: callMetadata.caller_contact_id,
-        first_name: callMetadata.caller_first_name || null,
-        full_name: callMetadata.caller_full_name || null,
-      };
+      // Metadata is not proof of identity: id only (call-log attribution).
+      caller = { id: callMetadata.caller_contact_id };
     }
     console.log(`[${logTag} ${requestId}] metadata path (no cache)`);
   } else {
@@ -1408,94 +1167,7 @@ router.post('/vapi-tools/caller-context', express.json({ limit: '64kb' }), async
       args = msg.parameters;
     }
 
-    // Also fall back to the call's caller number if no explicit phone arg
-    // was passed (common pattern — Vapi can pass the caller_phone implicitly
-    // via the call context).
-    const callerPhoneArg = args?.caller_phone || args?.phone || null;
-    const callContextPhone = msg.call?.customer?.number || msg.customer?.number || null;
-    const callerPhone = callerPhoneArg || callContextPhone;
-
-    if (!callerPhone) {
-      return res.json({
-        result: {
-          found: false,
-          recommended_opener_context: 'Hey, this is Claire from Bedrock — what can I help with today?',
-          note: 'No caller phone provided; falling back to generic opener.',
-        },
-      });
-    }
-
-    const lookup = await resolveCallerByPhone(callerPhone);
-    const caller = lookup.contact;
-    const property = lookup.property;
-    const community = lookup.community;
-
-    if (!caller) {
-      return res.json({
-        result: {
-          found: false,
-          recommended_opener_context: community
-            ? `Hey, this is Claire from Bedrock for ${community.name} — what can I help with today?`
-            : 'Hey, this is Claire from Bedrock — what can I help with today?',
-          note: 'Caller phone not in contacts. Treat as unknown caller; verify identity before sharing account-specific info.',
-        },
-      });
-    }
-
-    // Pull recent activity for synthesis. Bounded queries to keep response time low.
-    const homeownerName = caller.preferred_name || caller.first_name || caller.full_name || 'there';
-    const firstName = (caller.preferred_name || caller.first_name || (caller.full_name || '').split(' ')[0] || '').trim();
-
-    const recentActivity = await _gatherRecentActivity({
-      contact: caller,
-      property,
-      community,
-    });
-
-    // The opener is the synthesis. This is where encode-Ed actually lives —
-    // not a script, but a one-liner that already knows what the caller
-    // probably wants. Ed never opens with "what can I help with?" — he
-    // opens with "saw you called yesterday about X, did you get the Y?"
-    let opener;
-    if (recentActivity.most_recent_call_summary) {
-      opener = `Hey ${firstName}, this is Claire from Bedrock for ${community?.name || 'your community'} — saw you called ${recentActivity.most_recent_call_when || 'recently'} about ${recentActivity.most_recent_call_summary}. Did you get what you needed?`;
-    } else if (recentActivity.open_violation_summary) {
-      opener = `Hey ${firstName}, this is Claire from Bedrock for ${community?.name || 'your community'} — calling about the ${recentActivity.open_violation_summary} notice we sent over, or something else?`;
-    } else if (recentActivity.open_acc_summary) {
-      opener = `Hey ${firstName}, this is Claire from Bedrock for ${community?.name || 'your community'} — calling about your ${recentActivity.open_acc_summary} submission, or something else I can help with?`;
-    } else {
-      opener = `Hey ${firstName}, this is Claire from Bedrock for ${community?.name || 'your community'} — what can I help with today?`;
-    }
-
-    return res.json({
-      result: {
-        found: true,
-        caller: {
-          first_name: firstName,
-          full_name: caller.full_name,
-          preferred_name: caller.preferred_name,
-          contact_id: caller.id,
-        },
-        property: property ? {
-          street_address: property.street_address,
-          community_id: property.community_id,
-          property_id: property.id,
-        } : null,
-        community: community ? { id: community.id, name: community.name } : null,
-        recent_activity: recentActivity,
-        recommended_opener_context: opener,
-        // Guidance for the model: this is the encode-Ed mindset, surfaced
-        // as a tool result. Vapi's system prompt should be set up to obey
-        // these hints rather than reciting them verbatim.
-        conversation_guidance: [
-          'Open warmly using the recommended_opener_context — do not read it verbatim, use it as inspiration.',
-          'Listen for what is actually behind the question before answering.',
-          'Offer paths forward, never just policy.',
-          'Take ownership of the next step — never end with we will be in touch.',
-          'When account-specific info is requested, verify identity (last 4 of street address or full name) before sharing.',
-        ],
-      },
-    });
+    return res.json({ result: await buildCallerContextResult({ msg, args }) });
   } catch (err) {
     console.error(`[vapi-ctx ${requestId}] failed:`, err.message);
     return res.json({
@@ -1509,66 +1181,47 @@ router.post('/vapi-tools/caller-context', express.json({ limit: '64kb' }), async
 });
 
 /**
- * Pull recent activity for a caller and synthesize a few one-line
- * summaries Claire can use to anchor her opener. Bounded queries only.
+ * getCallerContext result (homeowner security boundary, Ed 2026-11-27).
+ *
+ * Caller ID can be spoofed and there is no phone verification step yet, so
+ * this returns ONLY what general help needs: the community (for public
+ * facts) and a neutral honest-AI opener. It never returns the owner's name,
+ * contact id, property address, prior call summaries, or violation / ACC /
+ * account status. The number looked up is the number the call is ACTUALLY
+ * coming from; a phone number in the tool arguments (model- or
+ * caller-supplied) is ignored, so it cannot be used to look up someone else.
+ *
+ * @param {object} deps.resolve — injectable for tests (defaults to resolveCallerByPhone)
  */
-async function _gatherRecentActivity({ contact, property, community }) {
-  const out = {
-    most_recent_call_summary: null,
-    most_recent_call_when: null,
-    open_violation_summary: null,
-    open_acc_summary: null,
-    has_open_ar_balance: false,
-    open_items_count: 0,
-  };
-  if (!contact?.id) return out;
-
-  // Most recent prior call (within last 14 days) — drives the
-  // "saw you called yesterday about X" opener
-  try {
-    const since = new Date(Date.now() - 14 * 86400 * 1000).toISOString();
-    const { data: priorCalls } = await supabase
-      .from('homeowner_calls')
-      .select('id, started_at, brief, full_transcript')
-      .eq('caller_homeowner_id', contact.id)
-      .gte('started_at', since)
-      .order('started_at', { ascending: false })
-      .limit(1);
-    const last = priorCalls?.[0];
-    if (last) {
-      const briefConcern = last.brief?.concern || last.brief?.summary || null;
-      out.most_recent_call_summary = briefConcern
-        ? briefConcern.replace(/\.$/, '').slice(0, 80)
-        : 'a question for the team';
-      const days = Math.floor((Date.now() - new Date(last.started_at).getTime()) / 86400000);
-      out.most_recent_call_when = days === 0 ? 'earlier today'
-        : days === 1 ? 'yesterday'
-        : days < 7 ? `${days} days ago`
-        : 'recently';
-    }
-  } catch (_) {}
-
-  // Open violation at property
-  if (property?.id) {
+async function buildCallerContextResult({ msg, args } = {}, deps = {}) {
+  const resolve = deps.resolve || resolveCallerByPhone;
+  void args; // args.caller_phone / args.phone deliberately ignored
+  const callContextPhone = msg?.call?.customer?.number || msg?.customer?.number || null;
+  let community = null;
+  if (callContextPhone) {
     try {
-      const { data: vios } = await supabase
-        .from('violations')
-        .select('id, current_stage, opened_at, enforcement_categories(label)')
-        .eq('property_id', property.id)
-        .is('resolved_at', null)
-        .order('opened_at', { ascending: false })
-        .limit(1);
-      const v = vios?.[0];
-      if (v) {
-        out.open_violation_summary = v.enforcement_categories?.label
-          ? `${v.enforcement_categories.label} ${v.current_stage === 'certified_209' ? 'certified' : 'courtesy'}`
-          : 'open violation';
-        out.open_items_count += 1;
-      }
-    } catch (_) {}
+      const lookup = await resolve(callContextPhone);
+      community = lookup?.community ? { id: lookup.community.id, name: lookup.community.name } : null;
+    } catch (_) { community = null; }
   }
-
-  return out;
+  return {
+    found: false,
+    verified: false,
+    community,
+    recommended_opener_context: community
+      ? `Hey, this is Claire from Bedrock — AI assistant for ${community.name}. What can I help with?`
+      : 'Hey, this is Claire from Bedrock — an AI assistant. What can I help with today?',
+    note:
+      'Caller is NOT verified. Caller ID and a stated address are not identity verification, and no phone ' +
+      'verification exists yet. Do not use or guess a name. Help with general and public questions; for anything ' +
+      'about their own account, offer the homeowner portal or a team callback.',
+    conversation_guidance: [
+      'Open warmly with the recommended_opener_context as inspiration — do not read it verbatim.',
+      'Listen for what is actually behind the question before answering.',
+      'Offer paths forward, never just policy.',
+      'Private account details (balance, payments, payment plans, collections/legal/bankruptcy, violations, ARC case details, contact history, owner contact info) are not available on this call. Offer the portal or a team callback.',
+    ],
+  };
 }
 
 function safeJsonParse(s) {
@@ -1894,7 +1547,13 @@ router.post('/vapi-tools/request-callback', express.json({ limit: '64kb' }), asy
     const body = req.body || {};
     const msg = body.message || body;
     const args = _extractToolArgs(msg);
-    const callerPhone = args.caller_phone || msg.call?.customer?.number || null;
+    // The number the call is ACTUALLY coming from wins for any lookup. A
+    // number the caller (or the model) states is stored only as the
+    // callback number on the request; it never selects whose record this is.
+    const callerPhone = msg.call?.customer?.number || msg.customer?.number || null;
+    const statedCallbackRaw = String(args.callback_number || args.caller_phone || args.phone || '').trim().slice(0, 40);
+    const statedCallback = statedCallbackRaw && statedCallbackRaw.replace(/\D/g, '').slice(-10) !== String(callerPhone || '').replace(/\D/g, '').slice(-10)
+      ? statedCallbackRaw : '';
     const reasonRaw = String(args.reason || args.summary || 'caller wants a callback').trim();
     const reason = reasonRaw.slice(0, 500);
     const urgency = (String(args.urgency || 'standard').toLowerCase());
@@ -1929,7 +1588,7 @@ router.post('/vapi-tools/request-callback', express.json({ limit: '64kb' }), asy
       row = existing;
     }
     const stamp = new Date().toISOString().slice(0, 16).replace('T', ' ');
-    const noteLine = `[${stamp}] Claire committed to callback (urgency=${urgency}): ${reason}${preferredCallbackTime ? ` — caller prefers ${preferredCallbackTime}` : ''}`;
+    const noteLine = `[${stamp}] Claire committed to callback (urgency=${urgency}): ${reason}${preferredCallbackTime ? ` — caller prefers ${preferredCallbackTime}` : ''}${statedCallback ? ` — callback number stated by caller: ${statedCallback} (unverified)` : ''}`;
     if (row) {
       const newNotes = row.internal_notes ? `${row.internal_notes}\n${noteLine}` : noteLine;
       await supabase
@@ -2185,7 +1844,9 @@ router.post('/vapi-tools/send-portal-link', express.json({ limit: '64kb' }), asy
     const msg = body.message || body;
     const args = _extractToolArgs(msg);
 
-    const callerPhone = args.caller_phone || msg.call?.customer?.number || msg.customer?.number || null;
+    // The actual calling number only; a model/caller-supplied number never
+    // selects whose record or phone this is (Ed 2026-11-27).
+    const callerPhone = msg.call?.customer?.number || msg.customer?.number || null;
     // destination_page: where the link should land — 'balance', 'acc',
     // 'fob_application', 'violations', 'documents', 'calendar', etc.
     const destinationPage = String(args.destination_page || 'home').toLowerCase();
@@ -2212,15 +1873,17 @@ router.post('/vapi-tools/send-portal-link', express.json({ limit: '64kb' }), asy
       // Log the would-have-sent for reconciliation when portal launches
       console.log(`[vapi-portal ${requestId}] STUB: would have sent ${destinationPage} link to ${callerPhone || 'unknown'} via ${deliveryChannel}`);
 
-      // If we have email on file or caller gave one, offer email fallback
-      const fallbackEmail = deliveryEmail || caller?.primary_email || caller?.email || null;
+      // Email fallback ONLY to an address the caller stated on this call.
+      // Never the email on file: reading it back would disclose an owner's
+      // contact details to an unverified caller (Ed 2026-11-27).
+      const fallbackEmail = /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(deliveryEmail) ? deliveryEmail : null;
       if (fallbackEmail && deliveryChannel === 'email') {
         return res.json({
           result: {
             link_sent: false,
             fallback_action: 'email',
             speak_to_caller: `Sure — I'll have the team email that over to ${fallbackEmail}. You should see it within the next hour. The portal we're rolling out soon will let you grab this stuff directly, but for now email is the fastest. Anything else?`,
-            note_for_audit: 'Portal not yet live; falling back to email delivery via team queue.',
+            note_for_audit: 'Portal not yet live; falling back to email delivery via team queue. Caller NOT verified and the address is caller-stated: send only public material, never account information, unless the team verifies identity first.',
           },
         });
       }
@@ -2286,4 +1949,4 @@ function _extractToolArgs(msg) {
   return args || {};
 }
 
-module.exports = { router, handleWebSocketConnection };
+module.exports = { router, handleWebSocketConnection, buildCallerContextResult };
