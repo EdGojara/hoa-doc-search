@@ -248,6 +248,11 @@ function fakeTwilio({ approveCode = '123456' } = {}) {
     assert.ok(k.includes('Amanda') && k.includes('Drama Creek Estates') && k.includes('Waterview Estates') && !k.some((x) => /TEST/.test(x)));
     const c = A.agentConfig({ persona: 'claire', brainUrl: 'u', headerSecret: 'h', voiceId: 'v', ttsModel: 'eleven_flash_v2', keywords: ['Canyon Gate'] });
     assert.ok(c.conversation_config.asr.keywords.includes('Canyon Gate'));
+    // ONE recognizer setup: the browser Talk to Amanda agent gets the same block
+    const V = require('../lib/amanda/voice_elevenlabs');
+    const b = V.agentConfig({ brainUrl: 'u', voiceId: 'harper', headerSecret: 'h', ttsModel: 'eleven_v4_turbo', keywords: ['Canyon Gate'] });
+    assert.deepStrictEqual(b.conversation_config.asr, c.conversation_config.asr);
+    assert.strictEqual(b.conversation_config.asr.quality, 'high');
   });
 
   // ---- agents ----------------------------------------------------------------------------
