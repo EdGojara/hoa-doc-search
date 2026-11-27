@@ -1,0 +1,63 @@
+{
+  "migration": "583_owner_authorized_closing_package.sql",
+  "summary": "Extends the Owner Authorization Service to Ownership Review's closing package: owner_authorizations.scope also allows 'closing_packages'. Adds owner_authorization_request_closing_package(), which creates one numbered request of pending transfers with their settlement dates, prorations, capitalization fees and the package fingerprint. Adds accounting_run_approve_closing_package(), which approves the capitalization-fee journal-entry run under that authorization only for completed, authorized transfers at the authorized amounts. No rows are added, removed or changed; no transfer, charge or entry is touched.",
+  "requires": [
+    "554_owner_delegated_approvals.sql",
+    "566_owner_authorized_accounting_runs.sql",
+    "577_owner_authorization_service.sql",
+    "582_owner_authorized_arc_acc.sql"
+  ],
+  "preflight": [
+    {
+      "name": "the closing package request function does not exist yet",
+      "sql": "SELECT count(*)::int FROM pg_proc WHERE proname = 'owner_authorization_request_closing_package'",
+      "expect": 0
+    },
+    {
+      "name": "no request uses an unknown scope",
+      "sql": "SELECT count(*)::int FROM owner_authorizations WHERE scope NOT IN ('conversion_objects', 'accounting_runs', 'arc_acc_decisions')",
+      "expect": 0
+    }
+  ],
+  "expected_changes": [
+    "owner_authorizations_scope_check now allows conversion_objects, accounting_runs, arc_acc_decisions and closing_packages.",
+    "Adds owner_authorization_request_closing_package(text, text, uuid, jsonb, text, text, integer), executable by service_role only.",
+    "Adds accounting_run_approve_closing_package(uuid, uuid, text, text), executable by service_role only.",
+    "No rows are added, removed or changed."
+  ],
+  "objects": {
+    "added": [
+      "function:owner_authorization_request_closing_package",
+      "function:accounting_run_approve_closing_package"
+    ],
+    "changed": [
+      "constraint:owner_authorizations.owner_authorizations_scope_check"
+    ],
+    "removed": []
+  },
+  "verify": [
+    {
+      "name": "both functions exist",
+      "sql": "SELECT count(*)::int FROM pg_proc WHERE proname IN ('owner_authorization_request_closing_package', 'accounting_run_approve_closing_package')",
+      "expect": 2
+    },
+    {
+      "name": "the scope check allows closing packages",
+      "sql": "SELECT count(*)::int FROM pg_constraint WHERE conname = 'owner_authorizations_scope_check' AND pg_get_constraintdef(oid) LIKE '%closing_packages%'",
+      "expect": 1
+    }
+  ],
+  "row_changes": {
+    "owner_authorizations": 0
+  },
+  "protected": [
+    {
+      "table": "ownership_change_proposals",
+      "order_by": "id"
+    },
+    {
+      "table": "accounting_runs",
+      "order_by": "id"
+    }
+  ]
+}

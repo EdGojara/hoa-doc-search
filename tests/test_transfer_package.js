@@ -144,6 +144,59 @@ function deps(extra = {}) {
     assert.strictEqual(P.capSourceRef('c', 'p1'), 'KATJE:c:capfee-p1');
   });
 
+  await check('authorization: items carry the package fingerprint; Tessa\'s email lists every transfer and the total', async () => {
+    const pkg = await P.buildPackage(fakeDb(world()), { communityId: CID, deps: deps() });
+    const items = P.authorizationItems(pkg);
+    assert.deepStrictEqual(items.map((i) => [i.n, i.proposal_id, i.settlement_date, i.capitalization_cents, i.fingerprint]), [[1, 'prop-a', '2026-09-10', 30000, pkg.fingerprint], [2, 'prop-b', '2026-10-05', 30000, pkg.fingerprint]]);
+    const subject = P.requestSubject('ABCD1234', 'Example HOA', pkg.totals);
+    assert.match(subject, /^Owner authorization ABCD1234: closing package, Example HOA, 2 ownership transfers, \$901\.00 in new charges$/);   // Tessa's inbox matches "owner authorization XXXXXXXX"
+    const mail = P.renderRequest({ subject, pkg, communityName: 'Example HOA', expiresAt: 'soon' });
+    assert.match(mail.text, /Reply "approved"/);
+    assert.match(mail.text, /1\. 100 Example Way, settled 9\/10\/2026, to Buyer A: builder \$20\.00, buyer \$150\.00, capitalization \$300\.00/);
+    assert.match(mail.text, /104 Example Way \(5\/1\/2026\): dated before the GL cutover/);
+    assert.ok(!/—/.test(mail.text + mail.html), 'no em-dashes');
+  });
+
+  await check('authorization: the reply-approved package runs the same workflow, fees approved under the authorization', async () => {
+    const d = deps();
+    const pkg = await P.buildPackage(fakeDb(world()), { communityId: CID, deps: d });
+    const auth = { id: 'auth-1', status: 'authorized', scope: 'closing_packages', authorized_by_email: 'owner@example.com', subject: 'Owner authorization X', items: P.authorizationItems(pkg) };
+    const approved = [];
+    d.R = { KAT: 'Kat', prepare: async (_s, a) => ({ run: { id: 'run-1', preview: { items: a.items.map((i) => ({ id: i.id })) } } }), approveAndPost: async (_s, a) => { approved.push(a); return {}; } };
+    const w = world(); w.accounting_runs.push({ id: 'run-1', status: 'posted', result: { posted: [{}, {}] } });
+    const db = fakeDb(w); const marked = [];
+    const out = await P.executeAuthorized({ supabase: db, rpc: async (n, a) => { marked.push([n, a.p_id]); }, deps: d }, auth);
+    assert.strictEqual(out.ok, true);
+    assert.deepStrictEqual(db.calls.map((c) => c[1].p_proposal_id), ['prop-a', 'prop-b']);
+    assert.match(db.calls[0][1].p_reviewed_by, /authorized by email reply, owner authorization auth-1/);
+    assert.deepStrictEqual(approved[0].approval, { channel: 'owner_closing_package', authorization_id: 'auth-1' });
+    assert.deepStrictEqual(marked, [['owner_authorization_mark_executed', 'auth-1']]);
+    assert.match(P.renderCompletion(auth, out).text, /2 transfer\(s\) recorded, 0 not\.\nCapitalization fees: 2 of 2 posted/);
+  });
+
+  await check('authorization: refused when not authorized, or when the package now lists other transfers', async () => {
+    const d = deps();
+    const pkg = await P.buildPackage(fakeDb(world()), { communityId: CID, deps: d });
+    const items = P.authorizationItems(pkg);
+    const db = fakeDb(world());
+    await assert.rejects(P.executeAuthorized({ supabase: db, deps: d }, { id: 'a', status: 'requested', scope: 'closing_packages', authorized_by_email: 'o', items }), (e) => e.code === 'approval_required');
+    await assert.rejects(P.executeAuthorized({ supabase: db, deps: d }, { id: 'a', status: 'authorized', scope: 'accounting_runs', authorized_by_email: 'o', items }), (e) => e.code === 'approval_required');
+    // same fingerprint cannot be forged onto a different list: a missing item is refused
+    await assert.rejects(P.executeAuthorized({ supabase: db, deps: d }, { id: 'a', status: 'authorized', scope: 'closing_packages', authorized_by_email: 'o', items: items.slice(0, 1) }), (e) => e.code === 'stale_package');
+    // a changed package (new transfer appears) changes the fingerprint
+    const w = world(); w.ownership_change_proposals.push({ id: 'prop-z', community_id: CID, status: 'pending', property_id: 'lot-a', proposed_owner_name: 'Z', effective_start_date: '2026-11-01', properties: { street_address: '110 Example Way' } });
+    await assert.rejects(P.executeAuthorized({ supabase: fakeDb(w), deps: d }, { id: 'a', status: 'authorized', scope: 'closing_packages', authorized_by_email: 'o', items }), (e) => e.code === 'stale_package');
+    assert.strictEqual(db.calls.length, 0);
+  });
+
+  await check('authorization service: closing packages are a registered tier-1 action approved whole (no partial replies)', async () => {
+    const AZ = require('../lib/authorization');
+    const a = AZ.actionForScope('closing_packages');
+    assert.ok(a && a.executable && a.type === 'closing_package');
+    assert.strictEqual(AZ.tierOf ? AZ.tierOf(a, {}) : a.tier, 1);
+    assert.ok(!a.parseReply && !a.supportsExclusions);
+  });
+
   if (failures) { console.log(`${failures} failed`); process.exit(1); }
   console.log('all passed');
 })();
