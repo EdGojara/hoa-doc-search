@@ -60,5 +60,29 @@ check('the newest receipt on or before the run date is reported (the incomplete-
     && src.includes("code: 'bank_not_reconciled', severity: 'blocking'") && src.includes("code: 'payment_history_unverified', severity: 'blocking'"));
 }
 
-console.log(`\n${pass} passed, ${fail} failed`);
-process.exit(fail ? 1 : 0);
+// The posting guard: an earlier month's correction posted inside this month is not this month's interest.
+(async () => {
+  process.env.SUPABASE_URL = process.env.SUPABASE_URL || 'http://localhost'; process.env.SUPABASE_KEY = process.env.SUPABASE_KEY || 'test';
+  const { postInterest } = require('../lib/ar/monthly_interest');
+  const fake = (rows) => ({ from(t) { const b = {};
+    for (const m of ['select', 'eq', 'neq', 'like', 'gte', 'lt', 'in', 'limit']) b[m] = () => b;
+    b.single = () => b;
+    b.then = (res, rej) => {
+      let out;
+      if (t === 'communities') out = { data: { management_company_id: 'm', account_code: 'WV' }, error: null };
+      else if (t === 'journal_entries') out = { data: [], error: null };
+      else if (t === 'homeowner_transactions') out = { data: rows, error: null };
+      else return Promise.reject(new Error('STOP_AFTER_GUARD')).then(res, rej);
+      return Promise.resolve(out).then(res, rej);
+    };
+    return b; } });
+  const args = { community_id: 'c1', run_date: '2026-11-01', items: [{ property_id: 'p1', interest_cents: 121 }], settings: { rate_bps: 1000, grace_days: 0 }, actor: 'test' };
+  let e1 = null; try { await postInterest(fake([{ id: 'x', property_id: 'p1', corrects_month: '2026-08' }]), args); } catch (e) { e1 = e; }
+  check('an August correction posted in November does not block November interest', e1 && /STOP_AFTER_GUARD/.test(e1.message), e1 && e1.message);
+  let e2 = null; try { await postInterest(fake([{ id: 'y', property_id: 'p1', corrects_month: null }]), args); } catch (e) { e2 = e; }
+  check('real November interest already posted still blocks a second posting', e2 && e2.code === 'duplicate', e2 && e2.message);
+  let e3 = null; try { await postInterest(fake([{ id: 'z', property_id: 'p1', corrects_month: '2026-11' }]), args); } catch (e) { e3 = e; }
+  check('a November correction counts as November interest', e3 && e3.code === 'duplicate', e3 && e3.message);
+  console.log(`\n${pass} passed, ${fail} failed`);
+  process.exit(fail ? 1 : 0);
+})();
