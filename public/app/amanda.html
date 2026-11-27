@@ -90,10 +90,11 @@
   function alert_(kind, text) { $('am-alert').innerHTML = text ? '<div class="am-note ' + kind + '">' + esc(text) + '</div>' : ''; }
   // Owner voice audition (?audition=harper): this session only, never Amanda's approved voice.
   var AUDITION = (new URLSearchParams(location.search).get('audition') || '').trim().toLowerCase();
+  // The notice shows only when the server confirms an audition session. An adopted audition (harper,
+  // Amanda's Canon voice since 2026-11-27) opens the normal session with no notice.
   function showAudition(a) {
-    $('am-audition').innerHTML = AUDITION ? '<div class="am-note info">' + esc(a && a.name
-      ? 'Voice audition: ' + a.name + ' (' + a.tts_model + '). This session only; Amanda\'s approved voice is unchanged. Open this page without ?audition to go back.'
-      : 'Voice audition requested: ' + AUDITION + '.') + '</div>' : '';
+    $('am-audition').innerHTML = (AUDITION && a && a.name) ? '<div class="am-note info">' + esc(
+      'Voice audition: ' + a.name + ' (' + a.tts_model + '). This session only; Amanda\'s approved voice is unchanged. Open this page without ?audition to go back.') + '</div>' : '';
   }
   showAudition(null);
   function state(text, mode) {

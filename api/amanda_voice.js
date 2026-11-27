@@ -23,6 +23,7 @@ const { requireOwner } = require('./_require_admin');
 const { safeErrorMessage } = require('./_safe_error');
 const C = require('../lib/amanda/conversation');
 const V = require('../lib/amanda/voice_elevenlabs');
+const VM = require('../lib/characters/voice_models');
 
 const router = express.Router();
 let _sb = null;
@@ -76,21 +77,24 @@ function baseUrl(req) {
 function amandaVoiceId() {
   try { return require('../lib/team/roster').canonicalVoiceIdFor('amanda'); } catch (_) { return null; }
 }
-// Owner voice auditions (Ed 2026-11-26): before choosing Amanda's permanent voice, Ed tests a
-// candidate in a live conversation. Opt-in per session (?audition=<key> on /app/amanda), owner
-// only, closed allowlist, never written to the Character Canon. An audition runs on its own
-// ElevenLabs agent (V.AUDITION_AGENT_NAME); the shared agent stays on the Canon voice and Flash.
-const AUDITION_VOICES = {
-  // Eleven v4 Turbo turns on ElevenLabs expressive mode; expressive also lets the brain add cues.
-  harper: { voice_id: 'c1uwEpPUcC16tq1udqxk', name: 'Harper - Confident, Clear and Cool', tts_model: 'eleven_v4_turbo', expressive: true },
-};
-/** PURE: resolve the session voice. Returns { voiceId, ttsModel, audition } or { error }. */
-function sessionVoice(auditionKey, canonicalId) {
-  const key = String(auditionKey || '').trim().toLowerCase();
-  if (!key) return canonicalId ? { voiceId: canonicalId, ttsModel: V.DEFAULT_TTS_MODEL, audition: null } : { error: 'voice_not_approved' };
+// Amanda's conversation model for her canonical voice (Ed 2026-11-27: Harper on Eleven v4 Turbo,
+// expressive, exactly as auditioned on 2026-11-26). lib/characters/voice_models.js is the one place.
+function amandaConversationModel() { return VM.conversationModelFor('amanda'); }
+// Owner voice auditions (Ed 2026-11-26): before choosing a permanent voice, Ed tests a candidate
+// in a live conversation. Opt-in per session (?audition=<key> on /app/amanda), owner only, closed
+// allowlist, never written to the Character Canon. An audition runs on its own ElevenLabs agent
+// (V.AUDITION_AGENT_NAME); the shared agent stays on the Canon voice. Empty while no audition runs.
+const AUDITION_VOICES = {};
+// Auditions that ended because Ed adopted the voice: an old link opens the normal session.
+const ADOPTED_AUDITIONS = { harper: 'Harper became the Canon voice for Amanda (Ed 2026-11-27)' };
+/** PURE: resolve the session voice. Returns { voiceId, ttsModel, expressive, audition } or { error }. */
+function sessionVoice(auditionKey, canonicalId, conv = amandaConversationModel()) {
+  let key = String(auditionKey || '').trim().toLowerCase();
+  if (Object.prototype.hasOwnProperty.call(ADOPTED_AUDITIONS, key)) key = '';
+  if (!key) return canonicalId ? { voiceId: canonicalId, ttsModel: conv.model_id, expressive: !!conv.expressive, audition: null } : { error: 'voice_not_approved' };
   const a = Object.prototype.hasOwnProperty.call(AUDITION_VOICES, key) ? AUDITION_VOICES[key] : null;
   if (!a) return { error: 'unknown_audition' };
-  return { voiceId: a.voice_id, ttsModel: a.tts_model, audition: { key, name: a.name, tts_model: a.tts_model, expressive: !!a.expressive } };
+  return { voiceId: a.voice_id, ttsModel: a.tts_model, expressive: !!a.expressive, audition: { key, name: a.name, tts_model: a.tts_model, expressive: !!a.expressive } };
 }
 function ownerOf(u) { return { user_id: u.user.id, email: u.email, name: u.full_name || null }; }
 
@@ -110,6 +114,10 @@ router.get('/status', express.json(), async (req, res) => {
   const probe = await sb().from('amanda_memory').select('id').limit(1);
   out.migration = probe.error ? (/amanda_memory|does not exist|schema cache/i.test(probe.error.message) ? 'pending' : probe.error.message) : 'applied';
   if (out.key) { try { out.agent = await V.checkAccess(); } catch (e) { out.agent = { ok: false, code: e.code || null, error: e.message }; } }
+  // What ElevenLabs actually holds for the shared agent (voice, model, expressive mode), read only.
+  const conv = amandaConversationModel();
+  out.conversation_model = { model_id: conv.model_id, expressive: !!conv.expressive };
+  if (out.agent && out.agent.agent_id) { try { out.agent.live = await V.getAgentTts(out.agent.agent_id); } catch (e) { out.agent.live = { error: e.message }; } }
   // ?audition=<key>: prepare the separate audition agent and report what ElevenLabs actually holds
   // for it (model, voice, expressive mode). Touches only the audition agent.
   if (out.key && req.query && req.query.audition) {
@@ -136,9 +144,9 @@ router.post('/session', express.json({ limit: '16kb' }), async (req, res) => {
     // Recovery, not polling: a conversation left open by a closed tab is finished when the next one starts.
     finishAbandoned(supabase, owner.user_id).catch((e) => console.warn('[amanda.voice] abandoned cleanup failed:', e.message));
     const sv = sessionVoice((req.body || {}).audition, amandaVoiceId());
-    if (sv.error === 'unknown_audition') return res.status(400).json({ ok: false, code: 'unknown_audition', error: `No voice audition is set up under that name. Available: ${Object.keys(AUDITION_VOICES).join(', ')}.` });
+    if (sv.error === 'unknown_audition') return res.status(400).json({ ok: false, code: 'unknown_audition', error: `No voice audition is set up under that name. Available: ${Object.keys(AUDITION_VOICES).join(', ') || 'none'}.` });
     if (sv.error) return res.status(409).json({ ok: false, code: 'voice_not_approved', error: 'Amanda has no approved voice in the Character Canon (/admin/characters).' });
-    const { voiceId, ttsModel, audition } = sv;
+    const { voiceId, ttsModel, expressive, audition } = sv;
     if (audition) console.log('[amanda.voice] voice audition session', JSON.stringify({ audition: audition.key, tts_model: ttsModel }));
     const brainUrl = `${baseUrl(req)}/api/amanda/voice/llm`;
     const [agent, started] = await Promise.all([
@@ -152,7 +160,7 @@ router.post('/session', express.json({ limit: '16kb' }), async (req, res) => {
     timings.total_ms = Date.now() - t0;
     st.startTimings = timings;
     console.log('[amanda.voice] session started', JSON.stringify({ session_id: started.session.id, ...timings, briefing_errors: Object.keys(started.briefing_errors || {}) }));
-    res.json({ ok: true, audition, session_id: started.session.id, conversation_token: tok.token, session_token: signToken({ sid: started.session.id, uid: owner.user_id, ex: !!(audition && audition.expressive) }), first_message: greeting(st), timings, briefing_incomplete: Object.keys(started.briefing_errors || {}) });
+    res.json({ ok: true, audition, voice: { tts_model: ttsModel, expressive: !!expressive }, session_id: started.session.id, conversation_token: tok.token, session_token: signToken({ sid: started.session.id, uid: owner.user_id, ex: !!expressive }), first_message: greeting(st), timings, briefing_incomplete: Object.keys(started.briefing_errors || {}) });
   } catch (e) {
     const code = e.code === 'migration_pending' ? 409 : e.code === 'permission' ? 502 : e.code === 'not_configured' ? 503 : 500;
     if (e.code === 'permission') e.message = `ElevenLabs refused the request. The server's ElevenLabs key needs the "ElevenLabs Agents" write permission. (${e.message})`;
@@ -302,4 +310,4 @@ function aggregateMetrics(rows) {
 }
 
 module.exports = router;
-module.exports._test = { signToken, verifyToken, aggregateMetrics, sanitizeClientMetrics, greeting, sessionVoice, AUDITION_VOICES };
+module.exports._test = { signToken, verifyToken, aggregateMetrics, sanitizeClientMetrics, greeting, sessionVoice, AUDITION_VOICES, ADOPTED_AUDITIONS };
