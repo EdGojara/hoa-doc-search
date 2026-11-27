@@ -163,9 +163,20 @@ router.get('/by-property/:propertyId', async (req, res) => {
 // GET /search — name / address / email / phone → candidate homeowners
 router.get('/search', async (req, res) => {
   try {
-    const q = String(req.query.q || '').trim();
-    if (q.length < 2) return res.json({ results: [] });
-    const like = `%${q}%`;
+    res.json(await searchHomeowners(req.query.q));
+  } catch (err) {
+    console.error('[homeowner360] search failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// The homeowner search, shared by the 360 screen and the shared lookups
+// (lib/lookups, Ed 2026-11-27). Callers scope the results to what their user may see.
+async function searchHomeowners(rawQ) {
+  {
+    const q = String(rawQ || '').trim();
+    if (q.length < 2) return { results: [], name_conflicts: [] };
+    const like = `%${q.replace(/[%_,()]/g, ' ')}%`;
     // contacts by name/email/phone
     const contacts = await safe(() => supabase.from('contacts')
       .select('id, full_name, primary_email, primary_phone, secondary_email')
@@ -188,6 +199,7 @@ router.get('/search', async (req, res) => {
       results.push({
         contact_id: c.id, name: c.full_name, email: c.primary_email || c.secondary_email || null, phone: c.primary_phone || null,
         properties: ps.map((p) => p.address), community: ps[0] ? ps[0].community : null,
+        property_ids: ps.map((p) => p.property_id), community_ids: [...new Set(ps.map((p) => p.community_id).filter(Boolean))],
       });
     }
     results.sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
@@ -229,12 +241,9 @@ router.get('/search', async (req, res) => {
       });
     }
 
-    res.json({ results, name_conflicts: nameConflicts });
-  } catch (err) {
-    console.error('[homeowner360] search failed:', err.message);
-    res.status(500).json({ error: safeErrorMessage(err) });
+    return { results, name_conflicts: nameConflicts };
   }
-});
+}
 
 // POST /verify-identity — staff records that two same-name contacts are the SAME
 // person or DIFFERENT people (Prompt 2/3). Staff-gated; verified_by = the acting
@@ -1368,4 +1377,4 @@ router.post('/interactions/:id/certified-number', express.json(), async (req, re
   }
 });
 
-module.exports = { router, requireStaffWrite, _test: { assemble, requireStaffWrite, h360AuthMode } };
+module.exports = { router, requireStaffWrite, assemble, searchHomeowners, ownedProperties, _test: { assemble, requireStaffWrite, h360AuthMode } };

@@ -403,6 +403,7 @@ const CHECKS = [
   'tests/test_ops_feed_phase1.js',
   'tests/test_amanda_request.js',
   'tests/test_amanda_conversation.js',     // Talk to Amanda (2026-11-26): brain, token, policy invariant, measurements
+  'tests/test_shared_lookups.js',          // Shared records lookups (2026-11-27): access by principal in code, dispatch, completion
   'tests/test_amanda_email_door.js',
   'tests/test_amanda_auto_reply.js',
   'tests/test_amanda_status_intent.js',
