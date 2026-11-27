@@ -241,6 +241,7 @@ require('../lib/authorization/arc_acc').registerExecutor('draft', {
     await sendHandler({ params: { id }, _approver: approver, body: { approved_package_sha256: packageSha } }, res);
     return out;
   },
+  rearm: () => rearmScheduled(),
 });
 async function sendHandler(req, res) {
   try {

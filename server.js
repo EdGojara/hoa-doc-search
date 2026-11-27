@@ -3396,6 +3396,9 @@ async function _accFinalizeHandler(req, res) {
       .eq('management_company_id', BEDROCK_MGMT_CO_ID)
       .single();
     if (qErr || !dec) return res.status(404).json({ error: 'Decision not found' });
+    // Approvals already decided at this property: a letter that refers to one is not read as a
+    // new approval (lib/acc/prior_approvals; the transport guard reads the same records).
+    dec.prior_approval_dates = await require('./lib/acc/prior_approvals').priorApprovalDates(supabase, dec);
 
     const decisionType = (body.decision_type || dec.decision_type || dec.ai_recommendation || '').trim();
     if (!decisionType) return res.status(400).json({ error: 'decision_type is required' });
@@ -11968,4 +11971,12 @@ httpServer.listen(3000, () => {
   // Ed 2026-11-26: re-arm teammate emails approved but still inside their delivery
   // window (lib/email/delivery_window) so a deploy never loses or skips one.
   require('./api/email_drafts').rearmScheduled().catch((e) => console.error('[delivery_window] re-arm failed:', e.message));
+  // Ed 2026-11-27: one more pass a few minutes after boot. During a deploy the outgoing
+  // instance can still be finishing work after this one booted; anything it scheduled or
+  // left unfinished (a scheduled send, an authorized ARC/ACC package) is picked up here,
+  // exactly once (lib/authorization/arc_acc: one runner per package, done items skipped).
+  setTimeout(() => {
+    require('./api/email_drafts').rearmScheduled().catch((e) => console.error('[delivery_window] second re-arm failed:', e.message));
+    require('./lib/authorization/arc_acc').resumePending(supabase).catch((e) => console.error('[arc_acc] boot resume failed:', e.message));
+  }, 3 * 60 * 1000).unref();
 });
