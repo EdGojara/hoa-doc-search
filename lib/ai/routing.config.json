@@ -451,6 +451,13 @@
       "prior": null,
       "note": "Talk to Amanda (2026-11-26): every spoken or typed turn of the owner's conversation with Amanda, with tool use. Latency-sensitive; measure before changing."
     },
+    "qa.amanda_acceptance_judge": {
+      "model": "tier:standard",
+      "fallback": "sonnet-4-6",
+      "consequence": "standard",
+      "prior": null,
+      "note": "Amanda acceptance tests (2026-11-28): grades a real conversation turn against facts the harness read independently. Engineering only, never in a live path."
+    },
     "team.amanda_memory_extract": {
       "model": "haiku-4-5",
       "fallback": "sonnet-4-6",
