@@ -165,11 +165,11 @@ check('voice shell config: custom LLM is ours, auth required, header secret set,
 
 check('voice audition: default is the canonical voice on Flash; auditions are a closed allowlist', () => {
   const plain = V.agentConfig({ brainUrl: 'https://x/llm', voiceId: 'canon', headerSecret: V.brainHeaderSecret() });
-  assert.strictEqual(plain.conversation_config.tts.model_id, 'eleven_flash_v2_5', 'normal sessions stay on Flash v2.5');
+  assert.strictEqual(plain.conversation_config.tts.model_id, 'eleven_flash_v2', 'normal sessions use English Flash v2');
   const exp = V.agentConfig({ brainUrl: 'https://x/llm', voiceId: 'h', headerSecret: V.brainHeaderSecret(), ttsModel: 'eleven_v3_conversational' });
   assert.strictEqual(exp.conversation_config.tts.model_id, 'eleven_v3_conversational');
   // no audition -> the Canon voice, unchanged
-  assert.deepStrictEqual(API.sessionVoice(undefined, 'canonVoice'), { voiceId: 'canonVoice', ttsModel: 'eleven_flash_v2_5', audition: null });
+  assert.deepStrictEqual(API.sessionVoice(undefined, 'canonVoice'), { voiceId: 'canonVoice', ttsModel: 'eleven_flash_v2', audition: null });
   assert.deepStrictEqual(API.sessionVoice('', null), { error: 'voice_not_approved' });
   // harper -> her voice on Eleven v4 Turbo (expressive mode), labelled as an audition
   const h = API.sessionVoice(' Harper ', 'canonVoice');
