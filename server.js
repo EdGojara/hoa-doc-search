@@ -615,7 +615,9 @@ const _STAFF_GATE_PUBLIC = [
   /^\/api\/claire\/public\/explainers$/,       // portfolio-wide ready videos only, filter is in the query
   /^\/api\/claire\/(me|explainers)$/,
   /^\/api\/claire\/session\/start$/,
-  /^\/api\/claire\/session\/[0-9a-f-]+\/(avatar-token|turn|heartbeat|handoff|end)$/,
+  // speak = Claire's voice (TTS) for an owned, active session; missing here, a
+  // homeowner heard nothing while staff did (Ed 2026-11-27 launch test).
+  /^\/api\/claire\/session\/[0-9a-f-]+\/(avatar-token|turn|heartbeat|handoff|end|speak)$/,
   /^\/api\/payments\/webhook$/,                // Stripe webhook (signature-verified inside)
   /^\/api\/graph\/mail\/(notify|lifecycle)\/[0-9a-f]{16}$/, // Graph mail push (per-mailbox clientState checked inside; Issue #29)
   // Twilio voice webhooks — same pattern as Stripe: outside-service webhooks,
