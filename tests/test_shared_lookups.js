@@ -155,6 +155,42 @@ check('wiring: dispatch runs only for the owner on voice/app; lookups are dispat
   assert.ok(!/sendMail|graph_send\.send|\.send\(/.test(disp), 'the dispatcher never sends');
 });
 
+check('Claire (portal): homeowner principal gets only her own-lot tools; balances only when allowed and owner-class', async () => {
+  const names = (p) => L.toolsFor(p).map((t) => t.name).sort();
+  const own = P.homeownerPrincipal({ portalUserId: 'p1', communityId: CID_A, propertyIds: [PROP_B], financials: true });
+  assert.deepStrictEqual(names(own), ['governing_documents', 'homeowner_transactions', 'my_account']);
+  const renter = P.homeownerPrincipal({ portalUserId: 'p1', communityId: CID_A, propertyIds: [PROP_B], financials: false });
+  assert.deepStrictEqual(names(renter), ['governing_documents', 'my_account']);
+  assert.ok(!own.capabilities.has('homeowner_record'), 'never the staff 360 record (internal notes, summaries)');
+  assert.strictEqual((await L.runLookup('homeowner_transactions', renter, {})).error, 'forbidden');
+  // another lot, even inside her own community, is refused before any read
+  const sb = fakeSb((t) => (t === 'properties' ? { data: { id: '66666666-6666-4666-8666-666666666666', street_address: '2 Elm', community_id: CID_A }, error: null } : { data: [], error: null }));
+  L._setClientForTests(sb);
+  try {
+    const r = await L.runLookup('my_account', own, { property_id: '66666666-6666-4666-8666-666666666666' });
+    assert.strictEqual(r.error, 'forbidden');
+    assert.ok(sb.log.every((l) => l.table === 'properties'), 'only the scope check ran');
+  } finally { L._setClientForTests(null); }
+});
+
+check('Claire (portal): homeownerAccess needs a signed-in portal user on the session\'s own lot', async () => {
+  const { _test } = require('../api/claire');
+  assert.strictEqual(await _test.homeownerAccess({ portalUserId: null, propertyId: PROP_B }, { property_id: PROP_B, community_id: CID_A }), null, 'no portal session');
+  assert.strictEqual(await _test.homeownerAccess({ portalUserId: 'p1', propertyId: PROP_B }, { property_id: '66666666-6666-4666-8666-666666666666', community_id: CID_A }), null, 'session lot is not the visitor lot');
+  assert.strictEqual(await _test.homeownerAccess({ portalUserId: 'p1', propertyId: PROP_B }, { property_id: PROP_B, community_id: null }), null);
+  const fs = require('fs');
+  const src = fs.readFileSync(require.resolve('../api/claire.js'), 'utf8');
+  assert.ok(/Lookups\.runLookup\(t\.name, principal, input \|\| \{\}\)/.test(src), 'handlers run with the session principal, never one from model input');
+  assert.ok(/CLAIRE_LOOKUPS = \['my_account', 'homeowner_transactions'\]/.test(src));
+});
+
+check('Claire (portal): correspondence is only what was exchanged with the homeowner, never notes or content', () => {
+  const src = require('fs').readFileSync(require.resolve('../lib/lookups/index.js'), 'utf8');
+  const fn = src.slice(src.indexOf('async function myAccount'), src.indexOf('// ---- association'));
+  assert.ok(/caller_facing: true/.test(fn) && /\['inbound', 'outbound'\]\.includes\(r\.direction\)/.test(fn) && /!\/note\/i/.test(fn));
+  assert.ok(!/content|notes|ai_summary|collection|attorney/.test(fn.replace(/\/\/.*$/gm, '').replace(/\* .*$/gm, '')), 'no internal fields read out');
+});
+
 (async () => {
   for (const [name, fn] of queue) {
     try { await fn(); passed++; console.log(`  ✓ ${name}`); }

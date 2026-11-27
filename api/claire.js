@@ -160,6 +160,30 @@ function centsFor(seconds) {
 // correspondence and must stay private. Explainers are the one asset class whose
 // job is to be watched by people who are not logged in, so they get their own
 // bucket rather than a public policy cut into a private one.
+// The signed-in homeowner's principal + Claire's account tools, or null (staff, board-only, no lot).
+const OWNER_LIKE_PORTAL_ROLES = new Set(['homeowner', 'board_member', 'staff', 'admin', 'manager']);
+const CLAIRE_LOOKUPS = ['my_account', 'homeowner_transactions'];
+async function homeownerAccess(visitor, session) {
+  if (!visitor || !visitor.portalUserId || !session.property_id || visitor.propertyId !== session.property_id || !session.community_id) return null;
+  try {
+    const Lookups = require('../lib/lookups');
+    const Principal = require('../lib/lookups/principal');
+    const access = await require('../lib/portal/financial_access').financialAccessFor(supabase, session.community_id);
+    const financials = !!access.balance && OWNER_LIKE_PORTAL_ROLES.has(String(visitor.portalRole || ''));
+    const principal = Principal.homeownerPrincipal({ portalUserId: visitor.portalUserId, communityId: session.community_id, propertyIds: [session.property_id], financials });
+    const tools = Lookups.toolsFor(principal).filter((t) => CLAIRE_LOOKUPS.includes(t.name));
+    const handlers = Object.fromEntries(tools.map((t) => [t.name, (input) => Lookups.runLookup(t.name, principal, input || {})]));
+    const CC = require('../lib/claire/caller_context');
+    const ctx = await CC.loadCallerContext(session.property_id, { includeBalance: financials });
+    const block = CC.callerContextPrompt(ctx);
+    const balanceLine = financials ? '' : '\nTheir balance is NOT available in this portal yet (the association has not turned homeowner balances on, or this sign-in is not the owner). Never point them to a tile or screen for it; offer to have the team confirm the amount.';
+    return { principal, tools, handlers, contextBlock: block ? block + balanceLine : balanceLine.trim() };
+  } catch (e) {
+    console.warn('[claire] homeowner access unavailable:', e.message);
+    return null;
+  }
+}
+
 const EXPLAINER_BUCKET = 'explainers';
 
 /**
@@ -437,8 +461,14 @@ router.post('/session/:id/turn', async (req, res) => {
       const { data: p } = await supabase.from('properties').select('street_address').eq('id', session.property_id).maybeSingle();
       property_address = (p && p.street_address) || null;
     }
+    // THE HOMEOWNER'S OWN ACCOUNT (Ed 2026-11-27): the shared lookups (lib/lookups) under a
+    // HOMEOWNER principal derived only from the signed portal session: their own lot, their
+    // community, balances only where the association shows them AND the sign-in is owner-class
+    // (renters never). The model cannot widen it: handlers use this principal, not its input.
+    const account = await homeownerAccess(visitor, session);
     const caller = {
       first_name: (visitor.name || '').trim().split(/\s+/)[0] || null,
+      account_context: account ? account.contextBlock : '',
       full_name: visitor.name || null,
       property_address,
       // Portal/board sign-in is a strong, unspoofable identity (unlike phone
@@ -481,7 +511,7 @@ router.post('/session/:id/turn', async (req, res) => {
     // so quality rides on the context, not the model.
     const portalModel = process.env.CLAIRE_PORTAL_MODEL || undefined;
 
-    for await (const chunk of streamTurn({ utterance: text, history, community, caller, personaPack, model: portalModel, channel: 'portal' })) {
+    for await (const chunk of streamTurn({ utterance: text, history, community, caller, personaPack, model: portalModel, channel: 'portal', ...(account ? { tools: account.tools, toolHandlers: account.handlers } : {}) })) {
       if (typeof chunk !== 'string') continue;  // control objects (passthrough tools) don't apply on video
       // No em dashes in what a resident reads on screen: Ed's rule covers
       // conversations, not just email, and the model still slips them in. Scrub
@@ -851,4 +881,4 @@ async function expireIdleSessions() {
   return (data || []).length;
 }
 
-module.exports = { router, expireIdleSessions };
+module.exports = { router, expireIdleSessions, _test: { homeownerAccess } };
