@@ -154,7 +154,7 @@ router.post('/session', express.json({ limit: '16kb' }), async (req, res) => {
     if (audition) console.log('[amanda.voice] voice audition session', JSON.stringify({ audition: audition.key, tts_model: ttsModel }));
     const brainUrl = `${baseUrl(req)}/api/amanda/voice/llm`;
     const [agent, started] = await Promise.all([
-      V.ensureAgent({ brainUrl, voiceId, ttsModel, audition: !!audition, expressive: !!expressive }).then((a) => { timings.agent_ms = a.ms; return a; }),
+      V.ensureAgent({ brainUrl, voiceId, ttsModel, audition: !!audition, expressive: !!expressive, tuning: audition ? {} : { similarity_boost: amandaConversationModel().similarity_boost, speculative_turn: amandaConversationModel().speculative_turn } }).then((a) => { timings.agent_ms = a.ms; return a; }),
       C.startConversation(supabase, { owner, channel: 'voice', provider: 'elevenlabs' }).then((s) => { timings.briefing_ms = s.briefing_ms; return s; }),
     ]);
     const tok = await V.conversationToken(agent.agent_id);

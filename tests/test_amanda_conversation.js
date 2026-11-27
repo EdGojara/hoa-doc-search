@@ -165,7 +165,7 @@ check('voice shell config: custom LLM is ours, auth required, header secret set,
 
 check('Canon voice (Ed 2026-11-27): Amanda talks on Eleven v4 Turbo, expressive; others keep Flash v2', () => {
   const VM = require('../lib/characters/voice_models');
-  assert.deepStrictEqual(VM.conversationModelFor('amanda'), { model_id: 'eleven_v4_turbo', expressive: true });
+  assert.deepStrictEqual(VM.conversationModelFor('amanda'), { model_id: 'eleven_v4_turbo', expressive: true, similarity_boost: 0.75, speculative_turn: true });
   assert.deepStrictEqual(VM.conversationModelFor('claire'), { model_id: 'eleven_flash_v2', expressive: false }, 'no entry -> unchanged default');
   for (const p of Object.keys(VM._BY_PERSONA)) assert.ok(V.ENGLISH_AGENT_MODELS.includes(VM.conversationModelFor(p).model_id), `${p}: an English agent can use it`);
   const plain = V.agentConfig({ brainUrl: 'https://x/llm', voiceId: 'canon', headerSecret: V.brainHeaderSecret() });
