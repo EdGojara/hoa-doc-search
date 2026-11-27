@@ -107,14 +107,6 @@ async function communityNames(supabase) {
 }
 function ownerOf(u) { return { user_id: u.user.id, email: u.email, name: u.full_name || null }; }
 
-// The greeting is deterministic (no model call): what changed since last time, from the briefing.
-function greeting(st) {
-  const first = String((st.owner.name || 'Ed').split(' ')[0]);
-  const b = st.briefing.text || '';
-  const m = /FINISHED WORK YOU HAVE NOT REPORTED TO HIM YET: (\d+)/.exec(b);
-  if (m && Number(m[1]) > 0) return `Hi ${first}. ${Number(m[1]) === 1 ? 'One thing' : 'A few things'} finished since we last talked. Want the rundown, or something else first?`;
-  return `Hi ${first}, it's Amanda. What's on your mind?`;
-}
 
 // ---- owner routes -------------------------------------------------------------------
 router.get('/status', express.json(), async (req, res) => {
@@ -166,14 +158,16 @@ router.post('/session', express.json({ limit: '16kb' }), async (req, res) => {
       communityNames(supabase).then((keywords) => V.ensureAgent({ brainUrl, voiceId, ttsModel, audition: !!audition, expressive: !!expressive, keywords, tuning: audition ? {} : { similarity_boost: amandaConversationModel().similarity_boost, speculative_turn: amandaConversationModel().speculative_turn } })).then((a) => { timings.agent_ms = a.ms; return a; }),
       C.startConversation(supabase, { owner, channel: 'voice', provider: 'elevenlabs' }).then((s) => { timings.briefing_ms = s.briefing_ms; return s; }),
     ]);
-    const tok = await V.conversationToken(agent.agent_id);
-    timings.token_ms = tok.ms;
+    // The opening line is generated from the conversation's own context while the token is fetched.
+    const g0 = Date.now();
+    const [tok, first] = await Promise.all([V.conversationToken(agent.agent_id), C.openingLine(anthropic(), C.peekState(started.session.id))]);
+    timings.token_ms = tok.ms; timings.opening_ms = Date.now() - g0;
     if (tok.conversation_id) await supabase.from('claire_sessions').update({ provider_conversation_id: tok.conversation_id }).eq('id', started.session.id);
     const st = C.peekState(started.session.id);
     timings.total_ms = Date.now() - t0;
     st.startTimings = timings;
     console.log('[amanda.voice] session started', JSON.stringify({ session_id: started.session.id, ...timings, briefing_errors: Object.keys(started.briefing_errors || {}) }));
-    res.json({ ok: true, audition, voice: { tts_model: ttsModel, expressive: !!expressive }, session_id: started.session.id, conversation_token: tok.token, session_token: signToken({ sid: started.session.id, uid: owner.user_id, ex: !!expressive }), first_message: greeting(st), timings, briefing_incomplete: Object.keys(started.briefing_errors || {}) });
+    res.json({ ok: true, audition, voice: { tts_model: ttsModel, expressive: !!expressive }, session_id: started.session.id, conversation_token: tok.token, session_token: signToken({ sid: started.session.id, uid: owner.user_id, ex: !!expressive }), first_message: first, timings, briefing_incomplete: Object.keys(started.briefing_errors || {}) });
   } catch (e) {
     const code = e.code === 'migration_pending' ? 409 : e.code === 'permission' ? 502 : e.code === 'not_configured' ? 503 : 500;
     if (e.code === 'permission') e.message = `ElevenLabs refused the request. The server's ElevenLabs key needs the "ElevenLabs Agents" write permission. (${e.message})`;
@@ -323,4 +317,4 @@ function aggregateMetrics(rows) {
 }
 
 module.exports = router;
-module.exports._test = { signToken, verifyToken, aggregateMetrics, sanitizeClientMetrics, greeting, sessionVoice, AUDITION_VOICES, ADOPTED_AUDITIONS };
+module.exports._test = { signToken, verifyToken, aggregateMetrics, sanitizeClientMetrics, sessionVoice, AUDITION_VOICES, ADOPTED_AUDITIONS };
