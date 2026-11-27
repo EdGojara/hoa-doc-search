@@ -243,6 +243,9 @@ function fakeTwilio({ approveCode = '123456' } = {}) {
     const a = A.agentConfig({ persona: 'amanda', brainUrl: 'https://x/api/phone/llm/amanda', headerSecret: 'h', voiceId: 'harper', ttsModel: 'eleven_v4_turbo', expressive: true, transferTo: 'claire-id' });
     assert.strictEqual(a.conversation_config.tts.model_id, 'eleven_v4_turbo');
     assert.strictEqual(a.conversation_config.tts.expressive_mode, true);
+    const t = A.agentConfig({ persona: 'amanda', brainUrl: 'u', headerSecret: 'h', voiceId: 'harper', ttsModel: 'eleven_v4_turbo', expressive: true, tuning: { similarity_boost: 0.75, speculative_turn: true } });
+    assert.strictEqual(t.conversation_config.tts.similarity_boost, 0.75);
+    assert.strictEqual(t.conversation_config.turn.speculative_turn, true);
     assert.ok(/Bedrock's AI senior community manager/.test(a.conversation_config.agent.first_message));
     assert.strictEqual(a.conversation_config.agent.prompt.built_in_tools.transfer_to_agent.params.transfers[0].enable_transferred_agent_first_message, true);
   });
