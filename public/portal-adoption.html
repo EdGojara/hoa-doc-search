@@ -1314,7 +1314,7 @@ function renderBalancesSwitch() {
   $('balancesToggle').checked = on;
   $('balancesLabel').textContent = on ? 'On' : 'Off';
   $('balancesHelp').textContent = on
-    ? `Verified by ${hf.verified_by} on ${new Date(hf.verified_at).toLocaleString()}. Online payments ${hf.payments === true ? 'on' : 'off'}.`
+    ? `Verified by ${hf.verified_by} on ${new Date(hf.verified_at).toLocaleString()}${hf.ledger_through ? `, ledger complete through ${hf.ledger_through}` : ``}. Online payments ${hf.payments === true ? 'on' : 'off'}.`
     : "Owner only. Turn on once this association's homeowner balances are verified. Records who verified and when. Online payments stay off.";
 }
 
@@ -1355,14 +1355,19 @@ async function savePayments(on) {
 async function saveBalances(on) {
   if (!_currentCommunityId) return;
   let note = null;
+  let ledgerThrough = null;
   if (on) {
-    note = prompt('Turn ON homeowner balances. Homeowners will see their account balance and transactions (no online payments). Note what you verified (optional):', '');
+    ledgerThrough = prompt('Turn ON homeowner balances. Homeowners will see their account balance and transactions (no online payments). The homeowner ledger is complete (all charges, payments and credits posted) through which date? (YYYY-MM-DD)', '');
+    if (ledgerThrough === null) { renderBalancesSwitch(); return; }
+    ledgerThrough = ledgerThrough.trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(ledgerThrough)) { toast('Enter the date as YYYY-MM-DD.', 'error'); renderBalancesSwitch(); return; }
+    note = prompt('Note what you verified (optional):', '');
     if (note === null) { renderBalancesSwitch(); return; }
   } else if (!confirm('Turn OFF homeowner balances? Homeowners stop seeing their balance immediately.')) { renderBalancesSwitch(); return; }
   try {
     const r = await af(`/api/portal-admin/community/${encodeURIComponent(_currentCommunityId)}/homeowner-balances`, {
       method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ on, note }),
+      body: JSON.stringify({ on, note, ledger_through: ledgerThrough }),
     });
     const j = await r.json().catch(() => ({}));
     if (r.status === 403) throw new Error('only the owner can change this');

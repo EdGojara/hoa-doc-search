@@ -28,6 +28,25 @@ check('everything explicit: balance and Pay', (() => { const r = d({ balance: { 
 check('payments must be literally true (a string is not a switch)', !d({ balance: { status: 'live' }, homeowner_financials: { ...verified, payments: 'yes' } }).payments);
 check('the demo community keeps its sample balance', FA.decideFinancialAccess({ is_demo: true, stripe_connected_account_id: 'acct_demo' }).balance);
 
+console.log('ledger complete through (Ed 2026-11-27 balance review)');
+{
+  const on = FA.balancesOnConfig({}, { verifiedBy: 'owner@example.com', note: null, at: '2026-12-02T00:00:00Z', ledgerThrough: '2026-11-30' });
+  check('the balances switch records the ledger-through date', on.homeowner_financials.ledger_through === '2026-11-30');
+  check('the decision carries it to homeowner surfaces', d(on).ledger_through === '2026-11-30');
+  check('a bad date is never claimed', FA.balancesOnConfig({}, { verifiedBy: 'x', at: 'y', ledgerThrough: '2026-02-30' }).homeowner_financials.ledger_through === null
+    && FA.isIsoDate('2026-11-30') && !FA.isIsoDate('11/30/2026') && !FA.isIsoDate(null));
+  check('an older stamp without the date still shows balances, with no date claimed', d({ balance: { status: 'live' }, homeowner_financials: verified }).ledger_through === null);
+  const portal = src('api/portal.js');
+  const tx = portal.slice(portal.indexOf("router.get('/transactions'"), portal.indexOf("router.get('/chamber'"));
+  check('transactions never send an import batch label to homeowners', !tx.includes('period_label') && !tx.includes('v_community_transaction_freshness'));
+  check('the running balance is computed from the owner ledger, not the imported column', tx.includes('runningAfter') && !tx.includes('running_balance_cents: t.running_balance_cents'));
+  check('a lot with no activity shows $0.00 only on a verified ledger with a stated date', portal.includes('function noActivityZeroBalance(prop, access)')
+    && /if \(!access \|\| !access\.balance \|\| !access\.ledger_through\) return null;/.test(portal)
+    && /if \(!prop \|\| !prop\.vantaca_account_id\) return null;/.test(portal));
+  const admin = src('api/portal_admin.js');
+  check('turning balances on requires the ledger-through date', admin.includes("error: 'ledger_through_required'"));
+}
+
 console.log('presentation');
 {
   const p = FA.presentedModuleConfig({ balance: { status: 'live' }, arc: { status: 'live' }, homeowner_financials: verified }, { balance: false });

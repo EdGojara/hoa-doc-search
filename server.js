@@ -540,6 +540,28 @@ const _STAFF_GATE_PUBLIC = [
   /^\/api\/portal\/property$/,                 // GET property details + owners + activity (cookie-gated)
   /^\/api\/portal\/balance$/,                  // GET balance + aging buckets + history (cookie-gated)
   /^\/api\/portal\/meetings$/,                 // GET upcoming meetings + past minutes (cookie-gated)
+  // Ed 2026-11-27 portal launch review: these homeowner routes were missing, so
+  // a homeowner holding only the portal cookie got 401 here while staff (who
+  // also carry the staff cookie) saw them work. Every handler authenticates the
+  // portal cookie itself (assertOwnerLikeRole / resolvePortalUser / scope) and
+  // resolves the lot server-side. tests/test_portal_gate_allowlist.js keeps the
+  // portal pages and this list in step.
+  /^\/api\/portal\/transactions$/,             // GET balance history (owner-like + scoped lot)
+  /^\/api\/portal\/messages$/,                 // GET threads / POST new message (portal scope)
+  /^\/api\/portal\/messages\/[^/]+(\/reply)?$/, // GET thread / POST reply (portal scope)
+  /^\/api\/portal\/arc$/,                      // GET my architectural requests (owner-like + scoped lot)
+  /^\/api\/portal\/arc\/submit$/,              // POST architectural request (owner-like + scoped lot)
+  /^\/api\/portal\/acc-reviews$/,              // GET committee member's queue (portal user, seat checked inside)
+  /^\/api\/portal\/acc-reviews\/[^/]+(\/vote)?$/, // GET application / POST vote (seat checked inside)
+  /^\/api\/portal\/community-calendar$/,       // GET events + meetings + clubhouse taken dates (owner-like + scoped lot)
+  /^\/api\/portal\/chamber$/,                  // GET live meeting (owner-like + scoped lot)
+  /^\/api\/portal\/chamber\/[^/]+\/(speak|viewer)$/, // POST request to speak / heartbeat
+  /^\/api\/portal\/tutorial-dismissed$/,       // POST first-login tour dismissed (portal user)
+  /^\/api\/portal\/vendor-categories$/,        // GET active vendor category labels (reference data only)
+  /^\/api\/portal\/vendor-experiences(\/mine)?$/, // POST vendor feedback / GET mine (owner-like + scoped lot)
+  /^\/api\/portal\/vendor-directory\/(feed|categories|vendor)$/, // GET community vendor directory (owner-like + scoped lot)
+  /^\/api\/portal\/newsletter-submissions$/,   // POST Share News (owner-like + scoped lot)
+  /^\/api\/community-contacts\/by-slug\/[^/]+$/, // GET published local contacts for the Local Contacts tile
   // Autopay — every handler resolves the property from the CALLER'S cookie
   // (assertOwnerLikeRole + resolveScopedProperty), never from the request body.
   // A client-supplied property_id here would leak whether a neighbour has

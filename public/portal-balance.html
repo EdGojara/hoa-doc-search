@@ -568,7 +568,7 @@ async function loadAndRenderTransactions(ctx) {
     };
 
     const freshnessLine = j.freshness
-      ? `Financial activity current as of <strong>${fmtDateShort(j.freshness.as_of_date)}</strong>${j.freshness.period_label ? ' · ' + escapeHtml(j.freshness.period_label) : ''}`
+      ? `Account activity shown through <strong>${fmtDateShort(j.freshness.as_of_date)}</strong>`
       : 'Transaction history';
 
     // The existing dollars() helper takes whole dollars. Our API returns
@@ -606,7 +606,7 @@ async function loadAndRenderTransactions(ctx) {
           </table>
         </div>
         <div class="txn-note">
-          Transactions and balance shown here mirror your association's accounting ledger. If you've recently paid and the latest payment isn't shown, your association will process the update with the next monthly refresh. The <strong>"as of"</strong> date above tells you when this data was last updated.
+          Transactions and balance shown here come from your association's accounting ledger. The <strong>"shown through"</strong> date above is the latest date included. A payment made after that date appears once it is posted.
         </div>
       </div>`;
   } catch (_) { /* silent — transactions are additive, never block the page */ }

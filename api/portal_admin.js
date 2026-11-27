@@ -462,7 +462,12 @@ router.post('/users/:id/revoke-property', async (req, res) => {
 
 // ============================================================================
 // POST /api/portal-admin/community/:communityId/homeowner-balances   (OWNER ONLY)
-//   { on: true, note }  -> balance tile live + verification stamp (who/when from the session)
+//   { on: true, note, ledger_through: 'YYYY-MM-DD' }
+//                       -> balance tile live + verification stamp (who/when from the session).
+//                          ledger_through is required: the date the owner verified the
+//                          homeowner ledger is complete through. Homeowners see it as
+//                          "shown through", and a lot with no activity since conversion
+//                          shows $0.00 as of that date.
 //   { on: false }       -> balance tile hidden, stamp removed
 // Homeowners see balances only after this. Online payments are never switched on here.
 // ============================================================================
@@ -472,21 +477,25 @@ router.post('/community/:communityId/homeowner-balances', async (req, res) => {
     const owner = await requireOwner(req, res);
     if (!owner) return;
     const communityId = req.params.communityId;
-    const { on, note } = req.body || {};
+    const { on, note, ledger_through: ledgerThrough } = req.body || {};
     if (typeof on !== 'boolean') return res.status(400).json({ error: 'on_must_be_boolean' });
+    const fa = require('../lib/portal/financial_access');
+    if (on) {
+      if (!fa.isIsoDate(ledgerThrough)) return res.status(400).json({ error: 'ledger_through_required', detail: 'Give the date the homeowner ledger is complete through (YYYY-MM-DD).' });
+      if (ledgerThrough > new Date().toISOString().slice(0, 10)) return res.status(400).json({ error: 'ledger_through_in_future' });
+    }
     const { data: current, error: curErr } = await supabase.from('communities')
       .select('id, name, is_demo, portal_module_config').eq('id', communityId).maybeSingle();
     if (curErr) throw curErr;
     if (!current) return res.status(404).json({ error: 'community_not_found' });
-    const fa = require('../lib/portal/financial_access');
     const verifiedBy = owner.email || owner.id;
     const cfg = on
-      ? fa.balancesOnConfig(current.portal_module_config, { verifiedBy, note: typeof note === 'string' ? note.slice(0, 500) : null, at: new Date().toISOString() })
+      ? fa.balancesOnConfig(current.portal_module_config, { verifiedBy, note: typeof note === 'string' ? note.slice(0, 500) : null, at: new Date().toISOString(), ledgerThrough })
       : fa.balancesOffConfig(current.portal_module_config);
     const { error: upErr } = await supabase.from('communities').update({ portal_module_config: cfg }).eq('id', communityId);
     if (upErr) throw upErr;
     await logAudit(on ? 'homeowner_balances_verified_on' : 'homeowner_balances_off', {
-      resource_type: 'community', resource_id: communityId, performed_by: verifiedBy, notes: (note || '').slice(0, 500),
+      resource_type: 'community', resource_id: communityId, performed_by: verifiedBy, notes: ((on ? `ledger complete through ${ledgerThrough}. ` : '') + (note || '')).slice(0, 500),
     });
     res.json({ ok: true, community_id: communityId, access: fa.decideFinancialAccess({ ...current, portal_module_config: cfg }) });
   } catch (err) {
