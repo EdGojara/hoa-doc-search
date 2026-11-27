@@ -17,6 +17,7 @@
 //      stubbed dependencies).
 // Offline and deterministic.
 // ============================================================================
+require('./_support/no_prod_network'); // unit test: loopback only, no production keys (Issue #27 follow-up)
 const assert = require('assert');
 const Module = require('module');
 const path = require('path');

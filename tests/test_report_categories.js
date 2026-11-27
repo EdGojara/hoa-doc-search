@@ -11,6 +11,7 @@
 // BVA_MAIN_MODULE (optional) = path to main's financial_statements.js for the
 // before/after comparison.
 // ============================================================================
+require('./_support/live_readonly'); // hybrid: fakes the code under test, reads live data read-only (Issue #27 follow-up)
 require('dotenv').config({ quiet: true });
 const assert = require('assert');
 const fs = require('fs');
