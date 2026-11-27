@@ -96,6 +96,17 @@ router.get('/deposits/:id/bank-lines', async (req, res) => {
   } catch (e) { fail(res, e, 'bank-lines'); }
 });
 
+// The owner accounts (current and former) of one lot, for a split allocation: a closing check
+// pays the seller's account (ended at settlement) and the buyer's.
+router.get('/owner-accounts', async (req, res) => {
+  try {
+    const actor = await requireActingUser(req, res); if (!actor) return;
+    const { community_id: cid, property_id: pid } = req.query;
+    if (!/^[0-9a-f-]{36}$/i.test(String(cid || '')) || !/^[0-9a-f-]{36}$/i.test(String(pid || ''))) return res.status(400).json({ error: 'community_id and property_id required' });
+    res.json({ accounts: await CR.ownerAccounts(supabase, { communityId: cid, propertyId: pid }) });
+  } catch (e) { fail(res, e, 'owner accounts'); }
+});
+
 router.get('/:id', async (req, res) => {
   try {
     const { data: rc, error } = await supabase.from('homeowner_check_receipts').select('*, properties(street_address, trusted_account_number), journal_entries!homeowner_check_receipts_journal_entry_id_fkey(reference)').eq('id', req.params.id).single();
@@ -104,8 +115,24 @@ router.get('/:id', async (req, res) => {
     let preview = null;
     if (rc.status === 'matched') { try { preview = await CR.previewRecording(supabase, rc.id); } catch (e) { preview = { error: e.message }; } }
     const findings = ['scanned', 'matched', 'exception'].includes(rc.status) ? await CR.findDuplicates(supabase, rc) : rc.duplicate_findings;
-    res.json({ receipt: full, preview, duplicate_findings: findings });
+    res.json({ receipt: full, preview, duplicate_findings: findings, allocation: await CR.describeAllocation(supabase, await CR.allocationLines(supabase, rc.id, ['prepared', 'recorded', 'returned'])) });
   } catch (e) { fail(res, e, 'detail'); }
+});
+
+// Split allocation (migration 584): one check across several owner accounts and a held portion.
+// Body: { lines: [{ kind, property_id, tenure_id, funding_party, purpose, amount_cents, basis }] }.
+// Never posts; Record posts the whole check once.
+router.post('/:id/allocation', express.json({ limit: '32kb' }), async (req, res) => {
+  try {
+    const actor = await requireActingUser(req, res); if (!actor) return;
+    res.json(await CR.setAllocation(supabase, req.params.id, { lines: (req.body || {}).lines, actor: who(actor) }));
+  } catch (e) { fail(res, e, 'allocation'); }
+});
+router.post('/:id/allocation/clear', express.json(), async (req, res) => {
+  try {
+    const actor = await requireActingUser(req, res); if (!actor) return;
+    res.json({ receipt: await CR.clearAllocation(supabase, req.params.id, { actor: who(actor) }) });
+  } catch (e) { fail(res, e, 'clear allocation'); }
 });
 
 // Scan checks. Field 'files': any number of check images or PDFs; a scanned multipage PDF is one
