@@ -170,6 +170,9 @@ check('Canon voice (Ed 2026-11-27): Amanda talks on Eleven v4 Turbo, expressive;
   for (const p of Object.keys(VM._BY_PERSONA)) assert.ok(V.ENGLISH_AGENT_MODELS.includes(VM.conversationModelFor(p).model_id), `${p}: an English agent can use it`);
   const plain = V.agentConfig({ brainUrl: 'https://x/llm', voiceId: 'canon', headerSecret: V.brainHeaderSecret() });
   assert.strictEqual(plain.conversation_config.tts.model_id, 'eleven_flash_v2', 'agent fallback is English Flash v2');
+  assert.ok(!('expressive_mode' in plain.conversation_config.tts), 'Flash agents carry no expressive flag');
+  const exp = V.agentConfig({ brainUrl: 'https://x/llm', voiceId: 'canon', headerSecret: V.brainHeaderSecret(), ttsModel: 'eleven_v4_turbo', expressive: true });
+  assert.strictEqual(exp.conversation_config.tts.expressive_mode, true, 'a PATCHed v4 Turbo agent is told expressive mode explicitly');
   // the normal session: the Canon voice on Amanda's conversation model, expressive
   assert.deepStrictEqual(API.sessionVoice(undefined, 'canonVoice'), { voiceId: 'canonVoice', ttsModel: 'eleven_v4_turbo', expressive: true, audition: null });
   assert.deepStrictEqual(API.sessionVoice('', null), { error: 'voice_not_approved' });
