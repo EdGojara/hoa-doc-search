@@ -118,7 +118,9 @@ function deps(o = {}) {
   await check('send-check parsing fails closed on anything unreadable', async () => {
     assert.strictEqual(IR.parseCheck('not json'), null);
     assert.strictEqual(IR.parseCheck('{"needs_reply":true}'), null);
-    assert.deepStrictEqual(IR.parseCheck('```json\n{"needs_reply":true,"supported":true,"no_commitments":true,"courteous":false,"issues":["curt"]}\n```').ok, false);
+    assert.deepStrictEqual(IR.parseCheck('```json\n{"needs_reply":true,"supported":true,"no_commitments":true,"courteous":false,"responsive":true,"issues":["curt"]}\n```').ok, false);
+    assert.strictEqual(IR.parseCheck('{"needs_reply":true,"supported":true,"no_commitments":true,"courteous":true,"responsive":false,"issues":["answers an earlier question"]}').ok, false);
+    assert.strictEqual(IR.parseCheck('{"needs_reply":true,"supported":true,"no_commitments":true,"courteous":true}'), null);   // a missing criterion fails closed
     const r = await IR.sendCheck({ inbound: inbound(), thread: 'x', draft: 'y' }, { client: { messages: { create: async () => { throw new Error('down'); } } } });
     assert.strictEqual(r.ok, false);
   });
