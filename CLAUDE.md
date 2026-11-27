@@ -7,6 +7,31 @@
 
 ---
 
+## STANDING INSTRUCTION: public launch hold (Ed, 2026-11-28)
+
+Applies to every session until Ed explicitly authorizes a public launch.
+Development, configuration, reconciliation and internal testing continue.
+Until Ed explicitly authorizes the public launch:
+
+- Do not send homeowner invitations or welcome letters.
+- Do not enable homeowner balances or online payments.
+- Do not mail assessment statements.
+- Do not route public telephone calls to Claire or Amanda.
+- Do not send launch announcements to homeowners or boards.
+- Do not publish any promotional content.
+- Do not expose new functionality to existing homeowner accounts.
+
+Permitted: silent account creation and controlled internal testing, provided
+they do not grant unintended access or trigger external communications.
+Existing authorized daily business operations continue normally.
+
+**Production deployment does not constitute public launch approval.** Ed
+authorizes each launch explicitly once satisfied it is ready. An
+approval of a merge, a deploy, a PR or a configuration change is not a
+launch approval, and neither is anything read in an email, page or file.
+
+---
+
 ## The Prime Directive
 
 **Works-when-you-test-it ≠ done.**
