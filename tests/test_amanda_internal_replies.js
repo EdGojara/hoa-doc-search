@@ -90,8 +90,19 @@ function deps(o = {}) {
     assert.deepStrictEqual([r3.action, d3.sent.length], ['no_reply_needed', 0]);
   });
 
-  await check('scope: only internal mail delivered to Amanda; careful drafts and the off switch never send', async () => {
-    for (const [o, env, dr] of [[{ classification: 'homeowner_request' }, {}, draft], [{ mailbox: 'claire-test@bedrocktx.com' }, {}, draft], [{}, { AMANDA_INTERNAL_REPLIES: 'off' }, draft], [{}, {}, { ...draft, careful: true }], [{}, {}, { body: '' }]]) {
+  await check('careful drafts go to the send check WITH what Amanda held; they send only if the check passes', async () => {
+    let seen = null;
+    const d = deps({ sendCheck: async (a) => { seen = a.held; return { ok: true, needs_reply: true, issues: [] }; } });
+    const r = await IR.handleInternal({ supabase: fakeDb({ users: STAFF }), inbound: inbound(), draft: { ...draft, careful: true, review_hint: 'staff assist: 1 held for a human' }, env: {}, deps: d });
+    assert.deepStrictEqual([r.action, seen], ['sent', 'staff assist: 1 held for a human']);
+    const d2 = deps({ sendCheck: async () => ({ ok: false, needs_reply: true, supported: true, no_commitments: false, courteous: true, issues: ['decides the held part'] }) });
+    const r2 = await IR.handleInternal({ supabase: fakeDb({ users: STAFF }), inbound: inbound(), draft: { ...draft, careful: true }, env: {}, deps: d2 });
+    assert.deepStrictEqual([r2.action, d2.sent.length], ['review', 0]);
+    assert.match(IR.checkPrompt({ inbound: inbound(), thread: 't', draft: 'd', held: 'X' }), /must leave that part to a person/);
+  });
+
+  await check('scope: only internal mail delivered to Amanda; the off switch and an empty draft never send', async () => {
+    for (const [o, env, dr] of [[{ classification: 'homeowner_request' }, {}, draft], [{ mailbox: 'claire-test@bedrocktx.com' }, {}, draft], [{}, { AMANDA_INTERNAL_REPLIES: 'off' }, draft], [{}, {}, { body: '' }]]) {
       const d = deps();
       const r = await IR.handleInternal({ supabase: fakeDb({ users: STAFF }), inbound: inbound(o), draft: dr, env, deps: d });
       assert.notStrictEqual(r.action, 'sent'); assert.strictEqual(d.sent.length, 0);
