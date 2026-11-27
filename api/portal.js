@@ -620,6 +620,38 @@ router.post('/request-link', express.json({ limit: '8kb' }), async (req, res) =>
       return res.json({ ok: true });
     }
 
+    // Public launch hold (Ed 2026-11-27): an account that exists silently for an
+    // association that is not open (portal off, not on its pilot) must not
+    // receive a sign-in email; that would be a homeowner communication before
+    // launch. Same answer as "not on file", so nothing is revealed. Board
+    // members, builders and managers keep their own access rules.
+    if (user.role === 'homeowner' || user.role === 'renter') {
+      try {
+        const { openPropertyIds } = require('../lib/portal/portal_open');
+        const ids = [];
+        const { data: grants, error: gErr } = await supabase.from('portal_user_properties')
+          .select('property_id').eq('portal_user_id', user.id).is('revoked_at', null);
+        if (gErr) throw gErr;
+        for (const g of grants || []) ids.push(g.property_id);
+        if (user.role === 'renter') {
+          const { data: rs, error: rErr } = await supabase.from('portal_user_residencies')
+            .select('property_residencies:residency_id (property_id, end_date)')
+            .eq('portal_user_id', user.id).is('revoked_at', null);
+          if (rErr) throw rErr;
+          for (const r of rs || []) if (r.property_residencies && !r.property_residencies.end_date) ids.push(r.property_residencies.property_id);
+        }
+        const open = await openPropertyIds(supabase, ids, user.id);
+        if (!open.size) {
+          console.log(`[portal] request-link: no open association for ${user.role} ${user.id.slice(0, 8)}; no email sent (launch hold)`);
+          return res.json({ ok: true });
+        }
+      } catch (e) {
+        // Fail closed: when we cannot tell, do not email.
+        console.warn('[portal] request-link open-association check failed (no email sent):', e.message);
+        return res.json({ ok: true });
+      }
+    }
+
     // Issue token
     const token = makeMagicToken();
     const expiresAt = new Date(Date.now() + MAGIC_LINK_TTL_HOURS * 60 * 60 * 1000).toISOString();
