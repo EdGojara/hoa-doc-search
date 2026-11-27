@@ -4,9 +4,9 @@
 //
 // Owner rule (Ed 2026-11-27): a caller providing a property address is not
 // authentication. Caller ID is not authentication either. Public information
-// and general help stay open; private records require real verification, and
-// no phone verification step exists yet, so on the phone private records are
-// closed (fail-closed) by CODE in lib/voice/private_gate.js.
+// and general help stay open; private records require real verification (a
+// code texted to the number on file, lib/verification), so on an unverified
+// call private records are closed (fail-closed) by CODE in lib/voice/private_gate.js.
 //
 // This file proves the gate runs, at the data/tool level, not in prompt prose:
 //   - every private tool refuses an unverified call even with a correct
@@ -161,11 +161,24 @@ function fakeRes() {
     assert.strictEqual(gate.phoneVerifiedPropertyId({ phone_verification: JSON.parse('{"property_id":"prop-1","method":"otp"}') }), null);
     assert.strictEqual(gate.phoneVerifiedPropertyId({ caller: { verified: true, property_id: 'prop-1' } }), null);
   });
-  await check('no verification method exists, so nothing can mint a verification', () => {
-    assert.deepStrictEqual([...gate.VERIFICATION_METHODS], []);
-    for (const method of ['address', 'caller_id', 'otp', 'name', undefined]) {
+  await check('the ONLY verification method is a code sent to the number on file; nothing else can mint one', () => {
+    // Ed 2026-11-27 decision 2: Twilio Verify code to a phone number already on file (lib/verification).
+    assert.deepStrictEqual([...gate.VERIFICATION_METHODS], ['sms_code_to_number_on_file']);
+    for (const method of ['address', 'caller_id', 'otp', 'name', 'sms', undefined]) {
       assert.throws(() => gate.createPhoneVerification({ property_id: 'prop-1', method }), /no_phone_verification_method_available/);
+      assert.throws(() => gate.createIdentityVerification({ kind: 'owner', user_id: 'u1', method }), /no_phone_verification_method_available/);
     }
+    const v = gate.createPhoneVerification({ property_id: 'prop-1', method: gate.SMS_CODE_ON_FILE });
+    assert.strictEqual(gate.phoneVerifiedPropertyId({ phone_verification: v }), 'prop-1');
+    // a copy (JSON round trip, spread) loses the brand and opens nothing
+    assert.strictEqual(gate.phoneVerifiedPropertyId({ phone_verification: JSON.parse(JSON.stringify(v)) }), null);
+    assert.strictEqual(gate.phoneVerifiedPropertyId({ phone_verification: { ...v } }), null);
+    const id = gate.createIdentityVerification({ kind: 'owner', user_id: 'u1', name: 'Ed', method: gate.SMS_CODE_ON_FILE });
+    assert.strictEqual(gate.verifiedIdentity({ identity_verification: id }).kind, 'owner');
+    assert.strictEqual(gate.verifiedIdentity({ identity_verification: JSON.parse(JSON.stringify(id)) }), null);
+    assert.throws(() => gate.createIdentityVerification({ kind: 'homeowner', user_id: 'u1', method: gate.SMS_CODE_ON_FILE }), /identity_kind_invalid/);
+    // an identity verification never opens a PROPERTY
+    assert.strictEqual(gate.phoneVerifiedPropertyId({ phone_verification: id }), null);
   });
 
   // ------------------------------------------------------- private tools refuse

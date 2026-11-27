@@ -203,6 +203,8 @@ const CHECKS = [
   // Phone homeowner security boundary (Ed 2026-11-27): private records are
   // closed on the phone until a real verification step exists. Offline.
   'tests/test_phone_private_records_gate.js',
+  // Claire + Amanda on the telephone (Ed 2026-11-27): code to the number on file, principals, agents. Offline.
+  'tests/test_phone_agents.js',
   'tests/test_amanda_guardrails.js',
   'tests/test_amanda_audience.js',
   'tests/test_amanda_disposition.js',
