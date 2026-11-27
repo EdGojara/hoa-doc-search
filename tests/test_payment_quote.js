@@ -80,6 +80,8 @@ function fakeStripe({ outcome = 'succeeded', intents = {} } = {}) {
   return {
     created, cancelled, intents,
     isConfigured: () => true,
+    // The stored connected account exists in this mode and takes charges (E1 gate).
+    async retrieveAccountRequirements() { return { ok: true, charges_enabled: true, payouts_enabled: true, details_submitted: true }; },
     async retrievePaymentMethod(id) { return PMS[id] ? { ok: true, payment_method: PMS[id] } : { ok: false, error: 'No such PaymentMethod' }; },
     async retrievePaymentIntent(id) { return intents[id] ? { ok: true, payment_intent: intents[id] } : { ok: false, error: 'no such pi' }; },
     async cancelPaymentIntent(id) { cancelled.push(id); if (intents[id]) intents[id].status = 'canceled'; return { ok: true }; },

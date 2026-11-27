@@ -73,8 +73,14 @@ console.log('lookup');
     && portal.lastIndexOf("error: 'balance_not_available'") > portal.indexOf("router.get('/transactions'"));
   const ck = src('lib/payments/assessment_checkout.js');
   check('every homeowner checkout (portal Pay, pay link) is refused server-side unless payments are allowed', ck.includes("return { ok: false, status: 403, error: 'online_payments_not_enabled'")
-    && ck.indexOf("error: 'online_payments_not_enabled'") < ck.indexOf('const amount = testAmountCents'));
-  check('only the demo payment-sandbox lot skips the association gate', ck.includes('if (identity.property.payment_sandbox !== true) {'));
+    && ck.indexOf("error: 'online_payments_not_enabled'") < ck.indexOf('const amount = liveVerification'));
+  // Only the demo payment-sandbox lot and the owner's live $1 verification
+  // (owner-only route, fixed $1.00, refunded automatically; Ed 2026-11-27) skip
+  // the association switch. The verification is keyed on the server-set initiator only.
+  check('only the demo payment-sandbox lot and the owner live verification skip the association gate',
+    ck.includes('if (identity.property.payment_sandbox !== true && !liveVerification) {')
+    && ck.includes('const liveVerification = initiatedBy === LIVE_VERIFICATION_INITIATOR;')
+    && ck.includes("const LIVE_VERIFICATION_INITIATOR = 'live_verification';"));
   check('the pay link shows "not available yet" for the refusal', src('server.js').includes("r.error === 'online_payments_not_enabled'"));
   check('the portal hides the balance stat when the server hides the balance', src('public/portal.html').includes("balVal.closest('.stat').style.display = bal.status === 'hidden' ? 'none' : '';"));
 

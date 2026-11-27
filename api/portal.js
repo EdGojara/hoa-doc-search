@@ -1620,6 +1620,20 @@ router.get('/me', async (req, res) => {
     // Fail-closed per association (lib/portal/financial_access, Ed 2026-11-16): no balance
     // leaves the server unless the association's balances are switched on AND verified.
     const financialAccess = require('../lib/portal/financial_access').decideFinancialAccess({ ...community, is_demo: isDemoCommunity });
+    // E1 (Ed 2026-11-27): Pay shows only if the stored connected account exists
+    // in this Stripe mode and takes charges (a sandbox account stored 'enabled'
+    // is not ready under the live key). Cached briefly; fails closed.
+    if (financialAccess.payments && community.stripe_connected_account_id) {
+      try {
+        const CAC = require('../lib/payments/connected_account_check');
+        const chk = await CAC.checkConnectedAccount(require('../lib/payments/stripe'), community.stripe_connected_account_id,
+          { mode: require('../lib/payments/stripe_mode').stripeMode() });
+        if (CAC.paymentRefusalFor(chk, community)) { financialAccess.payments = false; financialAccess.reason = 'stripe_not_ready'; }
+      } catch (e) {
+        console.warn('[portal] /me connected account check failed (Pay hidden):', e.message);
+        financialAccess.payments = false; financialAccess.reason = 'stripe_not_ready';
+      }
+    }
     if (!financialAccess.balance) balance = { status: 'hidden', amount_cents: null, as_of: null };
     else if (balance.amount_cents == null) {
       const zero = noActivityZeroBalance(prop, financialAccess);

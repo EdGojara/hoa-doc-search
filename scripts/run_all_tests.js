@@ -320,6 +320,7 @@ const CHECKS = [
   'tests/test_payment_foundation.js',
   'tests/test_autopay_intent.js',         // autopay on the one-time path: platform enrollment, off-session destination charge, notice fee+total, switch, in-flight
   'tests/test_payment_quote.js',          // funding-aware fees: credit-only surcharge cap, server-side confirm, PI webhook settlement
+  'tests/test_stripe_live_activation.js', // live activation: stored account must exist in this Stripe mode (E1); owner's $1 live verification + auto-refund (E2)
   'tests/test_portal_financials_fail_closed.js',
   'tests/test_portal_launch.js',
   'tests/test_portal_invite_roster.js',

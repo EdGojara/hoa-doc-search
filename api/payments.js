@@ -483,6 +483,36 @@ router.post('/test/assessment-intent/:step', express.json({ limit: '8kb' }), asy
   }
 });
 
+// POST /api/payments/live-verification/(setup|quote|confirm)   (OWNER ONLY)
+// The owner's $1.00 verification payment on a lot he picks, before an
+// association's online payments open to homeowners (Ed 2026-11-27, live
+// activation E2). Same gates, fee rules, PaymentIntent and webhook posting as a
+// homeowner payment (lib/payments/live_verification.js); the webhook refunds it
+// automatically once Stripe confirms it. Live key: real lots only, never demo.
+// Test key: the payment-sandbox lot only. Open
+// /portal/pay?live_verify=1&property_id=<lot>, or the button on Online Payments.
+router.post('/live-verification/:step', express.json({ limit: '8kb' }), async (req, res) => {
+  try {
+    const { requireOwner } = require('./_require_admin');
+    const owner = await requireOwner(req, res);
+    if (!owner) return;
+    const b = req.body || {};
+    const LV = require('../lib/payments/live_verification');
+    const origin = process.env.APP_BASE_URL || `${req.protocol}://${req.get('host')}`;
+    const r = await LV.runVerificationStep({ supabase, stripeLib }, req.params.step, {
+      propertyId: b.property_id, paymentMethodId: b.payment_method_id, quoteToken: b.quote_token,
+      ownerEmail: owner.email || owner.id,
+      returnUrl: `${origin}/portal/pay?live_verify=1&returned=1&property_id=${encodeURIComponent(String(b.property_id || ''))}`,
+      mandate: { ip: String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0].trim(), userAgent: String(req.headers['user-agent'] || '').slice(0, 500) },
+    });
+    if (!r.ok) return res.status(r.status || 500).json({ error: r.error, hint: r.hint, quote: r.quote, legal_hold: r.legal_hold });
+    res.json(r);
+  } catch (err) {
+    console.error('[payments] live verification failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
 // POST /api/payments/test/payment-sandbox  { action: plan | apply | plan_remove | remove }
 // (admin, TEST MODE ONLY). Provisions or removes the Drama Creek payment-sandbox
 // lot, in one transaction; the plan actions run everything and roll back.
@@ -660,11 +690,40 @@ router.post('/connect/onboard', express.json(), async (req, res) => {
       return res.status(409).json({ error: 'community_not_taking_payments', detail: gate.reason });
     }
 
-    const { data: community } = await supabase.from('communities')
-      .select('id, name, hoa_legal_name, stripe_connected_account_id').eq('id', community_id).maybeSingle();
+    const { data: community, error: cErr } = await supabase.from('communities')
+      .select('id, name, hoa_legal_name, stripe_connected_account_id, stripe_onboarding_status').eq('id', community_id).maybeSingle();
+    if (cErr) throw cErr;
     if (!community) return res.status(404).json({ error: 'community_not_found' });
 
     let accountId = community.stripe_connected_account_id;
+    // E1 (Ed 2026-11-27): a stored account that does not exist in THIS Stripe
+    // mode (a sandbox account read with the live key) is treated as missing: the
+    // old id goes to the audit log and a fresh account is made. Only Stripe's
+    // definite "no such account" does this; a lookup that fails for any other
+    // reason refuses, so a network blip can never orphan a real account.
+    if (accountId) {
+      const { stripeMode } = require('../lib/payments/stripe_mode');
+      const mode = stripeMode();
+      const CAC = require('../lib/payments/connected_account_check');
+      const chk = await CAC.checkConnectedAccount(stripeLib, accountId, { mode, useCache: false });
+      if (!chk.ok) return res.status(502).json({ error: 'stripe_status_unavailable', hint: 'Could not confirm the stored Stripe account. Try again in a minute.' });
+      if (!chk.exists) {
+        const staleId = accountId;
+        const actor = await require('./_require_admin').getAuthedUser(req).catch(() => null);
+        const { error: aErr } = await supabase.from('portal_audit_log').insert({
+          action: 'stripe_connected_account_replaced', resource_type: 'community', resource_id: community.id,
+          performed_by: (actor && actor.email) || 'staff',
+          notes: `stored account ${staleId} (status ${community.stripe_onboarding_status || 'none'}) does not exist in ${mode} mode; replaced by a new ${mode} account`,
+        });
+        if (aErr) {
+          console.error('[payments] connect onboard: audit of stale account failed, not replacing:', aErr.message);
+          return res.status(500).json({ error: 'audit_failed' });
+        }
+        console.warn(`[payments] connect onboard: ${community.name} stored account ${staleId} not found in ${mode} mode; starting a new one`);
+        CAC.clearAccountCheck(staleId);
+        accountId = null;
+      }
+    }
     if (!accountId) {
       // Recover an account we already created for this community (DB link may
       // have been lost on an earlier store failure) before making a new one.
@@ -676,7 +735,11 @@ router.post('/connect/onboard', express.json(), async (req, res) => {
         if (!acct.ok) return res.status(500).json({ error: acct.error || 'account_create_failed', stripeCode: acct.stripeCode });
         accountId = acct.account_id;
       }
-      await supabase.from('communities').update({ stripe_connected_account_id: accountId, stripe_onboarding_status: 'in_progress' }).eq('id', community.id);
+      const { error: upErr } = await supabase.from('communities').update({ stripe_connected_account_id: accountId, stripe_onboarding_status: 'in_progress', stripe_onboarded_at: null }).eq('id', community.id);
+      if (upErr) {
+        console.error(`[payments] connect onboard: account ${accountId} created but not stored for ${community.id}: ${upErr.message}`);
+        return res.status(500).json({ error: 'account_link_store_failed' });
+      }
     }
     const base = return_url || `${req.protocol}://${req.get('host')}/admin/accounting`;
     const link = await stripeLib.createAccountLink({
@@ -705,6 +768,15 @@ router.get('/connect/status', async (req, res) => {
     // Requirements too, so a restricted account says WHAT Stripe still needs
     // instead of a bare "restricted" (Ed 2026-11-21, Drama Creek sandbox).
     const st = await stripeLib.retrieveAccountRequirements(community.stripe_connected_account_id);
+    // E1: the stored account does not exist in this Stripe mode (a sandbox
+    // account under the live key). Say so; never count it as ready. Nothing is
+    // written here: "Set up online payments" replaces it, with an audit entry.
+    if (!st.ok && require('../lib/payments/connected_account_check').isMissingAccountResult(st)) {
+      const m = require('../lib/payments/stripe_mode').stripeMode();
+      return res.json({ ok: true, has_account: true, account_in_mode: false, account_id: community.stripe_connected_account_id, onboarded: false,
+        status: 'not_in_current_mode', mode: m,
+        hint: `The stored Stripe account does not exist in ${m} mode. Set up online payments again to create the ${m} account.` });
+    }
     if (!st.ok) return res.status(502).json({ error: 'stripe_status_unavailable' });
     const onboarded = !!(st.ok && st.details_submitted && st.charges_enabled);
     const newStatus = onboarded ? 'enabled' : (st.details_submitted ? 'restricted' : 'in_progress');
@@ -714,7 +786,7 @@ router.get('/connect/status', async (req, res) => {
         ...(onboarded ? { stripe_onboarded_at: new Date().toISOString() } : {}),
       }).eq('id', community.id);
     }
-    res.json({ ok: true, has_account: true, account_id: community.stripe_connected_account_id, onboarded, status: newStatus, details_submitted: st.details_submitted, charges_enabled: st.charges_enabled, payouts_enabled: st.payouts_enabled,
+    res.json({ ok: true, has_account: true, account_in_mode: true, account_id: community.stripe_connected_account_id, onboarded, status: newStatus, details_submitted: st.details_submitted, charges_enabled: st.charges_enabled, payouts_enabled: st.payouts_enabled,
       currently_due: st.currently_due, past_due: st.past_due, disabled_reason: st.disabled_reason || null });
   } catch (err) {
     console.error('[payments] connect status failed:', err.message);
@@ -737,16 +809,31 @@ router.get('/connect/portfolio-status', async (req, res) => {
       .select('id, name, stripe_connected_account_id, stripe_onboarding_status, portal_active, portal_module_config, is_demo, management_status, financials_active')
       .order('name');
     if (error) return res.status(500).json({ error: error.message });
+    // E1: check each stored account exists IN THIS MODE (cached 2 minutes per
+    // account, in parallel; a handful of communities). A sandbox account stored
+    // as 'enabled' is not ready under the live key.
+    const CAC = require('../lib/payments/connected_account_check');
+    const checks = {};
+    if (mode !== 'unconfigured') {
+      await Promise.all((data || []).filter((c) => c.stripe_connected_account_id).map(async (c) => {
+        checks[c.id] = await CAC.checkConnectedAccount(stripeLib, c.stripe_connected_account_id, { mode });
+      }));
+    }
     const communities = (data || []).map((c) => {
-      const hasAccount = !!c.stripe_connected_account_id;
+      const chk = checks[c.id] || null;
+      // null = not checked or could not check right now (stored status shown);
+      // false = the stored id does not exist in this mode: onboard again.
+      const accountInMode = chk ? (chk.ok ? chk.exists : null) : null;
+      const hasAccount = !!c.stripe_connected_account_id && accountInMode !== false;
       const balanceTile = ((c.portal_module_config || {}).balance || {}).status === 'live';
       const portalLive = c.portal_active === true;
       return {
         id: c.id,
         name: c.name,
         has_account: hasAccount,
-        onboarded: c.stripe_onboarding_status === 'enabled',
-        status: c.stripe_onboarding_status || (hasAccount ? 'in_progress' : 'not_started'),
+        account_in_mode: accountInMode,
+        onboarded: c.stripe_onboarding_status === 'enabled' && accountInMode !== false && !(chk && chk.ok && chk.exists && !chk.charges_enabled),
+        status: accountInMode === false ? 'not_in_current_mode' : (c.stripe_onboarding_status || (hasAccount ? 'in_progress' : 'not_started')),
         portal_active: portalLive,
         balance_tile_live: balanceTile,
         // Cross-check, per the CLAUDE.md "preview must verify against truth"
@@ -774,6 +861,7 @@ router.get('/connect/portfolio-status', async (req, res) => {
       enabled: communities.filter((c) => c.onboarded).length,
       in_progress: communities.filter((c) => c.has_account && !c.onboarded).length,
       not_started: communities.filter((c) => !c.has_account).length,
+      not_in_current_mode: communities.filter((c) => c.account_in_mode === false).length,
       portal_live_without_payments: communities.filter((c) => c.portal_live_without_payments).length,
     };
     res.json({ ok: true, mode, summary, communities });
@@ -989,6 +1077,7 @@ async function handleAccountUpdated(account, eventId) {
   // Surface to communities table so admin UI can show the current state.
   const acctId = account.id;
   if (!acctId) return;
+  require('../lib/payments/connected_account_check').clearAccountCheck(acctId);
   const newStatus = account.charges_enabled
     ? 'enabled'
     : account.requirements?.disabled_reason
@@ -1063,49 +1152,15 @@ router.post('/:id/refund', express.json({ limit: '32kb' }), async (req, res) => 
       .single();
     if (error) throw error;
     if (!payment) return res.status(404).json({ error: 'payment not found' });
-    if (payment.status !== 'succeeded' && payment.status !== 'partially_refunded') {
-      return res.status(409).json({ error: `cannot refund payment in status ${payment.status}` });
-    }
-    if (!payment.processor_payment_id) {
-      return res.status(400).json({ error: 'no processor_payment_id on record (was this a paper payment?)' });
-    }
 
-    // Whether Bedrock gives back its management fee is a judgement about
-    // whether the service happened, so the operator states it rather than the
-    // code assuming. A cancelled booking refunds it (nothing was delivered);
-    // returning a deposit after the event does not (the rental happened).
-    // Default false — keeping a fee you earned is recoverable; silently
-    // handing back revenue on every deposit return is not obvious to anyone.
-    const refund = await stripeLib.refund({
-      paymentIntentId: payment.processor_payment_id,
-      amountCents: amount_cents || undefined,
-      connectedAccountId: payment.connected_account_id || undefined,
-      reason: reason || 'requested_by_customer',
-      reverseTransfer: !!reverse_transfer,
-      // Assessments: the convenience fee is Bedrock's, collected as the
-      // application fee. Refunding the charge reverses the WHOLE transfer from
-      // the association, so unless the application fee comes back too, the
-      // association's own funds pay for refunding Bedrock's fee (Ed 2026-11-21:
-      // fees stay separate from association funds). Always refund it here.
-      refundApplicationFee: payment.product_type === 'assessment_payment' || req.body.refund_application_fee === true,
+    // One refund path (lib/payments/refund_payment.js), shared with the live
+    // $1 verification so the two can never behave differently.
+    const { refundPaymentRow } = require('../lib/payments/refund_payment');
+    const refund = await refundPaymentRow({ supabase, stripeLib }, payment, {
+      amountCents: amount_cents, reason, reverseTransfer: reverse_transfer,
+      refundApplicationFee: req.body.refund_application_fee === true,
     });
-
-    if (!refund.ok) {
-      return res.status(refund.skipped ? 503 : 500).json({ error: refund.error });
-    }
-
-    // Webhook will fire charge.refunded shortly and reconcile, but reflect right away
-    // so admin UI doesn't show stale state.
-    const newRefundedTotal = (payment.refunded_amount_cents || 0) + (refund.amount_cents || payment.amount_cents);
-    await supabase
-      .from('payments')
-      .update({
-        status: newRefundedTotal >= payment.amount_cents ? 'refunded' : 'partially_refunded',
-        refunded_amount_cents: newRefundedTotal,
-        refunded_at: new Date().toISOString(),
-        refund_reason: reason || null,
-      })
-      .eq('id', payment.id);
+    if (!refund.ok) return res.status(refund.status || 500).json({ error: refund.error });
 
     res.json({
       ok: true,

@@ -120,7 +120,11 @@
   let setup = null, stripe = null, elements = null, kind = null, paymentMethodId = null, quote = null;
 
   // ?staff_test=1: staff verification in Stripe TEST mode only (server refuses otherwise).
-  const apiBase = params.get('staff_test') === '1' ? '/api/payments/test/assessment-intent/' : '/api/portal/pay/';
+  // ?live_verify=1: the owner's $1.00 live verification (owner only on the server;
+  // refunded automatically once Stripe confirms it).
+  const liveVerify = params.get('live_verify') === '1';
+  const apiBase = liveVerify ? '/api/payments/live-verification/'
+    : params.get('staff_test') === '1' ? '/api/payments/test/assessment-intent/' : '/api/portal/pay/';
   async function api(path, body) {
     const r = await fetch(apiBase + path, {
       method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
@@ -150,6 +154,10 @@
       succeeded: ['Payment received', 'Thank you. Your payment was approved. Your balance updates as soon as it is confirmed, usually within a minute.'],
       processing: ['Bank payment submitted', 'Thank you. Bank payments take a few business days to clear. Your balance updates when the bank confirms it.'],
     };
+    if (liveVerify) {
+      map.succeeded = ['Verification payment approved', 'Stripe approved the $1.00 verification. It is refunded automatically, fee included, as soon as Stripe confirms it to trustEd. Check Online Payments and the Stripe Dashboard for the charge, the transfer and the refund.'];
+      map.processing = ['Verification bank payment submitted', 'The $1.00 bank verification takes a few business days to clear. It is refunded automatically, fee included, once the bank confirms it.'];
+    }
     const m = map[status] || ['Payment not completed', 'Your payment was not completed and you have not been charged. Please try again.'];
     $('resTitle').textContent = m[0];
     $('resTitle').className = map[status] ? 'ok' : '';
@@ -259,6 +267,7 @@
     }
 
     $('assocName').textContent = setup.association_name || 'your association';
+    if (liveVerify) $('assocName').parentElement.textContent = 'Owner live verification for ' + (setup.association_name || 'this association') + ' (refunded automatically)';
     $('dueAmt').textContent = usd(setup.assessment_cents);
     $('feeCard').textContent = setup.fee_schedule.card + '.' + (setup.fee_schedule.debit ? ' ' + setup.fee_schedule.debit + '.' : '');
     $('feeAch').textContent = setup.fee_schedule.ach + '.';

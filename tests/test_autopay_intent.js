@@ -90,6 +90,8 @@ function fakeStripe({ outcome = 'succeeded', intents = {}, setup = null } = {}) 
   return {
     created, cancelled, customers, sessions, intents,
     isConfigured: () => true,
+    // The stored connected account exists in this mode and takes charges (E1 gate).
+    async retrieveAccountRequirements() { return { ok: true, charges_enabled: true, payouts_enabled: true, details_submitted: true }; },
     async createCustomer(o) { customers.push(o); return { ok: true, id: `cus_platform_${customers.length}` }; },
     async createSetupSession(o) { sessions.push(o); return { ok: true, id: `cs_setup_${sessions.length}`, url: 'https://checkout.stripe.test/setup' }; },
     async retrieveSetupSession() { return setup || { ok: false, error: 'no session' }; },
