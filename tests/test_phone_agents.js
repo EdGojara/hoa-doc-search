@@ -205,6 +205,25 @@ function fakeTwilio({ approveCode = '123456' } = {}) {
     assert.deepStrictEqual(r.passthrough, { name: 'transfer_to_agent', input: { reason: 'homeowner', agent_number: 0 } });
   });
 
+  await check('Amanda\'s briefing ALWAYS carries the standing workstreams, by priority, with the latest event (any channel)', async () => {
+    const C = require('../lib/amanda/conversation');
+    const sbw = fakeSupabase({
+      objectives: [
+        { id: 'w4', title: 'Workstream 4: Infra', priority: 'normal', accountable_persona: 'amanda', status: 'open', next_action: 'none' },
+        { id: 'w1', title: 'Workstream 1: Accounting', priority: 'critical', accountable_persona: 'amanda', status: 'open', next_action: 'Ed approves package' },
+        { id: 'w3', title: 'Workstream 3: Telephone', priority: 'high', accountable_persona: 'amanda', status: 'open' },
+        { id: 'x', title: 'Closing packet 12', priority: 'critical', accountable_persona: 'amanda', status: 'open' },
+        { id: 'w9', title: 'Workstream 9: closed', priority: 'critical', accountable_persona: 'amanda', status: 'resolved' },
+      ],
+      objective_events: [{ objective_id: 'w1', at: '2026-11-27T10:00:00Z', summary: 'COMPLETED: closing package', kind: 'note' }],
+    });
+    const ws = await C.loadWorkstreams(sbw);
+    assert.deepStrictEqual(ws.items.map((w) => w.id), ['w1', 'w3', 'w4']);
+    const block = C.workstreamsBlock(ws.items);
+    assert.ok(/never a new request/.test(block) && /\[critical\] Workstream 1/.test(block) && /Latest \(2026-11-27\): COMPLETED: closing package/.test(block));
+    assert.ok(block.indexOf('Workstream 1') < block.indexOf('Workstream 3') && block.indexOf('Workstream 3') < block.indexOf('Workstream 4'));
+  });
+
   // ---- agents ----------------------------------------------------------------------------
   await check('agent config: AI + recording disclosed first, our brain + secret header, 90-day retention, webhook + extra body on', () => {
     const c = A.agentConfig({ persona: 'claire', brainUrl: 'https://x/api/phone/llm/claire', headerSecret: 'h', voiceId: 'v', ttsModel: 'eleven_flash_v2', transferTo: 'amanda-id' });
