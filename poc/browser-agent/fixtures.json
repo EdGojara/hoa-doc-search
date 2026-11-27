@@ -1,0 +1,14 @@
+{
+  "note": "Test values for the local mock portal only. Not a real account.",
+  "user": "kat-poc",
+  "pass": "poc-only-not-a-secret",
+  "reports": [
+    { "id": "R-2026-10-21", "date": "2026-10-21", "name": "Item activity 10/21", "csv": "item,date,amount\n1041,2026-10-21,22035.61\n1033,2026-10-21,918.90\n" },
+    { "id": "R-2026-10-22", "date": "2026-10-22", "name": "Item activity 10/22", "csv": "item,date,amount\n1042,2026-10-22,259.80\n1043,2026-10-22,2029.69\n1099,2026-10-22,500.00\n" }
+  ],
+  "register": [
+    { "item": "1042", "amount": "259.80" },
+    { "item": "1043", "amount": "2029.69" },
+    { "item": "1046", "amount": "4275.29" }
+  ]
+}
