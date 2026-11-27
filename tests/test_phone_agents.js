@@ -147,6 +147,14 @@ function fakeTwilio({ approveCode = '123456' } = {}) {
     const good = await Verification.check({ attempt_id: s.attempt_id, code: '123456', deps: tw.deps });
     assert.deepStrictEqual({ kind: good.record.kind, user_id: good.record.user_id }, { kind: 'owner', user_id: 'u-ed' });
   });
+  await check('readiness is read only: it never creates the Verify service', async () => {
+    Verification._resetForTests();
+    const calls = [];
+    const deps = { fetchImpl: async (url, opts) => { calls.push(opts.method); return { ok: true, status: 200, text: async () => JSON.stringify({ services: [] }) }; } };
+    const r = await Verification.readiness(deps);
+    assert.strictEqual(r.exists, false);
+    assert.deepStrictEqual(calls, ['GET']);
+  });
   await check('no credentials -> no code, a plain spoken fallback', async () => {
     const save = process.env.TWILIO_AUTH_TOKEN; delete process.env.TWILIO_AUTH_TOKEN;
     const r = await Verification.start({ supabase: sb, subject: { kind: 'owner' }, holder: {} });
