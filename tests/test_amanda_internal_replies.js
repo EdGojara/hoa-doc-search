@@ -70,6 +70,9 @@ function deps(o = {}) {
       assert.strictEqual(r.action, 'review', body); assert.strictEqual(d.sent.length, 0, body);
     }
     assert.deepStrictEqual(IR.restrictedTopics('Payments are approved by Ed in Payables; I have sent it to Kat to prepare for his approval.'), []);
+    // Sensitive data: disclosing a value is held; mentioning the subject is coordination.
+    for (const t of ['The password is Example-123', 'Routing number: 123456789', 'Account # 987654321 is the new one.', 'Her SSN is 123-45-6789.']) assert.deepStrictEqual(IR.restrictedTopics(t), ['sensitive_data'], t);
+    for (const t of ['Please do not email the routing number; Ed enters it in the bank portal himself.', 'Could you ask the vendor to send their W-9 instead of a bank account number?', 'I reset nothing; ask IT about the password.']) assert.deepStrictEqual(IR.restrictedTopics(t), [], t);
     assert.deepStrictEqual(IR.restrictedTopics('Thanks, I deposited the checks. The contract renewal is on the board agenda.'), []);
     assert.deepStrictEqual(IR.restrictedTopics('The contract was signed by the board last week.'), []);   // reporting is routine; the send check verifies it is true
   });
