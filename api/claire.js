@@ -162,7 +162,7 @@ function centsFor(seconds) {
 // bucket rather than a public policy cut into a private one.
 // The signed-in homeowner's principal + Claire's account tools, or null (staff, board-only, no lot).
 const OWNER_LIKE_PORTAL_ROLES = new Set(['homeowner', 'board_member', 'staff', 'admin', 'manager']);
-const CLAIRE_LOOKUPS = ['my_account', 'homeowner_transactions'];
+const CLAIRE_LOOKUPS = ['my_account', 'homeowner_transactions', 'community_calendar'];
 async function homeownerAccess(visitor, session) {
   if (!visitor || !visitor.portalUserId || !session.property_id || visitor.propertyId !== session.property_id || !session.community_id) return null;
   try {
@@ -176,8 +176,10 @@ async function homeownerAccess(visitor, session) {
     const CC = require('../lib/claire/caller_context');
     const ctx = await CC.loadCallerContext(session.property_id, { includeBalance: financials });
     const block = CC.callerContextPrompt(ctx);
+    let tilesLine = '';
+    try { const t = await require('../lib/portal/live_tiles').liveTiles(supabase, session.community_id); tilesLine = t.length ? '\nPortal tiles live for this community (name only these, exactly as written): ' + t.map((x) => x.title).join(', ') + '.' : ''; } catch (e) { console.warn('[claire] live tiles unavailable:', e.message); }
     const balanceLine = financials ? '' : '\nTheir balance is NOT available in this portal yet (the association has not turned homeowner balances on, or this sign-in is not the owner). Never point them to a tile or screen for it; offer to have the team confirm the amount.';
-    return { principal, tools, handlers, contextBlock: block ? block + balanceLine : balanceLine.trim() };
+    return { principal, tools, handlers, contextBlock: ((block || '') + balanceLine + tilesLine).trim() };
   } catch (e) {
     console.warn('[claire] homeowner access unavailable:', e.message);
     return null;

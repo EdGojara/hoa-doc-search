@@ -158,9 +158,9 @@ check('wiring: dispatch runs only for the owner on voice/app; lookups are dispat
 check('Claire (portal): homeowner principal gets only her own-lot tools; balances only when allowed and owner-class', async () => {
   const names = (p) => L.toolsFor(p).map((t) => t.name).sort();
   const own = P.homeownerPrincipal({ portalUserId: 'p1', communityId: CID_A, propertyIds: [PROP_B], financials: true });
-  assert.deepStrictEqual(names(own), ['governing_documents', 'homeowner_transactions', 'my_account']);
+  assert.deepStrictEqual(names(own), ['community_calendar', 'governing_documents', 'homeowner_transactions', 'my_account']);
   const renter = P.homeownerPrincipal({ portalUserId: 'p1', communityId: CID_A, propertyIds: [PROP_B], financials: false });
-  assert.deepStrictEqual(names(renter), ['governing_documents', 'my_account']);
+  assert.deepStrictEqual(names(renter), ['community_calendar', 'governing_documents', 'my_account']);
   assert.ok(!own.capabilities.has('homeowner_record'), 'never the staff 360 record (internal notes, summaries)');
   assert.strictEqual((await L.runLookup('homeowner_transactions', renter, {})).error, 'forbidden');
   // another lot, even inside her own community, is refused before any read
@@ -181,7 +181,7 @@ check('Claire (portal): homeownerAccess needs a signed-in portal user on the ses
   const fs = require('fs');
   const src = fs.readFileSync(require.resolve('../api/claire.js'), 'utf8');
   assert.ok(/Lookups\.runLookup\(t\.name, principal, input \|\| \{\}\)/.test(src), 'handlers run with the session principal, never one from model input');
-  assert.ok(/CLAIRE_LOOKUPS = \['my_account', 'homeowner_transactions'\]/.test(src));
+  assert.ok(/CLAIRE_LOOKUPS = \['my_account', 'homeowner_transactions', 'community_calendar'\]/.test(src));
 });
 
 check('Claire (portal): correspondence is only what was exchanged with the homeowner, never notes or content', () => {
@@ -189,6 +189,26 @@ check('Claire (portal): correspondence is only what was exchanged with the homeo
   const fn = src.slice(src.indexOf('async function myAccount'), src.indexOf('// ---- association'));
   assert.ok(/caller_facing: true/.test(fn) && /\['inbound', 'outbound'\]\.includes\(r\.direction\)/.test(fn) && /!\/note\/i/.test(fn));
   assert.ok(!/content|notes|ai_summary|collection|attorney/.test(fn.replace(/\/\/.*$/gm, '').replace(/\* .*$/gm, '')), 'no internal fields read out');
+});
+
+check('Claire tiles and calendar: titles come from the portal tile list; a hidden balance tile is never named; other communities refused', async () => {
+  const T = require('../lib/portal/live_tiles');
+  const titles = T.tileTitles();
+  assert.strictEqual(titles.clubhouse, 'Reserve the Clubhouse'); assert.strictEqual(titles.events, 'Community Calendar'); assert.strictEqual(titles.meetings, 'Meetings & Notices');
+  const FA = require('../lib/portal/financial_access');
+  const cfg = FA.presentedModuleConfig({ balance: { status: 'live' }, clubhouse: { status: 'live' } }, { balance: false });
+  assert.strictEqual(cfg.balance.status, 'hidden');
+  const own = P.homeownerPrincipal({ portalUserId: 'p1', communityId: CID_A, propertyIds: [PROP_B] });
+  assert.ok(L.toolsFor(own).some((t) => t.name === 'community_calendar'));
+  L._setClientForTests(fakeSb((t) => (t === 'communities' ? { data: [{ id: CID_A, name: 'Alpha Estates' }, { id: CID_B, name: 'Beta Lakes' }], error: null } : { data: [], error: null })));
+  try {
+    const r = await L.runLookup('community_calendar', own, { community: 'Beta Lakes' });
+    assert.strictEqual(r.error, 'community_not_found_or_outside_access');
+  } finally { L._setClientForTests(null); }
+  const src = require('fs').readFileSync(require.resolve('../lib/voice/reason.js'), 'utf8');
+  assert.ok(/ONLY a tile title from the live-tiles list/.test(src) && /never a translation like/.test(src));
+  const isa = require('fs').readFileSync(require.resolve('../lib/voice/reason_isabella.js'), 'utf8');
+  assert.ok(!/llamada hoy|hoy mismo y le devuelve|respuesta hoy/.test(isa), 'no same-day callback promise');
 });
 
 (async () => {
