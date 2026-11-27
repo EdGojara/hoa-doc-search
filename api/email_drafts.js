@@ -416,9 +416,12 @@ async function sendHandler(req, res) {
     let sent = null;
     try {
       // A threaded reply goes to exactly the recipients reviewed (never createReply's own pick).
+      // The builder lot letters an owner-authorized reply carries name their applications, so the
+      // transport guard checks them against the recorded decisions.
+      const builderApplicationIds = ((d.policy && d.policy.owner_authorization && d.policy.owner_authorization.letter_responses) || []).map((l) => l.application_id).filter(Boolean);
       sent = threaded
-        ? await graphSend.sendReplyAs({ from, sourceMailbox: replyTo.mailbox, sourceGraphId: replyTo.graph_id, to: d.to_email, cc: d.cc || undefined, html, attachments: [...personaAttachments, ...fileAttachments], communityId: d.community_id || null })
-        : await graphSend.sendAs({ from, to: d.to_email, cc: d.cc || undefined, subject, html, attachments: [...personaAttachments, ...fileAttachments] });
+        ? await graphSend.sendReplyAs({ from, sourceMailbox: replyTo.mailbox, sourceGraphId: replyTo.graph_id, to: d.to_email, cc: d.cc || undefined, html, attachments: [...personaAttachments, ...fileAttachments], communityId: d.community_id || null, builderApplicationIds })
+        : await graphSend.sendAs({ from, to: d.to_email, cc: d.cc || undefined, subject, html, attachments: [...personaAttachments, ...fileAttachments], builderApplicationIds });
       // sendAs RETURNS (does not throw) when the outbound guard suppresses a send.
       // That used to fall through and mark the draft 'sent' although nothing left.
       // Keep it a draft with the reason, so it stays visible as blocked. (Ed 2026-10-06.)

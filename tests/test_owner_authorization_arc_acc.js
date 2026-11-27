@@ -31,7 +31,8 @@ function fakeDb(seed = {}) {
       in(k, vs) { st.filters.push((x) => vs.includes(x[k])); return api; },
       gte(k, v) { st.filters.push((x) => x[k] != null && String(x[k]) >= String(v)); return api; },
       ilike(k, v) { const re = new RegExp('^' + String(v).replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/%/g, '.*') + '$', 'i'); st.filters.push((x) => re.test(String(x[k] || ''))); return api; },
-      not(k, op, v) { const vals = String(v).replace(/[()]/g, '').split(','); st.filters.push((x) => !vals.includes(x[k])); return api; },
+      like(k, v) { const re = new RegExp('^' + String(v).replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/%/g, '.*') + '$'); st.filters.push((x) => re.test(String(x[k] || ''))); return api; },
+      not(k, op, v) { if (op === 'is') { st.filters.push((x) => x[k] != null); return api; } const vals = String(v).replace(/[()]/g, '').split(','); st.filters.push((x) => !vals.includes(x[k])); return api; },
       limit(n) { st.limit = n; return api; },
       single() { st.single = true; return api; }, maybeSingle() { st.maybe = true; return api; },
       insert(r) { st.op = 'insert'; st.rows = Array.isArray(r) ? r : [r]; return api; },
@@ -375,6 +376,33 @@ check("wiring: Tessa acknowledges at once; boot and Amanda's scheduled pass resu
   assert.ok(/resumePending\(supabase\)/.test(read('lib/scheduler.js')));
   assert.ok(/rearm: \(\) => rearmScheduled\(\)/.test(read('api/email_drafts.js')));
   assert.ok(read('lib/authorization/arc_acc.js').includes("if (now && now.status === 'sent') return null;"));
+});
+
+check('builder decision notices: authorized only for recorded decisions, to the submitter or primary contact of record, and only matching what was decided', () => {
+  const DA = require('../lib/acc/decision_authority');
+  const apps = [{ reference_number: 'SCR-1', status: 'approved', decided_by: 'Ed', decided_at: '2026-11-27', submitter_email: 'b@lennar.com', builder_company: { primary_contact_email: 'pc@lennar.com' } }];
+  const appr = { ok: false, approval: true };
+  assert.ok(DA.authorizesBuilderDecisionNotice(apps, appr, ['b@lennar.com']).ok);
+  assert.ok(DA.authorizesBuilderDecisionNotice(apps, appr, ['pc@lennar.com']).ok);
+  assert.ok(!DA.authorizesBuilderDecisionNotice(apps, appr, ['someone@else.com']).ok, 'a stranger is refused');
+  assert.ok(!DA.authorizesBuilderDecisionNotice([{ ...apps[0], decided_by: null }], appr, ['b@lennar.com']).ok, 'an undecided lot is refused');
+  assert.ok(!DA.authorizesBuilderDecisionNotice([{ ...apps[0], status: 'received' }], appr, ['b@lennar.com']).ok, 'an approval email for an unapproved lot is refused');
+  assert.ok(/builderApplicationIds/.test(read('lib/email/graph_send.js')) && /builderApplicationIds/.test(read('api/email_drafts.js')));
+});
+
+check('after the one completion report, an outstanding item finished on Amanda\'s retry list gets one short update, never a second report', async () => {
+  const db = fakeDb(seed());
+  const a = await authorized(db);
+  installExecutors(db);
+  a.status = 'executed';
+  db.t.work_items.push({ id: 'lease-9', source_ref: 'owner_authorization_run:auth-1', status: 'waiting', updated_at: new Date().toISOString(), notes: JSON.stringify({ retry: [3] }) });
+  const sent = [];
+  const r = await AA.executePackage({ supabase: db, sentItems: async () => [], sendReport: async (m) => sent.push(m.subject) }, a);
+  assert.ok(!r.skipped);
+  assert.ok(sent.length === 1 && /^Update: /.test(sent[0]), JSON.stringify(sent));
+  const again = await AA.reportUpdate(db, a, { send: async (m) => sent.push(m.subject) });
+  assert.strictEqual(again.updated, false, 'each completed item is reported once');
+  assert.strictEqual(db.t.owner_authorizations[0].status, 'executed');
 });
 
 (async () => {
