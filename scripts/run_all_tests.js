@@ -325,6 +325,7 @@ const CHECKS = [
   'tests/test_portal_financials_fail_closed.js',
   'tests/test_portal_launch.js',
   'tests/test_portal_invite_roster.js',
+  'tests/test_portal_silent_create_authorization.js',   // OAS silent account creation: hash/status refusals, no email or link, idempotent
   'tests/sql/469_payment_rehearsal.mjs',
   'tests/sql/469_apply_one_e2e.mjs',
   'tests/sql/473_apply_one_e2e.mjs',

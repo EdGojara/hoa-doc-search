@@ -1,0 +1,67 @@
+{
+  "migration": "586_owner_authorized_portal_silent_create.sql",
+  "summary": "Extends the Owner Authorization Service to silent homeowner portal account creation: owner_authorizations.scope also allows 'portal_silent_creates'. Adds owner_authorization_request_portal_silent_creates(), which creates one numbered request of associations, each with its stated portal state, its account counts and roster hash as the fingerprint, executed by Amanda at sensitivity tier 1. No rows are added, removed or changed; no portal account, lot grant, community or setting is touched.",
+  "requires": [
+    "554_owner_delegated_approvals.sql",
+    "577_owner_authorization_service.sql",
+    "585_owner_authorized_legal_reversal.sql"
+  ],
+  "preflight": [
+    {
+      "name": "the portal silent create request function does not exist yet",
+      "sql": "SELECT count(*)::int FROM pg_proc WHERE proname = 'owner_authorization_request_portal_silent_creates'",
+      "expect": 0
+    },
+    {
+      "name": "no request uses an unknown scope",
+      "sql": "SELECT count(*)::int FROM owner_authorizations WHERE scope NOT IN ('conversion_objects', 'accounting_runs', 'arc_acc_decisions', 'closing_packages', 'check_receipt_allocations', 'legal_posting_reversals')",
+      "expect": 0
+    }
+  ],
+  "expected_changes": [
+    "owner_authorizations_scope_check also allows portal_silent_creates.",
+    "Adds owner_authorization_request_portal_silent_creates(text, text, jsonb, text, text, integer), executable by service_role only.",
+    "No rows are added, removed or changed."
+  ],
+  "objects": {
+    "added": [
+      "function:owner_authorization_request_portal_silent_creates"
+    ],
+    "changed": [
+      "constraint:owner_authorizations.owner_authorizations_scope_check"
+    ],
+    "removed": []
+  },
+  "verify": [
+    {
+      "name": "the request function exists",
+      "sql": "SELECT count(*)::int FROM pg_proc WHERE proname = 'owner_authorization_request_portal_silent_creates'",
+      "expect": 1
+    },
+    {
+      "name": "the scope check allows portal silent creates",
+      "sql": "SELECT count(*)::int FROM pg_constraint WHERE conname = 'owner_authorizations_scope_check' AND pg_get_constraintdef(oid) LIKE '%portal_silent_creates%'",
+      "expect": 1
+    },
+    {
+      "name": "the request function is not executable by authenticated users",
+      "sql": "SELECT has_function_privilege('authenticated', 'owner_authorization_request_portal_silent_creates(text, text, jsonb, text, text, integer)', 'EXECUTE')::int",
+      "expect": 0
+    }
+  ],
+  "row_changes": {
+    "owner_authorizations": 0,
+    "portal_users": 0,
+    "portal_user_properties": 0
+  },
+  "protected": [
+    {
+      "table": "portal_users",
+      "order_by": "id"
+    },
+    {
+      "table": "communities",
+      "order_by": "id"
+    }
+  ]
+}

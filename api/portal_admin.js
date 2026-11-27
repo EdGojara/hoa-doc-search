@@ -1049,57 +1049,10 @@ router.get('/community/:communityId/adoption', async (req, res) => {
 // ============================================================================
 const _sendsInFlight = new Set();
 
-async function _insertAuditRows(rows) {
-  for (let i = 0; i < rows.length; i += 200) {
-    const { error } = await supabase.from('portal_audit_log').insert(rows.slice(i, i + 200));
-    if (error) console.warn('[portal_admin] bulk audit insert failed:', error.message);
-  }
-}
-
-// Create portal_users + lot grants for roster rows with action 'create'.
-// Returns { byContact: { contact_id: portal_user_id }, failures: [{ contact_id, reason, detail }] }.
-async function _createRosterAccounts(rows, { performedBy, slug, via, mark }) {
-  const { SILENT_CREATE_MARK } = require('../lib/portal/invite_roster');
-  const invitedByMark = mark || SILENT_CREATE_MARK;
-  const byContact = {};
-  const failures = [];
-  const toUserRow = (r) => ({
-    management_company_id: BEDROCK_MGMT_CO_ID, email: r.email, full_name: r.name || null,
-    role: 'homeowner', status: 'invited', contact_id: r.contact_id, invited_by: invitedByMark,
-  });
-  for (let i = 0; i < rows.length; i += 100) {
-    const slice = rows.slice(i, i + 100);
-    const { data, error } = await supabase.from('portal_users').insert(slice.map(toUserRow)).select('id, contact_id');
-    if (!error) { for (const u of data || []) byContact[u.contact_id] = u.id; continue; }
-    // One bad row fails the whole batch insert; retry this batch row by row so
-    // the rest still land and the bad one is named.
-    console.warn(`[portal_admin] bulk account batch failed, retrying per row: ${error.message}`);
-    for (const r of slice) {
-      const one = await supabase.from('portal_users').insert(toUserRow(r)).select('id, contact_id').single();
-      if (one.error) failures.push({ contact_id: r.contact_id, reason: 'account_insert_failed', detail: safeErrorMessage(one.error) });
-      else byContact[r.contact_id] = one.data.id;
-    }
-  }
-  const grants = [];
-  for (const r of rows) {
-    const uid = byContact[r.contact_id];
-    if (!uid) continue;
-    for (const p of r.properties) grants.push({ portal_user_id: uid, property_id: p.property_id, granted_by: performedBy, revoked_at: null, revoked_by: null });
-  }
-  for (let i = 0; i < grants.length; i += 200) {
-    const slice = grants.slice(i, i + 200);
-    const { error } = await supabase.from('portal_user_properties').upsert(slice, { onConflict: 'portal_user_id,property_id' });
-    if (error) {
-      console.error('[portal_admin] bulk grant batch failed:', error.message);
-      const uids = new Set(slice.map((g) => g.portal_user_id));
-      for (const [cid, uid] of Object.entries(byContact)) if (uids.has(uid)) failures.push({ contact_id: cid, reason: 'lot_grant_failed', detail: safeErrorMessage(error) });
-    }
-  }
-  await _insertAuditRows(Object.values(byContact).map((uid) => ({
-    portal_user_id: uid, action: 'user_invited', performed_by: performedBy, notes: `via=${via} community=${slug} email=not_sent`,
-  })));
-  return { byContact, failures };
-}
+// The create path is shared with the Owner Authorization Service action
+// portal_silent_create (lib/portal/silent_create.js): one code path, no copy.
+const SilentCreate = require('../lib/portal/silent_create');
+const _createRosterAccounts = (rows, opts) => SilentCreate.createRosterAccounts(supabase, rows, opts);
 
 // Background invitation sender: one magic link + one email per account, paced.
 // Each success re-marks the account as emailed; a failure leaves it on the
@@ -1208,25 +1161,13 @@ router.post('/community/:communityId/bulk-invite', async (req, res) => {
       notes: `hash=${hash}${b.broader_launch_approved === true ? ' broader_launch_approved=true' : ''} accounts_created=${Object.keys(created.byContact).length} failures=${created.failures.length} to_email=${mode === 'send' ? roster.invite.length : 0}`,
     });
     // An owner whose account already exists (created silently earlier, not yet
-    // emailed) still needs THIS roster's lots: a later silent create in another
-    // association, or a lot bought since, never reached them before. Grants are
-    // idempotent (insert-if-missing on portal_user_id + property_id). (Ed 2026-11-27.)
-    const existingGrants = [];
-    for (const r of roster.invite.filter((x) => x.action === 'email_existing' && x.portal_user_id)) {
-      for (const p of r.properties) existingGrants.push({ portal_user_id: r.portal_user_id, property_id: p.property_id, granted_by: performedBy });
-    }
-    // Missing grants only: a grant staff revoked stays revoked.
-    for (let i = 0; i < existingGrants.length; i += 200) {
-      const { error } = await supabase.from('portal_user_properties').upsert(existingGrants.slice(i, i + 200), { onConflict: 'portal_user_id,property_id', ignoreDuplicates: true });
-      if (error) {
-        console.error('[portal_admin] existing-account lot grants failed:', error.message);
-        created.failures.push({ contact_id: null, reason: 'lot_grant_failed', detail: safeErrorMessage(error) });
-      }
-    }
+    // emailed) still needs THIS roster's lots (Ed 2026-11-27): shared path.
+    const existing = await SilentCreate.grantExistingAccountLots(supabase, roster.invite, { performedBy });
+    created.failures.push(...existing.failures);
     const result = {
       ok: true, mode, ...preview,
       accounts_created: Object.keys(created.byContact).length,
-      existing_accounts_checked: new Set(existingGrants.map((g) => g.portal_user_id)).size,
+      existing_accounts_checked: existing.existing_accounts_checked,
       failures: created.failures,
     };
     if (mode === 'create_only') return res.json(result);
