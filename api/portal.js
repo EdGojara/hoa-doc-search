@@ -1640,12 +1640,15 @@ router.get('/me', async (req, res) => {
     // Open requests — ACC applications still in flight + builder applications (if any)
     let openRequests = { count: 0, label: 'No active requests' };
     try {
-      const { count } = await supabase
+      const { count, error: orErr } = await supabase
         .from('community_applications')
         .select('id', { count: 'exact', head: true })
         .eq('community_id', community.id)
         .ilike('submitter_email', user.email)
-        .in('final_status', ['', 'pending', 'pending_review', 'pending_committee_review']);
+        // Every in-flight value the final_status CHECK allows (migration 210):
+        // incomplete = waiting on the homeowner, pending_send = decided, letter not out.
+        .in('final_status', ['incomplete', 'pending_review', 'pending_committee_review', 'pending_send']);
+      if (orErr) console.warn('[portal] open requests not read:', orErr.message);
       if (count && count > 0) {
         openRequests = { count, label: `${count} architectural request${count === 1 ? '' : 's'} in review` };
       }
