@@ -64,7 +64,7 @@ console.log('lookup');
   check('Claire balance lookup refuses unless the association shows balances', vt.includes('financialAccessFor(supabase, communityRow.id)')
     && vt.indexOf('if (!access.balance)') > -1 && vt.indexOf('if (!access.balance)') < vt.indexOf('resolveCurrentAR(supabase'));
   const cc = src('lib/claire/caller_context.js');
-  check('Claire caller context loads a balance only when balances are on', cc.includes('const bal = !access.balance ? null :'));
+  check('Claire caller context loads a balance only when balances are on', cc.includes('const bal = (!includeBalance || !access.balance) ? null :'));
 
   console.log(`\nportal financials fail-closed: ${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
