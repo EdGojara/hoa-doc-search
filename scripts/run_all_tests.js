@@ -197,6 +197,9 @@ const CHECKS = [
   'tests/test_letter_batch.js',
   'tests/test_bd_card.js',
   'tests/test_claire_guardrails.js',
+  // Phone homeowner security boundary (Ed 2026-11-27): private records are
+  // closed on the phone until a real verification step exists. Offline.
+  'tests/test_phone_private_records_gate.js',
   'tests/test_amanda_guardrails.js',
   'tests/test_amanda_audience.js',
   'tests/test_amanda_disposition.js',
