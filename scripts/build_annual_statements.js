@@ -190,6 +190,20 @@ function counselHoldReason(st) {
 // Split built statements into mailable and held. states: active
 // property_enforcement_states rows; legalFees: Map property_id -> cents of
 // legal/attorney charges billed. Pure; tested in test_annual_statement_run.js.
+// Legal fees that will print as their own line: committed current-owner rows dated on or after
+// the statement's activity window. With no window, nothing is itemized, so nothing is held.
+// Pure; tested in test_annual_statement_run.js.
+function printedLegalFees(rows, activityFrom) {
+  const out = new Map();
+  if (!activityFrom) return out;
+  for (const r of rows || []) {
+    if (!r.property_id || !(r.amount_cents > 0)) continue;
+    if (String(r.transaction_date || '').slice(0, 10) < activityFrom) continue;
+    out.set(r.property_id, (out.get(r.property_id) || 0) + r.amount_cents);
+  }
+  return out;
+}
+
 // Legal fees on an account with no recorded enforcement state are HELD, not
 // mailed: an itemized collection fee printed without the §209.0064 notice on
 // record is a statutory problem. An account is released only when it is on the
@@ -290,11 +304,13 @@ async function main() {
       if (!states.some((x) => x.property_id === d.property_id)) states.push({ property_id: d.property_id, state, attorney_firm: firm || null });
     }
   }
-  const legalRows = await fetchAllQuery(() => s.from('homeowner_transactions')
-    .select('id, property_id, amount_cents, description').eq('community_id', comm.id)
+  // Only the current owner's committed ledger (never a reverted or superseded import), and only
+  // the fees that would PRINT as their own line on this statement (dated on or after
+  // --activity-from). Older fees sit inside the balance forward and are not itemized.
+  const legalRows = await fetchAllQuery(() => s.from('v_current_owner_ledger')
+    .select('id, property_id, amount_cents, description, transaction_date').eq('community_id', comm.id)
     .or('description.ilike.%attorney%,description.ilike.%legal fee%'), { orderBy: 'id' });
-  const legalFees = new Map();
-  for (const r of legalRows) if (r.property_id && r.amount_cents > 0) legalFees.set(r.property_id, (legalFees.get(r.property_id) || 0) + r.amount_cents);
+  const legalFees = printedLegalFees(legalRows, billing && billing.activity_from);
   const signoff = !sample && o['legal-fee-signoff'] ? new Set(parseAccountList(fs.readFileSync(path.resolve(o['legal-fee-signoff']), 'utf8')).keys()) : new Set();
   const ch = sample ? { mail: withD, held: [], unflagged: [] } : applyCounselHolds(withD, states, legalFees, signoff);
   for (const h of ch.held) if (h.d._why && h.d._why.length) h.reason += `; also: ${h.d._why.join('; ')}`;
@@ -377,4 +393,4 @@ async function main() {
 
 if (require.main === module) main().catch((e) => { console.error('STOPPED:', e.message); process.exit(1); });
 
-module.exports = { billingGates, validate, args, PREVIEW_LABEL, applyCounselHolds, counselHoldReason, COUNSEL_HOLD, parseAccountList, applyDefer, counselNotices };
+module.exports = { billingGates, validate, args, PREVIEW_LABEL, applyCounselHolds, printedLegalFees, counselHoldReason, COUNSEL_HOLD, parseAccountList, applyDefer, counselNotices };

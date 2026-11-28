@@ -111,6 +111,10 @@ check('final: announcement placeholders and missing fees refuse', g.blockers.som
   check('counsel hold: bankruptcy and at-legal held, current and clean mailed', r.held.map((h) => h.d.property_id).join() === 'a,b,d' && r.mail.map((d) => d.property_id).join() === 'c,e');
   check('counsel hold: legal fees with no enforcement state are HELD (§209.0064), and listed', r.unflagged.length === 1 && r.unflagged[0].d.property_id === 'd' && r.held[2].state === 'legal_fees_unflagged' && /209.0064/.test(r.held[2].reason));
   const r2 = applyCounselHolds([D('d')], [], new Map([['d', 74255]]), new Set(['d']));
+  const { printedLegalFees } = require('../scripts/build_annual_statements');
+  const pl = printedLegalFees([{ property_id: 'p', amount_cents: 5000, transaction_date: '2026-07-31' }, { property_id: 'q', amount_cents: 2500, transaction_date: '2026-10-12' }, { property_id: 'q', amount_cents: -2500, transaction_date: '2026-10-20' }], '2026-10-01');
+  check('legal fees: only fees that print (dated in the activity window) count; older fees in the balance forward do not', !pl.has('p') && pl.get('q') === 2500);
+  check('legal fees: with no activity window nothing is itemized, so nothing is held', printedLegalFees([{ property_id: 'q', amount_cents: 2500, transaction_date: '2026-10-12' }], null).size === 0);
   check('counsel hold: an account on the legal-fee sign-off list is mailed', r2.mail.length === 1 && r2.held.length === 0 && r2.unflagged.length === 1);
   check('counsel hold: reason names the firm', /bankruptcy/i.test(r.held[0].reason) && /Firm/.test(r.held[0].reason));
   check('counsel hold: every non-current state holds', ['in_bankruptcy', 'at_legal', 'in_collections', 'lien_filed', 'judgment', 'on_payment_plan'].every((k) => counselHoldReason({ state: k })) && !counselHoldReason({ state: 'current' }) && !counselHoldReason(null));
