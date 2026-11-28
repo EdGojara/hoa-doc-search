@@ -96,6 +96,9 @@ g = billingGates({ opts: { ...base, 'notice-text': undefined }, community: comm(
 check('final: approved budget + valid announcement passes; notice taken from the announcement', !g.blockers.length && /delinquent if not paid when due/.test(g.noticeText), g.blockers.join('; '));
 g = billingGates({ opts: base, community: comm(), budget: { status: 'approved' }, lockbox: lb, announcementRaw: annRaw({ switch_date: '[[x]]' }) });
 check('final: announcement placeholders and missing fees refuse', g.blockers.some((b) => /placeholder/.test(b)) && g.blockers.some((b) => /payment fees/.test(b)));
+{ const gd = billingGates({ opts: { ...base, disclosure: 'Note' }, community: comm(), budget: { status: 'approved' }, lockbox: lb }); check('disclosure: free text without a recorded approval blocks a billing run', gd.blockers.some((b) => /disclosure-approved/.test(b))); }
+{ const gd = billingGates({ opts: { ...base, disclosure: 'Note', preview: true }, community: comm(), budget: { status: 'draft' }, lockbox: lb }); check('disclosure: in a preview it only warns', !gd.blockers.some((b) => /disclosure/.test(b)) && gd.warnings.some((w) => /disclosure-approved/.test(w))); }
+{ const gd = billingGates({ opts: { ...base, disclosure: 'Note', 'disclosure-approved': 'Board, 12/1/2026, minutes' }, community: comm(), budget: { status: 'approved' }, lockbox: lb }); check('disclosure: an approved wording passes and is carried', !gd.blockers.some((b) => /disclosure/.test(b)) && gd.billing.disclosure_approved === 'Board, 12/1/2026, minutes'); }
 
 // Counsel hold: accounts in bankruptcy / with counsel never reach the print file.
 {
@@ -105,11 +108,49 @@ check('final: announcement placeholders and missing fees refuse', g.blockers.som
   const r = applyCounselHolds([D('a'), D('b'), D('c'), D('d'), D('e')],
     [st('a', 'in_bankruptcy', { attorney_firm: 'Firm' }), st('b', 'at_legal'), st('c', 'current')],
     new Map([['d', 74255], ['c', 500]]));
-  check('counsel hold: bankruptcy and at-legal held, current and clean mailed', r.held.map((h) => h.d.property_id).join() === 'a,b' && r.mail.map((d) => d.property_id).join() === 'c,d,e');
-  check('counsel hold: legal fees with no state is a warning, not a hold', r.unflagged.length === 1 && r.unflagged[0].d.property_id === 'd');
+  check('counsel hold: bankruptcy and at-legal held, current and clean mailed', r.held.map((h) => h.d.property_id).join() === 'a,b,d' && r.mail.map((d) => d.property_id).join() === 'c,e');
+  check('counsel hold: legal fees with no enforcement state are HELD (§209.0064), and listed', r.unflagged.length === 1 && r.unflagged[0].d.property_id === 'd' && r.held[2].state === 'legal_fees_unflagged' && /209.0064/.test(r.held[2].reason));
+  const r2 = applyCounselHolds([D('d')], [], new Map([['d', 74255]]), new Set(['d']));
+  const { printedLegalFees } = require('../scripts/build_annual_statements');
+  const pl = printedLegalFees([{ property_id: 'p', amount_cents: 5000, transaction_date: '2026-07-31' }, { property_id: 'q', amount_cents: 2500, transaction_date: '2026-10-12' }, { property_id: 'q', amount_cents: -2500, transaction_date: '2026-10-20' }], '2026-10-01');
+  check('legal fees: only fees that print (dated in the activity window) count; older fees in the balance forward do not', !pl.has('p') && pl.get('q') === 2500);
+  check('legal fees: with no activity window nothing is itemized, so nothing is held', printedLegalFees([{ property_id: 'q', amount_cents: 2500, transaction_date: '2026-10-12' }], null).size === 0);
+  check('counsel hold: an account on the legal-fee sign-off list is mailed', r2.mail.length === 1 && r2.held.length === 0 && r2.unflagged.length === 1);
   check('counsel hold: reason names the firm', /bankruptcy/i.test(r.held[0].reason) && /Firm/.test(r.held[0].reason));
   check('counsel hold: every non-current state holds', ['in_bankruptcy', 'at_legal', 'in_collections', 'lien_filed', 'judgment', 'on_payment_plan'].every((k) => counselHoldReason({ state: k })) && !counselHoldReason({ state: 'current' }) && !counselHoldReason(null));
   check('counsel hold: empty inputs are safe', applyCounselHolds([], null).mail.length === 0);
+}
+
+// Full statements: activity since a date, deferrals, counsel notices.
+{
+  const { parseAccountList, applyDefer, counselNotices } = require('../scripts/build_annual_statements');
+  const S = require('../lib/statements/assessment_statement');
+  const L = (date, amount_cents, txn_type = 'charge', description = 'x') => ({ transaction_date: date, amount_cents, txn_type, description });
+  const led = [L('2026-07-31', 142500), L('2026-09-05', -20000, 'payment'), L('2026-10-27', -26700, 'payment', 'Payment: Vantaca Pay eCheck VPAY payout 2026-11-02 (deposited 2026-11-02)')];
+  const w = S.activityWindow(led, 95800, '2026-10-01');
+  check('activity: opening is the balance before the window and the lines foot to the balance', w.opening === 122500 && w.rows.length === 1 && w.opening + w.rows[0].amount_cents === 95800);
+  let threw = false; try { S.activityWindow(led, 95801, '2026-10-01'); } catch (_) { threw = true; }
+  check('activity: a ledger that does not tie to the balance refuses', threw);
+  const many = Array.from({ length: 20 }, (_, i) => L(`2026-10-${String(i + 1).padStart(2, '0')}`, 100));
+  const w2 = S.activityWindow(many, 2000, '2026-10-01');
+  check('activity: extra lines fold into the balance forward, never drop', w2.rows.length === 9 && w2.opening === 1100);
+  check('activity: payment label is plain, with no payout reference', S.activityLabel(led[2]) === 'Payment received (eCheck)' && S.activityLabel(L('x', -1, 'payment', 'Chk #2163 - Payment')) === 'Payment received (check #2163)');
+  check('activity: a returned payment keeps its own words', /Returned payment/.test(S.activityLabel(L('x', 20000, 'charge', 'Returned payment: insufficient funds (settled 2026-10-15)'))));
+  const df = parseAccountList('# note\n100,receipt pending\n\n200\n999,typo');
+  const r = applyDefer([{ account_number: '100' }, { account_number: '200' }, { account_number: '300' }], df);
+  check('defer: listed accounts leave the batch with their reason; unmatched reported', r.mail.map((d) => d.account_number).join() === '300' && r.deferred[0].reason === 'receipt pending' && r.unmatched.join() === '999');
+  const D = (n, why = []) => ({ account_number: n, _why: why, association: { name: 'A' }, mgmt: { name: 'M', line1: '1', city: 'C' }, addressee: { name: 'N', street: 'S', cityline: 'C' }, property_address: 'P', asOf: new Date('2026-11-23'), disclosure: 'note' });
+  const cn = counselNotices([{ d: D('1'), state: 'at_legal', firm: 'F' }, { d: D('2'), state: 'in_bankruptcy', firm: 'F' }, { d: D('3'), state: 'at_legal', firm: 'Unknown' }, { d: D('4', ['no complete mailing address']), state: 'at_legal', firm: 'F' }], { F: { name: 'F', lines: ['123 Main', '555'] } });
+  check('counsel notice: never a bankruptcy, an unknown firm or an incomplete address', cn.send.map((x) => x.d.account_number).join() === '1' && cn.none.length === 3);
+  const cn2 = counselNotices([{ d: D('5'), state: 'on_payment_plan', firm: 'F' }, { d: D('6'), state: 'in_collections', firm: 'F' }, { d: D('7'), state: 'legal_fees_unflagged', firm: null }, { d: D('8'), state: 'lien_filed', firm: 'F' }, { d: D('9'), state: 'judgment', firm: 'F' }], { F: { name: 'F', lines: ['123 Main'] } });
+  check('counsel notice: only accounts with counsel (at legal, lien, judgment), never a payment plan or collections', cn2.send.map((x) => x.d.account_number).join() === '8,9' && cn2.none.length === 3 && /not with counsel/.test(cn2.none[0].why));
+  const cn3 = counselNotices([{ d: D('10'), state: 'at_legal', firm: 'F (board moving matters to G, 10/29/26)' }], { F: { name: 'F', lines: ['123 Main'] }, 'F (board moving matters to G, 10/29/26)': { name: 'F', lines: ['x'] } });
+  check('counsel notice: a firm on file with a note (a firm transition) never gets a notice', cn3.send.length === 0 && /confirm the current firm/.test(cn3.none[0].why));
+  check('activity: balance forward names the date it is before; folded lines move it later', w.forwardBefore === '2026-10-27' && w2.forwardBefore === '2026-10-12' && S.activityWindow([L('2026-07-31', 500)], 500, '2026-10-01').forwardBefore === '2026-10-01');
+  check('activity: an interest correction reads as plain words', S.activityLabel(L('x', 41, 'charge', 'Interest correction for 2026-08: $4.42 posted, $4.83 due')) === 'Late interest adjustment');
+  const html = S.renderCounselNoticesHTML(cn.send, { year: 2027, assessment_cents: 150000, due_date: '2027-01-01' });
+  const body = html.split('<body>')[1];
+  check('counsel notice: assessment and firm, no coupon or pay instruction', /1,500\.00/.test(body) && /123 Main/.test(body) && !/PAY THIS AMOUNT|Mail Checks|class="coupon"/.test(body) && body.includes(S.COUNSEL_MESSAGE));
 }
 
 console.log(failures ? `\n\x1b[31m${failures} failed\x1b[0m` : '\n\x1b[32mall annual statement run checks passed\x1b[0m');
